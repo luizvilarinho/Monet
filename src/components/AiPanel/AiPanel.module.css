@@ -1,0 +1,50 @@
+.panel {
+  width: 300px;
+  background: var(--bg-panel, #161618);
+  border-left: 1px solid var(--border, #333340);
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.empty {
+  color: var(--text-muted, #606070);
+  font-size: 13px;
+  margin: auto;
+  text-align: center;
+}
+
+.card {
+  background: var(--surface-1, #1e1e22);
+  border: 1px solid var(--border, #333340);
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cardHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.cmd {
+  color: var(--accent-ai, #5dcaa5);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+.query {
+  color: var(--text-secondary, #a0a0b8);
+}
+
+.body {
+  color: var(--text-primary, #e8e8f0);
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}

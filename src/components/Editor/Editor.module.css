@@ -1,0 +1,18 @@
+.editor {
+  flex: 1;
+  display: flex;
+  height: 100%;
+}
+
+.editor textarea {
+  flex: 1;
+  background: var(--bg-app, #0e0e10);
+  color: var(--text-primary, #e8e8f0);
+  border: none;
+  outline: none;
+  resize: none;
+  padding: 24px 32px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 14px;
+  line-height: 1.6;
+}

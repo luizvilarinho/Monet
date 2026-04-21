@@ -1,0 +1,44 @@
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--bg-panel, #161618);
+  border-bottom: 1px solid var(--border, #333340);
+  height: 44px;
+}
+
+.brand {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  color: var(--accent, #7c6af5);
+  font-size: 13px;
+  letter-spacing: 0.5px;
+}
+
+.title {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-primary, #e8e8f0);
+  font-size: 14px;
+}
+
+.toolbar button {
+  background: transparent;
+  color: var(--text-secondary, #a0a0b8);
+  border: 1px solid var(--border, #333340);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.toolbar button[aria-pressed="true"] {
+  color: var(--accent, #7c6af5);
+  border-color: var(--accent, #7c6af5);
+}
+
+.toolbar button:hover {
+  color: var(--text-primary, #e8e8f0);
+}

@@ -1,0 +1,55 @@
+.sidebar {
+  width: 200px;
+  background: var(--bg-panel, #161618);
+  border-right: 1px solid var(--border, #333340);
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  gap: 12px;
+}
+
+.newNote {
+  background: transparent;
+  border: 1px solid var(--border, #333340);
+  color: var(--text-secondary, #a0a0b8);
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.newNote:hover {
+  color: var(--accent, #7c6af5);
+  border-color: var(--accent, #7c6af5);
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+}
+
+.list li {
+  padding: 8px 12px;
+  border-radius: 6px;
+  color: var(--text-secondary, #a0a0b8);
+  cursor: pointer;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.list li:hover {
+  background: var(--surface-1, #1e1e22);
+  color: var(--text-primary, #e8e8f0);
+}
+
+.active {
+  background: var(--surface-2, #26262c) !important;
+  color: var(--text-primary, #e8e8f0) !important;
+}

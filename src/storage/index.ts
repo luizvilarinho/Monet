@@ -1,0 +1,35 @@
+import type { Note, RagChunk } from '../types'
+import { TauriStorage } from './tauri'
+import { BrowserStorage } from './browser'
+
+export interface StorageAdapter {
+  getNotes(): Promise<Note[]>
+  getNote(id: string): Promise<Note | null>
+  saveNote(note: Note): Promise<void>
+  deleteNote(id: string): Promise<void>
+  searchNotes(query: string): Promise<Note[]>
+
+  saveChunks(chunks: RagChunk[]): Promise<void>
+  searchChunks(embedding: Float32Array, topK: number): Promise<RagChunk[]>
+  deleteChunks(noteId: string): Promise<void>
+
+  exportMarkdown(note: Note): Promise<void>
+  importFile(accept: string): Promise<{ name: string; content: string }>
+}
+
+declare global {
+  interface Window {
+    __TAURI__?: unknown
+    __TAURI_INTERNALS__?: unknown
+  }
+}
+
+export function createStorage(): StorageAdapter {
+  const isTauri =
+    typeof window !== 'undefined' &&
+    (window.__TAURI__ !== undefined || window.__TAURI_INTERNALS__ !== undefined)
+  if (isTauri) return new TauriStorage()
+  return new BrowserStorage()
+}
+
+export const storage = createStorage()
