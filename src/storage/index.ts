@@ -1,8 +1,12 @@
-import type { Note, RagChunk } from '../types'
+import type { Note, Notebook, RagChunk } from '../types'
 import { TauriStorage } from './tauri'
 import { BrowserStorage } from './browser'
 
 export interface StorageAdapter {
+  getNotebooks(): Promise<Notebook[]>
+  saveNotebook(notebook: Notebook): Promise<void>
+  deleteNotebook(id: string): Promise<void>
+
   getNotes(): Promise<Note[]>
   getNote(id: string): Promise<Note | null>
   saveNote(note: Note): Promise<void>

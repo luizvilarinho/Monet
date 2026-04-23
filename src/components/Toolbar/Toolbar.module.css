@@ -1,11 +1,17 @@
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 8px 16px;
+  padding: 8px 16px 8px 0;
   background: var(--bg-panel, #161618);
   border-bottom: 1px solid var(--border, #333340);
   height: 44px;
+}
+
+.brandSection {
+  width: 400px; /* NotebookList (180px) + Sidebar (220px) */
+  padding-left: 16px;
+  box-sizing: border-box;
+  flex-shrink: 0;
 }
 
 .brand {
@@ -15,13 +21,51 @@
   letter-spacing: 0.5px;
 }
 
-.title {
+.searchWrap {
+  flex: 0 1 500px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  background: var(--surface-1, #1e1e22);
+  border: 1px solid var(--border, #333340);
+  border-radius: 6px;
+}
+
+.searchWrap:focus-within {
+  border-color: var(--accent, #7c6af5);
+}
+
+.searchIcon {
+  color: var(--text-muted, #606070);
+  flex-shrink: 0;
+}
+
+.search {
   flex: 1;
+  min-width: 0;
   background: transparent;
   border: none;
   outline: none;
   color: var(--text-primary, #e8e8f0);
-  font-size: 14px;
+  font-size: 13px;
+}
+
+.search::placeholder {
+  color: var(--text-muted, #606070);
+}
+
+.search::-webkit-search-cancel-button {
+  filter: invert(0.6);
+  cursor: pointer;
+}
+
+.actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .toolbar button {

@@ -1,5 +1,13 @@
+export interface Notebook {
+  id: string
+  name: string
+  createdAt: number
+  updatedAt: number
+}
+
 export interface Note {
   id: string
+  notebookId: string | null
   title: string
   content: string
   tags: string[]

@@ -1,33 +1,63 @@
 import { useCallback, useEffect, useState } from 'react'
+import { nanoid } from 'nanoid'
 import type { Note } from '../types'
 import { storage } from '../storage'
 
 export function useNotes() {
   const [notes, setNotes] = useState<Note[]>([])
-  const [loading, setLoading] = useState(true)
+  const [loaded, setLoaded] = useState(false)
 
-  const refresh = useCallback(async () => {
-    setLoading(true)
+  useEffect(() => {
+    storage
+      .getNotes()
+      .then((list) => setNotes(list))
+      .catch((err) => console.error('failed to load notes', err))
+      .finally(() => setLoaded(true))
+  }, [])
+
+  const save = useCallback(async (note: Note) => {
+    setNotes((prev) => {
+      const i = prev.findIndex((n) => n.id === note.id)
+      if (i >= 0) {
+        const next = prev.slice()
+        next[i] = note
+        return next
+      }
+      return [note, ...prev]
+    })
     try {
-      setNotes(await storage.getNotes())
-    } finally {
-      setLoading(false)
+      await storage.saveNote(note)
+    } catch (err) {
+      console.error('failed to save note', err)
     }
   }, [])
 
-  useEffect(() => {
-    refresh().catch(console.error)
-  }, [refresh])
-
-  const save = useCallback(async (note: Note) => {
-    await storage.saveNote(note)
-    await refresh()
-  }, [refresh])
-
   const remove = useCallback(async (id: string) => {
-    await storage.deleteNote(id)
-    await refresh()
-  }, [refresh])
+    setNotes((prev) => prev.filter((n) => n.id !== id))
+    try {
+      await storage.deleteNote(id)
+    } catch (err) {
+      console.error('failed to delete note', err)
+    }
+  }, [])
 
-  return { notes, loading, refresh, save, remove }
+  const create = useCallback(
+    async (notebookId: string | null) => {
+      const now = Date.now()
+      const note: Note = {
+        id: nanoid(),
+        notebookId,
+        title: '',
+        content: '',
+        tags: [],
+        createdAt: now,
+        updatedAt: now,
+      }
+      await save(note)
+      return note
+    },
+    [save]
+  )
+
+  return { notes, loaded, save, remove, create }
 }

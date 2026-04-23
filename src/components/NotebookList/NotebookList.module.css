@@ -1,11 +1,25 @@
-.sidebar {
-  width: 220px;
+.notebooks {
+  width: 180px;
   background: var(--bg-panel, #161618);
   border-right: 1px solid var(--border, #333340);
   display: flex;
   flex-direction: column;
+  min-height: 0;
+}
+
+.scrollArea {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
   padding: 12px;
-  gap: 10px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .header {
@@ -16,7 +30,13 @@
   padding: 0 4px;
 }
 
-.newNote {
+.divider {
+  border: none;
+  border-top: 1px solid var(--border, #333340);
+  margin: 0;
+}
+
+.newNotebook {
   background: transparent;
   border: 1px solid var(--border, #333340);
   color: var(--text-secondary, #a0a0b8);
@@ -26,21 +46,9 @@
   font-size: 13px;
 }
 
-.newNote:hover:not(:disabled) {
+.newNotebook:hover {
   color: var(--accent, #7c6af5);
   border-color: var(--accent, #7c6af5);
-}
-
-.newNote:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.empty {
-  color: var(--text-muted, #606070) !important;
-  font-style: italic;
-  cursor: default !important;
-  background: transparent !important;
 }
 
 .list {
@@ -50,7 +58,6 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  overflow-y: auto;
 }
 
 .list li {
@@ -114,4 +121,35 @@
 .active {
   background: var(--surface-2, #26262c) !important;
   color: var(--text-primary, #e8e8f0) !important;
+}
+
+.empty {
+  color: var(--text-muted, #606070) !important;
+  font-style: italic;
+  cursor: default !important;
+  background: transparent !important;
+}
+
+.footer {
+  border-top: 1px solid var(--border, #333340);
+  padding: 8px 12px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.settings {
+  background: transparent;
+  border: none;
+  color: var(--text-muted, #606070);
+  padding: 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.settings:hover {
+  color: var(--accent, #7c6af5);
+  background: var(--surface-1, #1e1e22);
 }

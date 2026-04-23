@@ -1,7 +1,16 @@
-import type { Note, RagChunk } from '../types'
+import type { Note, Notebook, RagChunk } from '../types'
 import type { StorageAdapter } from './index'
 
 export class BrowserStorage implements StorageAdapter {
+  async getNotebooks(): Promise<Notebook[]> {
+    throw new Error('BrowserStorage.getNotebooks not implemented')
+  }
+  async saveNotebook(_notebook: Notebook): Promise<void> {
+    throw new Error('BrowserStorage.saveNotebook not implemented')
+  }
+  async deleteNotebook(_id: string): Promise<void> {
+    throw new Error('BrowserStorage.deleteNotebook not implemented')
+  }
   async getNotes(): Promise<Note[]> {
     throw new Error('BrowserStorage.getNotes not implemented')
   }
