@@ -18,6 +18,8 @@ export interface AiPanelProps {
   modelId: string | null
   onModelChange: (id: string) => void
   onOpenSettings: () => void
+  navigateToCard?: { index: number; ts: number } | null
+  onDeleteResponse?: (id: string) => void
 }
 
 export function AiPanel({
@@ -31,11 +33,15 @@ export function AiPanel({
   modelId,
   onModelChange,
   onOpenSettings,
+  navigateToCard,
+  onDeleteResponse,
 }: AiPanelProps) {
   const [width, setWidth] = useState(MIN_WIDTH)
+  const [forceOpenIndex, setForceOpenIndex] = useState<number | null>(null)
   const dragging = useRef(false)
   const startX = useRef(0)
   const startWidth = useRef(0)
+  const contentRef = useRef<HTMLDivElement | null>(null)
 
   const onMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
@@ -67,6 +73,22 @@ export function AiPanel({
     }
   }, [])
 
+  useEffect(() => {
+    if (!navigateToCard) return
+    const { index: execIndex } = navigateToCard
+    const cardIndex = responses.length - 1 - execIndex
+    if (cardIndex < 0 || cardIndex >= responses.length) return
+    setForceOpenIndex(cardIndex)
+    requestAnimationFrame(() => {
+      const card = contentRef.current?.querySelector(
+        `[data-exec-index="${cardIndex}"]`
+      ) as HTMLElement | null
+      if (card) {
+        card.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      }
+    })
+  }, [navigateToCard, responses.length])
+
   if (!open) return null
 
   const showMissingKeyBanner = apiKeyChecked && !hasApiKey
@@ -97,13 +119,21 @@ export function AiPanel({
           </button>
         </div>
       )}
-      <div className={styles.content}>
+      <div className={styles.content} ref={contentRef}>
         {responses.length === 0 ? (
           <p className={styles.empty}>
             Use /comandos no editor para acionar a IA.
           </p>
         ) : (
-          responses.map((r) => <AiCard key={r.id} response={r} />)
+          responses.map((r, i) => (
+            <AiCard
+              key={r.id}
+              response={r}
+              execIndex={i}
+              forceOpen={forceOpenIndex === i}
+              onDelete={onDeleteResponse}
+            />
+          ))
         )}
       </div>
     </aside>

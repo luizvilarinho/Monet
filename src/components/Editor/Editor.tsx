@@ -41,6 +41,7 @@ export interface EditorProps {
   value: string
   onChange: (value: string) => void
   onCommand?: (request: CommandExecutionRequest) => Promise<boolean> | boolean
+  onNavigateToCard?: (executionIndex: number) => void
 }
 
 const commandStatusTheme = EditorView.baseTheme({
@@ -94,6 +95,7 @@ const commandStatusTheme = EditorView.baseTheme({
     backgroundColor: 'rgba(93, 202, 165, 0.12)',
     borderLeft: '2px solid var(--accent-ai, #5dcaa5)',
     paddingLeft: '10px',
+    cursor: 'pointer',
   },
   '.cm-commandError': {
     color: '#ff8b8b',
@@ -176,6 +178,7 @@ export function Editor({
   value,
   onChange,
   onCommand,
+  onNavigateToCard,
 }: EditorProps) {
   const [adding, setAdding] = useState(false)
   const [draft, setDraft] = useState('')
@@ -185,8 +188,10 @@ export function Editor({
   const initialValueRef = useRef(value)
   const onCommandRef = useRef(onCommand)
   const onChangeRef = useRef(onChange)
+  const onNavigateToCardRef = useRef(onNavigateToCard)
   onCommandRef.current = onCommand
   onChangeRef.current = onChange
+  onNavigateToCardRef.current = onNavigateToCard
 
   useEffect(() => {
     if (!hostRef.current || viewRef.current) return
@@ -288,6 +293,24 @@ export function Editor({
         commandStatusTheme,
         createCommandDecorations(() => commandStatusRef.current),
         syncListener,
+        EditorView.domEventHandlers({
+          click(event, view) {
+            const pos = view.posAtCoords(event)
+            if (pos == null) return false
+            const line = view.state.doc.lineAt(pos)
+            const status = commandStatusRef.current.get(line.from)
+            if (status !== 'executed') return false
+            let execIndex = 0
+            for (let i = 1; i < line.number; i++) {
+              const prevLine = view.state.doc.line(i)
+              if (commandStatusRef.current.get(prevLine.from) === 'executed') {
+                execIndex++
+              }
+            }
+            onNavigateToCardRef.current?.(execIndex)
+            return true
+          },
+        }),
       ],
     })
     const view = new EditorView({ state, parent: hostRef.current })

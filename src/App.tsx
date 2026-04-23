@@ -58,8 +58,9 @@ function App() {
   const [modelsLoading, setModelsLoading] = useState<boolean>(false)
   const [modelsError, setModelsError] = useState<string | null>(null)
   const [modelId, setModelId] = useState<string | null>(null)
+  const [navigateToCard, setNavigateToCard] = useState<{ index: number; ts: number } | null>(null)
 
-  const { responses, start, addErrorCard } = useAi(activeId)
+  const { responses, start, addErrorCard, removeResponse } = useAi(activeId)
 
   const refreshApiKey = useCallback(async () => {
     const present = await hasOpenRouterKey()
@@ -270,6 +271,7 @@ function App() {
           value={activeNote?.content ?? ''}
           onChange={(content) => updateActive({ content })}
           onCommand={handleCommand}
+          onNavigateToCard={(index) => setNavigateToCard({ index, ts: Date.now() })}
         />
         <AiPanel
           open={aiOpen}
@@ -282,6 +284,8 @@ function App() {
           modelId={modelId}
           onModelChange={setModelId}
           onOpenSettings={() => setSettingsOpen(true)}
+          navigateToCard={navigateToCard}
+          onDeleteResponse={removeResponse}
         />
       </div>
       <SettingsModal

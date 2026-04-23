@@ -1,9 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { AiResponse } from '../../types'
 import styles from './AiPanel.module.css'
 
 export interface AiCardProps {
   response: AiResponse
+  execIndex: number
+  forceOpen?: boolean
+  onDelete?: (id: string) => void
 }
 
 const STATUS_LABEL: Record<AiResponse['status'], string> = {
@@ -13,8 +16,12 @@ const STATUS_LABEL: Record<AiResponse['status'], string> = {
   error: 'erro',
 }
 
-export function AiCard({ response }: AiCardProps) {
+export function AiCard({ response, execIndex, forceOpen, onDelete }: AiCardProps) {
   const [open, setOpen] = useState(response.status === 'streaming')
+
+  useEffect(() => {
+    if (forceOpen) setOpen(true)
+  }, [forceOpen])
 
   const statusClass =
     response.status === 'streaming'
@@ -38,6 +45,7 @@ export function AiCard({ response }: AiCardProps) {
       }
       aria-live={response.status === 'streaming' ? 'polite' : undefined}
       data-status={response.status}
+      data-exec-index={execIndex}
     >
       <header
         className={`${styles.cardHeader} ${hasBody ? styles.cardHeaderClickable : ''}`}
@@ -58,6 +66,19 @@ export function AiCard({ response }: AiCardProps) {
           )}
           {STATUS_LABEL[response.status]}
         </span>
+        {onDelete && response.status !== 'streaming' && (
+          <button
+            className={styles.deleteBtn}
+            onClick={(e) => {
+              e.stopPropagation()
+              onDelete(response.id)
+            }}
+            aria-label="apagar resposta"
+            type="button"
+          >
+            ×
+          </button>
+        )}
       </header>
       {response.model && (
         <div className={styles.modelTag}>{response.model}</div>

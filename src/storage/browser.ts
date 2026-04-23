@@ -32,6 +32,9 @@ export class BrowserStorage implements StorageAdapter {
   async saveResponse(_response: AiResponse): Promise<void> {
     throw new Error('BrowserStorage.saveResponse not implemented')
   }
+  async deleteResponse(_id: string): Promise<void> {
+    throw new Error('BrowserStorage.deleteResponse not implemented')
+  }
   async deleteResponses(_noteId: string): Promise<void> {
     throw new Error('BrowserStorage.deleteResponses not implemented')
   }

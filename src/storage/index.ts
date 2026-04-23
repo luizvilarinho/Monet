@@ -15,6 +15,7 @@ export interface StorageAdapter {
 
   getResponses(noteId: string): Promise<AiResponse[]>
   saveResponse(response: AiResponse): Promise<void>
+  deleteResponse(id: string): Promise<void>
   deleteResponses(noteId: string): Promise<void>
 
   saveChunks(chunks: RagChunk[]): Promise<void>

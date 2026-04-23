@@ -254,7 +254,23 @@ export function useAi(activeNoteId: string | null) {
     []
   )
 
+  const removeResponse = useCallback((responseId: string) => {
+    setByNote((prev) => {
+      const next: ResponsesByNote = {}
+      for (const [noteId, list] of Object.entries(prev)) {
+        const filtered = list.filter((r) => r.id !== responseId)
+        if (filtered.length !== list.length) {
+          storage.deleteResponse(responseId).catch((err) =>
+            console.error('failed to delete ai response', err)
+          )
+        }
+        next[noteId] = filtered
+      }
+      return next
+    })
+  }, [])
+
   const hasActiveStream = responses.some((r) => r.status === 'streaming')
 
-  return { responses, start, addErrorCard, hasActiveStream }
+  return { responses, start, addErrorCard, hasActiveStream, removeResponse }
 }

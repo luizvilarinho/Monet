@@ -305,6 +305,27 @@
   transform: rotate(90deg);
 }
 
+.deleteBtn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted, #606070);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 2px;
+  margin-left: 4px;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+.cardHeaderClickable:hover .deleteBtn {
+  opacity: 1;
+}
+
+.deleteBtn:hover {
+  color: var(--accent-warn, #ef9f27);
+}
+
 .cmd {
   color: var(--accent-ai, #5dcaa5);
   font-family: 'JetBrains Mono', ui-monospace, monospace;

@@ -280,6 +280,11 @@ export class TauriStorage implements StorageAdapter {
     )
   }
 
+  async deleteResponse(id: string): Promise<void> {
+    const db = await this.db()
+    await db.execute('DELETE FROM ai_responses WHERE id = $1', [id])
+  }
+
   async deleteResponses(noteId: string): Promise<void> {
     const db = await this.db()
     await db.execute('DELETE FROM ai_responses WHERE note_id = $1', [noteId])
