@@ -5,7 +5,9 @@
       "Bash(npx create-tauri-app@latest --help)",
       "Bash(npm install *)",
       "Bash(npx tsc *)",
-      "Bash(cargo check *)"
+      "Bash(cargo check *)",
+      "Bash(npx vite *)",
+      "Bash(npm run *)"
     ]
   }
 }

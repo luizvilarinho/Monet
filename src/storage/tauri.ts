@@ -1,5 +1,11 @@
 import Database from '@tauri-apps/plugin-sql'
-import type { Note, Notebook, RagChunk } from '../types'
+import type {
+  AiResponse,
+  AiResponseStatus,
+  Note,
+  Notebook,
+  RagChunk,
+} from '../types'
 import type { StorageAdapter } from './index'
 
 const DB_URL = 'sqlite:monet.db'
@@ -28,6 +34,37 @@ interface ChunkRow {
   content: string
   embedding: string
   chunk_index: number
+}
+
+interface AiResponseRow {
+  id: string
+  note_id: string | null
+  command: string
+  query: string
+  model: string
+  response: string
+  status: string
+  created_at: number
+}
+
+function normalizeStatus(s: string): AiResponseStatus {
+  if (s === 'streaming' || s === 'completed' || s === 'interrupted' || s === 'error') {
+    return s
+  }
+  return 'completed'
+}
+
+function rowToResponse(r: AiResponseRow): AiResponse {
+  return {
+    id: r.id,
+    noteId: r.note_id,
+    command: r.command,
+    query: r.query,
+    model: r.model ?? '',
+    response: r.response,
+    status: normalizeStatus(r.status ?? 'completed'),
+    createdAt: r.created_at,
+  }
 }
 
 function rowToNotebook(r: NotebookRow): Notebook {
@@ -207,6 +244,45 @@ export class TauriStorage implements StorageAdapter {
   async deleteChunks(noteId: string): Promise<void> {
     const db = await this.db()
     await db.execute('DELETE FROM rag_chunks WHERE note_id = $1', [noteId])
+  }
+
+  async getResponses(noteId: string): Promise<AiResponse[]> {
+    const db = await this.db()
+    const rows = await db.select<AiResponseRow[]>(
+      'SELECT * FROM ai_responses WHERE note_id = $1 ORDER BY created_at DESC',
+      [noteId]
+    )
+    return rows.map(rowToResponse)
+  }
+
+  async saveResponse(r: AiResponse): Promise<void> {
+    const db = await this.db()
+    await db.execute(
+      `INSERT INTO ai_responses (id, note_id, command, query, model, response, status, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT(id) DO UPDATE SET
+         note_id = excluded.note_id,
+         command = excluded.command,
+         query = excluded.query,
+         model = excluded.model,
+         response = excluded.response,
+         status = excluded.status`,
+      [
+        r.id,
+        r.noteId,
+        r.command,
+        r.query,
+        r.model,
+        r.response,
+        r.status,
+        r.createdAt,
+      ]
+    )
+  }
+
+  async deleteResponses(noteId: string): Promise<void> {
+    const db = await this.db()
+    await db.execute('DELETE FROM ai_responses WHERE note_id = $1', [noteId])
   }
 
   async exportMarkdown(_note: Note): Promise<void> {

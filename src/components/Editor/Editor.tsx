@@ -1,5 +1,37 @@
-import { useState } from 'react'
+import {
+  autocompletion,
+  acceptCompletion,
+  completionStatus,
+  type Completion,
+  type CompletionContext,
+} from '@codemirror/autocomplete'
+import { defaultKeymap, history, historyKeymap, insertNewlineAndIndent } from '@codemirror/commands'
+import { markdown } from '@codemirror/lang-markdown'
+import { syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language'
+import { EditorSelection, EditorState, RangeSetBuilder, StateEffect, StateField } from '@codemirror/state'
+import {
+  Decoration,
+  EditorView,
+  keymap,
+  placeholder,
+  type DecorationSet,
+} from '@codemirror/view'
+import {
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from 'react'
 import styles from './Editor.module.css'
+import {
+  buildCommandExecutionDraft,
+  getCommandLineStatus,
+  getCommandSuggestions,
+  isPotentialCommandLine,
+  parseCommandLine,
+  type CommandLineStatus,
+} from './commandParser'
+import type { CommandExecutionRequest } from '../../types'
 
 export interface EditorProps {
   title: string
@@ -8,7 +40,132 @@ export interface EditorProps {
   onTagsChange: (tags: string[]) => void
   value: string
   onChange: (value: string) => void
-  onCommand?: (cmd: string, query: string) => void
+  onCommand?: (request: CommandExecutionRequest) => Promise<boolean> | boolean
+}
+
+const commandStatusTheme = EditorView.baseTheme({
+  '.cm-editor': {
+    height: '100%',
+    backgroundColor: 'var(--bg-app, #0e0e10)',
+  },
+  '.cm-scroller': {
+    fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+    fontSize: '14px',
+    lineHeight: '1.6',
+    padding: '20px 32px 24px',
+  },
+  '.cm-content': {
+    minHeight: '100%',
+    color: 'var(--text-primary, #e8e8f0)',
+    caretColor: 'var(--text-primary, #e8e8f0)',
+  },
+  '.cm-line': {
+    padding: 0,
+  },
+  '.cm-gutters': {
+    display: 'none',
+  },
+  '.cm-tooltip.cm-tooltip-autocomplete': {
+    backgroundColor: 'var(--surface-1, #1e1e22)',
+    border: '1px solid var(--border, #333340)',
+    borderRadius: '12px',
+    overflow: 'hidden',
+  },
+  '.cm-tooltip-autocomplete > ul': {
+    fontFamily: 'system-ui, sans-serif',
+    fontSize: '13px',
+  },
+  '.cm-tooltip-autocomplete ul li': {
+    color: 'var(--text-secondary, #a0a0b8)',
+    padding: '8px 12px',
+  },
+  '.cm-tooltip-autocomplete ul li[aria-selected]': {
+    backgroundColor: 'rgba(124, 106, 245, 0.16)',
+    color: 'var(--text-primary, #e8e8f0)',
+  },
+  '.cm-completionDetail': {
+    color: 'var(--text-muted, #606070)',
+  },
+  '.cm-commandDraft': {
+    color: 'var(--accent, #7c6af5)',
+  },
+  '.cm-commandExecuted': {
+    color: 'var(--accent-ai, #5dcaa5)',
+    backgroundColor: 'rgba(93, 202, 165, 0.12)',
+    borderLeft: '2px solid var(--accent-ai, #5dcaa5)',
+    paddingLeft: '10px',
+  },
+  '.cm-commandError': {
+    color: '#ff8b8b',
+    backgroundColor: 'rgba(239, 79, 79, 0.1)',
+    borderLeft: '2px solid #ef4f4f',
+    paddingLeft: '10px',
+  },
+})
+
+const refreshCommandDecorations = StateEffect.define<null>()
+
+function createCommandDecorations(
+  getStatusByLine: () => Map<number, CommandLineStatus>
+): StateField<DecorationSet> {
+
+  function build(state: EditorState): DecorationSet {
+    const statusByLine = getStatusByLine()
+    const builder = new RangeSetBuilder<Decoration>()
+    for (let lineNumber = 1; lineNumber <= state.doc.lines; lineNumber++) {
+      const line = state.doc.line(lineNumber)
+      if (!isPotentialCommandLine(line.text)) continue
+      const status = statusByLine.get(line.from) ?? getCommandLineStatus(line.text)
+      const className =
+        status === 'executed'
+          ? 'cm-commandExecuted'
+          : status === 'invalid' || status === 'incomplete'
+            ? 'cm-commandError'
+            : status === 'draft' || status === 'valid'
+              ? 'cm-commandDraft'
+              : null
+      if (className) {
+        builder.add(line.from, line.from, Decoration.line({ class: className }))
+      }
+    }
+    return builder.finish()
+  }
+
+  return StateField.define<DecorationSet>({
+    create(state) {
+      return build(state)
+    },
+    update(decorations, transaction) {
+      if (
+        !transaction.docChanged &&
+        !transaction.effects.some((effect) => effect.is(refreshCommandDecorations))
+      ) {
+        return decorations
+      }
+      return build(transaction.state)
+    },
+    provide(field) {
+      return EditorView.decorations.from(field)
+    },
+  })
+}
+
+function commandCompletionSource(context: CompletionContext) {
+  const line = context.state.doc.lineAt(context.pos)
+  const lineBeforeCursor = line.text.slice(0, context.pos - line.from)
+  if (!/^\s*\/[^\s]*$/.test(lineBeforeCursor)) {
+    return null
+  }
+  const from = line.from + lineBeforeCursor.search(/\//)
+  const suggestions = getCommandSuggestions(lineBeforeCursor.trim()).map<Completion>((name) => ({
+    label: name,
+    type: 'keyword',
+  }))
+  return {
+    from,
+    options: suggestions,
+    validFor: /^\/[a-z]*$/i,
+  }
 }
 
 export function Editor({
@@ -18,9 +175,152 @@ export function Editor({
   onTagsChange,
   value,
   onChange,
+  onCommand,
 }: EditorProps) {
   const [adding, setAdding] = useState(false)
   const [draft, setDraft] = useState('')
+  const hostRef = useRef<HTMLDivElement | null>(null)
+  const viewRef = useRef<EditorView | null>(null)
+  const commandStatusRef = useRef<Map<number, CommandLineStatus>>(new Map())
+  const initialValueRef = useRef(value)
+  const onCommandRef = useRef(onCommand)
+  const onChangeRef = useRef(onChange)
+  onCommandRef.current = onCommand
+  onChangeRef.current = onChange
+
+  useEffect(() => {
+    if (!hostRef.current || viewRef.current) return
+    const syncListener = EditorView.updateListener.of((update) => {
+      if (!update.docChanged) return
+      onChangeRef.current(update.state.doc.toString())
+      const map = commandStatusRef.current
+      const preserved = new Map<number, CommandLineStatus>()
+      for (let lineNumber = 1; lineNumber <= update.state.doc.lines; lineNumber++) {
+        const line = update.state.doc.line(lineNumber)
+        if (!isPotentialCommandLine(line.text)) continue
+        const previous = map.get(line.from)
+        preserved.set(
+          line.from,
+          previous === 'executed' ? 'executed' : getCommandLineStatus(line.text)
+        )
+      }
+      map.clear()
+      for (const [from, status] of preserved) map.set(from, status)
+    })
+
+    const runCommand = async (view: EditorView) => {
+      const selection = view.state.selection.main
+      const draft = buildCommandExecutionDraft(
+        view.state.doc.toString(),
+        selection.from,
+        selection.to
+      )
+      if (!draft) {
+        insertNewlineAndIndent(view)
+        return
+      }
+      const allowed = await onCommandRef.current?.({
+        cmd: draft.cmd,
+        query: draft.query,
+      })
+      if (allowed) {
+        commandStatusRef.current.set(draft.lineStart, 'executed')
+      } else {
+        commandStatusRef.current.set(
+          draft.lineStart,
+          getCommandLineStatus(view.state.doc.lineAt(draft.lineStart).text)
+        )
+      }
+      view.dispatch({
+        changes: { from: draft.lineEnd, to: draft.lineEnd, insert: '\n' },
+        selection: EditorSelection.cursor(draft.nextSelection),
+        effects: refreshCommandDecorations.of(null),
+      })
+    }
+
+    const shouldHandleEnterAsCommand = (view: EditorView) => {
+      if (!onCommandRef.current) return false
+      const selection = view.state.selection.main
+      if (!selection.empty) return false
+      const line = view.state.doc.lineAt(selection.from)
+      if (selection.from !== line.to) return false
+      const parsed = parseCommandLine(line.text)
+      if (!parsed?.definition) return false
+      if (parsed.definition.takesQuery && parsed.query.length === 0) return false
+      return true
+    }
+
+    const state = EditorState.create({
+      doc: initialValueRef.current,
+      extensions: [
+        history(),
+        markdown(),
+        syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+        keymap.of([
+          {
+            key: 'Enter',
+            run(view) {
+              if (!shouldHandleEnterAsCommand(view)) return false
+              void runCommand(view)
+              return true
+            },
+          },
+          {
+            key: 'Tab',
+            run(view) {
+              if (completionStatus(view.state) !== 'active') {
+                return false
+              }
+              return acceptCompletion(view)
+            },
+          },
+          ...defaultKeymap,
+          ...historyKeymap,
+        ]),
+        autocompletion({
+          override: [commandCompletionSource],
+          activateOnTyping: true,
+          icons: false,
+          defaultKeymap: true,
+        }),
+        EditorView.lineWrapping,
+        placeholder('Anote a impressão do momento...'),
+        commandStatusTheme,
+        createCommandDecorations(() => commandStatusRef.current),
+        syncListener,
+      ],
+    })
+    const view = new EditorView({ state, parent: hostRef.current })
+    viewRef.current = view
+    return () => {
+      view.destroy()
+      viewRef.current = null
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    const current = view.state.doc.toString()
+    if (current === value) return
+    const selection = view.state.selection.main
+    view.dispatch({
+      changes: { from: 0, to: current.length, insert: value },
+      selection: EditorSelection.single(
+        Math.min(selection.from, value.length),
+        Math.min(selection.to, value.length)
+      ),
+    })
+    const map = commandStatusRef.current
+    map.clear()
+    for (let lineNumber = 1; lineNumber <= view.state.doc.lines; lineNumber++) {
+      const line = view.state.doc.line(lineNumber)
+      if (!isPotentialCommandLine(line.text)) continue
+      map.set(line.from, getCommandLineStatus(line.text))
+    }
+    view.dispatch({ effects: refreshCommandDecorations.of(null) })
+  }, [value])
 
   function commitTag() {
     const clean = draft.trim().replace(/^#/, '')
@@ -86,7 +386,7 @@ export function Editor({
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onBlur={commitTag}
-            onKeyDown={(e) => {
+            onKeyDown={(e: ReactKeyboardEvent<HTMLInputElement>) => {
               if (e.key === 'Enter') commitTag()
               if (e.key === 'Escape') {
                 setDraft('')
@@ -97,13 +397,7 @@ export function Editor({
           />
         )}
       </div>
-      <textarea
-        className={styles.body}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder="Anote a impressão do momento..."
-        spellCheck={false}
-      />
+      <div className={styles.body} ref={hostRef} />
     </div>
   )
 }

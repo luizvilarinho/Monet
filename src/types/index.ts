@@ -24,13 +24,27 @@ export interface RagChunk {
   chunkIndex: number
 }
 
+export type AiResponseStatus =
+  | 'streaming'
+  | 'completed'
+  | 'interrupted'
+  | 'error'
+
 export interface AiResponse {
   id: string
   noteId: string | null
   command: string
   query: string
+  model: string
   response: string
+  status: AiResponseStatus
   createdAt: number
+}
+
+export interface AiModel {
+  id: string
+  name: string
+  description?: string
 }
 
 export interface CommandDef {
@@ -38,6 +52,11 @@ export interface CommandDef {
   description: string
   example: string
   takesQuery: boolean
+}
+
+export interface CommandExecutionRequest {
+  cmd: string
+  query: string
 }
 
 export interface CommandContext {

@@ -1,4 +1,4 @@
-import type { Note, Notebook, RagChunk } from '../types'
+import type { AiResponse, Note, Notebook, RagChunk } from '../types'
 import { TauriStorage } from './tauri'
 import { BrowserStorage } from './browser'
 
@@ -12,6 +12,10 @@ export interface StorageAdapter {
   saveNote(note: Note): Promise<void>
   deleteNote(id: string): Promise<void>
   searchNotes(query: string): Promise<Note[]>
+
+  getResponses(noteId: string): Promise<AiResponse[]>
+  saveResponse(response: AiResponse): Promise<void>
+  deleteResponses(noteId: string): Promise<void>
 
   saveChunks(chunks: RagChunk[]): Promise<void>
   searchChunks(embedding: Float32Array, topK: number): Promise<RagChunk[]>
