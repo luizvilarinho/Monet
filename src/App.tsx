@@ -4,6 +4,7 @@ import { NotebookList } from './components/NotebookList/NotebookList'
 import { Sidebar } from './components/Sidebar/Sidebar'
 import { Editor } from './components/Editor/Editor'
 import { AiPanel } from './components/AiPanel/AiPanel'
+import { DEFAULT_MODEL_ID } from './components/AiPanel/models'
 import { useNotebooks } from './hooks/useNotebooks'
 import { useNotes } from './hooks/useNotes'
 import type { AiResponse, Note } from './types'
@@ -26,6 +27,7 @@ function App() {
   const [aiOpen, setAiOpen] = useState(true)
   const [previewOpen, setPreviewOpen] = useState(false)
   const [responses] = useState<AiResponse[]>([])
+  const [modelId, setModelId] = useState<string>(DEFAULT_MODEL_ID)
 
   const allTags = useMemo(
     () =>
@@ -134,7 +136,12 @@ function App() {
           value={activeNote?.content ?? ''}
           onChange={(content) => updateActive({ content })}
         />
-        <AiPanel open={aiOpen} responses={responses} />
+        <AiPanel
+          open={aiOpen}
+          responses={responses}
+          modelId={modelId}
+          onModelChange={setModelId}
+        />
       </div>
     </div>
   )
