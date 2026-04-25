@@ -58,7 +58,9 @@ export function SettingsModal({
       .catch(() => setHasKey(false))
     setTavilyValue('')
     setTavStatus({ kind: 'idle', message: '' })
-    setHasTavily(hasTavilyKey())
+    hasTavilyKey()
+      .then(setHasTavily)
+      .catch(() => setHasTavily(false))
   }, [open])
 
   useEffect(() => {
@@ -73,13 +75,21 @@ export function SettingsModal({
   if (!open) return null
 
   async function handleSave() {
-    if (!keyValue.trim()) {
+    const trimmed = keyValue.trim()
+    if (!trimmed) {
       setStatus({ kind: 'error', message: 'Informe uma chave válida.' })
+      return
+    }
+    if (!trimmed.startsWith('sk-or-v1-')) {
+      setStatus({
+        kind: 'error',
+        message: 'Chave OpenRouter inválida (deve começar com sk-or-v1-).',
+      })
       return
     }
     setSaving(true)
     try {
-      await saveOpenRouterKey(keyValue.trim())
+      await saveOpenRouterKey(trimmed)
       setHasKey(true)
       setKeyValue('')
       setStatus({ kind: 'success', message: 'Chave salva com segurança.' })
@@ -111,28 +121,46 @@ export function SettingsModal({
     }
   }
 
-  function handleTavilySave() {
-    if (!tavilyValue.trim()) {
+  async function handleTavilySave() {
+    const trimmed = tavilyValue.trim()
+    if (!trimmed) {
       setTavStatus({ kind: 'error', message: 'Informe uma chave válida.' })
+      return
+    }
+    if (!trimmed.startsWith('tvly-')) {
+      setTavStatus({
+        kind: 'error',
+        message: 'Chave Tavily inválida (deve começar com tvly-).',
+      })
       return
     }
     setTavSaving(true)
     try {
-      saveTavilyKey(tavilyValue.trim())
+      await saveTavilyKey(trimmed)
       setHasTavily(true)
       setTavilyValue('')
       setTavStatus({ kind: 'success', message: 'Chave salva.' })
-    } catch {
-      setTavStatus({ kind: 'error', message: 'Falha ao salvar chave.' })
+    } catch (err) {
+      setTavStatus({
+        kind: 'error',
+        message: err instanceof Error ? err.message : 'Falha ao salvar chave.',
+      })
     } finally {
       setTavSaving(false)
     }
   }
 
-  function handleTavilyClear() {
-    clearTavilyKey()
-    setHasTavily(false)
-    setTavStatus({ kind: 'success', message: 'Chave removida.' })
+  async function handleTavilyClear() {
+    try {
+      await clearTavilyKey()
+      setHasTavily(false)
+      setTavStatus({ kind: 'success', message: 'Chave removida.' })
+    } catch (err) {
+      setTavStatus({
+        kind: 'error',
+        message: err instanceof Error ? err.message : 'Falha ao remover chave.',
+      })
+    }
   }
 
   return (

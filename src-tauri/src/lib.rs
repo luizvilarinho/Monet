@@ -2,12 +2,16 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::time::Duration;
 
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_sql::{Migration, MigrationKind};
 use tokio::sync::oneshot;
+use tokio::time::timeout;
+
+const STREAM_CHUNK_TIMEOUT: Duration = Duration::from_secs(30);
 
 struct RequestRegistry(Mutex<HashMap<String, oneshot::Sender<()>>>);
 
@@ -52,17 +56,17 @@ struct OpenRouterModel {
     description: Option<String>,
 }
 
-fn key_file(app: &AppHandle) -> Result<PathBuf, String> {
+fn key_file(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
     let dir = app
         .path()
         .app_config_dir()
         .map_err(|e| format!("config dir unavailable: {}", e))?;
     fs::create_dir_all(&dir).map_err(|e| format!("failed to ensure config dir: {}", e))?;
-    Ok(dir.join("openrouter_key"))
+    Ok(dir.join(name))
 }
 
-fn read_key(app: &AppHandle) -> Option<String> {
-    let path = key_file(app).ok()?;
+fn read_key(app: &AppHandle, name: &str) -> Option<String> {
+    let path = key_file(app, name).ok()?;
     let content = fs::read_to_string(&path).ok()?;
     let trimmed = content.trim().to_string();
     if trimmed.is_empty() {
@@ -72,25 +76,18 @@ fn read_key(app: &AppHandle) -> Option<String> {
     }
 }
 
-#[tauri::command]
-fn save_openrouter_key(app: AppHandle, key: String) -> Result<(), String> {
+fn save_key(app: &AppHandle, name: &str, key: String) -> Result<(), String> {
     let trimmed = key.trim();
     if trimmed.is_empty() {
         return Err("chave vazia".into());
     }
-    let path = key_file(&app)?;
+    let path = key_file(app, name)?;
     fs::write(&path, trimmed).map_err(|e| format!("falha ao salvar chave: {}", e))?;
     Ok(())
 }
 
-#[tauri::command]
-fn has_openrouter_key(app: AppHandle) -> Result<bool, String> {
-    Ok(read_key(&app).is_some())
-}
-
-#[tauri::command]
-fn clear_openrouter_key(app: AppHandle) -> Result<(), String> {
-    let path = key_file(&app)?;
+fn clear_key(app: &AppHandle, name: &str) -> Result<(), String> {
+    let path = key_file(app, name)?;
     if path.exists() {
         fs::remove_file(&path).map_err(|e| format!("falha ao remover chave: {}", e))?;
     }
@@ -98,8 +95,61 @@ fn clear_openrouter_key(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn save_openrouter_key(app: AppHandle, key: String) -> Result<(), String> {
+    save_key(&app, "openrouter_key", key)
+}
+
+#[tauri::command]
+fn has_openrouter_key(app: AppHandle) -> Result<bool, String> {
+    Ok(read_key(&app, "openrouter_key").is_some())
+}
+
+#[tauri::command]
+fn clear_openrouter_key(app: AppHandle) -> Result<(), String> {
+    clear_key(&app, "openrouter_key")
+}
+
+#[tauri::command]
+fn save_tavily_key(app: AppHandle, key: String) -> Result<(), String> {
+    save_key(&app, "tavily_key", key)
+}
+
+#[tauri::command]
+fn has_tavily_key(app: AppHandle) -> Result<bool, String> {
+    Ok(read_key(&app, "tavily_key").is_some())
+}
+
+#[tauri::command]
+fn clear_tavily_key(app: AppHandle) -> Result<(), String> {
+    clear_key(&app, "tavily_key")
+}
+
+#[tauri::command]
+fn get_tavily_key(app: AppHandle) -> Result<Option<String>, String> {
+    Ok(read_key(&app, "tavily_key"))
+}
+
+fn is_valid_model_id(model: &str) -> bool {
+    if model.is_empty() || model.len() > 200 {
+        return false;
+    }
+    let mut parts = model.splitn(2, '/');
+    let provider = match parts.next() {
+        Some(p) if !p.is_empty() => p,
+        _ => return false,
+    };
+    let name = match parts.next() {
+        Some(n) if !n.is_empty() => n,
+        _ => return false,
+    };
+    let valid_char =
+        |c: char| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':');
+    provider.chars().all(valid_char) && name.chars().all(valid_char)
+}
+
+#[tauri::command]
 async fn openrouter_list_models(app: AppHandle) -> Result<Vec<ModelInfo>, String> {
-    let key = read_key(&app).ok_or_else(|| "OPENROUTER_KEY_MISSING".to_string())?;
+    let key = read_key(&app, "openrouter_key").ok_or_else(|| "OPENROUTER_KEY_MISSING".to_string())?;
     let client = reqwest::Client::new();
     let resp = client
         .get("https://openrouter.ai/api/v1/models")
@@ -113,7 +163,8 @@ async fn openrouter_list_models(app: AppHandle) -> Result<Vec<ModelInfo>, String
     let status = resp.status();
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return Err(format!("OpenRouter {}: {}", status, body));
+        eprintln!("OpenRouter list_models {} body: {}", status, body);
+        return Err(format!("OpenRouter respondeu {}", status));
     }
 
     let parsed: OpenRouterModelsResponse = resp
@@ -124,6 +175,7 @@ async fn openrouter_list_models(app: AppHandle) -> Result<Vec<ModelInfo>, String
     let models = parsed
         .data
         .into_iter()
+        .filter(|m| is_valid_model_id(&m.id))
         .map(|m| ModelInfo {
             name: m.name.clone().unwrap_or_else(|| m.id.clone()),
             id: m.id,
@@ -142,7 +194,19 @@ async fn openrouter_stream_chat(
     system_prompt: String,
     user_message: String,
 ) -> Result<(), String> {
-    let key = match read_key(&app) {
+    if !is_valid_model_id(&model) {
+        let _ = app.emit(
+            "openrouter://error",
+            StreamErrorEvent {
+                request_id: request_id.clone(),
+                code: "INVALID_MODEL".into(),
+                message: "Identificador de modelo inválido".into(),
+            },
+        );
+        return Err("INVALID_MODEL".into());
+    }
+
+    let key = match read_key(&app, "openrouter_key") {
         Some(k) => k,
         None => {
             let _ = app.emit(
@@ -264,9 +328,10 @@ async fn run_openrouter_stream(
     let status = resp.status();
     if !status.is_success() {
         let body_text = resp.text().await.unwrap_or_default();
+        eprintln!("OpenRouter stream {} body: {}", status, body_text);
         return Err(StreamError::Failed {
             code: "HTTP_ERROR".into(),
-            message: format!("OpenRouter respondeu {}: {}", status, body_text),
+            message: format!("OpenRouter respondeu {}", status),
         });
     }
 
@@ -278,14 +343,21 @@ async fn run_openrouter_stream(
             _ = &mut cancel_rx => {
                 return Err(StreamError::Cancelled);
             }
-            next = stream.next() => {
+            next = timeout(STREAM_CHUNK_TIMEOUT, stream.next()) => {
                 let bytes = match next {
-                    None => break,
-                    Some(Ok(b)) => b,
-                    Some(Err(e)) => {
+                    Err(_) => {
+                        return Err(StreamError::Failed {
+                            code: "STREAM_TIMEOUT".into(),
+                            message: "Tempo limite excedido aguardando resposta".into(),
+                        });
+                    }
+                    Ok(None) => break,
+                    Ok(Some(Ok(b))) => b,
+                    Ok(Some(Err(e))) => {
+                        eprintln!("OpenRouter stream error: {}", e);
                         return Err(StreamError::Failed {
                             code: "STREAM_ERROR".into(),
-                            message: format!("Conexao interrompida: {}", e),
+                            message: "Conexão interrompida".into(),
                         });
                     }
                 };
@@ -431,6 +503,10 @@ pub fn run() {
             save_openrouter_key,
             has_openrouter_key,
             clear_openrouter_key,
+            save_tavily_key,
+            has_tavily_key,
+            clear_tavily_key,
+            get_tavily_key,
             openrouter_list_models,
             openrouter_stream_chat,
             openrouter_cancel

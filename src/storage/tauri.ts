@@ -77,7 +77,12 @@ function rowToNote(r: NoteRow): Note {
   let tags: string[] = []
   try {
     const parsed = JSON.parse(r.tags)
-    if (Array.isArray(parsed)) tags = parsed
+    if (
+      Array.isArray(parsed) &&
+      parsed.every((t): t is string => typeof t === 'string')
+    ) {
+      tags = parsed
+    }
   } catch {
     tags = []
   }

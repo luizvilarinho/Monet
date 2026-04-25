@@ -1,4 +1,4 @@
-const STORAGE_KEY = 'tavilyKey'
+import { invoke } from '@tauri-apps/api/core'
 
 export interface SearchResult {
   title: string
@@ -6,25 +6,43 @@ export interface SearchResult {
   content: string
 }
 
-export function getTavilyKey(): string | null {
-  return localStorage.getItem(STORAGE_KEY) || null
+export async function getTavilyKey(): Promise<string | null> {
+  try {
+    const k = await invoke<string | null>('get_tavily_key')
+    return k && k.length > 0 ? k : null
+  } catch {
+    return null
+  }
 }
 
-export function saveTavilyKey(key: string): void {
-  localStorage.setItem(STORAGE_KEY, key.trim())
+export async function saveTavilyKey(key: string): Promise<void> {
+  await invoke('save_tavily_key', { key })
 }
 
-export function clearTavilyKey(): void {
-  localStorage.removeItem(STORAGE_KEY)
+export async function clearTavilyKey(): Promise<void> {
+  await invoke('clear_tavily_key')
 }
 
-export function hasTavilyKey(): boolean {
-  const k = getTavilyKey()
-  return !!k && k.length > 0
+export async function hasTavilyKey(): Promise<boolean> {
+  try {
+    return await invoke<boolean>('has_tavily_key')
+  } catch {
+    return false
+  }
+}
+
+function isSearchResult(value: unknown): value is SearchResult {
+  if (!value || typeof value !== 'object') return false
+  const r = value as Record<string, unknown>
+  return (
+    typeof r.title === 'string' &&
+    typeof r.url === 'string' &&
+    typeof r.content === 'string'
+  )
 }
 
 export async function webSearch(query: string): Promise<SearchResult[]> {
-  const key = getTavilyKey()
+  const key = await getTavilyKey()
   if (!key) throw new Error('Chave Tavily não configurada')
 
   const res = await fetch('https://api.tavily.com/search', {
@@ -39,18 +57,29 @@ export async function webSearch(query: string): Promise<SearchResult[]> {
   })
 
   if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText)
-    throw new Error(`Tavily ${res.status}: ${text}`)
+    throw new Error(`Tavily ${res.status}`)
   }
 
-  const data = await res.json() as {
-    results: Array<{ title: string; url: string; content: string }>
+  const data: unknown = await res.json()
+  if (
+    !data ||
+    typeof data !== 'object' ||
+    !Array.isArray((data as { results?: unknown }).results)
+  ) {
+    throw new Error('Tavily: resposta com formato inesperado')
   }
-  return (data.results ?? []).map((r) => ({
-    title: r.title ?? '',
-    url: r.url ?? '',
-    content: r.content ?? '',
-  }))
+
+  const rawResults = (data as { results: unknown[] }).results
+  return rawResults.flatMap((item) => {
+    if (!item || typeof item !== 'object') return []
+    const r = item as Record<string, unknown>
+    const normalized: SearchResult = {
+      title: typeof r.title === 'string' ? r.title : '',
+      url: typeof r.url === 'string' ? r.url : '',
+      content: typeof r.content === 'string' ? r.content : '',
+    }
+    return isSearchResult(normalized) ? [normalized] : []
+  })
 }
 
 export function formatSearchResults(results: SearchResult[]): string {

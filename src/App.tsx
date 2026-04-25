@@ -298,7 +298,7 @@ function App() {
         return true
       }
       if (def.usesSearch) {
-        if (!hasTavilyKey()) {
+        if (!(await hasTavilyKey())) {
           addErrorCard(
             activeId,
             cmd,
