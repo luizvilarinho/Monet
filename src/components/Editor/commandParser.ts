@@ -27,13 +27,24 @@ export interface CommandExecutionDraft {
 
 const COMMAND_NAMES = COMMANDS.map((command) => command.name)
 
+const CMD_MARKER_RE = /\s*<!--monet:([a-zA-Z0-9_-]+)-->$/
+
+export function extractCommandId(lineText: string): string | null {
+  return lineText.match(CMD_MARKER_RE)?.[1] ?? null
+}
+
+export function stripCommandMarker(lineText: string): string {
+  return lineText.replace(CMD_MARKER_RE, '')
+}
+
 export function isPotentialCommandLine(line: string): boolean {
   return /^\s*\//.test(line)
 }
 
 export function parseCommandLine(line: string): ParsedCommandLine | null {
-  if (!isPotentialCommandLine(line)) return null
-  const trimmed = line.trim()
+  const clean = stripCommandMarker(line)
+  if (!isPotentialCommandLine(clean)) return null
+  const trimmed = clean.trim()
   const match = trimmed.match(/^(\/[^\s]+)(?:\s+(.*))?$/)
   if (!match) {
     return {

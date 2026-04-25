@@ -80,6 +80,7 @@ function App() {
   const [navigateToCard, setNavigateToCard] = useState<{ index: number; ts: number } | null>(null)
   const [notebookWidth, setNotebookWidth] = useState(180)
   const [focusMode, setFocusMode] = useState(false)
+  const [commandLineToRemove, setCommandLineToRemove] = useState<{ id: string; ts: number } | null>(null)
   const [noteOrder, setNoteOrder] = useState<string[]>(() => loadNoteOrder())
   const [notebookOrder, setNotebookOrder] = useState<string[]>(() => loadOrder('monet:notebook-order'))
 
@@ -195,6 +196,11 @@ function App() {
     [notes, activeId]
   )
 
+  const executedCommandIds = useMemo(
+    () => new Set(responses.map((r) => r.id)),
+    [responses]
+  )
+
   function updateActive(patch: Partial<Note>) {
     if (!activeNote) return
     void saveNote({ ...activeNote, ...patch, updatedAt: Date.now() })
@@ -263,7 +269,7 @@ function App() {
   }, [])
 
   const handleCommand = useCallback(
-    async ({ cmd, query }: CommandExecutionRequest) => {
+    async ({ cmd, query, commandId }: CommandExecutionRequest) => {
       if (!activeId) return false
       const def = findCommand(cmd)
       if (!def) return false
@@ -319,6 +325,7 @@ function App() {
         model: modelId,
         command: cmd,
         query: def && !def.takesQuery ? '' : query,
+        commandId,
         systemPrompt: SYSTEM_PROMPT,
         userMessage: buildUserMessage(cmd, def.description, query, noteContent, searchContext),
       })
@@ -377,6 +384,7 @@ function App() {
           />
         ) : (
           <Editor
+            executedCommandIds={executedCommandIds}
             title={activeNote?.title ?? ''}
             onTitleChange={(title) => updateActive({ title })}
             tags={activeNote?.tags ?? []}
@@ -385,6 +393,8 @@ function App() {
             onChange={(content) => updateActive({ content })}
             onCommand={handleCommand}
             onNavigateToCard={(index) => setNavigateToCard({ index, ts: Date.now() })}
+            onDeleteCommand={(id) => removeResponse(id)}
+            commandLineToRemove={commandLineToRemove}
           />
         )}
         <AiPanel
@@ -400,7 +410,10 @@ function App() {
           onModelChange={setModelId}
           onOpenSettings={() => setSettingsOpen(true)}
           navigateToCard={navigateToCard}
-          onDeleteResponse={removeResponse}
+          onDeleteResponse={(id) => {
+            removeResponse(id)
+            setCommandLineToRemove({ id, ts: Date.now() })
+          }}
         />
       </div>
       <SettingsModal

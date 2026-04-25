@@ -15,6 +15,7 @@ export interface StartRequestInput {
   model: string
   command: string
   query: string
+  commandId: string
   systemPrompt: string
   userMessage: string
 }
@@ -136,10 +137,11 @@ export function useAi(activeNoteId: string | null) {
       model,
       command,
       query,
+      commandId,
       systemPrompt,
       userMessage,
     }: StartRequestInput) => {
-      const id = nanoid()
+      const id = commandId
       const response: AiResponse = {
         id,
         noteId,
@@ -149,6 +151,7 @@ export function useAi(activeNoteId: string | null) {
         response: '',
         status: 'streaming',
         createdAt: Date.now(),
+        commandId,
       }
       streamsRef.current.set(id, { noteId })
       setByNote((prev) => ({

@@ -23,9 +23,11 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react'
+import { nanoid } from 'nanoid'
 import styles from './Editor.module.css'
 import {
   buildCommandExecutionDraft,
+  extractCommandId,
   getCommandLineStatus,
   getCommandSuggestions,
   isPotentialCommandLine,
@@ -45,6 +47,9 @@ export interface EditorProps {
   onChange: (value: string) => void
   onCommand?: (request: CommandExecutionRequest) => Promise<boolean> | boolean
   onNavigateToCard?: (executionIndex: number) => void
+  onDeleteCommand?: (commandId: string) => void
+  executedCommandIds?: Set<string>
+  commandLineToRemove?: { id: string; ts: number } | null
 }
 
 const commandStatusTheme = EditorView.baseTheme({
@@ -99,12 +104,28 @@ const commandStatusTheme = EditorView.baseTheme({
     borderLeft: '2px solid var(--accent-ai, #5dcaa5)',
     paddingLeft: '10px',
     cursor: 'pointer',
+    position: 'relative',
   },
   '.cm-commandError': {
     color: '#ff8b8b',
     backgroundColor: 'rgba(239, 79, 79, 0.1)',
     borderLeft: '2px solid #ef4f4f',
     paddingLeft: '10px',
+  },
+  '.cm-cmdDelete': {
+    position: 'absolute',
+    right: '32px',
+    top: '0',
+    fontSize: '15px',
+    color: 'var(--text-muted, #606070)',
+    cursor: 'pointer',
+    opacity: '0.5',
+    lineHeight: 'inherit',
+    userSelect: 'none',
+  },
+  '.cm-cmdDelete:hover': {
+    color: '#ff6b6b',
+    opacity: '1',
   },
   '.cm-todo-check': {
     display: 'inline-flex',
@@ -185,6 +206,74 @@ const todoDecorationsField = StateField.define<DecorationSet>({
   provide: (f) => EditorView.decorations.from(f),
 })
 
+const MARKER_RE = / <!--monet:[a-zA-Z0-9_-]+-->/g
+const MARKER_ID_RE = /<!--monet:([a-zA-Z0-9_-]+)-->/
+
+function createMarkerDecorations(
+  getView: () => EditorView | null,
+  getOnDelete: () => ((id: string) => void) | undefined
+): StateField<DecorationSet> {
+
+  class DeleteWidget extends WidgetType {
+    constructor(readonly commandId: string) { super() }
+
+    toDOM() {
+      const span = document.createElement('span')
+      span.className = 'cm-cmdDelete'
+      span.textContent = '×'
+      span.title = 'apagar comando e resposta'
+      span.addEventListener('mousedown', (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+      })
+      span.addEventListener('click', (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        const view = getView()
+        if (view) {
+          const doc = view.state.doc
+          for (let i = 1; i <= doc.lines; i++) {
+            const line = doc.line(i)
+            if (line.text.includes(`<!--monet:${this.commandId}-->`)) {
+              const from = line.from > 0 ? line.from - 1 : line.from
+              view.dispatch({ changes: { from, to: line.to } })
+              break
+            }
+          }
+        }
+        getOnDelete()?.(this.commandId)
+      })
+      return span
+    }
+
+    eq(other: DeleteWidget) { return other.commandId === this.commandId }
+  }
+
+  function build(state: EditorState): DecorationSet {
+    const builder = new RangeSetBuilder<Decoration>()
+    for (let i = 1; i <= state.doc.lines; i++) {
+      const line = state.doc.line(i)
+      MARKER_RE.lastIndex = 0
+      let match
+      while ((match = MARKER_RE.exec(line.text)) !== null) {
+        const cmdId = MARKER_ID_RE.exec(match[0])?.[1] ?? ''
+        builder.add(
+          line.from + match.index,
+          line.from + match.index + match[0].length,
+          Decoration.replace({ widget: new DeleteWidget(cmdId) })
+        )
+      }
+    }
+    return builder.finish()
+  }
+
+  return StateField.define<DecorationSet>({
+    create: (state) => build(state),
+    update: (deco, tr) => tr.docChanged ? build(tr.state) : deco,
+    provide: (f) => EditorView.decorations.from(f),
+  })
+}
+
 const refreshCommandDecorations = StateEffect.define<null>()
 
 function createCommandDecorations(
@@ -259,6 +348,9 @@ export function Editor({
   onChange,
   onCommand,
   onNavigateToCard,
+  onDeleteCommand,
+  executedCommandIds,
+  commandLineToRemove,
 }: EditorProps) {
   const [adding, setAdding] = useState(false)
   const [draft, setDraft] = useState('')
@@ -271,7 +363,11 @@ export function Editor({
   const viewRef = useRef<EditorView | null>(null)
   const commandStatusRef = useRef<Map<number, CommandLineStatus>>(new Map())
   const initialValueRef = useRef(value)
+  const executedCommandIdsRef = useRef(executedCommandIds ?? new Set<string>())
+  executedCommandIdsRef.current = executedCommandIds ?? new Set<string>()
   const onCommandRef = useRef(onCommand)
+  const onDeleteCommandRef = useRef(onDeleteCommand)
+  onDeleteCommandRef.current = onDeleteCommand
   const onChangeRef = useRef(onChange)
   const onNavigateToCardRef = useRef(onNavigateToCard)
   const setToolbarRef = useRef(setToolbarState)
@@ -334,23 +430,34 @@ export function Editor({
         insertNewlineAndIndent(view)
         return
       }
+
+      // Move cursor immediately so the user gets feedback before any async work
+      view.dispatch({
+        changes: { from: draft.lineEnd, to: draft.lineEnd, insert: '\n' },
+        selection: EditorSelection.cursor(draft.lineEnd + 1),
+      })
+
+      const commandId = nanoid()
       const allowed = await onCommandRef.current?.({
         cmd: draft.cmd,
         query: draft.query,
+        commandId,
       })
       if (allowed) {
         commandStatusRef.current.set(draft.lineStart, 'executed')
+        // Insert marker right before the '\n' we already added (draft.lineEnd is still valid)
+        const marker = ` <!--monet:${commandId}-->`
+        view.dispatch({
+          changes: { from: draft.lineEnd, to: draft.lineEnd, insert: marker },
+          effects: refreshCommandDecorations.of(null),
+        })
       } else {
         commandStatusRef.current.set(
           draft.lineStart,
           getCommandLineStatus(view.state.doc.lineAt(draft.lineStart).text)
         )
+        view.dispatch({ effects: refreshCommandDecorations.of(null) })
       }
-      view.dispatch({
-        changes: { from: draft.lineEnd, to: draft.lineEnd, insert: '\n' },
-        selection: EditorSelection.cursor(draft.nextSelection),
-        effects: refreshCommandDecorations.of(null),
-      })
     }
 
     const shouldHandleEnterAsCommand = (view: EditorView) => {
@@ -402,6 +509,7 @@ export function Editor({
         placeholder('Anote a impressão do momento...'),
         commandStatusTheme,
         todoDecorationsField,
+        createMarkerDecorations(() => viewRef.current, () => onDeleteCommandRef.current),
         createCommandDecorations(() => commandStatusRef.current),
         syncListener,
         EditorView.domEventHandlers({
@@ -424,6 +532,15 @@ export function Editor({
         }),
       ],
     })
+    // Pre-populate executed status from persisted command IDs
+    const execIds = executedCommandIdsRef.current
+    for (let i = 1; i <= state.doc.lines; i++) {
+      const line = state.doc.line(i)
+      const cmdId = extractCommandId(line.text)
+      if (cmdId && execIds.has(cmdId)) {
+        commandStatusRef.current.set(line.from, 'executed')
+      }
+    }
     const view = new EditorView({ state, parent: hostRef.current })
     viewRef.current = view
     return () => {
@@ -448,13 +565,33 @@ export function Editor({
     })
     const map = commandStatusRef.current
     map.clear()
+    const execIds = executedCommandIdsRef.current
     for (let lineNumber = 1; lineNumber <= view.state.doc.lines; lineNumber++) {
       const line = view.state.doc.line(lineNumber)
       if (!isPotentialCommandLine(line.text)) continue
-      map.set(line.from, getCommandLineStatus(line.text))
+      const cmdId = extractCommandId(line.text)
+      map.set(
+        line.from,
+        cmdId && execIds.has(cmdId) ? 'executed' : getCommandLineStatus(line.text)
+      )
     }
     view.dispatch({ effects: refreshCommandDecorations.of(null) })
   }, [value])
+
+  useEffect(() => {
+    if (!commandLineToRemove) return
+    const view = viewRef.current
+    if (!view) return
+    for (let i = 1; i <= view.state.doc.lines; i++) {
+      const line = view.state.doc.line(i)
+      const cmdId = extractCommandId(line.text)
+      if (cmdId === commandLineToRemove.id) {
+        const from = line.from > 0 ? line.from - 1 : line.from
+        view.dispatch({ changes: { from, to: line.to } })
+        break
+      }
+    }
+  }, [commandLineToRemove])
 
   function commitTag() {
     const clean = draft.trim().replace(/^#/, '')

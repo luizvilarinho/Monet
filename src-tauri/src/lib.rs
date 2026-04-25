@@ -400,6 +400,15 @@ pub fn run() {
         ",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 3,
+            description: "ai_responses_command_id",
+            sql: "
+            ALTER TABLE ai_responses ADD COLUMN command_id TEXT;
+            CREATE INDEX IF NOT EXISTS idx_ai_responses_cmd ON ai_responses(command_id);
+        ",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()

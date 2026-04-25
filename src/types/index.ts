@@ -39,6 +39,7 @@ export interface AiResponse {
   response: string
   status: AiResponseStatus
   createdAt: number
+  commandId?: string | null
 }
 
 export interface AiModel {
@@ -58,6 +59,7 @@ export interface CommandDef {
 export interface CommandExecutionRequest {
   cmd: string
   query: string
+  commandId: string
 }
 
 export interface CommandContext {

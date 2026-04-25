@@ -45,6 +45,7 @@ interface AiResponseRow {
   response: string
   status: string
   created_at: number
+  command_id: string | null
 }
 
 function normalizeStatus(s: string): AiResponseStatus {
@@ -64,6 +65,7 @@ function rowToResponse(r: AiResponseRow): AiResponse {
     response: r.response,
     status: normalizeStatus(r.status ?? 'completed'),
     createdAt: r.created_at,
+    commandId: r.command_id ?? null,
   }
 }
 
@@ -258,15 +260,16 @@ export class TauriStorage implements StorageAdapter {
   async saveResponse(r: AiResponse): Promise<void> {
     const db = await this.db()
     await db.execute(
-      `INSERT INTO ai_responses (id, note_id, command, query, model, response, status, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO ai_responses (id, note_id, command, query, model, response, status, created_at, command_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        ON CONFLICT(id) DO UPDATE SET
          note_id = excluded.note_id,
          command = excluded.command,
          query = excluded.query,
          model = excluded.model,
          response = excluded.response,
-         status = excluded.status`,
+         status = excluded.status,
+         command_id = excluded.command_id`,
       [
         r.id,
         r.noteId,
@@ -276,6 +279,7 @@ export class TauriStorage implements StorageAdapter {
         r.response,
         r.status,
         r.createdAt,
+        r.commandId ?? null,
       ]
     )
   }
