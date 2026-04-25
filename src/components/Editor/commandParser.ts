@@ -69,7 +69,7 @@ export function getCommandSuggestions(input: string): string[] {
   const normalized = input.trim().toLowerCase()
   if (!normalized.startsWith('/')) return []
   if (normalized === '/') return COMMAND_NAMES
-  return COMMAND_NAMES.filter((name) => name.startsWith(normalized))
+  return COMMAND_NAMES.filter((name) => name.toLowerCase().startsWith(normalized))
 }
 
 export function buildCommandExecutionDraft(

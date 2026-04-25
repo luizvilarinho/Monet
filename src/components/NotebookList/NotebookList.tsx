@@ -1,12 +1,14 @@
+import { useRef, useState } from 'react'
 import type { Notebook } from '../../types'
 import styles from './NotebookList.module.css'
 
 export interface NotebookListProps {
   notebooks: Notebook[]
   activeId: string | null
-  onSelect: (id: string) => void
+  onSelect: (id: string | null) => void
   onCreate: () => void
   onDelete: (id: string) => void
+  onRename: (id: string, name: string) => void
   tags: string[]
   activeTag: string | null
   onSelectTag: (tag: string | null) => void
@@ -19,11 +21,22 @@ export function NotebookList({
   onSelect,
   onCreate,
   onDelete,
+  onRename,
   tags,
   activeTag,
   onSelectTag,
   onOpenSettings,
 }: NotebookListProps) {
+  const [editing, setEditing] = useState<{ id: string; value: string } | null>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  function commitEdit() {
+    if (!editing) return
+    const name = editing.value.trim()
+    if (name) onRename(editing.id, name)
+    setEditing(null)
+  }
+
   return (
     <aside className={styles.notebooks}>
       <div className={styles.scrollArea}>
@@ -33,35 +46,65 @@ export function NotebookList({
             + novo caderno
           </button>
           <ul className={styles.list}>
+            <li
+              className={`${styles.row} ${activeId === null ? styles.active : ''}`}
+              onClick={() => onSelect(null)}
+            >
+              <span className={`${styles.rowLabel} ${styles.allNotes}`}>todas as notas</span>
+            </li>
+
             {notebooks.length === 0 ? (
               <li className={styles.empty}>nenhum caderno</li>
             ) : (
               notebooks.map((nb) => (
                 <li
                   key={nb.id}
-                  className={
-                    (nb.id === activeId ? styles.active : '') + ' ' + styles.row
-                  }
-                  onClick={() => onSelect(nb.id)}
+                  className={`${styles.row} ${nb.id === activeId ? styles.active : ''}`}
+                  onClick={() => {
+                    if (editing?.id === nb.id) return
+                    onSelect(nb.id)
+                  }}
+                  onDoubleClick={(e) => {
+                    if ((e.target as HTMLElement).closest('button')) return
+                    setEditing({ id: nb.id, value: nb.name })
+                  }}
                 >
-                  <span className={styles.rowLabel}>{nb.name || 'sem nome'}</span>
-                  <button
-                    className={styles.rowDelete}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      if (
-                        window.confirm(
-                          `apagar o caderno "${nb.name}" e todas as anotações dele?`
-                        )
-                      ) {
-                        onDelete(nb.id)
-                      }
-                    }}
-                    aria-label={`apagar caderno ${nb.name}`}
-                    type="button"
-                  >
-                    ×
-                  </button>
+                  {editing?.id === nb.id ? (
+                    <input
+                      autoFocus
+                      ref={inputRef}
+                      className={styles.renameInput}
+                      value={editing.value}
+                      onChange={(e) => setEditing({ id: nb.id, value: e.target.value })}
+                      onBlur={commitEdit}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') commitEdit()
+                        if (e.key === 'Escape') setEditing(null)
+                        e.stopPropagation()
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  ) : (
+                    <span className={styles.rowLabel}>
+                      {nb.name || 'sem nome'}
+                    </span>
+                  )}
+                  {editing?.id !== nb.id && (
+                    <button
+                      className={styles.rowDelete}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (window.confirm(`apagar o caderno "${nb.name}" e todas as anotações dele?`)) {
+                          onDelete(nb.id)
+                        }
+                      }}
+                      onDoubleClick={(e) => e.stopPropagation()}
+                      aria-label={`apagar caderno ${nb.name}`}
+                      type="button"
+                    >
+                      ×
+                    </button>
+                  )}
                 </li>
               ))
             )}

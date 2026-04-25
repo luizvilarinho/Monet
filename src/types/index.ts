@@ -52,6 +52,7 @@ export interface CommandDef {
   description: string
   example: string
   takesQuery: boolean
+  usesSearch?: boolean
 }
 
 export interface CommandExecutionRequest {

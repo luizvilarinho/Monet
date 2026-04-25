@@ -38,6 +38,7 @@ export function AiPanel({
 }: AiPanelProps) {
   const [width, setWidth] = useState(MIN_WIDTH)
   const [forceOpenIndex, setForceOpenIndex] = useState<number | null>(null)
+  const [expandAll, setExpandAll] = useState<boolean | null>(null)
   const dragging = useRef(false)
   const startX = useRef(0)
   const startWidth = useRef(0)
@@ -120,6 +121,18 @@ export function AiPanel({
         </div>
       )}
       <div className={styles.content} ref={contentRef}>
+        {responses.length > 0 && (
+          <div className={styles.cardsToolbar}>
+            <button
+              className={styles.expandToggle}
+              onClick={() => setExpandAll((v) => v === true ? false : true)}
+              title={expandAll === true ? 'fechar todas' : 'abrir todas'}
+              type="button"
+            >
+              {expandAll === true ? '−' : '+'}
+            </button>
+          </div>
+        )}
         {responses.length === 0 ? (
           <p className={styles.empty}>
             Use /comandos no editor para acionar a IA.
@@ -131,6 +144,7 @@ export function AiPanel({
               response={r}
               execIndex={i}
               forceOpen={forceOpenIndex === i}
+              globalExpand={expandAll}
               onDelete={onDeleteResponse}
             />
           ))

@@ -51,7 +51,7 @@ export function Toolbar({
       <div className={styles.actions}>
         <button onClick={onExport}>export .md</button>
         <button onClick={onTogglePreview} aria-pressed={previewOpen}>preview</button>
-        <button onClick={onToggleAi} aria-pressed={aiOpen}>ai</button>
+        <button onClick={onToggleAi} aria-pressed={aiOpen}>IA</button>
       </div>
     </header>
   )

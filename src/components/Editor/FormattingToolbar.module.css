@@ -1,0 +1,68 @@
+.toolbar {
+  position: fixed;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  background: var(--surface-1, #1e1e22);
+  border: 1px solid var(--border, #333340);
+  border-radius: 8px;
+  padding: 3px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  transform: translateX(-50%) translateY(-100%);
+  pointer-events: all;
+  user-select: none;
+}
+
+.group {
+  display: flex;
+  align-items: center;
+}
+
+.sep {
+  width: 1px;
+  height: 20px;
+  background: var(--border, #333340);
+  margin: 0 3px;
+  flex-shrink: 0;
+}
+
+.btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary, #a0a0b8);
+  padding: 0 7px;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: system-ui, sans-serif;
+  cursor: pointer;
+  height: 28px;
+  min-width: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.1s, color 0.1s;
+  line-height: 1;
+}
+
+.btn:hover {
+  background: var(--surface-2, #26262c);
+  color: var(--text-primary, #e8e8f0);
+}
+
+.btn.active {
+  background: rgba(124, 106, 245, 0.16);
+  color: var(--accent, #7c6af5);
+}
+
+.btn.active:hover {
+  background: rgba(124, 106, 245, 0.24);
+}
+
+.btn.bold {
+  font-weight: 700;
+}
+
+.btn.italic {
+  font-style: italic;
+}

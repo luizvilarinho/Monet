@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
 import type { AiResponse } from '../../types'
+import { renderMarkdown } from '../../lib/markdown'
 import styles from './AiPanel.module.css'
 
 export interface AiCardProps {
   response: AiResponse
   execIndex: number
   forceOpen?: boolean
+  globalExpand?: boolean | null
   onDelete?: (id: string) => void
 }
 
@@ -16,12 +18,29 @@ const STATUS_LABEL: Record<AiResponse['status'], string> = {
   error: 'erro',
 }
 
-export function AiCard({ response, execIndex, forceOpen, onDelete }: AiCardProps) {
+export function AiCard({ response, execIndex, forceOpen, globalExpand, onDelete }: AiCardProps) {
   const [open, setOpen] = useState(response.status === 'streaming')
+  const [renderedHtml, setRenderedHtml] = useState('')
 
   useEffect(() => {
     if (forceOpen) setOpen(true)
   }, [forceOpen])
+
+  useEffect(() => {
+    if (globalExpand === null || globalExpand === undefined) return
+    if (response.status === 'streaming') return
+    setOpen(globalExpand)
+  }, [globalExpand, response.status])
+
+  useEffect(() => {
+    if (response.status === 'streaming') return
+    if (!response.response) { setRenderedHtml(''); return }
+    let cancelled = false
+    renderMarkdown(response.response).then((html) => {
+      if (!cancelled) setRenderedHtml(html)
+    })
+    return () => { cancelled = true }
+  }, [response.response, response.status])
 
   const statusClass =
     response.status === 'streaming'
@@ -88,12 +107,14 @@ export function AiCard({ response, execIndex, forceOpen, onDelete }: AiCardProps
           Falha ao obter resposta: {response.response || 'erro desconhecido'}
         </div>
       ) : (
-        <div className={`${styles.body} ${!open ? styles.bodyCollapsed : ''}`}>
-          {response.response}
-          {response.status === 'streaming' && (
-            <span className={styles.caretBlink} aria-hidden="true">
-              ▍
-            </span>
+        <div className={`${styles.body} ${response.status !== 'streaming' ? styles.bodyMd : ''} ${!open ? styles.bodyCollapsed : ''}`}>
+          {response.status === 'streaming' ? (
+            <>
+              <span style={{ whiteSpace: 'pre-wrap' }}>{response.response}</span>
+              <span className={styles.caretBlink} aria-hidden="true">▍</span>
+            </>
+          ) : (
+            <div dangerouslySetInnerHTML={{ __html: renderedHtml }} />
           )}
         </div>
       )}

@@ -12,6 +12,7 @@ import { EditorSelection, EditorState, RangeSetBuilder, StateEffect, StateField 
 import {
   Decoration,
   EditorView,
+  WidgetType,
   keymap,
   placeholder,
   type DecorationSet,
@@ -31,6 +32,8 @@ import {
   parseCommandLine,
   type CommandLineStatus,
 } from './commandParser'
+import { detectActiveFormats, type ActiveFormat } from './formatting'
+import { FormattingToolbar } from './FormattingToolbar'
 import type { CommandExecutionRequest } from '../../types'
 
 export interface EditorProps {
@@ -103,6 +106,83 @@ const commandStatusTheme = EditorView.baseTheme({
     borderLeft: '2px solid #ef4f4f',
     paddingLeft: '10px',
   },
+  '.cm-todo-check': {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '13px',
+    height: '13px',
+    border: '1.5px solid var(--border, #333340)',
+    borderRadius: '3px',
+    verticalAlign: 'middle',
+    marginRight: '3px',
+    cursor: 'pointer',
+    fontSize: '9px',
+    lineHeight: '1',
+    color: 'transparent',
+    userSelect: 'none',
+    flexShrink: '0',
+  },
+  '.cm-todo-check-done': {
+    borderColor: 'var(--accent, #7c6af5)',
+    backgroundColor: 'var(--accent, #7c6af5)',
+    color: '#fff',
+  },
+  '.cm-todo-done-line': {
+    color: 'var(--text-muted, #606070)',
+    textDecoration: 'line-through',
+  },
+})
+
+class TodoCheckboxWidget extends WidgetType {
+  constructor(readonly checked: boolean) { super() }
+  eq(other: WidgetType) {
+    return other instanceof TodoCheckboxWidget && this.checked === other.checked
+  }
+  toDOM(view: EditorView): HTMLElement {
+    const span = document.createElement('span')
+    span.className = `cm-todo-check${this.checked ? ' cm-todo-check-done' : ''}`
+    span.textContent = this.checked ? 'x' : ' '
+    span.setAttribute('aria-hidden', 'true')
+    span.addEventListener('mousedown', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const pos = view.posAtCoords({ x: e.clientX, y: e.clientY }, false)
+      const line = view.state.doc.lineAt(pos)
+      const m = line.text.match(/^- \[([ x])\] /)
+      if (!m) return
+      const charPos = line.from + 3
+      view.dispatch({ changes: { from: charPos, to: charPos + 1, insert: m[1] === 'x' ? ' ' : 'x' } })
+    })
+    return span
+  }
+  ignoreEvent() { return false }
+}
+
+function buildTodoDecorations(state: EditorState): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>()
+  for (let i = 1; i <= state.doc.lines; i++) {
+    const line = state.doc.line(i)
+    const m = line.text.match(/^- \[([ x])\] /)
+    if (!m) continue
+    const checked = m[1] === 'x'
+    if (checked) {
+      builder.add(line.from, line.from, Decoration.line({ class: 'cm-todo-done-line' }))
+    }
+    // replace the [ ] or [x] chars (positions 2-4 in line)
+    builder.add(
+      line.from + 2,
+      line.from + 5,
+      Decoration.replace({ widget: new TodoCheckboxWidget(checked) })
+    )
+  }
+  return builder.finish()
+}
+
+const todoDecorationsField = StateField.define<DecorationSet>({
+  create: (state) => buildTodoDecorations(state),
+  update: (deco, tr) => tr.docChanged ? buildTodoDecorations(tr.state) : deco,
+  provide: (f) => EditorView.decorations.from(f),
 })
 
 const refreshCommandDecorations = StateEffect.define<null>()
@@ -182,6 +262,11 @@ export function Editor({
 }: EditorProps) {
   const [adding, setAdding] = useState(false)
   const [draft, setDraft] = useState('')
+  const [toolbarState, setToolbarState] = useState<{
+    top: number
+    left: number
+    activeFormats: Set<ActiveFormat>
+  } | null>(null)
   const hostRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
   const commandStatusRef = useRef<Map<number, CommandLineStatus>>(new Map())
@@ -189,28 +274,53 @@ export function Editor({
   const onCommandRef = useRef(onCommand)
   const onChangeRef = useRef(onChange)
   const onNavigateToCardRef = useRef(onNavigateToCard)
+  const setToolbarRef = useRef(setToolbarState)
   onCommandRef.current = onCommand
   onChangeRef.current = onChange
   onNavigateToCardRef.current = onNavigateToCard
+  setToolbarRef.current = setToolbarState
 
   useEffect(() => {
     if (!hostRef.current || viewRef.current) return
     const syncListener = EditorView.updateListener.of((update) => {
-      if (!update.docChanged) return
-      onChangeRef.current(update.state.doc.toString())
-      const map = commandStatusRef.current
-      const preserved = new Map<number, CommandLineStatus>()
-      for (let lineNumber = 1; lineNumber <= update.state.doc.lines; lineNumber++) {
-        const line = update.state.doc.line(lineNumber)
-        if (!isPotentialCommandLine(line.text)) continue
-        const previous = map.get(line.from)
-        preserved.set(
-          line.from,
-          previous === 'executed' ? 'executed' : getCommandLineStatus(line.text)
-        )
+      if (update.docChanged) {
+        onChangeRef.current(update.state.doc.toString())
+        const map = commandStatusRef.current
+        const preserved = new Map<number, CommandLineStatus>()
+        for (let lineNumber = 1; lineNumber <= update.state.doc.lines; lineNumber++) {
+          const line = update.state.doc.line(lineNumber)
+          if (!isPotentialCommandLine(line.text)) continue
+          const previous = map.get(line.from)
+          preserved.set(
+            line.from,
+            previous === 'executed' ? 'executed' : getCommandLineStatus(line.text)
+          )
+        }
+        map.clear()
+        for (const [from, status] of preserved) map.set(from, status)
       }
-      map.clear()
-      for (const [from, status] of preserved) map.set(from, status)
+
+      if (update.selectionSet || update.docChanged || update.viewportChanged) {
+        const sel = update.state.selection.main
+        if (sel.empty) {
+          setToolbarRef.current(null)
+        } else {
+          const fromCoords = update.view.coordsAtPos(sel.from)
+          const toCoords = update.view.coordsAtPos(sel.to)
+          if (!fromCoords) {
+            setToolbarRef.current(null)
+          } else {
+            const midX = toCoords
+              ? (fromCoords.left + toCoords.left) / 2
+              : fromCoords.left
+            setToolbarRef.current({
+              top: fromCoords.top,
+              left: midX,
+              activeFormats: detectActiveFormats(update.view),
+            })
+          }
+        }
+      }
     })
 
     const runCommand = async (view: EditorView) => {
@@ -291,6 +401,7 @@ export function Editor({
         EditorView.lineWrapping,
         placeholder('Anote a impressão do momento...'),
         commandStatusTheme,
+        todoDecorationsField,
         createCommandDecorations(() => commandStatusRef.current),
         syncListener,
         EditorView.domEventHandlers({
@@ -421,6 +532,13 @@ export function Editor({
         )}
       </div>
       <div className={styles.body} ref={hostRef} />
+      {toolbarState && viewRef.current && (
+        <FormattingToolbar
+          view={viewRef.current}
+          activeFormats={toolbarState.activeFormats}
+          position={{ top: toolbarState.top, left: toolbarState.left }}
+        />
+      )}
     </div>
   )
 }

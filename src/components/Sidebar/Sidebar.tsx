@@ -29,9 +29,7 @@ export function Sidebar({
         + nova anotação
       </button>
       <ul className={styles.list}>
-        {!notebookSelected ? (
-          <li className={styles.empty}>selecione um caderno</li>
-        ) : notes.length === 0 ? (
+        {notes.length === 0 ? (
           <li className={styles.empty}>nenhuma anotação</li>
         ) : (
           notes.map((n) => (

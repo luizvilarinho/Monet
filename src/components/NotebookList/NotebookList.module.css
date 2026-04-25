@@ -130,6 +130,29 @@
   background: transparent !important;
 }
 
+.allNotes {
+  color: var(--text-muted, #606070);
+  font-style: italic;
+}
+
+.active .allNotes {
+  color: var(--text-primary, #e8e8f0);
+  font-style: normal;
+}
+
+.renameInput {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface-2, #26262c);
+  border: 1px solid var(--accent, #7c6af5);
+  border-radius: 4px;
+  color: var(--text-primary, #e8e8f0);
+  font-size: 13px;
+  padding: 1px 5px;
+  outline: none;
+  font-family: inherit;
+}
+
 .footer {
   border-top: 1px solid var(--border, #333340);
   padding: 8px 12px;

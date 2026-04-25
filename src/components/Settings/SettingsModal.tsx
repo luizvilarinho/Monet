@@ -4,6 +4,11 @@ import {
   hasOpenRouterKey,
   saveOpenRouterKey,
 } from '../../lib/openrouter'
+import {
+  clearTavilyKey,
+  hasTavilyKey,
+  saveTavilyKey,
+} from '../../lib/search'
 import styles from './SettingsModal.module.css'
 
 export interface SettingsModalProps {
@@ -12,10 +17,11 @@ export interface SettingsModalProps {
   onApiKeyChanged: (hasKey: boolean) => void
 }
 
-type Section = 'openrouter'
+type Section = 'openrouter' | 'search'
 
 const SECTIONS: Array<{ id: Section; label: string }> = [
   { id: 'openrouter', label: 'Integração OpenRouter' },
+  { id: 'search', label: 'Busca Web' },
 ]
 
 export function SettingsModal({
@@ -24,10 +30,21 @@ export function SettingsModal({
   onApiKeyChanged,
 }: SettingsModalProps) {
   const [section, setSection] = useState<Section>('openrouter')
+
+  // OpenRouter state
   const [keyValue, setKeyValue] = useState('')
   const [hasKey, setHasKey] = useState<boolean>(false)
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState<{
+    kind: 'idle' | 'success' | 'error'
+    message: string
+  }>({ kind: 'idle', message: '' })
+
+  // Tavily state
+  const [tavilyValue, setTavilyValue] = useState('')
+  const [hasTavily, setHasTavily] = useState(false)
+  const [tavSaving, setTavSaving] = useState(false)
+  const [tavStatus, setTavStatus] = useState<{
     kind: 'idle' | 'success' | 'error'
     message: string
   }>({ kind: 'idle', message: '' })
@@ -39,6 +56,9 @@ export function SettingsModal({
     hasOpenRouterKey()
       .then(setHasKey)
       .catch(() => setHasKey(false))
+    setTavilyValue('')
+    setTavStatus({ kind: 'idle', message: '' })
+    setHasTavily(hasTavilyKey())
   }, [open])
 
   useEffect(() => {
@@ -89,6 +109,30 @@ export function SettingsModal({
     } finally {
       setSaving(false)
     }
+  }
+
+  function handleTavilySave() {
+    if (!tavilyValue.trim()) {
+      setTavStatus({ kind: 'error', message: 'Informe uma chave válida.' })
+      return
+    }
+    setTavSaving(true)
+    try {
+      saveTavilyKey(tavilyValue.trim())
+      setHasTavily(true)
+      setTavilyValue('')
+      setTavStatus({ kind: 'success', message: 'Chave salva.' })
+    } catch {
+      setTavStatus({ kind: 'error', message: 'Falha ao salvar chave.' })
+    } finally {
+      setTavSaving(false)
+    }
+  }
+
+  function handleTavilyClear() {
+    clearTavilyKey()
+    setHasTavily(false)
+    setTavStatus({ kind: 'success', message: 'Chave removida.' })
   }
 
   return (
@@ -183,6 +227,64 @@ export function SettingsModal({
                   {hasKey
                     ? 'Uma chave já está configurada neste app.'
                     : 'Nenhuma chave configurada. Sem a chave, o painel IA não inicia solicitações.'}
+                </p>
+              </div>
+            )}
+
+            {section === 'search' && (
+              <div className={styles.form}>
+                <h3 className={styles.formTitle}>Busca Web (Tavily)</h3>
+                <p className={styles.formHelp}>
+                  A chave Tavily habilita os comandos <code>/pesquisa</code> e <code>/quem</code> a consultar a internet antes de responder. Crie uma conta gratuita em{' '}
+                  <strong>tavily.com</strong> (1.000 buscas/mês grátis).
+                </p>
+                <label className={styles.label} htmlFor="tav-key">
+                  Chave de API
+                </label>
+                <input
+                  id="tav-key"
+                  className={styles.input}
+                  type="password"
+                  value={tavilyValue}
+                  placeholder={
+                    hasTavily
+                      ? 'chave configurada — digite para substituir'
+                      : 'tvly-...'
+                  }
+                  onChange={(e) => setTavilyValue(e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleTavilySave() }}
+                />
+                <div className={styles.actions}>
+                  <button
+                    className={styles.primary}
+                    type="button"
+                    onClick={handleTavilySave}
+                    disabled={tavSaving}
+                  >
+                    salvar chave
+                  </button>
+                  {hasTavily && (
+                    <button
+                      className={styles.secondary}
+                      type="button"
+                      onClick={handleTavilyClear}
+                      disabled={tavSaving}
+                    >
+                      remover chave
+                    </button>
+                  )}
+                </div>
+                {tavStatus.kind !== 'idle' && (
+                  <p className={tavStatus.kind === 'error' ? styles.statusError : styles.statusOk}>
+                    {tavStatus.message}
+                  </p>
+                )}
+                <p className={styles.footNote}>
+                  {hasTavily
+                    ? 'Busca web ativa. Comandos /pesquisa e /quem consultam a internet.'
+                    : 'Sem a chave, /pesquisa e /quem usam apenas o conhecimento do modelo.'}
                 </p>
               </div>
             )}

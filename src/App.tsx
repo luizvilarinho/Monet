@@ -3,6 +3,7 @@ import { Toolbar } from './components/Toolbar/Toolbar'
 import { NotebookList } from './components/NotebookList/NotebookList'
 import { Sidebar } from './components/Sidebar/Sidebar'
 import { Editor } from './components/Editor/Editor'
+import { MarkdownPreview } from './components/Editor/MarkdownPreview'
 import { AiPanel } from './components/AiPanel/AiPanel'
 import { SettingsModal } from './components/Settings/SettingsModal'
 import { useNotebooks } from './hooks/useNotebooks'
@@ -13,6 +14,11 @@ import {
   listOpenRouterModels,
   OPENROUTER_KEY_MISSING,
 } from './lib/openrouter'
+import {
+  hasTavilyKey,
+  webSearch,
+  formatSearchResults,
+} from './lib/search'
 import { findCommand } from './lib/commands'
 import type { AiModel, CommandExecutionRequest, Note } from './types'
 import './App.css'
@@ -20,22 +26,34 @@ import './App.css'
 const SYSTEM_PROMPT =
   'Voce e a assistente do Monet, um app de notas para estudo ativo. Responda em portugues, de forma clara e objetiva, usando markdown curto.'
 
+function stripCommandLines(content: string): string {
+  return content
+    .split('\n')
+    .filter((line) => !/^\/[a-zA-Z]/.test(line.trim()))
+    .join('\n')
+    .trim()
+}
+
 function buildUserMessage(
   command: string,
+  description: string,
   query: string,
-  noteContent: string
+  noteContent: string,
+  searchContext?: string
 ): string {
   const parts: string[] = []
-  parts.push(`Comando: ${command}`)
+  parts.push(`Comando: ${command} — ${description}`)
   if (query.trim()) parts.push(`Parametro: ${query.trim()}`)
-  if (noteContent.trim()) {
-    parts.push(`\nConteudo da nota atual:\n${noteContent.trim()}`)
+  if (searchContext) parts.push(`\n${searchContext}`)
+  const cleanContent = stripCommandLines(noteContent)
+  if (cleanContent) {
+    parts.push(`\nConteudo da nota atual:\n${cleanContent}`)
   }
   return parts.join('\n')
 }
 
 function App() {
-  const { notebooks, create: createNotebook, remove: removeNotebook } =
+  const { notebooks, save: saveNotebook, create: createNotebook, remove: removeNotebook } =
     useNotebooks()
   const {
     notes,
@@ -75,8 +93,10 @@ function App() {
     try {
       const list = await listOpenRouterModels()
       setModels(list)
+      const savedModelId = localStorage.getItem('lastModelId')
       setModelId((current) => {
         if (current && list.some((m) => m.id === current)) return current
+        if (savedModelId && list.some((m) => m.id === savedModelId)) return savedModelId
         return list[0]?.id ?? null
       })
     } catch (err) {
@@ -121,6 +141,16 @@ function App() {
     [refreshModels]
   )
 
+  useEffect(() => {
+    if (modelId) localStorage.setItem('lastModelId', modelId)
+  }, [modelId])
+
+  async function handleRenameNotebook(id: string, name: string) {
+    const nb = notebooks.find((n) => n.id === id)
+    if (!nb) return
+    await saveNotebook({ ...nb, name: name.trim() || nb.name, updatedAt: Date.now() })
+  }
+
   const allTags = useMemo(
     () =>
       Array.from(new Set(notes.flatMap((n) => n.tags))).sort((a, b) =>
@@ -130,7 +160,9 @@ function App() {
   )
 
   const notebookNotes = useMemo(
-    () => notes.filter((n) => n.notebookId === activeNotebookId),
+    () => activeNotebookId === null
+      ? notes
+      : notes.filter((n) => n.notebookId === activeNotebookId),
     [notes, activeNotebookId]
   )
 
@@ -215,14 +247,36 @@ function App() {
         )
         return true
       }
+      if (def.usesSearch) {
+        if (!hasTavilyKey()) {
+          addErrorCard(
+            activeId,
+            cmd,
+            query,
+            'Busca web não configurada. Cadastre a chave Tavily em Settings > Busca Web para usar este comando.'
+          )
+          return true
+        }
+      }
+
       const noteContent = activeNote?.content ?? ''
+      let searchContext: string | undefined
+      if (def.usesSearch && query.trim()) {
+        try {
+          const results = await webSearch(query)
+          searchContext = formatSearchResults(results)
+        } catch (err) {
+          console.warn('webSearch failed:', err)
+        }
+      }
+
       await start({
         noteId: activeId,
         model: modelId,
         command: cmd,
         query: def && !def.takesQuery ? '' : query,
         systemPrompt: SYSTEM_PROMPT,
-        userMessage: buildUserMessage(cmd, query, noteContent),
+        userMessage: buildUserMessage(cmd, def.description, query, noteContent, searchContext),
       })
       return true
     },
@@ -250,6 +304,7 @@ function App() {
           }}
           onCreate={handleCreateNotebook}
           onDelete={handleDeleteNotebook}
+          onRename={handleRenameNotebook}
           tags={allTags}
           activeTag={activeTag}
           onSelectTag={setActiveTag}
@@ -263,16 +318,24 @@ function App() {
           onCreate={handleCreateNote}
           onDelete={handleDeleteNote}
         />
-        <Editor
-          title={activeNote?.title ?? ''}
-          onTitleChange={(title) => updateActive({ title })}
-          tags={activeNote?.tags ?? []}
-          onTagsChange={(tags) => updateActive({ tags })}
-          value={activeNote?.content ?? ''}
-          onChange={(content) => updateActive({ content })}
-          onCommand={handleCommand}
-          onNavigateToCard={(index) => setNavigateToCard({ index, ts: Date.now() })}
-        />
+        {previewOpen ? (
+          <MarkdownPreview
+            title={activeNote?.title ?? ''}
+            tags={activeNote?.tags ?? []}
+            content={activeNote?.content ?? ''}
+          />
+        ) : (
+          <Editor
+            title={activeNote?.title ?? ''}
+            onTitleChange={(title) => updateActive({ title })}
+            tags={activeNote?.tags ?? []}
+            onTagsChange={(tags) => updateActive({ tags })}
+            value={activeNote?.content ?? ''}
+            onChange={(content) => updateActive({ content })}
+            onCommand={handleCommand}
+            onNavigateToCard={(index) => setNavigateToCard({ index, ts: Date.now() })}
+          />
+        )}
         <AiPanel
           open={aiOpen}
           responses={responses}
