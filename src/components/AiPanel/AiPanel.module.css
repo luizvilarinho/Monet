@@ -22,6 +22,33 @@
   background: rgba(124, 106, 245, 0.25);
 }
 
+.sortableCard {
+  position: relative;
+}
+
+.cardDragHandle {
+  position: absolute;
+  top: 8px;
+  left: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted, #606070);
+  cursor: grab;
+  opacity: 0;
+  padding: 3px;
+  border-radius: 3px;
+  z-index: 1;
+}
+
+.cardDragHandle:active {
+  cursor: grabbing;
+}
+
+.sortableCard:hover .cardDragHandle {
+  opacity: 1;
+}
+
 .header {
   display: flex;
   align-items: center;

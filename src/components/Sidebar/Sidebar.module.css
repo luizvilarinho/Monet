@@ -1,6 +1,6 @@
 .sidebar {
   width: 220px;
-  background: var(--bg-panel, #161618);
+  background: var(--bg-app, #0e0e10);
   border-right: 1px solid var(--border, #333340);
   display: flex;
   flex-direction: column;
@@ -73,6 +73,26 @@
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.dragHandle {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted, #606070);
+  cursor: grab;
+  opacity: 0;
+  padding: 2px;
+  border-radius: 3px;
+}
+
+.dragHandle:active {
+  cursor: grabbing;
+}
+
+.row:hover .dragHandle {
+  opacity: 1;
 }
 
 .rowLabel {

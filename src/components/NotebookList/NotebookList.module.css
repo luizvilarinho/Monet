@@ -1,10 +1,26 @@
 .notebooks {
-  width: 180px;
+  flex-shrink: 0;
   background: var(--bg-panel, #161618);
   border-right: 1px solid var(--border, #333340);
   display: flex;
   flex-direction: column;
   min-height: 0;
+  position: relative;
+}
+
+.resizeHandle {
+  position: absolute;
+  right: -3px;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 10;
+}
+
+.resizeHandle:hover {
+  background: var(--accent, #7c6af5);
+  opacity: 0.4;
 }
 
 .scrollArea {
@@ -80,6 +96,26 @@
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.dragHandle {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted, #606070);
+  cursor: grab;
+  opacity: 0;
+  padding: 2px;
+  border-radius: 3px;
+}
+
+.dragHandle:active {
+  cursor: grabbing;
+}
+
+.row:hover .dragHandle {
+  opacity: 1;
 }
 
 .rowLabel {

@@ -1,3 +1,4 @@
+import logoUrl from '../../assets/logo_monet_vector.svg'
 import styles from './Toolbar.module.css'
 
 export interface ToolbarProps {
@@ -8,6 +9,9 @@ export interface ToolbarProps {
   onTogglePreview: () => void
   aiOpen: boolean
   onToggleAi: () => void
+  notebookWidth?: number
+  focusMode?: boolean
+  onToggleFocus?: () => void
 }
 
 export function Toolbar({
@@ -18,11 +22,17 @@ export function Toolbar({
   onTogglePreview,
   aiOpen,
   onToggleAi,
+  notebookWidth = 180,
+  focusMode = false,
+  onToggleFocus,
 }: ToolbarProps) {
   return (
     <header className={styles.toolbar}>
-      <div className={styles.brandSection}>
-        <span className={styles.brand}>monet</span>
+      <div
+        className={styles.brandSection}
+        style={{ width: focusMode ? 0 : notebookWidth + 220 }}
+      >
+        <img src={logoUrl} alt="monet" className={styles.brand} />
       </div>
       <div className={styles.searchWrap}>
         <svg
@@ -50,6 +60,7 @@ export function Toolbar({
       </div>
       <div className={styles.actions}>
         <button onClick={onExport}>export .md</button>
+        <button onClick={onToggleFocus} aria-pressed={focusMode}>foco</button>
         <button onClick={onTogglePreview} aria-pressed={previewOpen}>preview</button>
         <button onClick={onToggleAi} aria-pressed={aiOpen}>IA</button>
       </div>

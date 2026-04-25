@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { loadNoteOrder, saveNoteOrder, mergeOrder, applyOrder, loadOrder, saveOrder } from './lib/noteOrder'
 import { Toolbar } from './components/Toolbar/Toolbar'
 import { NotebookList } from './components/NotebookList/NotebookList'
 import { Sidebar } from './components/Sidebar/Sidebar'
@@ -77,6 +78,10 @@ function App() {
   const [modelsError, setModelsError] = useState<string | null>(null)
   const [modelId, setModelId] = useState<string | null>(null)
   const [navigateToCard, setNavigateToCard] = useState<{ index: number; ts: number } | null>(null)
+  const [notebookWidth, setNotebookWidth] = useState(180)
+  const [focusMode, setFocusMode] = useState(false)
+  const [noteOrder, setNoteOrder] = useState<string[]>(() => loadNoteOrder())
+  const [notebookOrder, setNotebookOrder] = useState<string[]>(() => loadOrder('monet:notebook-order'))
 
   const { responses, start, addErrorCard, removeResponse } = useAi(activeId)
 
@@ -166,9 +171,14 @@ function App() {
     [notes, activeNotebookId]
   )
 
+  const orderedNotebooks = useMemo(
+    () => applyOrder(notebooks, notebookOrder),
+    [notebooks, notebookOrder]
+  )
+
   const visibleNotes = useMemo(() => {
     const q = search.trim().toLowerCase()
-    return notebookNotes.filter((n) => {
+    const filtered = notebookNotes.filter((n) => {
       if (activeTag && !n.tags.includes(activeTag)) return false
       if (!q) return true
       return (
@@ -177,7 +187,8 @@ function App() {
         n.tags.some((t) => t.toLowerCase().includes(q))
       )
     })
-  }, [notebookNotes, search, activeTag])
+    return applyOrder(filtered, noteOrder)
+  }, [notebookNotes, search, activeTag, noteOrder])
 
   const activeNote = useMemo(
     () => notes.find((n) => n.id === activeId) ?? null,
@@ -195,12 +206,22 @@ function App() {
     const nb = await createNotebook(name)
     setActiveNotebookId(nb.id)
     setActiveId(null)
+    setNotebookOrder((prev) => {
+      const next = [nb.id, ...prev]
+      saveOrder('monet:notebook-order', next)
+      return next
+    })
   }
 
   async function handleCreateNote() {
     if (!activeNotebookId) return
     const note = await createNote(activeNotebookId)
     setActiveId(note.id)
+    setNoteOrder((prev) => {
+      const next = [note.id, ...prev]
+      saveNoteOrder(next)
+      return next
+    })
   }
 
   async function handleDeleteNotebook(id: string) {
@@ -211,12 +232,35 @@ function App() {
       setActiveNotebookId(null)
       setActiveId(null)
     }
+    setNotebookOrder((prev) => {
+      const next = prev.filter((x) => x !== id)
+      saveOrder('monet:notebook-order', next)
+      return next
+    })
   }
 
   async function handleDeleteNote(id: string) {
     await removeNote(id)
     if (activeId === id) setActiveId(null)
+    setNoteOrder((prev) => {
+      const next = prev.filter((x) => x !== id)
+      saveNoteOrder(next)
+      return next
+    })
   }
+
+  const handleNotebookReorder = useCallback((newOrder: string[]) => {
+    setNotebookOrder(newOrder)
+    saveOrder('monet:notebook-order', newOrder)
+  }, [])
+
+  const handleReorder = useCallback((newVisibleOrder: string[]) => {
+    setNoteOrder((prev) => {
+      const next = mergeOrder(prev, newVisibleOrder)
+      saveNoteOrder(next)
+      return next
+    })
+  }, [])
 
   const handleCommand = useCallback(
     async ({ cmd, query }: CommandExecutionRequest) => {
@@ -293,10 +337,13 @@ function App() {
         onTogglePreview={() => setPreviewOpen((v) => !v)}
         aiOpen={aiOpen}
         onToggleAi={() => setAiOpen((v) => !v)}
+        notebookWidth={notebookWidth}
+        focusMode={focusMode}
+        onToggleFocus={() => setFocusMode((v) => !v)}
       />
       <div className="workspace">
-        <NotebookList
-          notebooks={notebooks}
+        {!focusMode && <NotebookList
+          notebooks={orderedNotebooks}
           activeId={activeNotebookId}
           onSelect={(id) => {
             setActiveNotebookId(id)
@@ -309,15 +356,19 @@ function App() {
           activeTag={activeTag}
           onSelectTag={setActiveTag}
           onOpenSettings={() => setSettingsOpen(true)}
-        />
-        <Sidebar
+          width={notebookWidth}
+          onWidthChange={setNotebookWidth}
+          onReorder={handleNotebookReorder}
+        />}
+        {!focusMode && <Sidebar
           notes={visibleNotes}
           activeId={activeId}
           notebookSelected={activeNotebookId !== null}
           onSelect={setActiveId}
           onCreate={handleCreateNote}
           onDelete={handleDeleteNote}
-        />
+          onReorder={handleReorder}
+        />}
         {previewOpen ? (
           <MarkdownPreview
             title={activeNote?.title ?? ''}
@@ -338,6 +389,7 @@ function App() {
         )}
         <AiPanel
           open={aiOpen}
+          noteId={activeId}
           responses={responses}
           hasApiKey={hasApiKey}
           apiKeyChecked={apiKeyChecked}

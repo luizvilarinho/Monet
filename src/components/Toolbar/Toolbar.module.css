@@ -8,17 +8,16 @@
 }
 
 .brandSection {
-  width: 400px; /* NotebookList (180px) + Sidebar (220px) */
   padding-left: 16px;
   box-sizing: border-box;
   flex-shrink: 0;
+  overflow: hidden;
 }
 
 .brand {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
-  color: var(--accent, #7c6af5);
-  font-size: 13px;
-  letter-spacing: 0.5px;
+  height: 20px;
+  width: auto;
+  display: block;
 }
 
 .searchWrap {

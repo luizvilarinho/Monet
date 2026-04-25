@@ -404,6 +404,14 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(RequestRegistry(Mutex::new(HashMap::new())))
+        .setup(|app| {
+            if let Some(window) = app.get_webview_window("main") {
+                if let Some(icon) = app.default_window_icon() {
+                    let _ = window.set_icon(icon.clone());
+                }
+            }
+            Ok(())
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_sql::Builder::default()

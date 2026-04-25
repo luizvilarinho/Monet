@@ -1,6 +1,133 @@
-import { useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+  arrayMove,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import type { Notebook } from '../../types'
 import styles from './NotebookList.module.css'
+
+const MIN_WIDTH = 140
+const MAX_WIDTH = 320
+
+const GripIcon = () => (
+  <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true">
+    <circle cx="5" cy="4" r="1.2" />
+    <circle cx="5" cy="8" r="1.2" />
+    <circle cx="5" cy="12" r="1.2" />
+    <circle cx="11" cy="4" r="1.2" />
+    <circle cx="11" cy="8" r="1.2" />
+    <circle cx="11" cy="12" r="1.2" />
+  </svg>
+)
+
+interface SortableNotebookItemProps {
+  nb: Notebook
+  isActive: boolean
+  editing: { id: string; value: string } | null
+  onSelect: (id: string) => void
+  onDelete: (id: string) => void
+  onStartEdit: (id: string, value: string) => void
+  onCommitEdit: () => void
+  onCancelEdit: () => void
+  onEditChange: (id: string, value: string) => void
+  inputRef: React.RefObject<HTMLInputElement | null>
+}
+
+function SortableNotebookItem({
+  nb,
+  isActive,
+  editing,
+  onSelect,
+  onDelete,
+  onStartEdit,
+  onCommitEdit,
+  onCancelEdit,
+  onEditChange,
+  inputRef,
+}: SortableNotebookItemProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: nb.id,
+  })
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : undefined,
+  }
+
+  return (
+    <li
+      ref={setNodeRef}
+      style={style}
+      className={`${styles.row} ${isActive ? styles.active : ''}`}
+      onClick={() => {
+        if (editing?.id === nb.id) return
+        onSelect(nb.id)
+      }}
+      onDoubleClick={(e) => {
+        if ((e.target as HTMLElement).closest('button')) return
+        onStartEdit(nb.id, nb.name)
+      }}
+    >
+      {editing?.id !== nb.id && (
+        <span
+          className={styles.dragHandle}
+          {...attributes}
+          {...listeners}
+          onClick={(e) => e.stopPropagation()}
+          aria-label="arrastar para reordenar"
+        >
+          <GripIcon />
+        </span>
+      )}
+      {editing?.id === nb.id ? (
+        <input
+          autoFocus
+          ref={inputRef}
+          className={styles.renameInput}
+          value={editing.value}
+          onChange={(e) => onEditChange(nb.id, e.target.value)}
+          onBlur={onCommitEdit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') onCommitEdit()
+            if (e.key === 'Escape') onCancelEdit()
+            e.stopPropagation()
+          }}
+          onClick={(e) => e.stopPropagation()}
+        />
+      ) : (
+        <span className={styles.rowLabel}>{nb.name || 'sem nome'}</span>
+      )}
+      {editing?.id !== nb.id && (
+        <button
+          className={styles.rowDelete}
+          onClick={(e) => {
+            e.stopPropagation()
+            if (window.confirm(`apagar o caderno "${nb.name}" e todas as anotações dele?`)) {
+              onDelete(nb.id)
+            }
+          }}
+          onDoubleClick={(e) => e.stopPropagation()}
+          aria-label={`apagar caderno ${nb.name}`}
+          type="button"
+        >
+          ×
+        </button>
+      )}
+    </li>
+  )
+}
 
 export interface NotebookListProps {
   notebooks: Notebook[]
@@ -13,6 +140,9 @@ export interface NotebookListProps {
   activeTag: string | null
   onSelectTag: (tag: string | null) => void
   onOpenSettings: () => void
+  width?: number
+  onWidthChange?: (w: number) => void
+  onReorder?: (newOrder: string[]) => void
 }
 
 export function NotebookList({
@@ -26,9 +156,49 @@ export function NotebookList({
   activeTag,
   onSelectTag,
   onOpenSettings,
+  width = 180,
+  onWidthChange,
+  onReorder,
 }: NotebookListProps) {
   const [editing, setEditing] = useState<{ id: string; value: string } | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const dragging = useRef(false)
+  const startX = useRef(0)
+  const startWidth = useRef(0)
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
+  )
+
+  const onMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    dragging.current = true
+    startX.current = e.clientX
+    startWidth.current = width
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }, [width])
+
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      if (!dragging.current) return
+      const delta = e.clientX - startX.current
+      const next = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startWidth.current + delta))
+      onWidthChange?.(next)
+    }
+    const onMouseUp = () => {
+      if (!dragging.current) return
+      dragging.current = false
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+    return () => {
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [onWidthChange])
 
   function commitEdit() {
     if (!editing) return
@@ -37,8 +207,18 @@ export function NotebookList({
     setEditing(null)
   }
 
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const oldIndex = notebooks.findIndex((n) => n.id === active.id)
+    const newIndex = notebooks.findIndex((n) => n.id === over.id)
+    const reordered = arrayMove(notebooks, oldIndex, newIndex)
+    onReorder?.(reordered.map((n) => n.id))
+  }
+
   return (
-    <aside className={styles.notebooks}>
+    <aside className={styles.notebooks} style={{ width }}>
+      <div className={styles.resizeHandle} onMouseDown={onMouseDown} />
       <div className={styles.scrollArea}>
         <section className={styles.section}>
           <div className={styles.header}>cadernos</div>
@@ -56,57 +236,25 @@ export function NotebookList({
             {notebooks.length === 0 ? (
               <li className={styles.empty}>nenhum caderno</li>
             ) : (
-              notebooks.map((nb) => (
-                <li
-                  key={nb.id}
-                  className={`${styles.row} ${nb.id === activeId ? styles.active : ''}`}
-                  onClick={() => {
-                    if (editing?.id === nb.id) return
-                    onSelect(nb.id)
-                  }}
-                  onDoubleClick={(e) => {
-                    if ((e.target as HTMLElement).closest('button')) return
-                    setEditing({ id: nb.id, value: nb.name })
-                  }}
-                >
-                  {editing?.id === nb.id ? (
-                    <input
-                      autoFocus
-                      ref={inputRef}
-                      className={styles.renameInput}
-                      value={editing.value}
-                      onChange={(e) => setEditing({ id: nb.id, value: e.target.value })}
-                      onBlur={commitEdit}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') commitEdit()
-                        if (e.key === 'Escape') setEditing(null)
-                        e.stopPropagation()
-                      }}
-                      onClick={(e) => e.stopPropagation()}
+              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                <SortableContext items={notebooks.map((n) => n.id)} strategy={verticalListSortingStrategy}>
+                  {notebooks.map((nb) => (
+                    <SortableNotebookItem
+                      key={nb.id}
+                      nb={nb}
+                      isActive={nb.id === activeId}
+                      editing={editing}
+                      onSelect={onSelect}
+                      onDelete={onDelete}
+                      onStartEdit={(id, value) => setEditing({ id, value })}
+                      onCommitEdit={commitEdit}
+                      onCancelEdit={() => setEditing(null)}
+                      onEditChange={(id, value) => setEditing({ id, value })}
+                      inputRef={inputRef}
                     />
-                  ) : (
-                    <span className={styles.rowLabel}>
-                      {nb.name || 'sem nome'}
-                    </span>
-                  )}
-                  {editing?.id !== nb.id && (
-                    <button
-                      className={styles.rowDelete}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        if (window.confirm(`apagar o caderno "${nb.name}" e todas as anotações dele?`)) {
-                          onDelete(nb.id)
-                        }
-                      }}
-                      onDoubleClick={(e) => e.stopPropagation()}
-                      aria-label={`apagar caderno ${nb.name}`}
-                      type="button"
-                    >
-                      ×
-                    </button>
-                  )}
-                </li>
-              ))
+                  ))}
+                </SortableContext>
+              </DndContext>
             )}
           </ul>
         </section>
