@@ -14,6 +14,7 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import type { Note } from '../../types'
+import { useConfirm } from '../../hooks/useConfirm'
 import styles from './Sidebar.module.css'
 
 interface SortableNoteItemProps {
@@ -60,12 +61,7 @@ function SortableNoteItem({ note, isActive, onSelect, onDelete }: SortableNoteIt
       <span className={styles.rowLabel}>{note.title || 'sem título'}</span>
       <button
         className={styles.rowDelete}
-        onClick={(e) => {
-          e.stopPropagation()
-          if (window.confirm(`apagar a anotação "${note.title || 'sem título'}"?`)) {
-            onDelete(note.id)
-          }
-        }}
+        onClick={(e) => { e.stopPropagation(); onDelete(note.id) }}
         aria-label={`apagar anotação ${note.title || 'sem título'}`}
         type="button"
       >
@@ -97,6 +93,15 @@ export function Sidebar({
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
   )
+  const { confirm, modal } = useConfirm()
+
+  async function handleDeleteNote(id: string, title: string) {
+    const ok = await confirm(
+      `Apagar a anotação "${title || 'sem título'}"?`,
+      { title: 'Apagar anotação' }
+    )
+    if (ok) onDelete(id)
+  }
 
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event
@@ -109,14 +114,22 @@ export function Sidebar({
 
   return (
     <aside className={styles.sidebar}>
-      <div className={styles.header}>anotações</div>
-      <button
-        className={styles.newNote}
-        onClick={onCreate}
-        disabled={!notebookSelected}
-      >
-        + nova anotação
-      </button>
+      {modal}
+      <div className={styles.header}>
+        <span>anotações</span>
+        <button
+          className={styles.headerAdd}
+          onClick={onCreate}
+          disabled={!notebookSelected}
+          aria-label="nova anotação"
+          type="button"
+        >
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
+            <line x1="8" y1="3" x2="8" y2="13" />
+            <line x1="3" y1="8" x2="13" y2="8" />
+          </svg>
+        </button>
+      </div>
       <ul className={styles.list}>
         {notes.length === 0 ? (
           <li className={styles.empty}>nenhuma anotação</li>
@@ -129,7 +142,7 @@ export function Sidebar({
                   note={n}
                   isActive={n.id === activeId}
                   onSelect={onSelect}
-                  onDelete={onDelete}
+                  onDelete={(id) => handleDeleteNote(id, n.title)}
                 />
               ))}
             </SortableContext>

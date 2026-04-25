@@ -15,6 +15,7 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import type { Notebook } from '../../types'
+import { useConfirm } from '../../hooks/useConfirm'
 import styles from './NotebookList.module.css'
 
 const MIN_WIDTH = 140
@@ -112,12 +113,7 @@ function SortableNotebookItem({
       {editing?.id !== nb.id && (
         <button
           className={styles.rowDelete}
-          onClick={(e) => {
-            e.stopPropagation()
-            if (window.confirm(`apagar o caderno "${nb.name}" e todas as anotações dele?`)) {
-              onDelete(nb.id)
-            }
-          }}
+          onClick={(e) => { e.stopPropagation(); onDelete(nb.id) }}
           onDoubleClick={(e) => e.stopPropagation()}
           aria-label={`apagar caderno ${nb.name}`}
           type="button"
@@ -162,6 +158,7 @@ export function NotebookList({
 }: NotebookListProps) {
   const [editing, setEditing] = useState<{ id: string; value: string } | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const { confirm, modal } = useConfirm()
   const dragging = useRef(false)
   const startX = useRef(0)
   const startWidth = useRef(0)
@@ -200,6 +197,14 @@ export function NotebookList({
     }
   }, [onWidthChange])
 
+  async function handleDeleteNotebook(id: string, name: string) {
+    const ok = await confirm(
+      `Apagar o caderno "${name}" e todas as anotações dele?`,
+      { title: 'Apagar caderno' }
+    )
+    if (ok) onDelete(id)
+  }
+
   function commitEdit() {
     if (!editing) return
     const name = editing.value.trim()
@@ -218,13 +223,19 @@ export function NotebookList({
 
   return (
     <aside className={styles.notebooks} style={{ width }}>
+      {modal}
       <div className={styles.resizeHandle} onMouseDown={onMouseDown} />
       <div className={styles.scrollArea}>
         <section className={styles.section}>
-          <div className={styles.header}>cadernos</div>
-          <button className={styles.newNotebook} onClick={onCreate}>
-            + novo caderno
-          </button>
+          <div className={styles.header}>
+            <span>cadernos</span>
+            <button className={styles.headerAdd} onClick={onCreate} aria-label="novo caderno" type="button">
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
+                <line x1="8" y1="3" x2="8" y2="13" />
+                <line x1="3" y1="8" x2="13" y2="8" />
+              </svg>
+            </button>
+          </div>
           <ul className={styles.list}>
             <li
               className={`${styles.row} ${activeId === null ? styles.active : ''}`}
@@ -245,7 +256,7 @@ export function NotebookList({
                       isActive={nb.id === activeId}
                       editing={editing}
                       onSelect={onSelect}
-                      onDelete={onDelete}
+                      onDelete={(id) => handleDeleteNotebook(id, nb.name)}
                       onStartEdit={(id, value) => setEditing({ id, value })}
                       onCommitEdit={commitEdit}
                       onCancelEdit={() => setEditing(null)}

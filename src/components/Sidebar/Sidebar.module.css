@@ -14,25 +14,30 @@
   text-transform: uppercase;
   color: var(--text-muted, #606070);
   padding: 0 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
-.newNote {
+.headerAdd {
   background: transparent;
-  border: 1px solid var(--border, #333340);
-  color: var(--text-secondary, #a0a0b8);
-  padding: 8px 12px;
-  border-radius: 6px;
+  border: none;
+  color: var(--text-muted, #606070);
+  padding: 2px 4px;
+  border-radius: 4px;
   cursor: pointer;
-  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
 }
 
-.newNote:hover:not(:disabled) {
+.headerAdd:hover:not(:disabled) {
   color: var(--accent, #7c6af5);
-  border-color: var(--accent, #7c6af5);
 }
 
-.newNote:disabled {
-  opacity: 0.4;
+.headerAdd:disabled {
+  opacity: 0.3;
   cursor: not-allowed;
 }
 

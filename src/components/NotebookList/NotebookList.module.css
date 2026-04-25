@@ -44,27 +44,32 @@
   text-transform: uppercase;
   color: var(--text-muted, #606070);
   padding: 0 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.headerAdd {
+  background: transparent;
+  border: none;
+  color: var(--text-muted, #606070);
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.headerAdd:hover {
+  color: var(--accent, #7c6af5);
 }
 
 .divider {
   border: none;
   border-top: 1px solid var(--border, #333340);
   margin: 0;
-}
-
-.newNotebook {
-  background: transparent;
-  border: 1px solid var(--border, #333340);
-  color: var(--text-secondary, #a0a0b8);
-  padding: 8px 12px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 13px;
-}
-
-.newNotebook:hover {
-  color: var(--accent, #7c6af5);
-  border-color: var(--accent, #7c6af5);
 }
 
 .list {
