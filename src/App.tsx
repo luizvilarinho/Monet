@@ -5,6 +5,7 @@ import { NotebookList } from './components/NotebookList/NotebookList'
 import { Sidebar } from './components/Sidebar/Sidebar'
 import { Editor } from './components/Editor/Editor'
 import { MarkdownPreview } from './components/Editor/MarkdownPreview'
+import { EmptyEditor } from './components/Editor/EmptyEditor'
 import { AiPanel } from './components/AiPanel/AiPanel'
 import { SettingsModal } from './components/Settings/SettingsModal'
 import { useNotebooks } from './hooks/useNotebooks'
@@ -24,8 +25,24 @@ import { findCommand } from './lib/commands'
 import type { AiModel, CommandExecutionRequest, Note } from './types'
 import './App.css'
 
-const SYSTEM_PROMPT =
-  'Voce e a assistente do Monet, um app de notas para estudo ativo. Responda em portugues, de forma clara e objetiva, usando markdown curto.'
+const SYSTEM_PROMPT = `Você é o assistente de estudo do Monet — um app de notas para estudo ativo.
+Sua função é converter a entrada do usuário em conhecimento reutilizável e de fácil revisão.
+
+Regras de comportamento:
+1. SEMPRE responda em português do Brasil.
+2. SEMPRE use Markdown válido e enxuto.
+3. NUNCA use cumprimentos, despedidas ou frases de enchimento ("Claro!", "Com certeza!", "Aqui está..."). Vá direto ao conteúdo.
+4. Priorize o CONTEÚDO DA NOTA ATUAL (fornecido na mensagem do usuário) em vez de conhecimento genérico da internet, salvo quando o comando exigir informação externa (/pesquisa, /quem).
+
+Tamanho esperado por tipo de resposta:
+- /definir: 1 a 3 frases, conceito + exemplo breve se relevante.
+- /resumir: lista com bullets (•) ou (-). Cada ideia em 1 linha. Foque nos pontos principais, não nos detalhes.
+- /tabela: tabela Markdown com cabeçalho e separador. Seja comparativa e simétrica.
+- /opiniao: estruture em argumentos pró e contras (quando aplicável), com conclusão direta.
+- /pesquisa /quem: fato objetivo. Se não houver resultados concretos, diga "Não encontrei informações suficientes" em vez de inventar.
+- /AI (expandir): enriqueça as anotações com contexto histórico, conexões entre conceitos e detalhes que o usuário pode ter omitido. Mantenha o estilo das notas originais.
+
+Tom: didático, objetivo, como um tutor particular que respeita o tempo do aluno.`
 
 function stripCommandLines(content: string): string {
   return content
@@ -376,25 +393,30 @@ function App() {
           onDelete={handleDeleteNote}
           onReorder={handleReorder}
         />}
-        {previewOpen ? (
+        {previewOpen && activeNote ? (
           <MarkdownPreview
-            title={activeNote?.title ?? ''}
-            tags={activeNote?.tags ?? []}
-            content={activeNote?.content ?? ''}
+            title={activeNote.title}
+            tags={activeNote.tags}
+            content={activeNote.content}
           />
-        ) : (
+        ) : activeNote ? (
           <Editor
             executedCommandIds={executedCommandIds}
-            title={activeNote?.title ?? ''}
+            title={activeNote.title}
             onTitleChange={(title) => updateActive({ title })}
-            tags={activeNote?.tags ?? []}
+            tags={activeNote.tags}
             onTagsChange={(tags) => updateActive({ tags })}
-            value={activeNote?.content ?? ''}
+            value={activeNote.content}
             onChange={(content) => updateActive({ content })}
             onCommand={handleCommand}
             onNavigateToCard={(index) => setNavigateToCard({ index, ts: Date.now() })}
             onDeleteCommand={(id) => removeResponse(id)}
             commandLineToRemove={commandLineToRemove}
+          />
+        ) : (
+          <EmptyEditor
+            hasNotebook={activeNotebookId !== null}
+            onCreate={handleCreateNote}
           />
         )}
         <AiPanel

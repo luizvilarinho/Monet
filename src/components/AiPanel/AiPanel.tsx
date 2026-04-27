@@ -1,24 +1,24 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  DndContext,
   closestCenter,
+  DndContext,
   PointerSensor,
   useSensor,
   useSensors,
   type DragEndEvent,
 } from '@dnd-kit/core'
 import {
-  SortableContext,
-  verticalListSortingStrategy,
-  useSortable,
   arrayMove,
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import type { AiModel, AiResponse } from '../../types'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { loadOrder, saveOrder } from '../../lib/noteOrder'
+import type { AiModel, AiResponse } from '../../types'
 import { AiCard } from './AiCard'
-import { ModelSelector } from './ModelSelector'
 import styles from './AiPanel.module.css'
+import { ModelSelector } from './ModelSelector'
 
 const MIN_WIDTH = 300
 const MAX_WIDTH = 720
@@ -209,7 +209,7 @@ export function AiPanel({
     <aside className={styles.panel} style={{ width }}>
       <div className={styles.resizeHandle} onMouseDown={onMouseDown} />
       <header className={styles.header}>
-        <span className={styles.title}>ia</span>
+        <span className={styles.title}>IA</span>
         <ModelSelector
           hasApiKey={hasApiKey}
           apiKeyChecked={apiKeyChecked}
