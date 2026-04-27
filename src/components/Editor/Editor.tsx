@@ -17,12 +17,7 @@ import {
   placeholder,
   type DecorationSet,
 } from '@codemirror/view'
-import {
-  useEffect,
-  useRef,
-  useState,
-  type KeyboardEvent as ReactKeyboardEvent,
-} from 'react'
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { nanoid } from 'nanoid'
 import styles from './Editor.module.css'
 import {
@@ -30,13 +25,18 @@ import {
   extractCommandId,
   getCommandLineStatus,
   getCommandSuggestions,
+  getEmbeddedCommandIds,
+  getToggleTitle,
+  insertEmbeddedBlock,
   isPotentialCommandLine,
   parseCommandLine,
+  removeEmbeddedBlock,
   type CommandLineStatus,
 } from './commandParser'
 import { detectActiveFormats, type ActiveFormat } from './formatting'
 import { FormattingToolbar } from './FormattingToolbar'
-import type { CommandExecutionRequest } from '../../types'
+import type { AiResponse, CommandExecutionRequest } from '../../types'
+import { renderMarkdown } from '../../lib/markdown'
 
 export interface EditorProps {
   title: string
@@ -50,6 +50,7 @@ export interface EditorProps {
   onDeleteCommand?: (commandId: string) => void
   executedCommandIds?: Set<string>
   commandLineToRemove?: { id: string; ts: number } | null
+  responses?: AiResponse[]
 }
 
 const commandStatusTheme = EditorView.baseTheme({
@@ -113,17 +114,43 @@ const commandStatusTheme = EditorView.baseTheme({
     paddingLeft: '10px',
   },
   '.cm-cmdDelete': {
-    position: 'absolute',
-    right: '32px',
-    top: '0',
     fontSize: '15px',
     color: 'var(--text-muted, #606070)',
     cursor: 'pointer',
     opacity: '0.5',
     lineHeight: 'inherit',
     userSelect: 'none',
+    padding: '0 2px',
   },
   '.cm-cmdDelete:hover': {
+    color: '#ff6b6b',
+    opacity: '1',
+  },
+  '.cm-cmdInsert': {
+    fontSize: '11px',
+    color: 'var(--accent-ai, #5dcaa5)',
+    cursor: 'pointer',
+    opacity: '0.7',
+    lineHeight: 'inherit',
+    userSelect: 'none',
+    padding: '0 4px',
+    fontFamily: 'system-ui, sans-serif',
+  },
+  '.cm-cmdInsert:hover': {
+    opacity: '1',
+    textDecoration: 'underline',
+  },
+  '.cm-cmdRemove': {
+    fontSize: '11px',
+    color: 'var(--text-muted, #606070)',
+    cursor: 'pointer',
+    opacity: '0.7',
+    lineHeight: 'inherit',
+    userSelect: 'none',
+    padding: '0 4px',
+    fontFamily: 'system-ui, sans-serif',
+  },
+  '.cm-cmdRemove:hover': {
     color: '#ff6b6b',
     opacity: '1',
   },
@@ -152,6 +179,132 @@ const commandStatusTheme = EditorView.baseTheme({
   '.cm-todo-done-line': {
     color: 'var(--text-muted, #606070)',
     textDecoration: 'line-through',
+  },
+  '.cm-embedToggle': {
+    background: 'var(--surface-1, #1e1e22)',
+    border: '1px solid var(--border, #333340)',
+    borderRadius: '6px',
+    margin: '4px 0 4px 10px',
+    overflow: 'hidden',
+    position: 'relative',
+    display: 'block',
+    whiteSpace: 'normal',
+  },
+  '.cm-embedToggleHeader': {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '6px 10px',
+    cursor: 'pointer',
+    fontSize: '13px',
+    color: 'var(--text-secondary, #a0a0b8)',
+    userSelect: 'none',
+  },
+  '.cm-embedToggleHeader:hover': {
+    background: 'var(--surface-2, #26262c)',
+  },
+  '.cm-embedToggleChevron': {
+    fontSize: '12px',
+    color: 'var(--text-muted, #606070)',
+    transition: 'transform 0.15s ease',
+    display: 'inline-block',
+  },
+  '.cm-embedToggleChevronOpen': {
+    transform: 'rotate(90deg)',
+  },
+  '.cm-embedToggleBody': {
+    padding: '0 10px 8px 28px',
+    fontSize: '13px',
+    lineHeight: '1.55',
+    fontFamily: 'system-ui, -apple-system, sans-serif',
+    color: 'var(--text-primary, #e8e8f0)',
+  },
+  '.cm-embedToggleBody p': { margin: '0.4em 0' },
+  '.cm-embedToggleBody p:first-child': { marginTop: 0 },
+  '.cm-embedToggleBody p:last-child': { marginBottom: 0 },
+  '.cm-embedToggleBody h1, .cm-embedToggleBody h2, .cm-embedToggleBody h3': {
+    fontWeight: 600,
+    color: 'var(--text-primary, #e8e8f0)',
+    lineHeight: '1.3',
+    margin: '0.8em 0 0.3em',
+  },
+  '.cm-embedToggleBody h1': { fontSize: '1.2em' },
+  '.cm-embedToggleBody h2': { fontSize: '1.1em' },
+  '.cm-embedToggleBody h3': { fontSize: '1em' },
+  '.cm-embedToggleBody strong': { fontWeight: 700 },
+  '.cm-embedToggleBody em': { fontStyle: 'italic', color: 'var(--text-secondary, #a0a0b8)' },
+  '.cm-embedToggleBody del': { color: 'var(--text-muted, #606070)', textDecoration: 'line-through' },
+  '.cm-embedToggleBody code': {
+    fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+    fontSize: '0.85em',
+    background: 'var(--surface-2, #26262c)',
+    borderRadius: '3px',
+    padding: '0.1em 0.35em',
+    color: 'var(--accent-ai, #5dcaa5)',
+  },
+  '.cm-embedToggleBody pre': {
+    background: 'var(--surface-2, #26262c)',
+    borderRadius: '6px',
+    padding: '10px 12px',
+    overflowX: 'auto',
+    margin: '0.5em 0',
+  },
+  '.cm-embedToggleBody pre code': {
+    background: 'none',
+    padding: 0,
+    fontSize: '12px',
+    color: 'var(--text-primary, #e8e8f0)',
+  },
+  '.cm-embedToggleBody blockquote': {
+    margin: '0.5em 0',
+    padding: '0.3em 0.8em',
+    borderLeft: '2px solid var(--accent-ai, #5dcaa5)',
+    color: 'var(--text-secondary, #a0a0b8)',
+  },
+  '.cm-embedToggleBody blockquote p': { margin: '0' },
+  '.cm-embedToggleBody ul, .cm-embedToggleBody ol': {
+    margin: '0.3em 0',
+    paddingLeft: '1.4em',
+  },
+  '.cm-embedToggleBody li': { margin: '0.15em 0' },
+  '.cm-embedToggleBody li p': { margin: '0' },
+  '.cm-embedToggleBody a': { color: 'var(--accent, #7c6af5)', textDecoration: 'none' },
+  '.cm-embedToggleBody a:hover': { textDecoration: 'underline' },
+  '.cm-embedToggleBody hr': {
+    border: 'none',
+    borderTop: '1px solid var(--border, #333340)',
+    margin: '0.8em 0',
+  },
+  '.cm-embedToggleBody table': {
+    width: '100%',
+    borderCollapse: 'collapse',
+    margin: '0.5em 0',
+    fontSize: '12px',
+  },
+  '.cm-embedToggleBody th, .cm-embedToggleBody td': {
+    border: '1px solid var(--border, #333340)',
+    padding: '4px 8px',
+    textAlign: 'left',
+  },
+  '.cm-embedToggleBody th': {
+    background: 'var(--surface-2, #26262c)',
+    fontWeight: 600,
+  },
+  '.cm-cmdActionContainer': {
+    position: 'absolute',
+    right: '32px',
+    top: '0',
+    display: 'flex',
+    gap: '8px',
+    alignItems: 'center',
+  },
+  '.cm-embedLoading': {
+    fontStyle: 'italic',
+    color: 'var(--text-muted, #606070)',
+  },
+  '.cm-embedError': {
+    fontStyle: 'italic',
+    color: 'var(--text-muted, #606070)',
   },
 })
 
@@ -190,7 +343,6 @@ function buildTodoDecorations(state: EditorState): DecorationSet {
     if (checked) {
       builder.add(line.from, line.from, Decoration.line({ class: 'cm-todo-done-line' }))
     }
-    // replace the [ ] or [x] chars (positions 2-4 in line)
     builder.add(
       line.from + 2,
       line.from + 5,
@@ -209,58 +361,269 @@ const todoDecorationsField = StateField.define<DecorationSet>({
 const MARKER_RE = / <!--monet:[a-zA-Z0-9_-]+-->/g
 const MARKER_ID_RE = /<!--monet:([a-zA-Z0-9_-]+)-->/
 
+const EMBED_START_RE = /<!--monet-embed:([a-zA-Z0-9_-]+)-->/
+
+// ── Toggle block (embedded AI response) ──────────────────
+
+const embedRenderCache = new Map<string, string>()
+
+const toggleOpenEffect = StateEffect.define<{ commandId: string; open: boolean }>()
+
+const toggleOpenState = StateField.define<Map<string, boolean>>({
+  create: () => new Map(),
+  update: (value, tr) => {
+    let next = value
+    for (const effect of tr.effects) {
+      if (effect.is(toggleOpenEffect)) {
+        if (next === value) next = new Map(value)
+        next.set(effect.value.commandId, effect.value.open)
+      }
+    }
+    return next
+  },
+})
+
+class ToggleBlockWidget extends WidgetType {
+  constructor(
+    readonly commandId: string,
+    readonly title: string,
+    readonly body: string,
+    readonly open: boolean,
+    readonly getView: () => EditorView | null
+  ) { super() }
+
+  eq(other: WidgetType) {
+    return other instanceof ToggleBlockWidget &&
+      this.commandId === other.commandId &&
+      this.title === other.title &&
+      this.body === other.body &&
+      this.open === other.open
+  }
+
+  toDOM(): HTMLElement {
+    const wrapper = document.createElement('div')
+    wrapper.className = 'cm-embedToggle'
+
+    const header = document.createElement('div')
+    header.className = 'cm-embedToggleHeader'
+
+    const chevron = document.createElement('span')
+    chevron.className = `cm-embedToggleChevron${this.open ? ' cm-embedToggleChevronOpen' : ''}`
+    chevron.textContent = '›'
+    chevron.setAttribute('aria-hidden', 'true')
+
+    const title = document.createElement('span')
+    title.textContent = this.title
+
+    header.appendChild(chevron)
+    header.appendChild(title)
+
+    header.addEventListener('click', () => {
+      const view = this.getView()
+      if (view) {
+        view.dispatch({ effects: toggleOpenEffect.of({ commandId: this.commandId, open: !this.open }) })
+      }
+    })
+
+    wrapper.appendChild(header)
+
+    if (this.open) {
+      const bodyDiv = document.createElement('div')
+      bodyDiv.className = 'cm-embedToggleBody'
+      const cached = embedRenderCache.get(this.body)
+      if (cached !== undefined) {
+        bodyDiv.innerHTML = cached
+      } else {
+        bodyDiv.innerHTML = '<em class="cm-embedLoading">carregando...</em>'
+        renderMarkdown(this.body).then((html) => {
+          embedRenderCache.set(this.body, html)
+          bodyDiv.innerHTML = html
+        }).catch(() => {
+          bodyDiv.innerHTML = '<em class="cm-embedError">erro ao renderizar</em>'
+        })
+      }
+      wrapper.appendChild(bodyDiv)
+    }
+
+    return wrapper
+  }
+
+  ignoreEvent() { return false }
+}
+
+interface EmbedSpec {
+  from: number
+  to: number
+  deco: Decoration
+}
+
+function buildEmbedDecorations(
+  state: EditorState,
+  openMap: Map<string, boolean>,
+  getView: () => EditorView | null
+): DecorationSet {
+  const text = state.doc.toString()
+  const specs: EmbedSpec[] = []
+
+  // 1. Ocultar os blocos embed no texto (invisíveis, não-editáveis)
+  const startRe = new RegExp(EMBED_START_RE.source, 'g')
+  let startMatch: RegExpExecArray | null
+  while ((startMatch = startRe.exec(text)) !== null) {
+    const cmdId = startMatch[1]
+    const endMarker = `<!--monet-embed-end:${cmdId}-->`
+    const endIdx = text.indexOf(endMarker, startMatch.index + startMatch[0].length)
+    if (endIdx === -1) continue
+    specs.push({
+      from: startMatch.index,
+      to: endIdx + endMarker.length,
+      deco: Decoration.replace({}),
+    })
+  }
+
+  // 2. Inserir widgets externos abaixo da linha de comando correspondente
+  for (let i = 1; i <= state.doc.lines; i++) {
+    const line = state.doc.line(i)
+    const cmdId = extractCommandId(line.text)
+    if (!cmdId) continue
+
+    const blockStart = text.indexOf(`<!--monet-embed:${cmdId}-->`)
+    if (blockStart === -1) continue
+    const blockEndMarker = `<!--monet-embed-end:${cmdId}-->`
+    const blockEnd = text.indexOf(blockEndMarker, blockStart)
+    if (blockEnd === -1) continue
+
+    const content = text.slice(blockStart + `<!--monet-embed:${cmdId}-->`.length, blockEnd)
+    const lines = content.split('\n')
+    const bodyLines = lines.map((l) => l.replace(/^> /, ''))
+    const bodyText = bodyLines.join('\n').trim()
+    const titleMatch = bodyText.match(/^\*\*([^*]+)\*\*/)
+    const title = titleMatch ? titleMatch[1] : 'Resposta gerada pela IA'
+    const body = bodyText.replace(/^\*\*[^*]+\*\*\n\n?/, '')
+    const isOpen = openMap.get(cmdId) ?? false
+
+    specs.push({
+      from: line.to,
+      to: line.to,
+      deco: Decoration.widget({
+        widget: new ToggleBlockWidget(cmdId, title, body, isOpen, getView),
+        block: true,
+        side: 1,
+      }),
+    })
+  }
+
+  // Sort by from position; widget side=1 must come after replace at same position
+  specs.sort((a, b) => {
+    if (a.from !== b.from) return a.from - b.from
+    const aSide = (a.deco as any).startSide ?? 0
+    const bSide = (b.deco as any).startSide ?? 0
+    return aSide - bSide
+  })
+
+  const builder = new RangeSetBuilder<Decoration>()
+  for (const s of specs) {
+    builder.add(s.from, s.to, s.deco)
+  }
+  return builder.finish()
+}
+
+// ── Command markers (delete + insert/remove buttons) ─────
+
 function createMarkerDecorations(
   getView: () => EditorView | null,
-  getOnDelete: () => ((id: string) => void) | undefined
+  getOnDelete: () => ((id: string) => void) | undefined,
+  getOnInsert: () => ((id: string) => void) | undefined,
+  getOnRemove: () => ((id: string) => void) | undefined,
+  getCompletedIds: () => Set<string>,
 ): StateField<DecorationSet> {
 
-  class DeleteWidget extends WidgetType {
-    constructor(readonly commandId: string) { super() }
+  class CommandActionsWidget extends WidgetType {
+    constructor(readonly commandId: string, readonly hasEmbed: boolean, readonly canInsert: boolean) { super() }
 
     toDOM() {
-      const span = document.createElement('span')
-      span.className = 'cm-cmdDelete'
-      span.textContent = '×'
-      span.title = 'apagar comando e resposta'
-      span.addEventListener('mousedown', (e) => {
+      const container = document.createElement('span')
+      container.className = 'cm-cmdActionContainer'
+
+      if (this.hasEmbed) {
+        const removeBtn = document.createElement('span')
+        removeBtn.className = 'cm-cmdRemove'
+        removeBtn.textContent = '↑ remover'
+        removeBtn.title = 'remover bloco da nota'
+        removeBtn.addEventListener('click', (e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          getOnRemove()?.(this.commandId)
+        })
+        container.appendChild(removeBtn)
+      } else if (this.canInsert) {
+        const insertBtn = document.createElement('span')
+        insertBtn.className = 'cm-cmdInsert'
+        insertBtn.textContent = '↓ inserir'
+        insertBtn.title = 'inserir resposta na nota'
+        insertBtn.addEventListener('click', (e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          getOnInsert()?.(this.commandId)
+        })
+        container.appendChild(insertBtn)
+      }
+
+      const deleteBtn = document.createElement('span')
+      deleteBtn.className = 'cm-cmdDelete'
+      deleteBtn.textContent = '×'
+      deleteBtn.title = 'apagar comando e resposta'
+      deleteBtn.addEventListener('mousedown', (e) => {
         e.preventDefault()
         e.stopPropagation()
       })
-      span.addEventListener('click', (e) => {
+      deleteBtn.addEventListener('click', (e) => {
         e.preventDefault()
         e.stopPropagation()
         const view = getView()
         if (view) {
-          const doc = view.state.doc
-          for (let i = 1; i <= doc.lines; i++) {
-            const line = doc.line(i)
-            if (line.text.includes(`<!--monet:${this.commandId}-->`)) {
-              const from = line.from > 0 ? line.from - 1 : line.from
-              view.dispatch({ changes: { from, to: line.to } })
+          let newText = view.state.doc.toString()
+          // Remove embed block first
+          newText = removeEmbeddedBlock(newText, this.commandId)
+          // Remove command line
+          const lines = newText.split('\n')
+          for (let i = 0; i < lines.length; i++) {
+            if (lines[i].includes(`<!--monet:${this.commandId}-->`)) {
+              lines.splice(i, 1)
               break
             }
           }
+          newText = lines.join('\n')
+          view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: newText } })
         }
         getOnDelete()?.(this.commandId)
       })
-      return span
+      container.appendChild(deleteBtn)
+
+      return container
     }
 
-    eq(other: DeleteWidget) { return other.commandId === this.commandId }
+    eq(other: CommandActionsWidget) {
+      return other.commandId === this.commandId && other.hasEmbed === this.hasEmbed && other.canInsert === this.canInsert
+    }
   }
 
   function build(state: EditorState): DecorationSet {
     const builder = new RangeSetBuilder<Decoration>()
+    const text = state.doc.toString()
+    const embeddedIds = getEmbeddedCommandIds(text)
+    const completedIds = getCompletedIds()
     for (let i = 1; i <= state.doc.lines; i++) {
       const line = state.doc.line(i)
       MARKER_RE.lastIndex = 0
       let match
       while ((match = MARKER_RE.exec(line.text)) !== null) {
         const cmdId = MARKER_ID_RE.exec(match[0])?.[1] ?? ''
+        const hasEmbed = embeddedIds.has(cmdId)
+        const canInsert = completedIds.has(cmdId)
         builder.add(
           line.from + match.index,
           line.from + match.index + match[0].length,
-          Decoration.replace({ widget: new DeleteWidget(cmdId) })
+          Decoration.replace({ widget: new CommandActionsWidget(cmdId, hasEmbed, canInsert) })
         )
       }
     }
@@ -339,6 +702,7 @@ function commandCompletionSource(context: CompletionContext) {
   }
 }
 
+
 export function Editor({
   title,
   onTitleChange,
@@ -351,6 +715,7 @@ export function Editor({
   onDeleteCommand,
   executedCommandIds,
   commandLineToRemove,
+  responses,
 }: EditorProps) {
   const [adding, setAdding] = useState(false)
   const [draft, setDraft] = useState('')
@@ -376,20 +741,64 @@ export function Editor({
   onNavigateToCardRef.current = onNavigateToCard
   setToolbarRef.current = setToolbarState
 
+  const responsesRef = useRef(responses)
+  responsesRef.current = responses
+
+  const handleInsert = useCallback((commandId: string) => {
+    const view = viewRef.current
+    if (!view) return
+    const response = responsesRef.current?.find((r) => r.commandId === commandId || r.id === commandId)
+    if (!response) return
+    const newContent = insertEmbeddedBlock(
+      view.state.doc.toString(),
+      commandId,
+      getToggleTitle(response.command),
+      response.response
+    )
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: newContent } })
+    // Trigger decorations refresh so the insert button becomes remove
+    view.dispatch({ effects: refreshCommandDecorations.of(null) })
+  }, [])
+
+  const handleRemove = useCallback((commandId: string) => {
+    const view = viewRef.current
+    if (!view) return
+    const newContent = removeEmbeddedBlock(view.state.doc.toString(), commandId)
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: newContent } })
+    view.dispatch({ effects: refreshCommandDecorations.of(null) })
+  }, [])
+
+  const handleInsertRef = useRef(handleInsert)
+  const handleRemoveRef = useRef(handleRemove)
+  handleInsertRef.current = handleInsert
+  handleRemoveRef.current = handleRemove
+
   useEffect(() => {
     if (!hostRef.current || viewRef.current) return
     const syncListener = EditorView.updateListener.of((update) => {
       if (update.docChanged) {
         onChangeRef.current(update.state.doc.toString())
         const map = commandStatusRef.current
+
+        // Build cmdId → status from old state so position shifts don't lose 'executed' status
+        const idToStatus = new Map<string, CommandLineStatus>()
+        for (let i = 1; i <= update.startState.doc.lines; i++) {
+          const oldLine = update.startState.doc.line(i)
+          const status = map.get(oldLine.from)
+          if (!status) continue
+          const cmdId = extractCommandId(oldLine.text)
+          if (cmdId) idToStatus.set(cmdId, status)
+        }
+
         const preserved = new Map<number, CommandLineStatus>()
         for (let lineNumber = 1; lineNumber <= update.state.doc.lines; lineNumber++) {
           const line = update.state.doc.line(lineNumber)
           if (!isPotentialCommandLine(line.text)) continue
-          const previous = map.get(line.from)
+          const cmdId = extractCommandId(line.text)
+          const prevStatus = (cmdId && idToStatus.get(cmdId)) ?? map.get(line.from)
           preserved.set(
             line.from,
-            previous === 'executed' ? 'executed' : getCommandLineStatus(line.text)
+            prevStatus === 'executed' ? 'executed' : getCommandLineStatus(line.text)
           )
         }
         map.clear()
@@ -431,7 +840,6 @@ export function Editor({
         return
       }
 
-      // Move cursor immediately so the user gets feedback before any async work
       view.dispatch({
         changes: { from: draft.lineEnd, to: draft.lineEnd, insert: '\n' },
         selection: EditorSelection.cursor(draft.lineEnd + 1),
@@ -445,7 +853,6 @@ export function Editor({
       })
       if (allowed) {
         commandStatusRef.current.set(draft.lineStart, 'executed')
-        // Insert marker right before the '\n' we already added (draft.lineEnd is still valid)
         const marker = ` <!--monet:${commandId}-->`
         view.dispatch({
           changes: { from: draft.lineEnd, to: draft.lineEnd, insert: marker },
@@ -509,7 +916,26 @@ export function Editor({
         placeholder('Anote a impressão do momento...'),
         commandStatusTheme,
         todoDecorationsField,
-        createMarkerDecorations(() => viewRef.current, () => onDeleteCommandRef.current),
+        toggleOpenState,
+        createMarkerDecorations(
+          () => viewRef.current,
+          () => onDeleteCommandRef.current,
+          () => handleInsertRef.current,
+          () => handleRemoveRef.current,
+          () => new Set(responsesRef.current?.filter((r) => r.status === 'completed').map((r) => r.commandId ?? r.id) ?? [])
+        ),
+        StateField.define<DecorationSet>({
+          create(state) {
+            return buildEmbedDecorations(state, new Map(), () => viewRef.current)
+          },
+          update(deco, tr) {
+            if (!tr.docChanged && !tr.effects.some((e) => e.is(toggleOpenEffect))) {
+              return deco
+            }
+            return buildEmbedDecorations(tr.state, tr.state.field(toggleOpenState), () => viewRef.current)
+          },
+          provide: (f) => EditorView.decorations.from(f),
+        }),
         createCommandDecorations(() => commandStatusRef.current),
         syncListener,
         EditorView.domEventHandlers({
@@ -532,7 +958,6 @@ export function Editor({
         }),
       ],
     })
-    // Pre-populate executed status from persisted command IDs
     const execIds = executedCommandIdsRef.current
     for (let i = 1; i <= state.doc.lines; i++) {
       const line = state.doc.line(i)
@@ -582,14 +1007,18 @@ export function Editor({
     if (!commandLineToRemove) return
     const view = viewRef.current
     if (!view) return
-    for (let i = 1; i <= view.state.doc.lines; i++) {
-      const line = view.state.doc.line(i)
-      const cmdId = extractCommandId(line.text)
-      if (cmdId === commandLineToRemove.id) {
-        const from = line.from > 0 ? line.from - 1 : line.from
-        view.dispatch({ changes: { from, to: line.to } })
+    const current = view.state.doc.toString()
+    let newText = removeEmbeddedBlock(current, commandLineToRemove.id)
+    const lines = newText.split('\n')
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].includes(`<!--monet:${commandLineToRemove.id}-->`)) {
+        lines.splice(i, 1)
         break
       }
+    }
+    newText = lines.join('\n')
+    if (newText !== current) {
+      view.dispatch({ changes: { from: 0, to: current.length, insert: newText } })
     }
   }, [commandLineToRemove])
 

@@ -412,6 +412,7 @@ function App() {
             onNavigateToCard={(index) => setNavigateToCard({ index, ts: Date.now() })}
             onDeleteCommand={(id) => removeResponse(id)}
             commandLineToRemove={commandLineToRemove}
+            responses={responses}
           />
         ) : (
           <EmptyEditor

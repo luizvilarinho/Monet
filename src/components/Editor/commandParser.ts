@@ -37,6 +37,75 @@ export function stripCommandMarker(lineText: string): string {
   return lineText.replace(CMD_MARKER_RE, '')
 }
 
+// ── Embedded AI-response blocks ──────────────────────────
+
+export const EMBED_START_RE = /<!--monet-embed:([a-zA-Z0-9_-]+)-->/g
+export const EMBED_END_RE = /<!--monet-embed-end:([a-zA-Z0-9_-]+)-->/g
+
+export function getToggleTitle(command: string): string {
+  const map: Record<string, string> = {
+    '/resumir': 'Resumo gerado pela IA',
+    '/tabela': 'Tabela gerada pela IA',
+    '/definir': 'Definição gerada pela IA',
+    '/opiniao': 'Opinião gerada pela IA',
+    '/pesquisa': 'Pesquisa gerada pela IA',
+    '/quem': 'Perfil gerado pela IA',
+  }
+  return map[command] ?? 'Resposta gerada pela IA'
+}
+
+export function hasEmbeddedBlock(content: string, commandId: string): boolean {
+  const start = `<!--monet-embed:${commandId}-->`
+  const end = `<!--monet-embed-end:${commandId}-->`
+  return content.includes(start) && content.includes(end)
+}
+
+export function insertEmbeddedBlock(
+  content: string,
+  commandId: string,
+  title: string,
+  body: string
+): string {
+  // Find the line that contains the command marker
+  const lines = content.split('\n')
+  let insertIndex = lines.length
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].includes(`<!--monet:${commandId}-->`)) {
+      insertIndex = i + 1
+      break
+    }
+  }
+  const block = `<!--monet-embed:${commandId}-->\n> **${title}**\n> \n${body
+    .split('\n')
+    .map((l) => '> ' + l)
+    .join('\n')}\n<!--monet-embed-end:${commandId}-->`
+  lines.splice(insertIndex, 0, block)
+  return lines.join('\n')
+}
+
+export function removeEmbeddedBlock(content: string, commandId: string): string {
+  const startMarker = `<!--monet-embed:${commandId}-->`
+  const endMarker = `<!--monet-embed-end:${commandId}-->`
+  const startIdx = content.indexOf(startMarker)
+  if (startIdx === -1) return content
+  const endIdx = content.indexOf(endMarker, startIdx)
+  if (endIdx === -1) return content
+  const before = content.slice(0, startIdx)
+  const after = content.slice(endIdx + endMarker.length)
+  // remove one trailing newline if present to keep doc clean
+  return (before + after).replace(/\n\n$/, '\n')
+}
+
+export function getEmbeddedCommandIds(content: string): Set<string> {
+  const ids = new Set<string>()
+  let m: RegExpExecArray | null
+  EMBED_START_RE.lastIndex = 0
+  while ((m = EMBED_START_RE.exec(content)) !== null) {
+    ids.add(m[1])
+  }
+  return ids
+}
+
 export function isPotentialCommandLine(line: string): boolean {
   return /^\s*\//.test(line)
 }
