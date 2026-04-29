@@ -5,11 +5,14 @@ export interface ToolbarProps {
   search: string
   onSearchChange: (value: string) => void
   onExport: () => void
+  hasNote: boolean
+  exportSuccess?: boolean
   previewOpen: boolean
   onTogglePreview: () => void
   aiOpen: boolean
   onToggleAi: () => void
   notebookWidth?: number
+  sidebarWidth?: number
   focusMode?: boolean
   onToggleFocus?: () => void
 }
@@ -18,11 +21,14 @@ export function Toolbar({
   search,
   onSearchChange,
   onExport,
+  hasNote,
+  exportSuccess,
   previewOpen,
   onTogglePreview,
   aiOpen,
   onToggleAi,
   notebookWidth = 180,
+  sidebarWidth = 220,
   focusMode = false,
   onToggleFocus,
 }: ToolbarProps) {
@@ -30,7 +36,7 @@ export function Toolbar({
     <header className={styles.toolbar}>
       <div
         className={styles.brandSection}
-        style={{ width: focusMode ? 0 : notebookWidth + 220 }}
+        style={{ width: focusMode ? 0 : notebookWidth + sidebarWidth }}
       >
         <img src={logoUrl} alt="monet" className={styles.brand} />
       </div>
@@ -59,9 +65,16 @@ export function Toolbar({
         />
       </div>
       <div className={styles.actions}>
-        <button onClick={onExport}>export .md</button>
-        <button onClick={onToggleFocus} aria-pressed={focusMode}>foco</button>
-        <button onClick={onTogglePreview} aria-pressed={previewOpen}>preview</button>
+        <button
+          onClick={onExport}
+          disabled={!hasNote}
+          className={exportSuccess ? styles.exportSuccess : undefined}
+          title="Exportar nota como .md"
+        >
+          {exportSuccess ? 'salvo!' : 'export .md'}
+        </button>
+        <button onClick={onToggleFocus} aria-pressed={focusMode} title="Foco (Ctrl+Space)">foco</button>
+        <button onClick={onTogglePreview} aria-pressed={previewOpen} title="Preview (Ctrl+\)">preview</button>
         <button onClick={onToggleAi} aria-pressed={aiOpen}>IA</button>
       </div>
     </header>

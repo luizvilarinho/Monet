@@ -162,6 +162,11 @@ export function NotebookList({
   const dragging = useRef(false)
   const startX = useRef(0)
   const startWidth = useRef(0)
+  const currentWidthRef = useRef(width)
+
+  useEffect(() => {
+    currentWidthRef.current = width
+  }, [width])
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
@@ -181,6 +186,7 @@ export function NotebookList({
       if (!dragging.current) return
       const delta = e.clientX - startX.current
       const next = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startWidth.current + delta))
+      currentWidthRef.current = next
       onWidthChange?.(next)
     }
     const onMouseUp = () => {
@@ -188,6 +194,7 @@ export function NotebookList({
       dragging.current = false
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
+      localStorage.setItem('monet:notebook-width', String(currentWidthRef.current))
     }
     document.addEventListener('mousemove', onMouseMove)
     document.addEventListener('mouseup', onMouseUp)

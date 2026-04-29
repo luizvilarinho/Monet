@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { invoke } from '@tauri-apps/api/core'
 import { loadNoteOrder, saveNoteOrder, mergeOrder, applyOrder, loadOrder, saveOrder } from './lib/noteOrder'
 import { Toolbar } from './components/Toolbar/Toolbar'
 import { NotebookList } from './components/NotebookList/NotebookList'
@@ -95,13 +96,37 @@ function App() {
   const [modelsError, setModelsError] = useState<string | null>(null)
   const [modelId, setModelId] = useState<string | null>(null)
   const [navigateToCard, setNavigateToCard] = useState<{ index: number; ts: number } | null>(null)
-  const [notebookWidth, setNotebookWidth] = useState(180)
+  const [notebookWidth, setNotebookWidth] = useState(() => {
+    const saved = parseInt(localStorage.getItem('monet:notebook-width') ?? '', 10)
+    return isNaN(saved) ? 180 : saved
+  })
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const saved = parseInt(localStorage.getItem('monet:sidebar-width') ?? '', 10)
+    return isNaN(saved) ? 220 : saved
+  })
   const [focusMode, setFocusMode] = useState(false)
+  const [exportSuccess, setExportSuccess] = useState(false)
+  const exportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [commandLineToRemove, setCommandLineToRemove] = useState<{ id: string; ts: number } | null>(null)
   const [noteOrder, setNoteOrder] = useState<string[]>(() => loadNoteOrder())
   const [notebookOrder, setNotebookOrder] = useState<string[]>(() => loadOrder('monet:notebook-order'))
 
   const { responses, start, addErrorCard, removeResponse } = useAi(activeId)
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.key === ' ') {
+        e.preventDefault()
+        setFocusMode((v) => !v)
+      }
+      if (e.ctrlKey && e.key === '\\') {
+        e.preventDefault()
+        setPreviewOpen((v) => !v)
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown, true)
+    return () => document.removeEventListener('keydown', handleKeyDown, true)
+  }, [])
 
   const refreshApiKey = useCallback(async () => {
     const present = await hasOpenRouterKey()
@@ -212,6 +237,24 @@ function App() {
     () => notes.find((n) => n.id === activeId) ?? null,
     [notes, activeId]
   )
+
+  const handleExport = useCallback(async () => {
+    if (!activeNote) return
+    const content = stripCommandLines(activeNote.content)
+    const defaultName = activeNote.title.trim()
+      ? `${activeNote.title.trim()}.md`
+      : 'nota-sem-titulo.md'
+    try {
+      const saved = await invoke<boolean>('export_markdown', { defaultName, content })
+      if (saved) {
+        if (exportTimerRef.current) clearTimeout(exportTimerRef.current)
+        setExportSuccess(true)
+        exportTimerRef.current = setTimeout(() => setExportSuccess(false), 2000)
+      }
+    } catch (err) {
+      console.error('export failed:', err)
+    }
+  }, [activeNote])
 
   const executedCommandIds = useMemo(
     () => new Set(responses.map((r) => r.id)),
@@ -356,12 +399,15 @@ function App() {
       <Toolbar
         search={search}
         onSearchChange={setSearch}
-        onExport={() => {}}
+        onExport={handleExport}
+        hasNote={!!activeNote}
+        exportSuccess={exportSuccess}
         previewOpen={previewOpen}
         onTogglePreview={() => setPreviewOpen((v) => !v)}
         aiOpen={aiOpen}
         onToggleAi={() => setAiOpen((v) => !v)}
         notebookWidth={notebookWidth}
+        sidebarWidth={sidebarWidth}
         focusMode={focusMode}
         onToggleFocus={() => setFocusMode((v) => !v)}
       />
@@ -392,6 +438,8 @@ function App() {
           onCreate={handleCreateNote}
           onDelete={handleDeleteNote}
           onReorder={handleReorder}
+          width={sidebarWidth}
+          onWidthChange={setSidebarWidth}
         />}
         {previewOpen && activeNote ? (
           <MarkdownPreview

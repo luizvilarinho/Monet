@@ -105,7 +105,10 @@ export function AiPanel({
   navigateToCard,
   onDeleteResponse,
 }: AiPanelProps) {
-  const [width, setWidth] = useState(MIN_WIDTH)
+  const [width, setWidth] = useState(() => {
+    const saved = parseInt(localStorage.getItem('monet:ai-width') ?? '', 10)
+    return isNaN(saved) ? MIN_WIDTH : Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, saved))
+  })
   const [forceOpenIndex, setForceOpenIndex] = useState<number | null>(null)
   const [expandAll, setExpandAll] = useState<boolean | null>(null)
   const [orderedIds, setOrderedIds] = useState<string[]>([])
@@ -154,10 +157,12 @@ export function AiPanel({
   }, [width])
 
   useEffect(() => {
+    let lastWidth = MIN_WIDTH
     const onMouseMove = (e: MouseEvent) => {
       if (!dragging.current) return
       const delta = startX.current - e.clientX
       const next = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startWidth.current + delta))
+      lastWidth = next
       setWidth(next)
     }
     const onMouseUp = () => {
@@ -165,6 +170,7 @@ export function AiPanel({
       dragging.current = false
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
+      localStorage.setItem('monet:ai-width', String(lastWidth))
     }
     document.addEventListener('mousemove', onMouseMove)
     document.addEventListener('mouseup', onMouseUp)

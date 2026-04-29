@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useRef } from 'react'
 import {
   DndContext,
   closestCenter,
@@ -16,6 +17,9 @@ import { CSS } from '@dnd-kit/utilities'
 import type { Note } from '../../types'
 import { useConfirm } from '../../hooks/useConfirm'
 import styles from './Sidebar.module.css'
+
+const MIN_WIDTH = 160
+const MAX_WIDTH = 400
 
 interface SortableNoteItemProps {
   note: Note
@@ -79,6 +83,8 @@ export interface SidebarProps {
   onCreate: () => void
   onDelete: (id: string) => void
   onReorder: (newOrder: string[]) => void
+  width?: number
+  onWidthChange?: (w: number) => void
 }
 
 export function Sidebar({
@@ -89,11 +95,53 @@ export function Sidebar({
   onCreate,
   onDelete,
   onReorder,
+  width = 220,
+  onWidthChange,
 }: SidebarProps) {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
   )
   const { confirm, modal } = useConfirm()
+  const dragging = useRef(false)
+  const startX = useRef(0)
+  const startWidth = useRef(0)
+  const currentWidthRef = useRef(width)
+
+  useEffect(() => {
+    currentWidthRef.current = width
+  }, [width])
+
+  const onMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    dragging.current = true
+    startX.current = e.clientX
+    startWidth.current = width
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }, [width])
+
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      if (!dragging.current) return
+      const delta = e.clientX - startX.current
+      const next = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startWidth.current + delta))
+      currentWidthRef.current = next
+      onWidthChange?.(next)
+    }
+    const onMouseUp = () => {
+      if (!dragging.current) return
+      dragging.current = false
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      localStorage.setItem('monet:sidebar-width', String(currentWidthRef.current))
+    }
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+    return () => {
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [onWidthChange])
 
   async function handleDeleteNote(id: string, title: string) {
     const ok = await confirm(
@@ -113,8 +161,9 @@ export function Sidebar({
   }
 
   return (
-    <aside className={styles.sidebar}>
+    <aside className={styles.sidebar} style={{ width }}>
       {modal}
+      <div className={styles.resizeHandle} onMouseDown={onMouseDown} />
       <div className={styles.header}>
         <span>anotações</span>
         <button

@@ -82,6 +82,16 @@
   border-color: var(--accent, #7c6af5);
 }
 
-.toolbar button:hover {
+.toolbar button:hover:not(:disabled) {
   color: var(--text-primary, #e8e8f0);
+}
+
+.toolbar button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.exportSuccess {
+  color: var(--accent-ai, #5dcaa5) !important;
+  border-color: var(--accent-ai, #5dcaa5) !important;
 }

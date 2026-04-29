@@ -129,6 +129,27 @@ fn get_tavily_key(app: AppHandle) -> Result<Option<String>, String> {
     Ok(read_key(&app, "tavily_key"))
 }
 
+#[tauri::command]
+async fn export_markdown(default_name: String, content: String) -> Result<bool, String> {
+    let result = tokio::task::spawn_blocking(move || {
+        rfd::FileDialog::new()
+            .set_file_name(&default_name)
+            .add_filter("Markdown", &["md"])
+            .save_file()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    match result {
+        None => Ok(false),
+        Some(path) => {
+            std::fs::write(&path, content.as_bytes())
+                .map_err(|e| format!("Falha ao salvar: {}", e))?;
+            Ok(true)
+        }
+    }
+}
+
 fn is_valid_model_id(model: &str) -> bool {
     if model.is_empty() || model.len() > 200 {
         return false;
@@ -509,7 +530,8 @@ pub fn run() {
             get_tavily_key,
             openrouter_list_models,
             openrouter_stream_chat,
-            openrouter_cancel
+            openrouter_cancel,
+            export_markdown
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
