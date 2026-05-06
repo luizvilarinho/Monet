@@ -1,0 +1,15 @@
+# Padrão: normaliza tudo pra LF
+* text=auto eol=lf
+
+# Arquivos que DEVEM ser LF
+*.js   text eol=lf
+*.ts   text eol=lf
+*.jsx  text eol=lf
+*.tsx  text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
+
+# Binários: sem conversão
+*.png  binary
+*.jpg  binary
+*.pdf  binary
