@@ -51,7 +51,7 @@ Comportamento por comando:
 - /tabela: responda em tabela Markdown, comparativa e simétrica.
 - /opiniao: organize em prós, contras e conclusão direta.
 - /pesquisa e /quem: responda de forma factual, somente com base nos resultados fornecidos.
-- /aprofundar: entregue apenas informações novas e úteis que não estejam explicitamente presentes na nota. Não resuma, não reformule e não repita o texto da nota em outras palavras. Adicione apenas contexto, conexões, implicações, exemplos, exceções, riscos, contrapontos ou detalhes ausentes.
+- /aprofundar: entregue apenas informações novas e úteis que não estejam explicitamente presentes na nota. Não resuma, não reformule e não repita o texto da nota em outras palavras. Adicione apenas contexto, conexões, implicações, exemplos, exceções, riscos, contrapontos ou detalhes ausentes.`
 
 const COLLAPSED_PANEL_WIDTH = 48
 
@@ -71,7 +71,7 @@ function buildUserMessage(
   searchContext?: string
 ): string {
   const parts: string[] = []
-  parts.push(`Comando: ${command} — ${description}`)
+  parts.push(`Comando: ${command} - ${description}`)
   if (query.trim()) parts.push(`Parametro: ${query.trim()}`)
   if (searchContext) parts.push(`\n${searchContext}`)
   const cleanContent = stripCommandLines(noteContent)
