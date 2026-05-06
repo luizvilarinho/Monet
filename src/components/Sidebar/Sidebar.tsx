@@ -21,6 +21,12 @@ import styles from './Sidebar.module.css'
 const MIN_WIDTH = 160
 const MAX_WIDTH = 400
 
+const ChevronIcon = ({ collapsed }: { collapsed: boolean }) => (
+  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    {collapsed ? <polyline points="6 3.5 10.5 8 6 12.5" /> : <polyline points="10 3.5 5.5 8 10 12.5" />}
+  </svg>
+)
+
 interface SortableNoteItemProps {
   note: Note
   isActive: boolean
@@ -84,6 +90,8 @@ export interface SidebarProps {
   onDelete: (id: string) => void
   onReorder: (newOrder: string[]) => void
   width?: number
+  collapsed?: boolean
+  onToggleCollapsed?: () => void
   onWidthChange?: (w: number) => void
 }
 
@@ -96,6 +104,8 @@ export function Sidebar({
   onDelete,
   onReorder,
   width = 220,
+  collapsed = false,
+  onToggleCollapsed,
   onWidthChange,
 }: SidebarProps) {
   const sensors = useSensors(
@@ -161,43 +171,70 @@ export function Sidebar({
   }
 
   return (
-    <aside className={styles.sidebar} style={{ width }}>
+    <aside className={`${styles.sidebar} ${collapsed ? styles.collapsed : ''}`} style={{ width }}>
       {modal}
-      <div className={styles.resizeHandle} onMouseDown={onMouseDown} />
-      <div className={styles.header}>
-        <span>anotações</span>
-        <button
-          className={styles.headerAdd}
-          onClick={onCreate}
-          disabled={!notebookSelected}
-          aria-label="nova anotação"
-          type="button"
-        >
-          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
-            <line x1="8" y1="3" x2="8" y2="13" />
-            <line x1="3" y1="8" x2="13" y2="8" />
-          </svg>
-        </button>
-      </div>
-      <ul className={styles.list}>
-        {notes.length === 0 ? (
-          <li className={styles.empty}>nenhuma anotação</li>
-        ) : (
-          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-            <SortableContext items={notes.map((n) => n.id)} strategy={verticalListSortingStrategy}>
-              {notes.map((n) => (
-                <SortableNoteItem
-                  key={n.id}
-                  note={n}
-                  isActive={n.id === activeId}
-                  onSelect={onSelect}
-                  onDelete={(id) => handleDeleteNote(id, n.title)}
-                />
-              ))}
-            </SortableContext>
-          </DndContext>
-        )}
-      </ul>
+      {!collapsed && <div className={styles.resizeHandle} onMouseDown={onMouseDown} />}
+      {collapsed ? (
+        <div className={styles.collapsedTop}>
+          <button
+            className={styles.headerToggle}
+            onClick={onToggleCollapsed}
+            aria-label="expandir anotações"
+            title="expandir anotações"
+            type="button"
+          >
+            <ChevronIcon collapsed />
+          </button>
+        </div>
+      ) : (
+        <>
+          <div className={styles.header}>
+            <span>anotações</span>
+            <div className={styles.headerActions}>
+              <button
+                className={styles.headerToggle}
+                onClick={onToggleCollapsed}
+                aria-label="recolher anotações"
+                title="recolher anotações"
+                type="button"
+              >
+                <ChevronIcon collapsed={false} />
+              </button>
+              <button
+                className={styles.headerAdd}
+                onClick={onCreate}
+                disabled={!notebookSelected}
+                aria-label="nova anotação"
+                type="button"
+              >
+                <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
+                  <line x1="8" y1="3" x2="8" y2="13" />
+                  <line x1="3" y1="8" x2="13" y2="8" />
+                </svg>
+              </button>
+            </div>
+          </div>
+          <ul className={styles.list}>
+            {notes.length === 0 ? (
+              <li className={styles.empty}>nenhuma anotação</li>
+            ) : (
+              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                <SortableContext items={notes.map((n) => n.id)} strategy={verticalListSortingStrategy}>
+                  {notes.map((n) => (
+                    <SortableNoteItem
+                      key={n.id}
+                      note={n}
+                      isActive={n.id === activeId}
+                      onSelect={onSelect}
+                      onDelete={(id) => handleDeleteNote(id, n.title)}
+                    />
+                  ))}
+                </SortableContext>
+              </DndContext>
+            )}
+          </ul>
+        </>
+      )}
     </aside>
   )
 }

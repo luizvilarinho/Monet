@@ -32,6 +32,12 @@ const GripIcon = () => (
   </svg>
 )
 
+const ChevronIcon = ({ collapsed }: { collapsed: boolean }) => (
+  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    {collapsed ? <polyline points="6 3.5 10.5 8 6 12.5" /> : <polyline points="10 3.5 5.5 8 10 12.5" />}
+  </svg>
+)
+
 interface SortableNotebookItemProps {
   nb: Notebook
   isActive: boolean
@@ -137,6 +143,8 @@ export interface NotebookListProps {
   onSelectTag: (tag: string | null) => void
   onOpenSettings: () => void
   width?: number
+  collapsed?: boolean
+  onToggleCollapsed?: () => void
   onWidthChange?: (w: number) => void
   onReorder?: (newOrder: string[]) => void
 }
@@ -153,6 +161,8 @@ export function NotebookList({
   onSelectTag,
   onOpenSettings,
   width = 180,
+  collapsed = false,
+  onToggleCollapsed,
   onWidthChange,
   onReorder,
 }: NotebookListProps) {
@@ -229,77 +239,102 @@ export function NotebookList({
   }
 
   return (
-    <aside className={styles.notebooks} style={{ width }}>
+    <aside className={`${styles.notebooks} ${collapsed ? styles.collapsed : ''}`} style={{ width }}>
       {modal}
-      <div className={styles.resizeHandle} onMouseDown={onMouseDown} />
-      <div className={styles.scrollArea}>
-        <section className={styles.section}>
-          <div className={styles.header}>
-            <span>cadernos</span>
-            <button className={styles.headerAdd} onClick={onCreate} aria-label="novo caderno" type="button">
-              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
-                <line x1="8" y1="3" x2="8" y2="13" />
-                <line x1="3" y1="8" x2="13" y2="8" />
-              </svg>
-            </button>
-          </div>
-          <ul className={styles.list}>
-            <li
-              className={`${styles.row} ${activeId === null ? styles.active : ''}`}
-              onClick={() => onSelect(null)}
-            >
-              <span className={`${styles.rowLabel} ${styles.allNotes}`}>todas as notas</span>
-            </li>
-
-            {notebooks.length === 0 ? (
-              <li className={styles.empty}>nenhum caderno</li>
-            ) : (
-              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                <SortableContext items={notebooks.map((n) => n.id)} strategy={verticalListSortingStrategy}>
-                  {notebooks.map((nb) => (
-                    <SortableNotebookItem
-                      key={nb.id}
-                      nb={nb}
-                      isActive={nb.id === activeId}
-                      editing={editing}
-                      onSelect={onSelect}
-                      onDelete={(id) => handleDeleteNotebook(id, nb.name)}
-                      onStartEdit={(id, value) => setEditing({ id, value })}
-                      onCommitEdit={commitEdit}
-                      onCancelEdit={() => setEditing(null)}
-                      onEditChange={(id, value) => setEditing({ id, value })}
-                      inputRef={inputRef}
-                    />
-                  ))}
-                </SortableContext>
-              </DndContext>
-            )}
-          </ul>
-        </section>
-
-        <hr className={styles.divider} />
-
-        <section className={styles.section}>
-          <div className={styles.header}>tags</div>
-          <ul className={styles.list}>
-            {tags.length === 0 ? (
-              <li className={styles.empty}>nenhuma tag</li>
-            ) : (
-              tags.map((t) => (
-                <li
-                  key={t}
-                  className={t === activeTag ? styles.active : undefined}
-                  onClick={() => onSelectTag(t === activeTag ? null : t)}
+      {!collapsed && <div className={styles.resizeHandle} onMouseDown={onMouseDown} />}
+      {collapsed ? (
+        <div className={styles.collapsedTop}>
+          <button
+            className={styles.headerToggle}
+            onClick={onToggleCollapsed}
+            aria-label="expandir cadernos"
+            title="expandir cadernos"
+            type="button"
+          >
+            <ChevronIcon collapsed />
+          </button>
+        </div>
+      ) : (
+        <div className={styles.scrollArea}>
+          <section className={styles.section}>
+            <div className={styles.header}>
+              <span>cadernos</span>
+              <div className={styles.headerActions}>
+                <button
+                  className={styles.headerToggle}
+                  onClick={onToggleCollapsed}
+                  aria-label="recolher cadernos"
+                  title="recolher cadernos"
+                  type="button"
                 >
-                  #{t}
-                </li>
-              ))
-            )}
-          </ul>
-        </section>
-      </div>
+                  <ChevronIcon collapsed={false} />
+                </button>
+                <button className={styles.headerAdd} onClick={onCreate} aria-label="novo caderno" type="button">
+                  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
+                    <line x1="8" y1="3" x2="8" y2="13" />
+                    <line x1="3" y1="8" x2="13" y2="8" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <ul className={styles.list}>
+              <li
+                className={`${styles.row} ${activeId === null ? styles.active : ''}`}
+                onClick={() => onSelect(null)}
+              >
+                <span className={`${styles.rowLabel} ${styles.allNotes}`}>todas as notas</span>
+              </li>
 
-      <div className={styles.footer}>
+              {notebooks.length === 0 ? (
+                <li className={styles.empty}>nenhum caderno</li>
+              ) : (
+                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                  <SortableContext items={notebooks.map((n) => n.id)} strategy={verticalListSortingStrategy}>
+                    {notebooks.map((nb) => (
+                      <SortableNotebookItem
+                        key={nb.id}
+                        nb={nb}
+                        isActive={nb.id === activeId}
+                        editing={editing}
+                        onSelect={onSelect}
+                        onDelete={(id) => handleDeleteNotebook(id, nb.name)}
+                        onStartEdit={(id, value) => setEditing({ id, value })}
+                        onCommitEdit={commitEdit}
+                        onCancelEdit={() => setEditing(null)}
+                        onEditChange={(id, value) => setEditing({ id, value })}
+                        inputRef={inputRef}
+                      />
+                    ))}
+                  </SortableContext>
+                </DndContext>
+              )}
+            </ul>
+          </section>
+
+          <hr className={styles.divider} />
+
+          <section className={styles.section}>
+            <div className={styles.header}>tags</div>
+            <ul className={styles.list}>
+              {tags.length === 0 ? (
+                <li className={styles.empty}>nenhuma tag</li>
+              ) : (
+                tags.map((t) => (
+                  <li
+                    key={t}
+                    className={t === activeTag ? styles.active : undefined}
+                    onClick={() => onSelectTag(t === activeTag ? null : t)}
+                  >
+                    #{t}
+                  </li>
+                ))
+              )}
+            </ul>
+          </section>
+        </div>
+      )}
+
+      <div className={`${styles.footer} ${collapsed ? styles.footerCollapsed : ''}`}>
         <button
           className={styles.settings}
           onClick={onOpenSettings}

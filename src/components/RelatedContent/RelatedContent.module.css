@@ -1,0 +1,125 @@
+.related {
+  border-top: 1px solid var(--border, #333340);
+  background: var(--bg-app, #0e0e10);
+  flex-shrink: 0;
+  max-height: 50%;
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary, #a0a0b8);
+  cursor: pointer;
+  padding: 10px 32px;
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.header:hover {
+  background: var(--surface-1, #1e1e22);
+}
+
+.chevron {
+  display: inline-block;
+  font-size: 14px;
+  color: var(--text-muted, #606070);
+  transition: transform 0.15s ease;
+  line-height: 1;
+}
+
+.chevronOpen {
+  transform: rotate(90deg);
+}
+
+.title {
+  flex: 1;
+}
+
+.count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--surface-2, #26262c);
+  color: var(--text-muted, #606070);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0 16px 12px 28px;
+  overflow-y: auto;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+.item + .item {
+  margin-top: 4px;
+}
+
+.itemButton {
+  width: 100%;
+  text-align: left;
+  background: var(--surface-1, #1e1e22);
+  border: 1px solid var(--border, #333340);
+  border-radius: 6px;
+  color: var(--text-primary, #e8e8f0);
+  cursor: pointer;
+  padding: 8px 12px;
+  display: block;
+  font-family: inherit;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.itemButton:hover {
+  border-color: var(--accent, #7c6af5);
+  background: var(--surface-2, #26262c);
+}
+
+.itemTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary, #e8e8f0);
+  margin-bottom: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.itemSnippet {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary, #a0a0b8);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.itemTags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.itemTag {
+  font-size: 11px;
+  color: var(--text-muted, #606070);
+  background: var(--surface-2, #26262c);
+  padding: 1px 6px;
+  border-radius: 999px;
+}

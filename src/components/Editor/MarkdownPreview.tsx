@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { renderMarkdown } from '../../lib/markdown'
 import styles from './MarkdownPreview.module.css'
 import editorStyles from './Editor.module.css'
@@ -73,9 +73,10 @@ interface Props {
   title: string
   tags: string[]
   content: string
+  relatedContent?: ReactNode
 }
 
-export function MarkdownPreview({ title, tags, content }: Props) {
+export function MarkdownPreview({ title, tags, content, relatedContent }: Props) {
   const [html, setHtml] = useState('')
 
   useEffect(() => {
@@ -100,6 +101,7 @@ export function MarkdownPreview({ title, tags, content }: Props) {
         className={styles.body}
         dangerouslySetInnerHTML={{ __html: html }}
       />
+      {relatedContent}
     </div>
   )
 }

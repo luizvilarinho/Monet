@@ -1,49 +1,59 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { loadNoteOrder, saveNoteOrder, mergeOrder, applyOrder, loadOrder, saveOrder } from './lib/noteOrder'
-import { Toolbar } from './components/Toolbar/Toolbar'
-import { NotebookList } from './components/NotebookList/NotebookList'
-import { Sidebar } from './components/Sidebar/Sidebar'
-import { Editor } from './components/Editor/Editor'
-import { MarkdownPreview } from './components/Editor/MarkdownPreview'
-import { EmptyEditor } from './components/Editor/EmptyEditor'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import './App.css'
 import { AiPanel } from './components/AiPanel/AiPanel'
+import { Editor } from './components/Editor/Editor'
+import { EmptyEditor } from './components/Editor/EmptyEditor'
+import { MarkdownPreview } from './components/Editor/MarkdownPreview'
+import { NotebookList } from './components/NotebookList/NotebookList'
+import { RelatedContent } from './components/RelatedContent/RelatedContent'
 import { SettingsModal } from './components/Settings/SettingsModal'
+import { Sidebar } from './components/Sidebar/Sidebar'
+import { Toolbar } from './components/Toolbar/Toolbar'
+import { useAi } from './hooks/useAi'
 import { useNotebooks } from './hooks/useNotebooks'
 import { useNotes } from './hooks/useNotes'
-import { useAi } from './hooks/useAi'
+import { findCommand } from './lib/commands'
+import { applyOrder, loadNoteOrder, loadOrder, mergeOrder, saveNoteOrder, saveOrder } from './lib/noteOrder'
 import {
   hasOpenRouterKey,
   listOpenRouterModels,
   OPENROUTER_KEY_MISSING,
 } from './lib/openrouter'
 import {
+  formatSearchResults,
   hasTavilyKey,
   webSearch,
-  formatSearchResults,
 } from './lib/search'
-import { findCommand } from './lib/commands'
 import type { AiModel, CommandExecutionRequest, Note } from './types'
-import './App.css'
 
-const SYSTEM_PROMPT = `Você é o assistente de estudo do Monet — um app de notas para estudo ativo.
-Sua função é converter a entrada do usuário em conhecimento reutilizável e de fácil revisão.
+const SYSTEM_PROMPT = `Você é o assistente de estudo do Monet.
 
-Regras de comportamento:
-1. SEMPRE responda em português do Brasil.
-2. SEMPRE use Markdown válido e enxuto.
-3. NUNCA use cumprimentos, despedidas ou frases de enchimento ("Claro!", "Com certeza!", "Aqui está..."). Vá direto ao conteúdo.
-4. Priorize o CONTEÚDO DA NOTA ATUAL (fornecido na mensagem do usuário) em vez de conhecimento genérico da internet, salvo quando o comando exigir informação externa (/pesquisa, /quem).
+Responda sempre em português do Brasil, com Markdown enxuto e sem saudações, despedidas ou frases de enchimento.
 
-Tamanho esperado por tipo de resposta:
-- /definir: 1 a 3 frases, conceito + exemplo breve se relevante.
-- /resumir: lista com bullets (•) ou (-). Cada ideia em 1 linha. Foque nos pontos principais, não nos detalhes.
-- /tabela: tabela Markdown com cabeçalho e separador. Seja comparativa e simétrica.
-- /opiniao: estruture em argumentos pró e contras (quando aplicável), com conclusão direta.
-- /pesquisa /quem: fato objetivo. Se não houver resultados concretos, diga "Não encontrei informações suficientes" em vez de inventar.
-- /AI (expandir): enriqueça as anotações com contexto histórico, conexões entre conceitos e detalhes que o usuário pode ter omitido. Mantenha o estilo das notas originais.
+Objetivo geral:
+- Complementar a nota atual sem repetir literalmente o que já está escrito.
+- Tratar a nota como contexto principal.
+- Priorizar informação útil que não esteja explicitamente presente na nota: exemplos concretos, implicações práticas, conexões entre conceitos, exceções, riscos, contrapontos e contexto relevante.
 
-Tom: didático, objetivo, como um tutor particular que respeita o tempo do aluno.`
+Regras gerais:
+- Não reescreva, resuma ou parafraseie trechos da nota, exceto quando o próprio comando pedir síntese.
+- Não transforme o conteúdo existente apenas em outras palavras.
+- Se precisar mencionar algo que já está na nota, faça isso de forma breve e apenas para conectar a nova informação.
+- Não invente fatos, nomes, números, datas ou referências.
+- Se o comando depender de pesquisa web, use somente os resultados fornecidos.
+- Se os resultados de pesquisa forem insuficientes, responda exatamente: "Não encontrei informações suficientes nos resultados disponíveis."
+- Se não houver complemento relevante além do que já está explícito na nota, responda exatamente: "Sem complemento relevante além do que já está na nota."
+
+Comportamento por comando:
+- /resumir: sintetize apenas o essencial da nota em bullets curtos. Aqui pode reformular o conteúdo da nota, mas sem floreio.
+- /definir: dê uma definição curta e, se útil, acrescente 1 exemplo, contraste ou implicação que não esteja explícito na nota.
+- /tabela: responda em tabela Markdown, comparativa e simétrica.
+- /opiniao: organize em prós, contras e conclusão direta.
+- /pesquisa e /quem: responda de forma factual, somente com base nos resultados fornecidos.
+- /AI: entregue apenas informações novas e úteis que não estejam explicitamente presentes na nota. Não resuma, não reformule e não repita o texto da nota em outras palavras. Adicione apenas contexto, conexões, implicações, exemplos, exceções, riscos, contrapontos ou detalhes ausentes.`
+
+const COLLAPSED_PANEL_WIDTH = 48
 
 function stripCommandLines(content: string): string {
   return content
@@ -104,6 +114,12 @@ function App() {
     const saved = parseInt(localStorage.getItem('monet:sidebar-width') ?? '', 10)
     return isNaN(saved) ? 220 : saved
   })
+  const [notebookCollapsed, setNotebookCollapsed] = useState(
+    () => localStorage.getItem('monet:notebook-collapsed') === '1'
+  )
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => localStorage.getItem('monet:sidebar-collapsed') === '1'
+  )
   const [focusMode, setFocusMode] = useState(false)
   const [exportSuccess, setExportSuccess] = useState(false)
   const exportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -193,6 +209,14 @@ function App() {
     if (modelId) localStorage.setItem('lastModelId', modelId)
   }, [modelId])
 
+  useEffect(() => {
+    localStorage.setItem('monet:notebook-collapsed', notebookCollapsed ? '1' : '0')
+  }, [notebookCollapsed])
+
+  useEffect(() => {
+    localStorage.setItem('monet:sidebar-collapsed', sidebarCollapsed ? '1' : '0')
+  }, [sidebarCollapsed])
+
   async function handleRenameNotebook(id: string, name: string) {
     const nb = notebooks.find((n) => n.id === id)
     if (!nb) return
@@ -260,6 +284,9 @@ function App() {
     () => new Set(responses.map((r) => r.id)),
     [responses]
   )
+
+  const effectiveNotebookWidth = notebookCollapsed ? COLLAPSED_PANEL_WIDTH : notebookWidth
+  const effectiveSidebarWidth = sidebarCollapsed ? COLLAPSED_PANEL_WIDTH : sidebarWidth
 
   function updateActive(patch: Partial<Note>) {
     if (!activeNote) return
@@ -406,8 +433,8 @@ function App() {
         onTogglePreview={() => setPreviewOpen((v) => !v)}
         aiOpen={aiOpen}
         onToggleAi={() => setAiOpen((v) => !v)}
-        notebookWidth={notebookWidth}
-        sidebarWidth={sidebarWidth}
+        notebookWidth={effectiveNotebookWidth}
+        sidebarWidth={effectiveSidebarWidth}
         focusMode={focusMode}
         onToggleFocus={() => setFocusMode((v) => !v)}
       />
@@ -426,7 +453,9 @@ function App() {
           activeTag={activeTag}
           onSelectTag={setActiveTag}
           onOpenSettings={() => setSettingsOpen(true)}
-          width={notebookWidth}
+          width={effectiveNotebookWidth}
+          collapsed={notebookCollapsed}
+          onToggleCollapsed={() => setNotebookCollapsed((v) => !v)}
           onWidthChange={setNotebookWidth}
           onReorder={handleNotebookReorder}
         />}
@@ -438,7 +467,9 @@ function App() {
           onCreate={handleCreateNote}
           onDelete={handleDeleteNote}
           onReorder={handleReorder}
-          width={sidebarWidth}
+          width={effectiveSidebarWidth}
+          collapsed={sidebarCollapsed}
+          onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
           onWidthChange={setSidebarWidth}
         />}
         {previewOpen && activeNote ? (
@@ -446,6 +477,9 @@ function App() {
             title={activeNote.title}
             tags={activeNote.tags}
             content={activeNote.content}
+            relatedContent={
+              <RelatedContent activeNote={activeNote} notes={notes} onSelect={setActiveId} />
+            }
           />
         ) : activeNote ? (
           <Editor
@@ -461,6 +495,9 @@ function App() {
             onDeleteCommand={(id) => removeResponse(id)}
             commandLineToRemove={commandLineToRemove}
             responses={responses}
+            relatedContent={
+              <RelatedContent activeNote={activeNote} notes={notes} onSelect={setActiveId} />
+            }
           />
         ) : (
           <EmptyEditor

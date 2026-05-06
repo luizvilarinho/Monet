@@ -7,7 +7,7 @@ export const COMMANDS: CommandDef[] = [
   { name: '/resumir', description: 'Resume a nota atual', example: '/resumir', takesQuery: false },
   { name: '/opiniao', description: 'Resposta opinativa e direta', example: '/opiniao usar RAG vs fine-tuning', takesQuery: true },
   { name: '/tabela', description: 'Resposta formatada como tabela markdown', example: '/tabela REST vs GraphQL', takesQuery: true },
-  { name: '/AI', description: 'Expanda o conteúdo da nota com mais detalhes, contexto histórico e informações relevantes, mantendo o estilo das anotações', example: '/AI', takesQuery: false },
+  { name: '/AI', description: 'Adicione apenas informações novas e úteis que não estejam explícitas na nota, sem resumir, reformular ou parafrasear o texto existente', example: '/AI', takesQuery: false },
 ]
 
 export function findCommand(name: string): CommandDef | undefined {

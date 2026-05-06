@@ -17,7 +17,7 @@ import {
   placeholder,
   type DecorationSet,
 } from '@codemirror/view'
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 import { nanoid } from 'nanoid'
 import styles from './Editor.module.css'
 import {
@@ -51,6 +51,7 @@ export interface EditorProps {
   executedCommandIds?: Set<string>
   commandLineToRemove?: { id: string; ts: number } | null
   responses?: AiResponse[]
+  relatedContent?: ReactNode
 }
 
 const commandStatusTheme = EditorView.baseTheme({
@@ -291,12 +292,28 @@ const commandStatusTheme = EditorView.baseTheme({
     fontWeight: 600,
   },
   '.cm-cmdActionContainer': {
-    position: 'absolute',
-    right: '32px',
-    top: '0',
-    display: 'flex',
+    display: 'inline-flex',
     gap: '8px',
     alignItems: 'center',
+    flex: '0 0 auto',
+    marginLeft: 'auto',
+    whiteSpace: 'nowrap',
+  },
+  '.cm-commandActionLine': {
+    display: 'flex',
+    gap: '12px',
+    alignItems: 'start',
+  },
+  '.cm-commandText': {
+    flex: '1 1 0',
+    minWidth: '0',
+    overflowWrap: 'anywhere',
+  },
+  '.cm-commandActionLine > .cm-widgetBuffer': {
+    width: '0',
+    minWidth: '0',
+    flex: '0 0 0',
+    overflow: 'hidden',
   },
   '.cm-embedLoading': {
     fontStyle: 'italic',
@@ -615,24 +632,37 @@ function createMarkerDecorations(
     for (let i = 1; i <= state.doc.lines; i++) {
       const line = state.doc.line(i)
       MARKER_RE.lastIndex = 0
-      let match
-      while ((match = MARKER_RE.exec(line.text)) !== null) {
-        const cmdId = MARKER_ID_RE.exec(match[0])?.[1] ?? ''
-        const hasEmbed = embeddedIds.has(cmdId)
-        const canInsert = completedIds.has(cmdId)
+      const match = MARKER_RE.exec(line.text)
+      if (!match) continue
+
+      const cmdId = MARKER_ID_RE.exec(match[0])?.[1] ?? ''
+      const hasEmbed = embeddedIds.has(cmdId)
+      const canInsert = completedIds.has(cmdId)
+
+      builder.add(line.from, line.from, Decoration.line({ class: 'cm-commandActionLine' }))
+      if (match.index > 0) {
         builder.add(
+          line.from,
           line.from + match.index,
-          line.from + match.index + match[0].length,
-          Decoration.replace({ widget: new CommandActionsWidget(cmdId, hasEmbed, canInsert) })
+          Decoration.mark({ class: 'cm-commandText' })
         )
       }
+      builder.add(
+        line.from + match.index,
+        line.from + match.index + match[0].length,
+        Decoration.replace({ widget: new CommandActionsWidget(cmdId, hasEmbed, canInsert) })
+      )
     }
     return builder.finish()
   }
 
   return StateField.define<DecorationSet>({
     create: (state) => build(state),
-    update: (deco, tr) => tr.docChanged ? build(tr.state) : deco,
+    update: (deco, tr) => (
+      tr.docChanged || tr.effects.some((effect) => effect.is(refreshCommandDecorations))
+        ? build(tr.state)
+        : deco
+    ),
     provide: (f) => EditorView.decorations.from(f),
   })
 }
@@ -716,6 +746,7 @@ export function Editor({
   executedCommandIds,
   commandLineToRemove,
   responses,
+  relatedContent,
 }: EditorProps) {
   const [adding, setAdding] = useState(false)
   const [draft, setDraft] = useState('')
@@ -743,6 +774,26 @@ export function Editor({
 
   const responsesRef = useRef(responses)
   responsesRef.current = responses
+
+  const syncCommandUi = useCallback(() => {
+    const view = viewRef.current
+    if (!view) return
+
+    const map = commandStatusRef.current
+    map.clear()
+    const execIds = executedCommandIdsRef.current
+    for (let lineNumber = 1; lineNumber <= view.state.doc.lines; lineNumber++) {
+      const line = view.state.doc.line(lineNumber)
+      if (!isPotentialCommandLine(line.text)) continue
+      const cmdId = extractCommandId(line.text)
+      map.set(
+        line.from,
+        cmdId && execIds.has(cmdId) ? 'executed' : getCommandLineStatus(line.text)
+      )
+    }
+
+    view.dispatch({ effects: refreshCommandDecorations.of(null) })
+  }, [])
 
   const handleInsert = useCallback((commandId: string) => {
     const view = viewRef.current
@@ -988,20 +1039,12 @@ export function Editor({
         Math.min(selection.to, value.length)
       ),
     })
-    const map = commandStatusRef.current
-    map.clear()
-    const execIds = executedCommandIdsRef.current
-    for (let lineNumber = 1; lineNumber <= view.state.doc.lines; lineNumber++) {
-      const line = view.state.doc.line(lineNumber)
-      if (!isPotentialCommandLine(line.text)) continue
-      const cmdId = extractCommandId(line.text)
-      map.set(
-        line.from,
-        cmdId && execIds.has(cmdId) ? 'executed' : getCommandLineStatus(line.text)
-      )
-    }
-    view.dispatch({ effects: refreshCommandDecorations.of(null) })
-  }, [value])
+    syncCommandUi()
+  }, [value, syncCommandUi])
+
+  useEffect(() => {
+    syncCommandUi()
+  }, [responses, executedCommandIds, syncCommandUi])
 
   useEffect(() => {
     if (!commandLineToRemove) return
@@ -1098,6 +1141,7 @@ export function Editor({
         )}
       </div>
       <div className={styles.body} ref={hostRef} />
+      {relatedContent}
       {toolbarState && viewRef.current && (
         <FormattingToolbar
           view={viewRef.current}
