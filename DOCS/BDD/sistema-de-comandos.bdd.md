@@ -69,7 +69,7 @@ Feature: Sistema de comandos no editor
     Given que o usuario esta editando uma nota no editor
     When ele digitar /
     Then o sistema deve exibir autocomplete com os comandos disponiveis
-    And a lista deve conter /pesquisa, /quem, /definir, /resumir, /opiniao e /tabela
+    And a lista deve conter /pesquisa, /quem, /definir, /resumir, /opiniao, /tabela, /aprofundar, /explicar, /guia, /mapa-mental e /perguntar
 
   Scenario: Filtrar autocomplete conforme digitacao
     Given que o autocomplete de comandos esta visivel
@@ -162,6 +162,38 @@ Feature: Sistema de comandos no editor
     Then o sistema deve iniciar uma solicitacao para a IA usando o /comando /tabela
     And a resposta deve ser exibida no painel IA da nota atual
 
+  Scenario: Executar comando /aprofundar
+    Given que o usuario digitou /aprofundar em uma nota com conteudo
+    When ele pressionar Enter
+    Then o sistema deve iniciar uma solicitacao para a IA usando o /comando /aprofundar
+    And a solicitacao deve usar o contexto da nota atual
+    And a resposta deve ser exibida no painel IA da nota atual
+
+  Scenario: Executar comando /explicar
+    Given que o usuario digitou /explicar seguido de um conceito
+    When ele pressionar Enter
+    Then o sistema deve iniciar uma solicitacao para a IA usando o /comando /explicar
+    And a resposta deve ser exibida no painel IA da nota atual
+
+  Scenario: Executar comando /guia
+    Given que o usuario digitou /guia seguido de um topico
+    When ele pressionar Enter
+    Then o sistema deve iniciar uma solicitacao para a IA usando o /comando /guia
+    And a resposta deve ser exibida no painel IA da nota atual
+
+  Scenario: Executar comando /mapa-mental
+    Given que o usuario digitou /mapa-mental em uma nota com conteudo
+    When ele pressionar Enter
+    Then o sistema deve iniciar uma solicitacao para a IA usando o /comando /mapa-mental
+    And a solicitacao deve usar o contexto da nota atual
+    And a resposta deve ser exibida no painel IA da nota atual
+
+  Scenario: Executar comando /perguntar
+    Given que o usuario digitou /perguntar seguido de uma pergunta
+    When ele pressionar Enter
+    Then o sistema deve iniciar uma solicitacao para a IA usando o /comando /perguntar
+    And a resposta deve ser exibida no painel IA da nota atual
+
   Scenario: Exibir resposta em streaming para comando executado
     Given que o usuario executou um comando valido
     And que a IA iniciou o retorno da resposta em partes
@@ -203,7 +235,7 @@ Feature: Sistema de comandos no editor
 3. Texto iniciado por `/` no meio de um paragrafo nao deve ser tratado como comando.
 4. Quando houver um /comando em linha isolada, a linha inteira deve ser interpretada como esse comando.
 5. Ao digitar `/`, o sistema deve exibir autocomplete com todos os comandos disponiveis.
-6. O autocomplete deve incluir `/pesquisa`, `/quem`, `/definir`, `/resumir`, `/opiniao` e `/tabela`.
+6. O autocomplete deve incluir /pesquisa, /quem, /definir, /resumir, /opiniao, /tabela, /aprofundar, /explicar, /guia, /mapa-mental e /perguntar.
 7. O autocomplete deve filtrar as sugestoes conforme o usuario continua digitando.
 8. Pressionar `Tab` com uma sugestao selecionada no autocomplete deve aceitar essa sugestao.
 9. Pressionar `Enter` em uma linha com /comando valido deve iniciar uma solicitacao para a IA usando o /comando informado na nota atual.
@@ -240,6 +272,11 @@ Feature: Sistema de comandos no editor
 - /resumir: comando usado para resumir o conteudo da nota atual.
 - /opiniao: comando usado para solicitar uma resposta opinativa sobre um tema.
 - /tabela: comando usado para solicitar uma resposta formatada como tabela markdown.
+- /aprofundar: comando usado para adicionar informacoes novas e uteis que nao estao explicitas na nota.
+- /explicar: comando usado para solicitar uma explicacao simples de um conceito usando a tecnica Feynman.
+- /guia: comando usado para solicitar um roteiro de estudos com topicos e sequencia logica.
+- /mapa-mental: comando usado para gerar um mapa mental hierarquico da nota atual em markdown.
+- /perguntar: comando usado para fazer uma pergunta livre ao modelo de IA.
 - Painel IA: area lateral onde as respostas da IA sao exibidas.
 - Nota atual: nota atualmente selecionada pelo usuario, cujo contexto e usado na execucao do /comando e na exibicao do painel IA.
 - Streaming de resposta: envio progressivo da resposta em partes para exibicao em tempo real.

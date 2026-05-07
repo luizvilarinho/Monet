@@ -193,6 +193,11 @@ CREATE TABLE ai_responses (
 | `/resumir` | Resume o conteúdo da nota atual em bullet points |
 | `/opiniao [tema]` | Resposta opinativa e direta |
 | `/tabela [tema]` | Resposta formatada como tabela markdown |
+| `/aprofundar` | Adiciona informações novas e úteis que não estão explícitas na nota |
+| `/explicar [conceito]` | Explica um conceito de forma simples (técnica Feynman) |
+| `/guia [tópico]` | Cria um roteiro de estudos com tópicos e sequência lógica |
+| `/mapa-mental` | Gera um mapa mental hierárquico da nota atual em markdown |
+| `/perguntar [pergunta]` | Faz uma pergunta livre ao modelo |
 
 ### Fluxo do parser (CodeMirror 6)
 1. Editor detecta linhas que começam com `/` em tempo real

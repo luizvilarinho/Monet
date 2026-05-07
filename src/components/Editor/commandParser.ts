@@ -51,6 +51,10 @@ export function getToggleTitle(command: string): string {
     '/pesquisa': 'Pesquisa gerada pela IA',
     '/quem': 'Perfil gerado pela IA',
     '/aprofundar': 'Aprofundamento gerado pela IA',
+    '/explicar': 'Explicação gerada pela IA',
+    '/guia': 'Guia de estudos gerado pela IA',
+    '/mapa-mental': 'Mapa mental gerado pela IA',
+    '/perguntar': 'Resposta gerada pela IA',
   }
   return map[command] ?? 'Resposta gerada pela IA'
 }
