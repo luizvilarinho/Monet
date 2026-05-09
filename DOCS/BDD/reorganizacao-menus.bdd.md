@@ -1,215 +1,275 @@
-# BDD - Reorganizacao dos Menus Principais
+# BDD - Modo Cadernos e Modo Chat
+
+## Contexto do produto
+
+O Monet possui hoje um único modo de uso: o fluxo de anotações (Cadernos → Anotações → Editor → IA).
+Esta feature adiciona um segundo modo, **Chat**, que permite ao usuário conversar livremente com a IA
+sem precisar criar ou abrir nenhuma nota.
+
+A Toolbar atual (com busca, export_md, foco, preview, IA) passa a ser um dropdown acessado ao
+passar o mouse sobre o botão "Caderno". No topo do app ficam apenas dois botões de modo:
+
+```
+[ Caderno ]  [ Chat ]
+```
+
+O dropdown com as opções da Toolbar atual só aparece ao passar o mouse sobre "Caderno" **enquanto o
+modo ativo for Caderno**. No modo Chat, o dropdown não aparece.
+
+---
 
 ## Historias de usuario
 
-### HU-01 - Navegar entre Cadernos e Chat no menu principal
+### HU-01 - Alternar entre modo Cadernos e modo Chat
 Prioridade: Alta
 
 Como usuario do Monet
-Quero ver dois menus principais no canto superior esquerdo: Cadernos e Chat
-Para alternar rapidamente entre anotações e conversas com a IA
+Quero clicar em "Caderno" ou "Chat" na barra superior
+Para alternar entre o fluxo de anotações e uma conversa livre com a IA
 
-### HU-02 - Acessar anotações como submenu de Cadernos
+### HU-02 - Acessar as ferramentas do Caderno via dropdown
 Prioridade: Alta
 
 Como usuario do Monet
-Quero que a lista de cadernos e anotações fique acessível sob o menu Cadernos
-Para manter a organização hierárquica e não perder o fluxo de trabalho atual
+Quero passar o mouse sobre o botão "Caderno" para ver as opções atuais (busca, export_md, foco, preview, IA)
+Para manter acesso às ferramentas sem poluir a barra principal
 
-### HU-03 - Acessar o chat com a IA como menu independentemente
+### HU-03 - Conversar com a IA sem abrir nenhuma nota
 Prioridade: Alta
 
 Como usuario do Monet
-Quero clicar no menu Chat para abri-lo como um painel separado
-Para conversar com a IA sem precisar estar em uma nota específica
+Quero ter uma tela de chat dedicada
+Para discutir ideias com a IA sem precisar criar ou editar uma nota
 
 ---
 
 ## Cenarios BDD
 
 ```gherkin
-Feature: Reorganizacao dos menus principais
+Feature: Modo Cadernos e Modo Chat
   Como usuario do Monet
-  Quero navegar entre Cadernos e Chat a partir de um menu principal unificado
-  Para ter acesso rápido a ambas funcionalidades mantendo a organização visual
+  Quero alternar entre o modo de anotações e o modo de chat
+  Para ter acesso a ambas funcionalidades pelo mesmo aplicativo
 
   Background:
     Given que o aplicativo Monet esta aberto
 
-  Scenario: Exibir os dois menus principais no canto superior esquerdo
-    Given que o usuario abriu o Monet
+  # --- BARRA PRINCIPAL ---
+
+  Scenario: Exibir os dois botoes de modo na barra superior
     When a interface for carregada
-    Then o canto superior esquerdo deve exibir dois menus principais lado a lado
-    And o primeiro menu deve ser "Cadernos"
-    And o segundo menu deve ser "Chat"
-    And ambos os menus devem estar visiveis simultaneamente
+    Then a barra superior deve exibir apenas dois botoes: "Caderno" e "Chat"
+    And o botao do modo ativo deve ter estilo visual diferente do inativo (ex: sublinhado, cor de destaque)
+    And a busca, export_md, foco, preview e IA nao devem aparecer diretamente na barra superior
 
-  Scenario: Menu Cadernos exibe submenus de anotações
-    Given que o menu "Cadernos" esta visivel
-    When o usuario clicar no menu "Cadernos"
-    Then deve abrir um dropdown ou painel lateral com os submenus
-    And o submenu deve conter a lista de cadernos (NotebookList)
-    And o submenu deve conter a lista de anotações do caderno selecionado (Sidebar)
-    And o layout deve ser o mesmo atual do NotebookList e Sidebar
+  Scenario: Dropdown de ferramentas aparece ao passar o mouse sobre Caderno (modo Caderno)
+    Given que o modo ativo e "Caderno"
+    When o usuario passar o mouse sobre o botao "Caderno"
+    Then deve aparecer um dropdown abaixo do botao "Caderno"
+    And o dropdown deve conter: campo de busca de anotacoes, export_md, foco, preview, IA
+    And esses itens devem funcionar exatamente como funcionam hoje
 
-  Scenario: Menu Chat abre painel de conversa
-    Given que o menu "Chat" esta visivel
-    When o usuario clicar no menu "Chat"
-    Then deve abrir um painel de chat com a IA
-    And o painel deve conter um campo de input para digitar mensagens
-    And o painel deve conter o histórico de mensagens anteriores
-    And o painel deve estar posicionado de forma nao obstrutiva
+  Scenario: Dropdown nao aparece no modo Chat
+    Given que o modo ativo e "Chat"
+    When o usuario passar o mouse sobre o botao "Caderno"
+    Then nenhum dropdown deve aparecer
 
-  Scenario: Alternar entre Cadernos e Chat
-    Given que o usuario tem o menu Cadernos aberto exibindo anotações
-    When o usuario clicar no menu "Chat"
-    Then o painel de Cadernos deve permanecer visivel ou ser recolhido conforme configuração
-    And o painel de Chat deve abrir
-    And o usuario deve conseguir interagir com o Chat independentemente
+  Scenario: Dropdown fecha ao mover o mouse para fora
+    Given que o dropdown de ferramentas esta aberto
+    When o usuario mover o mouse para fora do dropdown e do botao "Caderno"
+    Then o dropdown deve fechar
 
-  Scenario: Menu Cadernos recolhido exibe apenas icone
-    Given que o menu "Cadernos" esta configurado para modo recolhido
-    When a interface for carregada
-    Then o menu "Cadernos" deve exibir apenas um icone
-    And o menu "Chat" deve permanecer visivel
-    And ao passar o mouse ou clicar, o menu deve expandir
+  # --- ALTERNANCIA DE MODOS ---
 
-  Scenario: Menu Chat recolhido exibe apenas icone
-    Given que o menu "Chat" esta configurado para modo recolhido
-    When a interface for carregada
-    Then o menu "Chat" deve exibir apenas um icone
-    And o menu "Cadernos" deve permanecer visivel
-    And ao clicar no icone, o painel de Chat deve abrir
+  Scenario: Modo Caderno e o padrao ao abrir o app pela primeira vez
+    When a interface for carregada pela primeira vez (sem dado salvo em localStorage)
+    Then o modo ativo deve ser "Caderno"
+    And o workspace deve exibir: NotebookList | Sidebar | Editor | AiPanel
 
-  Scenario: Navegacao por teclado entre menus
-    Given que os menus "Cadernos" e "Chat" estao visiveis
-    When o usuario usar a tecla Tab para navegar
-    Then o foco deve alternar entre os dois menus principais
-    And o usuario deve conseguir abrir qualquer menu usando Enter/Space
+  Scenario: Clicar em Chat substitui o workspace pelo ChatPanel
+    Given que o modo ativo e "Caderno"
+    When o usuario clicar no botao "Chat"
+    Then o modo ativo passa a ser "Chat"
+    And o workspace inteiro e substituido pelo ChatPanel
+    And NotebookList, Sidebar, Editor e AiPanel nao sao exibidos
 
-  Scenario: Persistir estado de abertura dos menus
-    Given que o usuario abriu o menu "Cadernos"
-    And depois abriu o menu "Chat"
+  Scenario: Clicar em Caderno restaura o layout de anotacoes
+    Given que o modo ativo e "Chat"
+    When o usuario clicar no botao "Caderno"
+    Then o modo ativo passa a ser "Caderno"
+    And o workspace exibe novamente: NotebookList | Sidebar | Editor | AiPanel
+    And o estado anterior (caderno selecionado, nota selecionada) e preservado
+
+  Scenario: Clicar no botao do modo ja ativo nao faz nada
+    Given que o modo ativo e "Chat"
+    When o usuario clicar novamente no botao "Chat"
+    Then nada acontece (nenhuma mudanca de estado ou layout)
+
+  Scenario: Persistir o modo ativo entre sessoes
+    Given que o usuario encerra o app com o modo "Chat" ativo
+    When o usuario reabrir o aplicativo
+    Then o modo ativo deve ser "Chat"
+
+  # --- CHAT PANEL ---
+
+  Scenario: Layout do ChatPanel
+    Given que o modo ativo e "Chat"
+    Then o ChatPanel deve ocupar todo o workspace
+    And o ChatPanel deve ter um header com o seletor de modelo de IA (ModelSelector)
+    And abaixo do header deve haver a area de historico de mensagens (rolavel)
+    And na parte inferior deve haver o campo de texto para digitar mensagens
+    And ao lado do campo de texto deve haver um botao "Enviar"
+
+  Scenario: Estado vazio do ChatPanel
+    Given que o modo ativo e "Chat"
+    And nao ha nenhuma mensagem no historico
+    Then o ChatPanel deve exibir uma mensagem amigavel de boas-vindas na area de historico
+    And o campo de input deve estar disponivel para digitacao
+
+  Scenario: Aviso de API key ausente
+    Given que o modo ativo e "Chat"
+    And nao ha API key configurada
+    Then o ChatPanel deve exibir um aviso amigavel informando que e necessario configurar a API key
+    And o botao "Enviar" deve estar desabilitado
+
+  Scenario: Digitar mensagem e enviar pelo botao
+    Given que o modo ativo e "Chat"
+    And ha uma API key configurada
+    When o usuario digitar um texto no campo de input
+    And o usuario clicar no botao "Enviar"
+    Then a mensagem do usuario aparece no historico com role "user"
+    And o campo de input e limpo
+    And a IA processa a mensagem via hook useChat (que chama OpenRouter sem noteId)
+    And a resposta da IA aparece no historico em streaming com role "assistant"
+
+  Scenario: Enter dentro do campo de texto pula linha (nao envia)
+    Given que o modo ativo e "Chat"
+    When o usuario pressionar Enter no campo de input
+    Then uma nova linha e inserida no campo de texto
+    And a mensagem NAO e enviada
+
+  Scenario: Historico exibe mensagens do usuario e da IA com estilo diferente
+    Given que ha mensagens no historico do Chat
+    Then mensagens com role "user" devem ter estilo visual A (ex: alinhadas a direita ou cor diferente)
+    And mensagens com role "assistant" devem ter estilo visual B
+    And o historico deve rolar automaticamente para a mensagem mais recente
+
+  Scenario: Historico do Chat e persistido em localStorage
+    Given que o usuario enviou mensagens no Chat
     When o usuario fechar e reabrir o aplicativo
-    Then os menus devem manter seu estado anterior (aberto/fechado)
-    Or os menus devem reabrir no estado padrao configurado
+    And navegar para o modo "Chat"
+    Then o historico anterior de mensagens deve ser exibido
 
-  Scenario: Chat funciona independentemente de nota selecionada
-    Given que o usuario abriu o menu "Chat"
-    And nao ha nenhuma nota selecionada
-    When o usuario enviar uma mensagem no Chat
-    Then o Chat deve processar a mensagem normalmente
-    And a conversa deve ser persistida no histórico do Chat
-    And a resposta da IA deve aparecer no painel de Chat
+  # --- COMPATIBILIDADE ---
 
-  Scenario: Chat mantem contexto da nota ativa quando aplicavel
-    Given que o usuario tem uma nota selecionada
-    And o usuario abriu o menu "Chat"
-    When o usuario enviar uma mensagem no Chat
-    Then o Chat pode opcionalmente usar o conteudo da nota como contexto
-    And o usuario deve ter opcao de enviar mensagem com ou sem contexto da nota
-
-  Scenario: NotebookList e Sidebar mantem funcionalidade atual
-    Given que o menu "Cadernos" foi clicado
-    When o usuario interagir com o NotebookList
-    Then todas as funcionalidades atuais devem funcionar
-    And o usuario deve conseguir criar, renomear e deletar cadernos
-    And o usuario deve conseguir selecionar um caderno
-    When o usuario interagir com o Sidebar
-    Then todas as funcionalidades atuais devem funcionar
-    And o usuario deve conseguir criar, reordenar e deletar anotações
-    And o usuario deve conseguir selecionar uma anotação para editar
-
-  Scenario: Redimensionamento dos painels de Cadernos
-    Given que o menu "Cadernos" esta aberto com NotebookList e Sidebar
-    When o usuario arrastar a borda do NotebookList
-    Then o NotebookList deve ser redimensionado
-    And as preferencias de largura devem ser persistidas
-    When o usuario arrastar a borda do Sidebar
-    Then o Sidebar deve ser redimensionado
-    And as preferencias de largura devem ser persistidas
-
-  Scenario: Redimensionamento do painel de Chat
-    Given que o menu "Chat" esta aberto
-    When o usuario arrastar a borda do painel de Chat
-    Then o painel de Chat deve ser redimensionado
-    And as preferencias de largura devem ser persistidas
+  Scenario: Modo Caderno nao e afetado pela feature
+    Given que o modo ativo e "Caderno"
+    Then todas as funcionalidades atuais devem continuar funcionando:
+      | Funcionalidade                              |
+      | Criar, renomear e deletar cadernos          |
+      | Criar, reordenar e deletar anotacoes        |
+      | Editar notas no Editor (CodeMirror)         |
+      | Usar /comandos no editor para acionar a IA  |
+      | AiPanel exibindo respostas dos /comandos    |
+      | Redimensionar NotebookList e Sidebar        |
+      | Modo foco (Ctrl+Space)                      |
+    And as funcionalidades do dropdown (export_md, foco, preview, busca, IA) devem funcionar igual a hoje
 ```
 
 ---
 
 ## Criterios de aceitacao
 
-### Menu Principal
-1. O canto superior esquerdo da interface deve exibir dois menus principais: "Cadernos" e "Chat".
-2. Ambos os menus devem ser acessíveis via mouse e teclado.
-3. Os menus devem ter estados visuais claros (ativo, hover, inativo).
-4. O layout dos menus deve ser responsivo e se adaptar a diferentes tamanhos de tela.
+### Barra principal e dropdown
+1. A barra superior exibe apenas dois botoes: "Caderno" e "Chat".
+2. O botao do modo ativo tem estilo visual diferente do inativo.
+3. Ao passar o mouse sobre "Caderno" **no modo Caderno**, aparece um dropdown com: campo de busca, export_md, foco, preview, IA — funcionando igual a hoje.
+4. No modo Chat, passar o mouse sobre "Caderno" **nao** exibe dropdown.
+5. O dropdown fecha ao mover o mouse para fora da area do botao e do dropdown.
 
-### Menu Cadernos
-5. O menu "Cadernos" deve conter como submenus o NotebookList e o Sidebar atual.
-6. O NotebookList deve manter todas as suas funcionalidades atuais (criar, renomear, deletar, reordenar cadernos).
-7. O Sidebar deve manter todas as suas funcionalidades atuais (criar, reordenar, deletar, selecionar anotações).
-8. O comportamento de recolher/expandir do NotebookList deve ser preservado.
-9. O comportamento de recolher/expandir do Sidebar deve ser preservado.
-10. As preferências de largura de ambos os painéis devem ser persistidas.
+### Alternancia de modos
+6. O modo padrao (primeiro acesso, sem localStorage) e "Caderno".
+7. Clicar no botao do modo ja ativo nao faz nada.
+8. Ao voltar para "Caderno" apos ter estado em "Chat", o estado anterior (caderno ativo, nota ativa) e restaurado.
+9. O modo ativo e persistido em `localStorage` com a chave `monet:active-mode`.
 
-### Menu Chat
-11. O menu "Chat" deve abrir um painel dedicado para conversas com a IA.
-12. O painel de Chat deve conter um campo de input para digitar mensagens.
-13. O painel de Chat deve exibir o histórico de mensagens (usuário e assistente).
-14. O painel de Chat deve suportar redimensionamento.
-15. As preferências de largura do painel de Chat devem ser persistidas.
+### ChatPanel — layout
+10. O ChatPanel ocupa todo o workspace quando o modo Chat esta ativo.
+11. O ChatPanel tem: header com ModelSelector | area de historico rolavel | input fixo na base com botao Enviar.
+12. Estado vazio: exibe mensagem amigavel de boas-vindas.
+13. Sem API key: exibe aviso amigavel e desabilita o botao Enviar.
 
-### Integração com IA existente
-16. O Chat deve reutilizar a integração existente com OpenRouter/Anthropic.
-17. O Chat deve reutilizar a camada de storage existente (IndexedDB/SQLite) para persistir mensagens.
-18. O Chat deve exibir respostas em streaming, semelhante ao AiPanel atual.
+### ChatPanel — envio de mensagens
+14. Enter no campo de input insere nova linha (NAO envia).
+15. O botao "Enviar" envia a mensagem.
+16. Apos enviar, o campo de input e limpo.
+17. A resposta da IA e exibida em streaming.
+18. O historico rola automaticamente para a mensagem mais recente.
+
+### ChatPanel — persistencia
+19. O historico de mensagens e persistido em `localStorage` com a chave `monet:chat-history`.
+20. Estrutura do objeto gravado:
+```typescript
+// localStorage["monet:chat-history"] = JSON.stringify(Message[])
+
+interface Message {
+  id: string           // UUID gerado no cliente
+  role: "user" | "assistant"
+  content: string
+  timestamp: string    // ISO 8601 (ex: "2026-05-09T14:30:00.000Z")
+}
+```
+
+### Integracao com IA
+21. O ChatPanel usa um hook novo chamado `useChat` (a ser criado do zero).
+22. O `useChat` chama a API do OpenRouter diretamente via `fetch` com streaming (SSE), **sem reutilizar nenhum codigo existente** do projeto (nem `openrouter.ts`, nem `useAi`).
+23. O endpoint a chamar e `https://openrouter.ai/api/v1/chat/completions` com `stream: true`.
+24. A API key do OpenRouter e lida do mesmo local onde o app ja a armazena (verificar `src/hooks/useAi.ts` ou Settings para descobrir a chave exata do localStorage/storage onde ela e salva).
+25. O modelo selecionado no ChatPanel e persistido separadamente em `localStorage` com a chave `monet:chat-model`.
 
 ### Compatibilidade
-19. A reorganização não deve quebrar a funcionalidade existente do AiPanel.
-20. A reorganização não deve quebrar a funcionalidade existente do Editor.
-21. A reorganização não deve quebrar a funcionalidade existente da Toolbar.
+25. Os componentes `NotebookList`, `Sidebar`, `Editor` e `AiPanel` nao sao modificados internamente.
+26. O hook `useAi` existente nao e modificado.
 
 ---
 
-## Glossario do dominio
+## Decisoes de design (fechadas)
 
-- **Monet**: aplicacao desktop de notas com IA para apoio ao estudo.
-- **Menu Principal**: area no canto superior esquerdo contendo os menus Cadernos e Chat.
-- **Menu Cadernos**: menu principal que agrupa o NotebookList e Sidebar como submenus.
-- **Menu Chat**: menu principal que abre o painel de conversa com a IA.
-- **NotebookList**: componente atual que exibe a lista de cadernos (notebooks).
-- **Sidebar**: componente atual que exibe a lista de anotações do caderno selecionado.
-- **AiPanel**: painel atual que exibe respostas de IA geradas por /comandos nas notas.
-- **Painel de Chat**: novo painel para conversas interativas com a IA, independentemente de notas.
-- **OpenRouter**: gateway de IA usado pelo Monet para acessar diferentes modelos.
-- **Storage**: camada de persistência abstrata (SQLite para desktop, IndexedDB para web).
+| Decisao | Escolha |
+|---|---|
+| Layout da barra superior | Apenas "Caderno" e "Chat" — sem outros botoes |
+| Ferramentas do Caderno (busca, export etc.) | Dropdown no hover sobre "Caderno", apenas no modo Caderno |
+| Comportamento de alternancia | Substitui o workspace inteiro |
+| Chat coexiste com AiPanel? | Nao — em modo Chat, workspace e apenas o ChatPanel |
+| Chat usa contexto de notas? | Nao — conversa livre e independente |
+| Historico do Chat | Unico historico global, array simples em localStorage |
+| Chave localStorage do historico | `monet:chat-history` |
+| Chave localStorage do modo ativo | `monet:active-mode` |
+| Chave localStorage do modelo do chat | `monet:chat-model` |
+| Enter no input | Quebra linha (nao envia) |
+| Envio de mensagem | Apenas pelo botao "Enviar" |
+| Hook de IA para o Chat | Novo hook `useChat` 100% independente, chama OpenRouter via fetch/SSE diretamente |
 
 ---
 
-## Ambiguidades e decisoes pendentes
+## Arquivos afetados (estimativa)
 
-1. **Posicionamento dos menus**: Os menus "Cadernos" e "Chat" devem ser botões lado a lado na horizontal, ou um menu dropdown vertical?
-   - *Sugestao: Botões lado a lado na horizontal, similar a abas*.
+| Arquivo | Tipo de mudanca |
+|---|---|
+| `src/App.tsx` | Adicionar estado `activeMode`, renderizar ChatPanel ou layout atual conforme modo |
+| `src/components/Toolbar/Toolbar.tsx` | Substituir conteudo atual por botoes "Caderno" / "Chat" + dropdown |
+| `src/components/ChatPanel/ChatPanel.tsx` | **Novo componente** — tela de chat |
+| `src/hooks/useChat.ts` | **Novo hook** — envio e streaming de mensagens sem noteId |
 
-2. **Comportamento ao clicar**: O menu "Cadernos" deve abrir um dropdown ou deve manter o NotebookList/Sidebar sempre visíveis como painéis laterais?
-   - *Sugestao: Manter NotebookList e Sidebar como painéis laterais recolhíveis, similar ao comportamento atual*.
+---
 
-3. **Relação entre Chat e AiPanel**: O novo painel de Chat deve substituir o AiPanel, coexistir com ele, ou ser uma evolução do AiPanel?
-   - *Sugestao: Coexistir. AiPanel continua para respostas de /comandos, Chat é para conversas livres*.
+## Glossario
 
-4. **Contexto da nota no Chat**: Ao usar o Chat com uma nota selecionada, o Chat deve automaticamente usar o conteúdo da nota como contexto, ou isso deve ser opcional?
-   - *Sugestao: Opcional, com um botão ou toggle para incluir/excluir contexto da nota*.
-
-5. **Histórico do Chat**: O histórico de mensagens do Chat deve ser global (um único chat) ou por nota (cada nota tem seu chat)?
-   - *Sugestao: Inicialmente global, com possibilidade futura de chat por nota*.
-
-6. **Posição do painel de Chat**: O painel de Chat deve abrir à direita (como o AiPanel), à esquerda, ou em uma posição configurável?
-   - *Sugestao: À direita, substituindo ou ao lado do AiPanel*.
-
-7. **Teclas de atalho**: Devem ser criadas teclas de atalho para alternar entre Cadernos e Chat?
-   - *Sugestao: Sim, Ctrl+1 para Cadernos, Ctrl+2 para Chat*.
-
-8. **Persistência do estado**: O estado de abertura/fechamento dos menus deve ser persistido entre sessões?
-   - *Sugestao: Sim, usar localStorage*.
+- **Modo Caderno**: modo padrao do app, exibe NotebookList + Sidebar + Editor + AiPanel.
+- **Modo Chat**: novo modo, exibe somente o ChatPanel ocupando todo o workspace.
+- **ChatPanel**: novo componente de chat livre com a IA, sem vinculo com notas.
+- **useChat**: novo hook 100% independente para o ChatPanel; chama a API OpenRouter via fetch com SSE diretamente, sem depender de nenhum codigo existente do projeto.
+- **Dropdown de ferramentas**: box que aparece no hover sobre "Caderno" com as opcoes atuais da Toolbar.
+- **AiPanel**: componente atual que exibe respostas de /comandos no editor — nao e modificado.
+- **ModelSelector**: componente existente de selecao de modelo — reutilizado no ChatPanel.
+- **SSE (Server-Sent Events)**: protocolo de streaming usado pela API do OpenRouter para entregar a resposta da IA palavra por palavra.

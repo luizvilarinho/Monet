@@ -125,7 +125,10 @@ Feature: Comportamento em casos especiais
 
 | ID | Questão | Decisão | Impacto |
 |----|---------|---------|--------|
-| A1 | Qual library de spell check será usada? | **typo-js** - Leve (~200KB), dicionário PT-BR disponível, fácil integração com CodeMirror 6 | Performance e tamanho do bundle |
-| A2 | O corretor deve funcionar offline? | **Não** - Pode usar solução baseada em browser/navegador | Requer dicionário embarcado vs API externa |
-| A3 | Como lidar com palavras compostas com hífen? | **Ambas as partes devem ser marcadas em vermelho** se estiverem erradas | Qualidade das sugestões |
-| A4 | O menu de contexto deve substituir ou complementar o menu nativo do CodeMirror? | **Complementar** | UX - consistência |
+| A1 | Qual library de spell check será usada? | ~~**typo-js**~~ → **Spell check nativo do browser** via `spellcheck="true"`. typo-js foi tentado mas não funcionou na prática. | Sem controle de dicionário, sugestões dependem do OS/browser |
+| A2 | Como integrar `spellcheck="true"` no CodeMirror 6? | **MutationObserver** (`src/lib/spellcheck.ts`) que reaplica o atributo a cada re-render do DOM interno do editor, via ciclo `false → true`. Atributo direto não persiste pois o CM6 sobrescreve o DOM. | Workaround funcional parcial — mantém o corretor ativo, mas sem garantia de PT-BR nem sugestões controladas |
+| A3 | O corretor funciona offline? | **Sim** — depende do dicionário do browser/OS, que é local | Qualidade varia por ambiente do usuário |
+| A4 | Como lidar com palavras compostas com hífen? | **Comportamento do browser** — fora do nosso controle na implementação atual | — |
+| A5 | Code blocks são excluídos da verificação? | **Não** — limitação da implementação atual com spell check nativo | Issue em aberto |
+
+> **Status atual:** Implementação parcial. Os cenários BDD de menu de contexto com sugestões ordenadas e exclusão de code blocks não estão implementados — dependem de solução futura (substituir o spell check nativo por engine própria quando uma alternativa viável ao typo-js for encontrada).

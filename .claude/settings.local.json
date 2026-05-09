@@ -25,7 +25,19 @@
       "Bash(Remove-Item -Force \"C:\\\\Users\\\\User\\\\Documents\\\\projetos\\\\Monet\\\\src\\\\lib\\\\spellcheck\\\\index.ts\" \"C:\\\\Users\\\\User\\\\Documents\\\\projetos\\\\Monet\\\\src\\\\lib\\\\spellcheck\\\\extension.ts\" \"C:\\\\Users\\\\User\\\\Documents\\\\projetos\\\\Monet\\\\src\\\\components\\\\Editor\\\\SpellCheckMenu.tsx\" \"C:\\\\Users\\\\User\\\\Documents\\\\projetos\\\\Monet\\\\src\\\\components\\\\Editor\\\\SpellCheckMenu.module.css\" \"C:\\\\Users\\\\User\\\\Documents\\\\projetos\\\\Monet\\\\src\\\\types\\\\nspell.d.ts\" \"C:\\\\Users\\\\User\\\\Documents\\\\projetos\\\\Monet\\\\scripts\\\\build-wordlist.mjs\")",
       "Bash(Remove-Item -Recurse -Force \"C:\\\\Users\\\\User\\\\Documents\\\\projetos\\\\Monet\\\\public\\\\dictionaries\")",
       "Bash(Remove-Item -Recurse -Force \"C:\\\\Users\\\\User\\\\Documents\\\\projetos\\\\Monet\\\\src\\\\lib\\\\spellcheck\")",
-      "Bash(Remove-Item -Recurse -Force \"C:\\\\Users\\\\User\\\\Documents\\\\projetos\\\\Monet\\\\scripts\")"
+      "Bash(Remove-Item -Recurse -Force \"C:\\\\Users\\\\User\\\\Documents\\\\projetos\\\\Monet\\\\scripts\")",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\User\\\\Documents\\\\projetos\\\\Monet\" -Recurse -Directory)",
+      "Bash(Select-Object FullName)",
+      "Bash(Head -30)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\User\\\\Documents\\\\projetos\\\\Monet\\\\src\" -Recurse -Directory)",
+      "WebSearch",
+      "WebFetch(domain:openrouter.zendesk.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:openrouter.ai)",
+      "Bash(git checkout *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)"
     ]
   }
 }
