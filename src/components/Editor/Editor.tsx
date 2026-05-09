@@ -1,13 +1,13 @@
 import {
-  autocompletion,
   acceptCompletion,
+  autocompletion,
   completionStatus,
   type Completion,
   type CompletionContext,
 } from '@codemirror/autocomplete'
 import { defaultKeymap, history, historyKeymap, insertNewlineAndIndent } from '@codemirror/commands'
 import { markdown } from '@codemirror/lang-markdown'
-import { syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language'
+import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { EditorSelection, EditorState, RangeSetBuilder, StateEffect, StateField } from '@codemirror/state'
 import {
   Decoration,
@@ -17,9 +17,13 @@ import {
   placeholder,
   type DecorationSet,
 } from '@codemirror/view'
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 import { nanoid } from 'nanoid'
-import styles from './Editor.module.css'
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
+import { findClosestHeading, parseHeadings } from '../../lib/headingParser'
+import { renderMarkdown } from '../../lib/markdown'
+import { spellCheckEnforcer } from '../../lib/spellcheck'
+import type { AiResponse, CommandExecutionRequest } from '../../types'
+import { HeadingNavigator } from '../HeadingNavigator/HeadingNavigator'
 import {
   buildCommandExecutionDraft,
   extractCommandId,
@@ -33,11 +37,9 @@ import {
   removeEmbeddedBlock,
   type CommandLineStatus,
 } from './commandParser'
+import styles from './Editor.module.css'
 import { detectActiveFormats, type ActiveFormat } from './formatting'
 import { FormattingToolbar } from './FormattingToolbar'
-import type { AiResponse, CommandExecutionRequest } from '../../types'
-import { renderMarkdown } from '../../lib/markdown'
-import { spellCheckEnforcer } from '../../lib/spellcheck'
 
 export interface EditorProps {
   title: string
@@ -756,6 +758,7 @@ export function Editor({
     left: number
     activeFormats: Set<ActiveFormat>
   } | null>(null)
+  const [activeOffset, setActiveOffset] = useState<number | null>(null)
   const hostRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
   const commandStatusRef = useRef<Map<number, CommandLineStatus>>(new Map())
@@ -820,6 +823,15 @@ export function Editor({
     view.dispatch({ effects: refreshCommandDecorations.of(null) })
   }, [])
 
+  const handleNavigateToHeading = useCallback((offset: number) => {
+    const view = viewRef.current
+    if (!view) return
+    setActiveOffset(offset)
+    view.dispatch({
+      effects: EditorView.scrollIntoView(offset, { y: 'start' }),
+    })
+  }, [])
+
   const handleInsertRef = useRef(handleInsert)
   const handleRemoveRef = useRef(handleRemove)
   handleInsertRef.current = handleInsert
@@ -876,6 +888,14 @@ export function Editor({
               activeFormats: detectActiveFormats(update.view),
             })
           }
+        }
+
+        if (update.viewportChanged || update.docChanged) {
+          const content = update.state.doc.toString()
+          const headings = parseHeadings(content)
+          const viewportTop = update.view.viewport.from
+          const closest = findClosestHeading(headings, viewportTop)
+          setActiveOffset(closest?.offset ?? null)
         }
       }
     })
@@ -1143,7 +1163,16 @@ export function Editor({
           />
         )}
       </div>
-      <div className={styles.body} ref={hostRef} />
+      <div className={styles.bodyWrap}>
+        <div className={styles.body}>
+          <div ref={hostRef} />
+        </div>
+        <HeadingNavigator
+          content={value}
+          activeOffset={activeOffset}
+          onNavigate={handleNavigateToHeading}
+        />
+      </div>
       {relatedContent}
       {toolbarState && viewRef.current && (
         <FormattingToolbar
