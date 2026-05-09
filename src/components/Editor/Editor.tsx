@@ -35,8 +35,10 @@ import {
 } from './commandParser'
 import { detectActiveFormats, type ActiveFormat } from './formatting'
 import { FormattingToolbar } from './FormattingToolbar'
+import { HeadingNavigator } from '../HeadingNavigator/HeadingNavigator'
 import type { AiResponse, CommandExecutionRequest } from '../../types'
 import { renderMarkdown } from '../../lib/markdown'
+import { findClosestHeading, parseHeadings } from '../../lib/headingParser'
 
 export interface EditorProps {
   title: string
@@ -755,6 +757,7 @@ export function Editor({
     left: number
     activeFormats: Set<ActiveFormat>
   } | null>(null)
+  const [activeOffset, setActiveOffset] = useState<number | null>(null)
   const hostRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
   const commandStatusRef = useRef<Map<number, CommandLineStatus>>(new Map())
@@ -819,6 +822,15 @@ export function Editor({
     view.dispatch({ effects: refreshCommandDecorations.of(null) })
   }, [])
 
+  const handleNavigateToHeading = useCallback((offset: number) => {
+    const view = viewRef.current
+    if (!view) return
+    setActiveOffset(offset)
+    view.dispatch({
+      effects: EditorView.scrollIntoView(offset, { y: 'start' }),
+    })
+  }, [])
+
   const handleInsertRef = useRef(handleInsert)
   const handleRemoveRef = useRef(handleRemove)
   handleInsertRef.current = handleInsert
@@ -875,6 +887,14 @@ export function Editor({
               activeFormats: detectActiveFormats(update.view),
             })
           }
+        }
+
+        if (update.viewportChanged || update.docChanged) {
+          const content = update.state.doc.toString()
+          const headings = parseHeadings(content)
+          const viewportTop = update.view.viewport.from
+          const closest = findClosestHeading(headings, viewportTop)
+          setActiveOffset(closest?.offset ?? null)
         }
       }
     })
@@ -1140,7 +1160,16 @@ export function Editor({
           />
         )}
       </div>
-      <div className={styles.body} ref={hostRef} />
+      <div className={styles.bodyWrap}>
+        <div className={styles.body}>
+          <div ref={hostRef} />
+        </div>
+        <HeadingNavigator
+          content={value}
+          activeOffset={activeOffset}
+          onNavigate={handleNavigateToHeading}
+        />
+      </div>
       {relatedContent}
       {toolbarState && viewRef.current && (
         <FormattingToolbar
