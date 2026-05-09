@@ -281,7 +281,7 @@ function App() {
   }, [activeNote])
 
   const executedCommandIds = useMemo(
-    () => new Set(responses.map((r) => r.id)),
+    () => new Set(responses.map((r) => r.commandId ?? r.id)),
     [responses]
   )
 

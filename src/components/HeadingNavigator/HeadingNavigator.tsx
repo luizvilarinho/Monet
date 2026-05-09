@@ -20,6 +20,7 @@ export function HeadingNavigator({
   const [panelPos, setPanelPos] = useState({ right: 0, top: 0 })
   const boxRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
+  const activeDashRef = useRef<HTMLDivElement | null>(null)
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const headings = useMemo(() => parseHeadings(content), [content])
@@ -30,12 +31,8 @@ export function HeadingNavigator({
   }, [headings, activeOffset])
 
   useEffect(() => {
-    if (!boxRef.current || headings.length === 0) return
-    const el = boxRef.current.querySelector('[data-active="true"]')
-    if (el) {
-      el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-    }
-  }, [activeHeading, headings.length])
+    activeDashRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [activeHeading])
 
   const showPanel = useCallback(() => {
     if (hideTimerRef.current) {
@@ -45,7 +42,7 @@ export function HeadingNavigator({
     if (!panelOpen && boxRef.current) {
       const rect = boxRef.current.getBoundingClientRect()
       setPanelPos({
-        right: document.body.clientWidth - rect.left + 4,
+        right: window.innerWidth - rect.left + 4,
         top: rect.top,
       })
     }
@@ -56,16 +53,9 @@ export function HeadingNavigator({
     hideTimerRef.current = setTimeout(() => setPanelOpen(false), 150)
   }, [])
 
-  const handleItemClick = useCallback(
-    (offset: number) => {
-      onNavigate(offset)
-    },
-    [onNavigate]
-  )
-
   if (headings.length === 0) {
     return (
-      <div className={styles.box} onMouseEnter={showPanel} onMouseLeave={hidePanel}>
+      <div className={styles.box}>
         <div className={styles.empty} />
       </div>
     )
@@ -79,7 +69,7 @@ export function HeadingNavigator({
         onMouseEnter={showPanel}
         onMouseLeave={hidePanel}
       >
-        {headings.map((heading, index) => {
+        {headings.map((heading) => {
           const isActive = activeHeading?.offset === heading.offset
           const levelClass =
             heading.level === 1 ? styles.dashH1
@@ -91,9 +81,9 @@ export function HeadingNavigator({
 
           return (
             <div
-              key={index}
+              key={heading.offset}
+              ref={isActive ? activeDashRef : undefined}
               className={`${styles.dash} ${levelClass} ${isActive ? styles.dashActive : ''}`}
-              data-active={isActive ? 'true' : 'false'}
             />
           )
         })}
@@ -106,15 +96,15 @@ export function HeadingNavigator({
           onMouseLeave={hidePanel}
           style={{ right: panelPos.right, top: panelPos.top }}
         >
-          {headings.map((heading, index) => {
+          {headings.map((heading) => {
             const isActive = activeHeading?.offset === heading.offset
             return (
               <span
-                key={index}
+                key={heading.offset}
                 className={`${styles.panelItem} ${isActive ? styles.panelItemActive : ''}`}
                 onClick={(e) => {
                   e.stopPropagation()
-                  handleItemClick(heading.offset)
+                  onNavigate(heading.offset)
                 }}
               >
                 <span className={styles.panelLevel}>

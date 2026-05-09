@@ -8,7 +8,7 @@ import {
 import { defaultKeymap, history, historyKeymap, insertNewlineAndIndent } from '@codemirror/commands'
 import { markdown } from '@codemirror/lang-markdown'
 import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
-import { EditorSelection, EditorState, RangeSetBuilder, StateEffect, StateField } from '@codemirror/state'
+import { EditorSelection, EditorState, RangeSetBuilder, StateEffect, StateField, type Text } from '@codemirror/state'
 import {
   Decoration,
   EditorView,
@@ -642,12 +642,28 @@ function createMarkerDecorations(
       const hasEmbed = embeddedIds.has(cmdId)
       const canInsert = completedIds.has(cmdId)
 
-      builder.add(line.from, line.from, Decoration.line({ class: 'cm-commandActionLine' }))
+      // Workaround: força cm-commandExecuted aqui também porque o StateField de
+      // cor (createCommandDecorations) está perdendo o status 'executed' em
+      // edições abaixo da linha por motivo ainda não diagnosticado.
+      const isExecuted = hasEmbed || canInsert
+      builder.add(
+        line.from,
+        line.from,
+        Decoration.line({
+          class: isExecuted
+            ? 'cm-commandActionLine cm-commandExecuted'
+            : 'cm-commandActionLine',
+          attributes: { spellcheck: 'false' },
+        })
+      )
       if (match.index > 0) {
         builder.add(
           line.from,
           line.from + match.index,
-          Decoration.mark({ class: 'cm-commandText' })
+          Decoration.mark({
+            class: 'cm-commandText',
+            attributes: { spellcheck: 'false' },
+          })
         )
       }
       builder.add(
@@ -839,27 +855,30 @@ export function Editor({
 
   useEffect(() => {
     if (!hostRef.current || viewRef.current) return
+    let cachedHeadingsDoc: Text | null = null
+    let cachedHeadings: ReturnType<typeof parseHeadings> = []
     const syncListener = EditorView.updateListener.of((update) => {
       if (update.docChanged) {
         onChangeRef.current(update.state.doc.toString())
         const map = commandStatusRef.current
 
-        // Build cmdId → status from old state so position shifts don't lose 'executed' status
-        const idToStatus = new Map<string, CommandLineStatus>()
-        for (let i = 1; i <= update.startState.doc.lines; i++) {
-          const oldLine = update.startState.doc.line(i)
-          const status = map.get(oldLine.from)
-          if (!status) continue
-          const cmdId = extractCommandId(oldLine.text)
-          if (cmdId) idToStatus.set(cmdId, status)
+        // Map old line.from to new line.from via the change set so edits above
+        // a command line don't lose the 'executed' status when the line shifts.
+        const mapped = new Map<number, CommandLineStatus>()
+        for (const [oldFrom, status] of map) {
+          const newFrom = update.changes.mapPos(oldFrom, 1)
+          if (newFrom < 0 || newFrom > update.state.doc.length) continue
+          const line = update.state.doc.lineAt(newFrom)
+          if (line.from !== newFrom) continue
+          if (!isPotentialCommandLine(line.text)) continue
+          mapped.set(line.from, status)
         }
 
         const preserved = new Map<number, CommandLineStatus>()
         for (let lineNumber = 1; lineNumber <= update.state.doc.lines; lineNumber++) {
           const line = update.state.doc.line(lineNumber)
           if (!isPotentialCommandLine(line.text)) continue
-          const cmdId = extractCommandId(line.text)
-          const prevStatus = (cmdId && idToStatus.get(cmdId)) ?? map.get(line.from)
+          const prevStatus = mapped.get(line.from)
           preserved.set(
             line.from,
             prevStatus === 'executed' ? 'executed' : getCommandLineStatus(line.text)
@@ -891,10 +910,12 @@ export function Editor({
         }
 
         if (update.viewportChanged || update.docChanged) {
-          const content = update.state.doc.toString()
-          const headings = parseHeadings(content)
+          if (cachedHeadingsDoc !== update.state.doc) {
+            cachedHeadings = parseHeadings(update.state.doc.toString())
+            cachedHeadingsDoc = update.state.doc
+          }
           const viewportTop = update.view.viewport.from
-          const closest = findClosestHeading(headings, viewportTop)
+          const closest = findClosestHeading(cachedHeadings, viewportTop)
           setActiveOffset(closest?.offset ?? null)
         }
       }
