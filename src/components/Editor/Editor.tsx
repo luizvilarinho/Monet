@@ -37,6 +37,7 @@ import { detectActiveFormats, type ActiveFormat } from './formatting'
 import { FormattingToolbar } from './FormattingToolbar'
 import type { AiResponse, CommandExecutionRequest } from '../../types'
 import { renderMarkdown } from '../../lib/markdown'
+import { spellCheckEnforcer } from '../../lib/spellcheck'
 
 export interface EditorProps {
   title: string
@@ -966,6 +967,8 @@ export function Editor({
         EditorView.lineWrapping,
         placeholder('Anote a impressão do momento...'),
         commandStatusTheme,
+        EditorView.contentAttributes.of({ spellcheck: 'true' }),
+        spellCheckEnforcer,
         todoDecorationsField,
         toggleOpenState,
         createMarkerDecorations(
