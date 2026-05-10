@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import { AiPanel } from './components/AiPanel/AiPanel'
+import { ChatPanel } from './components/ChatPanel/ChatPanel'
 import { Editor } from './components/Editor/Editor'
 import { EmptyEditor } from './components/Editor/EmptyEditor'
 import { MarkdownPreview } from './components/Editor/MarkdownPreview'
@@ -9,7 +10,7 @@ import { NotebookList } from './components/NotebookList/NotebookList'
 import { RelatedContent } from './components/RelatedContent/RelatedContent'
 import { SettingsModal } from './components/Settings/SettingsModal'
 import { Sidebar } from './components/Sidebar/Sidebar'
-import { Toolbar } from './components/Toolbar/Toolbar'
+import { Toolbar, type ActiveMode } from './components/Toolbar/Toolbar'
 import { useAi } from './hooks/useAi'
 import { useNotebooks } from './hooks/useNotebooks'
 import { useNotes } from './hooks/useNotes'
@@ -91,6 +92,10 @@ function App() {
     remove: removeNote,
   } = useNotes()
 
+  const [activeMode, setActiveMode] = useState<ActiveMode>(() => {
+    const saved = localStorage.getItem('monet:active-mode')
+    return saved === 'chat' ? 'chat' : 'caderno'
+  })
   const [activeNotebookId, setActiveNotebookId] = useState<string | null>(null)
   const [activeId, setActiveId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
@@ -208,6 +213,14 @@ function App() {
   useEffect(() => {
     if (modelId) localStorage.setItem('lastModelId', modelId)
   }, [modelId])
+
+  useEffect(() => {
+    localStorage.setItem('monet:active-mode', activeMode)
+  }, [activeMode])
+
+  const handleSetMode = useCallback((mode: ActiveMode) => {
+    setActiveMode((prev) => (prev === mode ? prev : mode))
+  }, [])
 
   useEffect(() => {
     localStorage.setItem('monet:notebook-collapsed', notebookCollapsed ? '1' : '0')
@@ -424,6 +437,8 @@ function App() {
   return (
     <div className="app">
       <Toolbar
+        activeMode={activeMode}
+        onSetMode={handleSetMode}
         search={search}
         onSearchChange={setSearch}
         onExport={handleExport}
@@ -433,11 +448,19 @@ function App() {
         onTogglePreview={() => setPreviewOpen((v) => !v)}
         aiOpen={aiOpen}
         onToggleAi={() => setAiOpen((v) => !v)}
-        notebookWidth={effectiveNotebookWidth}
-        sidebarWidth={effectiveSidebarWidth}
         focusMode={focusMode}
         onToggleFocus={() => setFocusMode((v) => !v)}
       />
+      {activeMode === 'chat' ? (
+        <div className="workspace">
+          <ChatPanel
+            models={models}
+            modelsLoading={modelsLoading}
+            modelsError={modelsError}
+            onOpenSettings={() => setSettingsOpen(true)}
+          />
+        </div>
+      ) : (
       <div className="workspace">
         {!focusMode && <NotebookList
           notebooks={orderedNotebooks}
@@ -524,6 +547,7 @@ function App() {
           }}
         />
       </div>
+      )}
       <SettingsModal
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}

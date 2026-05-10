@@ -1,0 +1,158 @@
+.wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.trigger,
+.triggerActive {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: var(--surface-1, #1e1e22);
+  border: 1px solid var(--border, #333340);
+  color: var(--text-secondary, #a0a0b8);
+  cursor: pointer;
+}
+
+.trigger:hover {
+  color: var(--text-primary, #e8e8f0);
+  border-color: var(--surface-3, #2e2e36);
+}
+
+.triggerActive {
+  color: var(--accent, #7c6af5);
+  border-color: var(--accent, #7c6af5);
+  background: rgba(124, 106, 245, 0.1);
+}
+
+.badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  background: var(--accent, #7c6af5);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.popover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  z-index: 40;
+  width: 320px;
+  background: var(--bg-panel, #161618);
+  border: 1px solid var(--border, #333340);
+  border-radius: 10px;
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+}
+
+.popoverHeader {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.6px;
+  color: var(--text-muted, #606070);
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border, #333340);
+}
+
+.toolList {
+  display: flex;
+  flex-direction: column;
+}
+
+.toolRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border-bottom: 1px solid var(--border, #333340);
+}
+
+.toolRow:last-child {
+  border-bottom: none;
+}
+
+.toolIcon {
+  flex-shrink: 0;
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: var(--surface-1, #1e1e22);
+  color: var(--text-secondary, #a0a0b8);
+}
+
+.toolText {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.toolName {
+  font-size: 13px;
+  color: var(--text-primary, #e8e8f0);
+  font-weight: 500;
+}
+
+.toolDescription {
+  font-size: 11px;
+  color: var(--text-muted, #606070);
+  line-height: 1.4;
+}
+
+.toggleOn,
+.toggleOff {
+  width: 32px;
+  height: 18px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  position: relative;
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+  transition: background 0.15s;
+}
+
+.toggleOff {
+  background: var(--surface-3, #2e2e36);
+  border-color: var(--border, #333340);
+}
+
+.toggleOn {
+  background: var(--accent, #7c6af5);
+  border-color: var(--accent, #7c6af5);
+}
+
+.toggleKnob {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 14px;
+  height: 14px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.15s;
+}
+
+.toggleOn .toggleKnob {
+  transform: translateX(14px);
+}

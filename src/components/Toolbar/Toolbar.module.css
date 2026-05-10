@@ -1,28 +1,73 @@
 .toolbar {
   display: flex;
   align-items: center;
-  padding: 8px 16px 8px 0;
+  gap: 16px;
+  padding: 8px 16px;
   background: var(--bg-panel, #161618);
   border-bottom: 1px solid var(--border, #333340);
   height: 44px;
-}
-
-.brandSection {
-  padding-left: 16px;
-  box-sizing: border-box;
   flex-shrink: 0;
-  overflow: hidden;
 }
 
 .brand {
   height: 20px;
   width: auto;
   display: block;
+  flex-shrink: 0;
+}
+
+.modes {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.modeWrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.modeButton,
+.modeButtonActive {
+  background: transparent;
+  color: var(--text-secondary, #a0a0b8);
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 4px 12px;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  border-radius: 0;
+  line-height: 1.4;
+}
+
+.modeButton:hover {
+  color: var(--text-primary, #e8e8f0);
+}
+
+.modeButtonActive {
+  color: var(--accent, #7c6af5);
+  border-bottom-color: var(--accent, #7c6af5);
+}
+
+.dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  background: var(--bg-panel, #161618);
+  border: 1px solid var(--border, #333340);
+  border-radius: 8px;
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.4);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 360px;
 }
 
 .searchWrap {
-  flex: 0 1 500px;
-  min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -60,33 +105,34 @@
   cursor: pointer;
 }
 
-.actions {
-  margin-left: auto;
+.dropdownActions {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
-.toolbar button {
+.dropdown button {
   background: transparent;
   color: var(--text-secondary, #a0a0b8);
   border: 1px solid var(--border, #333340);
   border-radius: 6px;
   padding: 4px 10px;
   font-size: 12px;
+  font-family: inherit;
   cursor: pointer;
 }
 
-.toolbar button[aria-pressed="true"] {
+.dropdown button[aria-pressed="true"] {
   color: var(--accent, #7c6af5);
   border-color: var(--accent, #7c6af5);
 }
 
-.toolbar button:hover:not(:disabled) {
+.dropdown button:hover:not(:disabled) {
   color: var(--text-primary, #e8e8f0);
 }
 
-.toolbar button:disabled {
+.dropdown button:disabled {
   opacity: 0.35;
   cursor: not-allowed;
 }

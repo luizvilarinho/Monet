@@ -110,6 +110,11 @@ fn clear_openrouter_key(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn get_openrouter_key(app: AppHandle) -> Result<Option<String>, String> {
+    Ok(read_key(&app, "openrouter_key"))
+}
+
+#[tauri::command]
 fn save_tavily_key(app: AppHandle, key: String) -> Result<(), String> {
     save_key(&app, "tavily_key", key)
 }
@@ -524,6 +529,7 @@ pub fn run() {
             save_openrouter_key,
             has_openrouter_key,
             clear_openrouter_key,
+            get_openrouter_key,
             save_tavily_key,
             has_tavily_key,
             clear_tavily_key,

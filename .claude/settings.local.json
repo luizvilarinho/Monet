@@ -37,7 +37,12 @@
       "Bash(git checkout *)",
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "WebFetch(domain:context7.com)",
+      "WebFetch(domain:docs.rs)",
+      "WebFetch(domain:alexgarcia.xyz)",
+      "WebFetch(domain:crates.io)",
+      "WebFetch(domain:medium.com)"
     ]
   }
 }
