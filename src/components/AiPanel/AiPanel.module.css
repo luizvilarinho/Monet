@@ -60,7 +60,7 @@
 }
 
 .title {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
   color: var(--accent-ai, #5dcaa5);
   font-size: 12px;
   letter-spacing: 0.5px;
@@ -219,7 +219,7 @@
 
 .modelId {
   color: var(--text-muted, #606070);
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
   font-size: 10px;
 }
 
@@ -257,7 +257,7 @@
 }
 
 .warnText {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
 }
 
 .warnCta {
@@ -382,7 +382,7 @@
 
 .cmd {
   color: var(--accent-ai, #5dcaa5);
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
 }
 
 .query {
@@ -429,7 +429,7 @@
 }
 
 .modelTag {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
   color: var(--text-muted, #606070);
   font-size: 10px;
 }
@@ -469,7 +469,7 @@
 .bodyMd :global(li) { margin: 0.15em 0; }
 
 .bodyMd :global(code) {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
   font-size: 0.85em;
   background: var(--surface-2, #26262c);
   border-radius: 3px;
@@ -640,7 +640,7 @@
 
 .sourceMeta {
   color: var(--text-muted, #606070);
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
   font-size: 10px;
 }
 

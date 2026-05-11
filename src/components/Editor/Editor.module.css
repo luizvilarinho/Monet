@@ -104,8 +104,8 @@
   border: none;
   outline: none;
   resize: none;
-  padding: 20px 32px 24px;
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  padding: 20px 0px 23px;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
   font-size: 14px;
   line-height: 1.6;
 }

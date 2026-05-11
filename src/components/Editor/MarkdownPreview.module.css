@@ -10,7 +10,7 @@
 .body {
   flex: 1;
   padding: 20px 32px 48px;
-  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
   font-size: 14px;
   line-height: 1.7;
   color: var(--text-primary, #e8e8f0);
@@ -112,7 +112,7 @@
 
 /* Code */
 .body :global(code) {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
   font-size: 0.88em;
   background: var(--surface-1, #1e1e22);
   border: 1px solid var(--border, #333340);

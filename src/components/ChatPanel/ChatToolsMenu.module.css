@@ -62,7 +62,7 @@
 }
 
 .popoverHeader {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
   font-size: 10px;
   letter-spacing: 0.6px;
   color: var(--text-muted, #606070);

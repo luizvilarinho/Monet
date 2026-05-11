@@ -53,7 +53,7 @@
   border: 1px solid var(--border, #333340);
   border-radius: 8px;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
   font-size: 13px;
   line-height: 1.6;
   color: var(--text-primary, #e8e8f0);

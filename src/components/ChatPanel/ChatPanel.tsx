@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { openUrl } from '@tauri-apps/plugin-opener'
+import { useEffect, useMemo, useState } from 'react'
 import { useChat, type ChatMessage } from '../../hooks/useChat'
 import { renderMarkdown } from '../../lib/markdown'
 import type { AiModel } from '../../types'
 import { ModelSelector } from '../AiPanel/ModelSelector'
+import styles from './ChatPanel.module.css'
 import { ChatSidebar } from './ChatSidebar'
 import { ChatToolsMenu } from './ChatToolsMenu'
-import styles from './ChatPanel.module.css'
 
 export interface ChatPanelProps {
   models: AiModel[]
@@ -39,7 +40,6 @@ export function ChatPanel({
   } = useChat()
 
   const [draft, setDraft] = useState('')
-  const historyRef = useRef<HTMLDivElement | null>(null)
 
   // Selecionar modelo padrao quando a lista carregar
   useEffect(() => {
@@ -52,13 +52,6 @@ export function ChatPanel({
         : models[0].id
     setModel(next)
   }, [models, model, setModel])
-
-  // Auto-scroll ao final quando mensagens mudam
-  useEffect(() => {
-    const el = historyRef.current
-    if (!el) return
-    el.scrollTop = el.scrollHeight
-  }, [messages])
 
   // Limpa o draft ao trocar de conversa
   useEffect(() => {
@@ -119,7 +112,7 @@ export function ChatPanel({
           </div>
         )}
 
-        <div className={styles.history} ref={historyRef}>
+        <div className={styles.history}>
           {messages.length === 0 ? (
             <div className={styles.empty}>
               <p className={styles.emptyTitle}>Olá! Eu sou o seu assistente.</p>
@@ -230,6 +223,14 @@ function ChatBubble({ message }: { message: ChatMessage }) {
           <div
             className={styles.assistantBody}
             dangerouslySetInnerHTML={{ __html: html }}
+            onClick={(e) => {
+              const target = (e.target as HTMLElement).closest('a')
+              if (!target) return
+              const href = target.getAttribute('href')
+              if (!href || !href.startsWith('http')) return
+              e.preventDefault()
+              void openUrl(href)
+            }}
           />
           <button
             type="button"

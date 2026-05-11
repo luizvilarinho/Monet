@@ -1,18 +1,18 @@
 :root {
-  --bg-app: #0e0e10;
-  --bg-panel: #161618;
-  --surface-1: #1e1e22;
-  --surface-2: #26262c;
+  --bg-app: #1f1f2f;
+  --bg-panel: #161625;
+  --surface-1: #1d1d34;
+  --surface-2: #292959;
   --surface-3: #2e2e36;
-  --text-primary: #e8e8f0;
-  --text-secondary: #a0a0b8;
+  --text-primary: #ddddf1;
+  --text-secondary: #8282a7;
   --text-muted: #606070;
-  --accent: #7c6af5;
+  --accent: #7b6ed4;
   --accent-ai: #5dcaa5;
   --accent-warn: #ef9f27;
-  --border: #333340;
+  --border: #2e2f2cb3;
 
-  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
   font-size: 14px;
   color: var(--text-primary);
   background: var(--bg-app);
@@ -22,6 +22,7 @@
 
 *, *::before, *::after { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
+body { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif; }
 
 .app {
   display: flex;

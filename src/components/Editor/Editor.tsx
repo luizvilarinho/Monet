@@ -63,7 +63,7 @@ const commandStatusTheme = EditorView.baseTheme({
     backgroundColor: 'var(--bg-app, #0e0e10)',
   },
   '.cm-scroller': {
-    fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+    fontFamily: "'Inter', system-ui, -apple-system, sans-serif",
     fontSize: '14px',
     lineHeight: '1.6',
     padding: '20px 32px 24px',
@@ -187,7 +187,7 @@ const commandStatusTheme = EditorView.baseTheme({
   '.cm-embedToggle': {
     background: 'var(--surface-1, #1e1e22)',
     border: '1px solid var(--border, #333340)',
-    borderRadius: '6px',
+    borderRadius: '3px',
     margin: '4px 0 4px 10px',
     overflow: 'hidden',
     position: 'relative',
@@ -239,7 +239,7 @@ const commandStatusTheme = EditorView.baseTheme({
   '.cm-embedToggleBody em': { fontStyle: 'italic', color: 'var(--text-secondary, #a0a0b8)' },
   '.cm-embedToggleBody del': { color: 'var(--text-muted, #606070)', textDecoration: 'line-through' },
   '.cm-embedToggleBody code': {
-    fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+    fontFamily: "'Inter', system-ui, -apple-system, sans-serif",
     fontSize: '0.85em',
     background: 'var(--surface-2, #26262c)',
     borderRadius: '3px',

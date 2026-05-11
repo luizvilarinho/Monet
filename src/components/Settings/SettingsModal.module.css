@@ -134,7 +134,7 @@
   color: var(--text-primary, #e8e8f0);
   font-size: 13px;
   outline: none;
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
 }
 
 .input:focus {
