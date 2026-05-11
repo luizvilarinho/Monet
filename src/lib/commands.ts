@@ -1,4 +1,4 @@
-import type { CommandContext, CommandDef } from '../types'
+import type { CommandDef } from '../types'
 
 export const COMMANDS: CommandDef[] = [
   { name: '/pesquisa', description: 'Busca rápida, resposta objetiva', example: '/pesquisa Delta Sharing', takesQuery: true, usesSearch: true },
@@ -12,15 +12,9 @@ export const COMMANDS: CommandDef[] = [
   { name: '/guia', description: 'Cria um roteiro de estudos com tópicos e sequência lógica para dominar o assunto', example: '/guia cálculo diferencial', takesQuery: true, usesSearch: true },
   { name: '/mapa-mental', description: 'Gera um mapa mental hierárquico da nota atual em markdown', example: '/mapa-mental', takesQuery: false },
   { name: '/perguntar', description: 'Faz uma pergunta livre ao modelo', example: '/perguntar qual a diferença entre HTTP/1.1 e HTTP/2?', takesQuery: true, usesSearch: true },
+  { name: '/documentos', description: 'Responde usando apenas os documentos do caderno', example: '/documentos quais empresas a pessoa trabalhou?', takesQuery: true },
 ]
 
 export function findCommand(name: string): CommandDef | undefined {
   return COMMANDS.find((c) => c.name.toLowerCase() === name.toLowerCase())
-}
-
-export async function executeCommand(
-  _ctx: CommandContext,
-  _onChunk: (text: string) => void
-): Promise<void> {
-  throw new Error('executeCommand not implemented')
 }

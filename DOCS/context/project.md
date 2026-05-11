@@ -27,22 +27,16 @@ A IA é silenciosa por padrão e só age quando chamada. Isso diferencia o produ
 - Persistência de cadernos e notas no SQLite local
 - Criação e listagem de cadernos e anotações
 - Tags por nota (ex: #aovivo, #importante)
-- Painel IA com toggle (abrir/fechar)
-- Seletor de modelo no painel IA (dados mockados — ainda não integrado)
-- Barra de busca de anotações (UI presente)
-- Botões `export .md` e `preview` na toolbar (UI presente)
+- Painel IA com toggle e seletor de modelo (OpenRouter real, com streaming)
+- Sistema de `/comandos` no editor (parser, autocomplete, execução)
+- Barra de busca de anotações
+- Export `.md` e preview de markdown
+- Web search via Tavily como contexto opcional dos comandos
+- Chat livre (modo `chat`)
+- Mini-navegador de títulos
+- **RAG por caderno:** upload de PDF/TXT/MD, indexação em background com `sqlite-vec` (768 dim, OpenRouter embeddings), busca KNN filtrada por caderno e injeção automática de trechos nos `/comandos`. UI: ícone de documentos no caderno + modal com tabela de status e ações.
 
-### 🔧 Pendente — fase atual
-- **Integração OpenRouter:** conectar o seletor de modelo à API real do OpenRouter com streaming de respostas
-- **Sistema de /comandos:** parser no editor, autocomplete, execução e exibição de respostas no painel IA
-- Chave de API deve ser armazenada via Tauri (Rust), nunca exposta no frontend
-
-### 📋 Backlog fase 2
-- RAG completo com Transformers.js + embeddings no SQLite
-- Web search como tool call da IA
-- Upload de PDF/TXT como contexto
-- Preview de markdown (toggle)
-- Exportar nota como `.md`
+### 📋 Backlog
 - Modo flashcard
 - Build `.msix` para Microsoft Store
 
@@ -62,9 +56,9 @@ A IA é silenciosa por padrão e só age quando chamada. Isso diferencia o produ
 | UI | React 18 + TypeScript |
 | Editor | CodeMirror 6 |
 | Estilo | CSS Modules + variáveis CSS |
-| Banco local | SQLite via `tauri-plugin-sql` |
-| RAG | Transformers.js (`all-MiniLM-L6-v2`) — fase 2 |
-| PDF parsing | pdf.js — fase 2 |
+| Banco local | SQLite via `tauri-plugin-sql` (`monet.db`) + `rusqlite` direto (`monet-vec.db`) |
+| RAG | OpenRouter (`google/gemini-embedding-2-preview`, 768 dim) + `sqlite-vec` |
+| PDF parsing | `pdf-extract` (Rust, no backend) |
 | Markdown render | unified + remark + rehype |
 | IA | OpenRouter API (multi-modelo, com streaming) |
 | Portabilidade | `storage.ts` abstraction layer |
@@ -103,8 +97,11 @@ monet/
 │   │   │   └── Sidebar.module.css
 │   │   ├── AiPanel/
 │   │   │   ├── AiPanel.tsx     # Painel de respostas IA (toggle)
-│   │   │   ├── AiCard.tsx      # Card individual de resposta
+│   │   │   ├── AiCard.tsx      # Card individual de resposta + seção Fontes (RAG)
 │   │   │   └── AiPanel.module.css
+│   │   ├── DocumentsModal/
+│   │   │   ├── DocumentsModal.tsx     # Modal de gerenciamento de docs do caderno
+│   │   │   └── DocumentsModal.module.css
 │   │   └── Toolbar/
 │   │       ├── Toolbar.tsx     # export, preview, seletor de modelo
 │   │       └── Toolbar.module.css
@@ -113,15 +110,17 @@ monet/
 │   │   ├── useNotebooks.ts     # CRUD de cadernos
 │   │   ├── useNotes.ts         # CRUD de notas
 │   │   ├── useAi.ts            # Streaming de respostas da IA
+│   │   ├── useDocuments.ts     # Lista de documentos por caderno + eventos de status
 │   │   └── useCommands.ts      # Execução de /comandos
 │   │
 │   ├── lib/
 │   │   ├── openrouter.ts       # Cliente OpenRouter configurado
+│   │   ├── documents.ts        # Wrappers dos commands de RAG + listener de status
 │   │   ├── commands.ts         # Definições e handlers dos /comandos
 │   │   └── markdown.ts         # unified pipeline
 │   │
 │   └── types/
-│       └── index.ts            # Notebook, Note, Command, AiResponse...
+│       └── index.ts            # Notebook, Note, Command, AiResponse, AiSource, Document...
 │
 ├── DOCS/
 │   ├── doc.menu.md             # Índice de documentação para o modelo
@@ -162,13 +161,17 @@ CREATE TABLE notes (
   updated_at   INTEGER NOT NULL
 );
 
-CREATE TABLE rag_chunks (
-  id          TEXT PRIMARY KEY,
-  note_id     TEXT REFERENCES notes(id) ON DELETE CASCADE,
-  source_name TEXT NOT NULL,
-  content     TEXT NOT NULL,
-  embedding   BLOB NOT NULL,
-  chunk_index INTEGER NOT NULL
+CREATE TABLE documents (
+  id             TEXT PRIMARY KEY,
+  notebook_id    TEXT NOT NULL REFERENCES notebooks(id) ON DELETE CASCADE,
+  name           TEXT NOT NULL,
+  original_path  TEXT NOT NULL,        -- arquivo copiado em app_data_dir/documents/
+  mime           TEXT NOT NULL,
+  size           INTEGER NOT NULL,
+  status         TEXT NOT NULL,        -- 'indexing' | 'available' | 'error'
+  error_message  TEXT,
+  created_at     INTEGER NOT NULL,
+  updated_at     INTEGER NOT NULL
 );
 
 CREATE TABLE ai_responses (
@@ -176,8 +179,27 @@ CREATE TABLE ai_responses (
   note_id     TEXT REFERENCES notes(id) ON DELETE CASCADE,
   command     TEXT NOT NULL,
   query       TEXT,
+  model       TEXT NOT NULL DEFAULT '',
   response    TEXT NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'completed',
+  command_id  TEXT,
+  sources     TEXT,                    -- JSON array de AiSource (RAG)
   created_at  INTEGER NOT NULL
+);
+```
+
+Os vetores ficam em arquivo separado **`monet-vec.db`** (aberto só pelo Rust via `rusqlite` + extensão `sqlite-vec`):
+
+```sql
+CREATE VIRTUAL TABLE vec_chunks USING vec0(embedding float[768]);
+
+CREATE TABLE chunks_meta (
+  rowid        INTEGER PRIMARY KEY,    -- mesma rowid de vec_chunks
+  document_id  TEXT NOT NULL,
+  notebook_id  TEXT NOT NULL,
+  source_name  TEXT NOT NULL,
+  content      TEXT NOT NULL,
+  chunk_index  INTEGER NOT NULL
 );
 ```
 

@@ -1,7 +1,54 @@
 import { useEffect, useState } from 'react'
-import type { AiResponse } from '../../types'
+import type { AiResponse, AiSource } from '../../types'
 import { renderMarkdown } from '../../lib/markdown'
 import styles from './AiPanel.module.css'
+
+const SourceIcon = () => (
+  <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M3.5 2.5h6L12.5 5.5v8a1 1 0 0 1-1 1h-8a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1z" />
+    <polyline points="9.5 2.5 9.5 5.5 12.5 5.5" />
+  </svg>
+)
+
+function SourcesSection({ sources }: { sources: AiSource[] }) {
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+
+  const toggle = (key: string) => {
+    setExpanded((prev) => ({ ...prev, [key]: !prev[key] }))
+  }
+
+  return (
+    <details className={styles.sources}>
+      <summary className={styles.sourcesSummary}>
+        <SourceIcon />
+        Fontes ({sources.length})
+      </summary>
+      <ul className={styles.sourcesList}>
+        {sources.map((s, i) => {
+          const key = `${s.documentId}-${s.chunkIndex}-${i}`
+          const isExpanded = !!expanded[key]
+          return (
+            <li key={key} className={styles.sourceItem}>
+              <button
+                type="button"
+                className={styles.sourceToggle}
+                onClick={() => toggle(key)}
+                aria-expanded={isExpanded}
+              >
+                <SourceIcon />
+                <span className={styles.sourceName}>{s.documentName}</span>
+                <span className={styles.sourceMeta}>· trecho {s.chunkIndex + 1}</span>
+              </button>
+              {isExpanded && (
+                <p className={styles.sourceSnippet}>{s.snippet}</p>
+              )}
+            </li>
+          )
+        })}
+      </ul>
+    </details>
+  )
+}
 
 export interface AiCardProps {
   response: AiResponse
@@ -122,6 +169,9 @@ export function AiCard({ response, execIndex, forceOpen, globalExpand, onDelete 
         <div className={styles.interruptedNote}>
           Resposta interrompida antes de terminar.
         </div>
+      )}
+      {response.sources && response.sources.length > 0 && response.status !== 'streaming' && (
+        <SourcesSection sources={response.sources} />
       )}
     </article>
   )

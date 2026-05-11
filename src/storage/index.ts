@@ -1,4 +1,4 @@
-import type { AiResponse, Note, Notebook, RagChunk } from '../types'
+import type { AiResponse, Document, DocumentStatus, Note, Notebook } from '../types'
 import { TauriStorage } from './tauri'
 import { BrowserStorage } from './browser'
 
@@ -18,9 +18,15 @@ export interface StorageAdapter {
   deleteResponse(id: string): Promise<void>
   deleteResponses(noteId: string): Promise<void>
 
-  saveChunks(chunks: RagChunk[]): Promise<void>
-  searchChunks(embedding: Float32Array, topK: number): Promise<RagChunk[]>
-  deleteChunks(noteId: string): Promise<void>
+  // Documentos têm ciclo de vida no backend Rust (documents_upload /
+  // documents_delete em src-tauri/src/documents.rs). O StorageAdapter só
+  // expõe leitura e atualização de status.
+  getDocuments(notebookId: string): Promise<Document[]>
+  updateDocumentStatus(
+    id: string,
+    status: DocumentStatus,
+    errorMessage?: string | null,
+  ): Promise<void>
 
   exportMarkdown(note: Note): Promise<void>
   importFile(accept: string): Promise<{ name: string; content: string }>

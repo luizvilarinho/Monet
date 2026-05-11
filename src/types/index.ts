@@ -15,13 +15,18 @@ export interface Note {
   updatedAt: number
 }
 
-export interface RagChunk {
+export type DocumentStatus = 'indexing' | 'available' | 'error'
+
+export interface Document {
   id: string
-  noteId: string | null
-  sourceName: string
-  content: string
-  embedding: Float32Array
-  chunkIndex: number
+  notebookId: string
+  name: string
+  mime: string
+  size: number
+  status: DocumentStatus
+  errorMessage?: string
+  createdAt: number
+  updatedAt: number
 }
 
 export type AiResponseStatus =
@@ -29,6 +34,13 @@ export type AiResponseStatus =
   | 'completed'
   | 'interrupted'
   | 'error'
+
+export interface AiSource {
+  documentId: string
+  documentName: string
+  chunkIndex: number
+  snippet: string
+}
 
 export interface AiResponse {
   id: string
@@ -40,6 +52,7 @@ export interface AiResponse {
   status: AiResponseStatus
   createdAt: number
   commandId?: string | null
+  sources?: AiSource[]
 }
 
 export interface AiModel {
@@ -60,11 +73,4 @@ export interface CommandExecutionRequest {
   cmd: string
   query: string
   commandId: string
-}
-
-export interface CommandContext {
-  cmd: string
-  query: string
-  noteContent: string
-  ragChunks?: RagChunk[]
 }

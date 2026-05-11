@@ -42,7 +42,11 @@
       "WebFetch(domain:docs.rs)",
       "WebFetch(domain:alexgarcia.xyz)",
       "WebFetch(domain:crates.io)",
-      "WebFetch(domain:medium.com)"
+      "WebFetch(domain:medium.com)",
+      "mcp__context7__resolve-library-id",
+      "mcp__context7__query-docs",
+      "Bash(cargo build *)",
+      "Bash(pdftotext \"C:/Users/User/Downloads/A cidade nas artes.pdf\" -)"
     ]
   }
 }

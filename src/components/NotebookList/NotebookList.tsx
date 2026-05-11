@@ -38,12 +38,22 @@ const ChevronIcon = ({ collapsed }: { collapsed: boolean }) => (
   </svg>
 )
 
+const DocumentsIcon = () => (
+  <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M3.5 2.5h6L12.5 5.5v8a1 1 0 0 1-1 1h-8a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1z" />
+    <polyline points="9.5 2.5 9.5 5.5 12.5 5.5" />
+    <line x1="5" y1="8.5" x2="10" y2="8.5" />
+    <line x1="5" y1="11" x2="10" y2="11" />
+  </svg>
+)
+
 interface SortableNotebookItemProps {
   nb: Notebook
   isActive: boolean
   editing: { id: string; value: string } | null
   onSelect: (id: string) => void
   onDelete: (id: string) => void
+  onOpenDocuments: (id: string) => void
   onStartEdit: (id: string, value: string) => void
   onCommitEdit: () => void
   onCancelEdit: () => void
@@ -57,6 +67,7 @@ function SortableNotebookItem({
   editing,
   onSelect,
   onDelete,
+  onOpenDocuments,
   onStartEdit,
   onCommitEdit,
   onCancelEdit,
@@ -117,15 +128,27 @@ function SortableNotebookItem({
         <span className={styles.rowLabel}>{nb.name || 'sem nome'}</span>
       )}
       {editing?.id !== nb.id && (
-        <button
-          className={styles.rowDelete}
-          onClick={(e) => { e.stopPropagation(); onDelete(nb.id) }}
-          onDoubleClick={(e) => e.stopPropagation()}
-          aria-label={`apagar caderno ${nb.name}`}
-          type="button"
-        >
-          ×
-        </button>
+        <>
+          <button
+            className={styles.rowDocs}
+            onClick={(e) => { e.stopPropagation(); onSelect(nb.id); onOpenDocuments(nb.id) }}
+            onDoubleClick={(e) => e.stopPropagation()}
+            aria-label={`documentos do caderno ${nb.name}`}
+            title="documentos do caderno"
+            type="button"
+          >
+            <DocumentsIcon />
+          </button>
+          <button
+            className={styles.rowDelete}
+            onClick={(e) => { e.stopPropagation(); onDelete(nb.id) }}
+            onDoubleClick={(e) => e.stopPropagation()}
+            aria-label={`apagar caderno ${nb.name}`}
+            type="button"
+          >
+            ×
+          </button>
+        </>
       )}
     </li>
   )
@@ -138,6 +161,7 @@ export interface NotebookListProps {
   onCreate: () => void
   onDelete: (id: string) => void
   onRename: (id: string, name: string) => void
+  onOpenDocuments: (id: string) => void
   tags: string[]
   activeTag: string | null
   onSelectTag: (tag: string | null) => void
@@ -156,6 +180,7 @@ export function NotebookList({
   onCreate,
   onDelete,
   onRename,
+  onOpenDocuments,
   tags,
   activeTag,
   onSelectTag,
@@ -298,6 +323,7 @@ export function NotebookList({
                         editing={editing}
                         onSelect={onSelect}
                         onDelete={(id) => handleDeleteNotebook(id, nb.name)}
+                        onOpenDocuments={onOpenDocuments}
                         onStartEdit={(id, value) => setEditing({ id, value })}
                         onCommitEdit={commitEdit}
                         onCancelEdit={() => setEditing(null)}

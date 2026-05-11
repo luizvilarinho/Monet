@@ -26,6 +26,17 @@ export interface StartStreamInput {
   userMessage: string
 }
 
+export interface ChatMessageInput {
+  role: 'system' | 'user' | 'assistant'
+  content: string
+}
+
+export interface StartStreamMessagesInput {
+  requestId: string
+  model: string
+  messages: ChatMessageInput[]
+}
+
 export async function hasOpenRouterKey(): Promise<boolean> {
   try {
     return await invoke<boolean>('has_openrouter_key')
@@ -48,6 +59,12 @@ export async function listOpenRouterModels(): Promise<AiModel[]> {
 
 export async function startOpenRouterStream(input: StartStreamInput): Promise<void> {
   await invoke('openrouter_stream_chat', { ...input })
+}
+
+export async function startOpenRouterStreamMessages(
+  input: StartStreamMessagesInput,
+): Promise<void> {
+  await invoke('openrouter_stream_messages', { ...input })
 }
 
 export async function cancelOpenRouterStream(requestId: string): Promise<void> {

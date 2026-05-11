@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import { AiPanel } from './components/AiPanel/AiPanel'
 import { ChatPanel } from './components/ChatPanel/ChatPanel'
+import { DocumentsModal } from './components/DocumentsModal/DocumentsModal'
 import { Editor } from './components/Editor/Editor'
 import { EmptyEditor } from './components/Editor/EmptyEditor'
 import { MarkdownPreview } from './components/Editor/MarkdownPreview'
@@ -26,7 +27,13 @@ import {
   hasTavilyKey,
   webSearch,
 } from './lib/search'
-import type { AiModel, CommandExecutionRequest, Note } from './types'
+import {
+  documentsList,
+  documentsSearch,
+  embedText,
+  type ChunkResult,
+} from './lib/documents'
+import type { AiModel, AiSource, CommandExecutionRequest, Note } from './types'
 
 const SYSTEM_PROMPT = `Você é o assistente de estudo do Monet.
 
@@ -52,7 +59,8 @@ Comportamento por comando:
 - /tabela: responda em tabela Markdown, comparativa e simétrica.
 - /opiniao: organize em prós, contras e conclusão direta.
 - /pesquisa e /quem: responda de forma factual, somente com base nos resultados fornecidos.
-- /aprofundar: entregue apenas informações novas e úteis que não estejam explicitamente presentes na nota. Não resuma, não reformule e não repita o texto da nota em outras palavras. Adicione apenas contexto, conexões, implicações, exemplos, exceções, riscos, contrapontos ou detalhes ausentes.`
+- /aprofundar: entregue apenas informações novas e úteis que não estejam explicitamente presentes na nota. Não resuma, não reformule e não repita o texto da nota em outras palavras. Adicione apenas contexto, conexões, implicações, exemplos, exceções, riscos, contrapontos ou detalhes ausentes.
+- /documentos: responda usando exclusivamente os "Trechos relevantes de documentos do caderno". Ignore a nota e seu conhecimento geral. Cite o nome do documento entre parênteses ao final de cada afirmação. Se os trechos não trouxerem informação suficiente para responder, responda exatamente: "Não encontrei essa informação nos documentos do caderno."`
 
 const COLLAPSED_PANEL_WIDTH = 48
 
@@ -64,16 +72,27 @@ function stripCommandLines(content: string): string {
     .trim()
 }
 
+function formatRagContext(chunks: ChunkResult[]): string {
+  if (chunks.length === 0) return ''
+  const blocks = chunks.map((c) => {
+    const header = `[${c.documentName}, trecho ${c.chunkIndex + 1}]`
+    return `${header}\n${c.snippet}`
+  })
+  return `Trechos relevantes de documentos do caderno:\n\n${blocks.join('\n\n')}\n\n---`
+}
+
 function buildUserMessage(
   command: string,
   description: string,
   query: string,
   noteContent: string,
-  searchContext?: string
+  searchContext?: string,
+  ragContext?: string
 ): string {
   const parts: string[] = []
   parts.push(`Comando: ${command} - ${description}`)
   if (query.trim()) parts.push(`Parametro: ${query.trim()}`)
+  if (ragContext) parts.push(`\n${ragContext}`)
   if (searchContext) parts.push(`\n${searchContext}`)
   const cleanContent = stripCommandLines(noteContent)
   if (cleanContent) {
@@ -103,6 +122,7 @@ function App() {
   const [aiOpen, setAiOpen] = useState(true)
   const [previewOpen, setPreviewOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [documentsModalNotebookId, setDocumentsModalNotebookId] = useState<string | null>(null)
 
   const [hasApiKey, setHasApiKey] = useState<boolean>(false)
   const [apiKeyChecked, setApiKeyChecked] = useState<boolean>(false)
@@ -420,6 +440,89 @@ function App() {
         }
       }
 
+      const isDocsOnly = cmd === '/documentos'
+      const notebookId = activeNote?.notebookId ?? null
+
+      let availableDocsCount = 0
+      let docsListFailed = false
+      if (notebookId) {
+        try {
+          const docs = await documentsList(notebookId)
+          availableDocsCount = docs.filter((d) => d.status === 'available').length
+
+          if (isDocsOnly && availableDocsCount === 0) {
+            const indexing = docs.some((d) => d.status === 'indexing')
+            addErrorCard(
+              activeId,
+              cmd,
+              query,
+              indexing
+                ? 'Nenhum documento disponível ainda — aguarde a indexação terminar.'
+                : 'Nenhum documento neste caderno. Adicione um pelo ícone de documentos no caderno.'
+            )
+            return true
+          }
+        } catch (err) {
+          docsListFailed = true
+          console.warn('documentsList failed:', err)
+          if (isDocsOnly) {
+            addErrorCard(
+              activeId,
+              cmd,
+              query,
+              'Falha ao consultar documentos do caderno.'
+            )
+            return true
+          }
+        }
+      } else if (isDocsOnly) {
+        addErrorCard(
+          activeId,
+          cmd,
+          query,
+          'Esta nota não pertence a um caderno. /documentos requer um caderno com documentos indexados.'
+        )
+        return true
+      }
+
+      let ragContext: string | undefined
+      let ragSources: AiSource[] | undefined
+      if (notebookId && !docsListFailed && availableDocsCount > 0) {
+        try {
+          const queryText = query.trim() || stripCommandLines(noteContent).slice(0, 500)
+          if (queryText) {
+            const embedding = await embedText(queryText)
+            const topK = isDocsOnly ? 8 : 5
+            const chunks = await documentsSearch(notebookId, embedding, topK)
+            if (chunks.length > 0) {
+              ragContext = formatRagContext(chunks)
+              ragSources = chunks.map((c) => ({
+                documentId: c.documentId,
+                documentName: c.documentName,
+                chunkIndex: c.chunkIndex,
+                snippet: c.snippet,
+              }))
+            }
+          }
+        } catch (err) {
+          console.warn('RAG context failed (continuing without):', err)
+        }
+      }
+
+      if (isDocsOnly && !ragContext) {
+        addErrorCard(
+          activeId,
+          cmd,
+          query,
+          'Não consegui buscar trechos relevantes nos documentos. Verifique a conexão e tente novamente.'
+        )
+        return true
+      }
+
+      const userMessage = isDocsOnly
+        ? buildUserMessage(cmd, def.description, query, '', undefined, ragContext)
+        : buildUserMessage(cmd, def.description, query, noteContent, searchContext, ragContext)
+
       await start({
         noteId: activeId,
         model: modelId,
@@ -427,7 +530,8 @@ function App() {
         query: def && !def.takesQuery ? '' : query,
         commandId,
         systemPrompt: SYSTEM_PROMPT,
-        userMessage: buildUserMessage(cmd, def.description, query, noteContent, searchContext),
+        userMessage,
+        sources: ragSources,
       })
       return true
     },
@@ -472,6 +576,10 @@ function App() {
           onCreate={handleCreateNotebook}
           onDelete={handleDeleteNotebook}
           onRename={handleRenameNotebook}
+          onOpenDocuments={(id) => {
+            setActiveNotebookId(id)
+            setDocumentsModalNotebookId(id)
+          }}
           tags={allTags}
           activeTag={activeTag}
           onSelectTag={setActiveTag}
@@ -552,6 +660,14 @@ function App() {
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         onApiKeyChanged={handleApiKeyChanged}
+      />
+      <DocumentsModal
+        open={documentsModalNotebookId !== null}
+        notebookId={documentsModalNotebookId}
+        notebookName={
+          notebooks.find((n) => n.id === documentsModalNotebookId)?.name ?? ''
+        }
+        onClose={() => setDocumentsModalNotebookId(null)}
       />
     </div>
   )

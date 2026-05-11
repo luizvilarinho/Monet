@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { nanoid } from 'nanoid'
-import type { AiResponse } from '../types'
+import type { AiResponse, AiSource } from '../types'
 import { storage } from '../storage'
 import {
   cancelOpenRouterStream,
@@ -18,6 +18,7 @@ export interface StartRequestInput {
   commandId: string
   systemPrompt: string
   userMessage: string
+  sources?: AiSource[]
 }
 
 type ResponsesByNote = Record<string, AiResponse[]>
@@ -140,6 +141,7 @@ export function useAi(activeNoteId: string | null) {
       commandId,
       systemPrompt,
       userMessage,
+      sources,
     }: StartRequestInput) => {
       const id = commandId
       const response: AiResponse = {
@@ -152,6 +154,7 @@ export function useAi(activeNoteId: string | null) {
         status: 'streaming',
         createdAt: Date.now(),
         commandId,
+        sources: sources && sources.length > 0 ? sources : undefined,
       }
       streamsRef.current.set(id, { noteId })
       setByNote((prev) => ({

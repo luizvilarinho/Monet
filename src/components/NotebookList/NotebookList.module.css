@@ -150,7 +150,8 @@
   white-space: nowrap;
 }
 
-.rowDelete {
+.rowDelete,
+.rowDocs {
   flex-shrink: 0;
   width: 18px;
   height: 18px;
@@ -169,13 +170,24 @@
 }
 
 .row:hover .rowDelete,
-.rowDelete:focus-visible {
+.row:hover .rowDocs,
+.rowDelete:focus-visible,
+.rowDocs:focus-visible {
+  opacity: 1;
+}
+
+.active .rowDocs {
   opacity: 1;
 }
 
 .rowDelete:hover {
   color: #ff6b6b;
   background: rgba(255, 107, 107, 0.1);
+}
+
+.rowDocs:hover {
+  color: var(--accent-ai, #5dcaa5);
+  background: rgba(93, 202, 165, 0.1);
 }
 
 .active {

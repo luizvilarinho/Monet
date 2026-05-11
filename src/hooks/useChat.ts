@@ -1,14 +1,21 @@
-import { invoke } from '@tauri-apps/api/core'
 import { nanoid } from 'nanoid'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { formatSearchResults, hasTavilyKey, webSearch } from '../lib/search'
+import {
+  cancelOpenRouterStream,
+  hasOpenRouterKey,
+  onOpenRouterChunk,
+  onOpenRouterDone,
+  onOpenRouterError,
+  startOpenRouterStreamMessages,
+  type ChatMessageInput,
+} from '../lib/openrouter'
 
 const CONVERSATIONS_KEY = 'monet:chat-conversations'
 const ACTIVE_ID_KEY = 'monet:chat-active-id'
 const MODEL_KEY = 'monet:chat-model'
 const TOOLS_KEY = 'monet:chat-tools'
 const LEGACY_HISTORY_KEY = 'monet:chat-history'
-const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
 
 export interface ChatMessage {
   id: string
@@ -185,7 +192,11 @@ export function useChat(): UseChatResult {
   const [apiKeyChecked, setApiKeyChecked] = useState<boolean>(false)
   const [isStreaming, setIsStreaming] = useState<boolean>(false)
   const [error, setError] = useState<string | null>(null)
-  const abortRef = useRef<AbortController | null>(null)
+  const activeStreamRef = useRef<{
+    requestId: string
+    convId: string
+    assistantId: string
+  } | null>(null)
   const conversationsRef = useRef<ChatConversation[]>(conversations)
   conversationsRef.current = conversations
 
@@ -220,16 +231,10 @@ export function useChat(): UseChatResult {
   }, [])
 
   const refreshApiKey = useCallback(async () => {
-    try {
-      const present = await invoke<boolean>('has_openrouter_key')
-      setHasApiKey(present)
-      setApiKeyChecked(true)
-      return present
-    } catch {
-      setHasApiKey(false)
-      setApiKeyChecked(true)
-      return false
-    }
+    const present = await hasOpenRouterKey()
+    setHasApiKey(present)
+    setApiKeyChecked(true)
+    return present
   }, [])
 
   useEffect(() => {
@@ -279,6 +284,55 @@ export function useChat(): UseChatResult {
     []
   )
 
+  useEffect(() => {
+    let cancelled = false
+    const unlisteners: Array<() => void> = []
+    ;(async () => {
+      const chunk = await onOpenRouterChunk(({ requestId, text }) => {
+        const stream = activeStreamRef.current
+        if (!stream || stream.requestId !== requestId) return
+        updateMessages(stream.convId, (msgs) =>
+          msgs.map((m) =>
+            m.id === stream.assistantId
+              ? { ...m, content: m.content + text }
+              : m
+          )
+        )
+      })
+      const done = await onOpenRouterDone(({ requestId }) => {
+        const stream = activeStreamRef.current
+        if (!stream || stream.requestId !== requestId) return
+        activeStreamRef.current = null
+        setIsStreaming(false)
+      })
+      const err = await onOpenRouterError(({ requestId, message }) => {
+        const stream = activeStreamRef.current
+        if (!stream || stream.requestId !== requestId) return
+        updateMessages(stream.convId, (msgs) =>
+          msgs.map((m) =>
+            m.id === stream.assistantId && m.content === ''
+              ? { ...m, content: `Erro: ${message}` }
+              : m
+          )
+        )
+        setError(message)
+        activeStreamRef.current = null
+        setIsStreaming(false)
+      })
+      if (cancelled) {
+        chunk()
+        done()
+        err()
+        return
+      }
+      unlisteners.push(chunk, done, err)
+    })().catch((e) => console.error('failed to subscribe to openrouter events', e))
+    return () => {
+      cancelled = true
+      unlisteners.forEach((u) => u())
+    }
+  }, [updateMessages])
+
   const send = useCallback(
     async (text: string) => {
       const trimmed = text.trim()
@@ -290,10 +344,8 @@ export function useChat(): UseChatResult {
       }
       setError(null)
 
-      const apiKey = await invoke<string | null>('get_openrouter_key').catch(
-        () => null
-      )
-      if (!apiKey) {
+      const keyPresent = await hasOpenRouterKey()
+      if (!keyPresent) {
         setHasApiKey(false)
         setApiKeyChecked(true)
         setError(
@@ -305,7 +357,7 @@ export function useChat(): UseChatResult {
       setApiKeyChecked(true)
 
       // Busca web opcional (tool ativada)
-      let searchSystemMessage: { role: 'system'; content: string } | null = null
+      let searchSystemMessage: ChatMessageInput | null = null
       if (toolsRef.current.webSearch) {
         const tavilyOk = await hasTavilyKey()
         if (!tavilyOk) {
@@ -355,27 +407,34 @@ export function useChat(): UseChatResult {
         timestamp: new Date().toISOString(),
       }
 
-      // Snapshot do historico ANTES de adicionar a nova mensagem (pra montar o body do fetch)
       const currentConv = conversationsRef.current.find((c) => c.id === targetId)
-      const historyForApi =
+      const historyForApi: ChatMessageInput[] =
         currentConv?.messages.map((m) => ({
           role: m.role,
           content: m.content,
         })) ?? []
 
       updateMessages(targetId, (msgs) => [...msgs, userMsg, assistantMsg])
-      setIsStreaming(true)
 
-      const controller = new AbortController()
-      abortRef.current = controller
-
-      const apiMessages = [
+      const apiMessages: ChatMessageInput[] = [
         ...(searchSystemMessage ? [searchSystemMessage] : []),
         ...historyForApi,
-        { role: 'user' as const, content: trimmed },
+        { role: 'user', content: trimmed },
       ]
 
-      const finishWithError = (message: string) => {
+      const requestId = assistantId
+      activeStreamRef.current = { requestId, convId: targetId, assistantId }
+      setIsStreaming(true)
+
+      try {
+        await startOpenRouterStreamMessages({
+          requestId,
+          model,
+          messages: apiMessages,
+        })
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : String(err ?? 'erro desconhecido')
         updateMessages(targetId, (msgs) =>
           msgs.map((m) =>
             m.id === assistantId && m.content === ''
@@ -384,93 +443,7 @@ export function useChat(): UseChatResult {
           )
         )
         setError(message)
-      }
-
-      try {
-        const response = await fetch(OPENROUTER_URL, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-            'HTTP-Referer': 'https://monet.local',
-            'X-Title': 'Monet',
-          },
-          body: JSON.stringify({
-            model,
-            stream: true,
-            messages: apiMessages,
-          }),
-          signal: controller.signal,
-        })
-
-        if (!response.ok) {
-          const body = await response.text().catch(() => '')
-          throw new Error(
-            `OpenRouter respondeu ${response.status}${body ? `: ${body.slice(0, 200)}` : ''}`
-          )
-        }
-
-        const reader = response.body?.getReader()
-        if (!reader) throw new Error('Resposta sem corpo de stream.')
-
-        const decoder = new TextDecoder()
-        let buffer = ''
-        let finished = false
-
-        while (!finished) {
-          const { value, done } = await reader.read()
-          if (done) break
-          buffer += decoder.decode(value, { stream: true })
-
-          let newlineIdx: number
-          while ((newlineIdx = buffer.indexOf('\n')) >= 0) {
-            const rawLine = buffer.slice(0, newlineIdx)
-            buffer = buffer.slice(newlineIdx + 1)
-            const line = rawLine.trim()
-            if (!line || line.startsWith(':')) continue
-            if (!line.startsWith('data:')) continue
-            const data = line.slice(5).trim()
-            if (data === '[DONE]') {
-              finished = true
-              break
-            }
-            let json: any
-            try {
-              json = JSON.parse(data)
-            } catch {
-              continue
-            }
-            if (json?.error) {
-              const msg =
-                typeof json.error.message === 'string'
-                  ? json.error.message
-                  : 'Erro do OpenRouter'
-              throw new Error(msg)
-            }
-            const delta: unknown = json?.choices?.[0]?.delta?.content
-            if (typeof delta === 'string' && delta.length > 0) {
-              updateMessages(targetId, (msgs) =>
-                msgs.map((m) =>
-                  m.id === assistantId
-                    ? { ...m, content: m.content + delta }
-                    : m
-                )
-              )
-            }
-          }
-        }
-      } catch (err) {
-        if (controller.signal.aborted) {
-          // streaming cancelado pelo usuario
-        } else {
-          const message =
-            err instanceof Error
-              ? err.message
-              : String(err ?? 'erro desconhecido')
-          finishWithError(message)
-        }
-      } finally {
-        abortRef.current = null
+        activeStreamRef.current = null
         setIsStreaming(false)
       }
     },
@@ -479,7 +452,13 @@ export function useChat(): UseChatResult {
 
   useEffect(() => {
     return () => {
-      abortRef.current?.abort()
+      const stream = activeStreamRef.current
+      if (stream) {
+        cancelOpenRouterStream(stream.requestId).catch((e) =>
+          console.error('failed to cancel chat stream on unmount', e)
+        )
+        activeStreamRef.current = null
+      }
     }
   }, [])
 

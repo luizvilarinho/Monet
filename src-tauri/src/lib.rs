@@ -1,3 +1,6 @@
+mod documents;
+mod vec_db;
+
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -65,7 +68,7 @@ fn key_file(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
     Ok(dir.join(name))
 }
 
-fn read_key(app: &AppHandle, name: &str) -> Option<String> {
+pub(crate) fn read_key(app: &AppHandle, name: &str) -> Option<String> {
     let path = key_file(app, name).ok()?;
     let content = fs::read_to_string(&path).ok()?;
     let trimmed = content.trim().to_string();
@@ -107,11 +110,6 @@ fn has_openrouter_key(app: AppHandle) -> Result<bool, String> {
 #[tauri::command]
 fn clear_openrouter_key(app: AppHandle) -> Result<(), String> {
     clear_key(&app, "openrouter_key")
-}
-
-#[tauri::command]
-fn get_openrouter_key(app: AppHandle) -> Result<Option<String>, String> {
-    Ok(read_key(&app, "openrouter_key"))
 }
 
 #[tauri::command]
@@ -211,14 +209,18 @@ async fn openrouter_list_models(app: AppHandle) -> Result<Vec<ModelInfo>, String
     Ok(models)
 }
 
-#[tauri::command]
-async fn openrouter_stream_chat(
+#[derive(Deserialize)]
+struct ChatMessageInput {
+    role: String,
+    content: String,
+}
+
+fn spawn_openrouter_stream(
     app: AppHandle,
     registry: State<'_, RequestRegistry>,
     request_id: String,
     model: String,
-    system_prompt: String,
-    user_message: String,
+    messages: serde_json::Value,
 ) -> Result<(), String> {
     if !is_valid_model_id(&model) {
         let _ = app.emit(
@@ -262,8 +264,7 @@ async fn openrouter_stream_chat(
             &request_id_clone,
             &key,
             &model,
-            &system_prompt,
-            &user_message,
+            messages,
             cancel_rx,
         )
         .await;
@@ -302,6 +303,43 @@ async fn openrouter_stream_chat(
 }
 
 #[tauri::command]
+async fn openrouter_stream_chat(
+    app: AppHandle,
+    registry: State<'_, RequestRegistry>,
+    request_id: String,
+    model: String,
+    system_prompt: String,
+    user_message: String,
+) -> Result<(), String> {
+    let messages = serde_json::json!([
+        { "role": "system", "content": system_prompt },
+        { "role": "user", "content": user_message }
+    ]);
+    spawn_openrouter_stream(app, registry, request_id, model, messages)
+}
+
+#[tauri::command]
+async fn openrouter_stream_messages(
+    app: AppHandle,
+    registry: State<'_, RequestRegistry>,
+    request_id: String,
+    model: String,
+    messages: Vec<ChatMessageInput>,
+) -> Result<(), String> {
+    let messages_json: Vec<serde_json::Value> = messages
+        .into_iter()
+        .map(|m| serde_json::json!({ "role": m.role, "content": m.content }))
+        .collect();
+    spawn_openrouter_stream(
+        app,
+        registry,
+        request_id,
+        model,
+        serde_json::Value::Array(messages_json),
+    )
+}
+
+#[tauri::command]
 fn openrouter_cancel(
     registry: State<'_, RequestRegistry>,
     request_id: String,
@@ -323,17 +361,13 @@ async fn run_openrouter_stream(
     request_id: &str,
     key: &str,
     model: &str,
-    system_prompt: &str,
-    user_message: &str,
+    messages: serde_json::Value,
     mut cancel_rx: oneshot::Receiver<()>,
 ) -> Result<(), StreamError> {
     let body = serde_json::json!({
         "model": model,
         "stream": true,
-        "messages": [
-            { "role": "system", "content": system_prompt },
-            { "role": "user", "content": user_message }
-        ]
+        "messages": messages,
     });
 
     let client = reqwest::Client::new();
@@ -507,6 +541,34 @@ pub fn run() {
         ",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 4,
+            description: "documents_table",
+            sql: "
+            CREATE TABLE IF NOT EXISTS documents (
+                id TEXT PRIMARY KEY,
+                notebook_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                original_path TEXT NOT NULL,
+                mime TEXT NOT NULL,
+                size INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                error_message TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY (notebook_id) REFERENCES notebooks(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_documents_notebook ON documents(notebook_id);
+            DROP TABLE IF EXISTS rag_chunks;
+        ",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 5,
+            description: "ai_responses_sources",
+            sql: "ALTER TABLE ai_responses ADD COLUMN sources TEXT;",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
@@ -517,6 +579,16 @@ pub fn run() {
                     let _ = window.set_icon(icon.clone());
                 }
             }
+            let vec_db = vec_db::init(&app.handle())
+                .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+            app.manage(vec_db);
+            app.manage(documents::DocDb::new());
+
+            let cleanup_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                documents::cleanup_stuck_indexing(cleanup_handle).await;
+            });
+
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())
@@ -529,15 +601,23 @@ pub fn run() {
             save_openrouter_key,
             has_openrouter_key,
             clear_openrouter_key,
-            get_openrouter_key,
             save_tavily_key,
             has_tavily_key,
             clear_tavily_key,
             get_tavily_key,
             openrouter_list_models,
             openrouter_stream_chat,
+            openrouter_stream_messages,
             openrouter_cancel,
-            export_markdown
+            export_markdown,
+            vec_db::vec_db_smoke_test,
+            documents::documents_upload,
+            documents::documents_reindex,
+            documents::documents_delete,
+            documents::documents_list,
+            documents::documents_search,
+            documents::documents_pick_file,
+            documents::embed_text
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

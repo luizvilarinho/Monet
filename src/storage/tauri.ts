@@ -2,9 +2,11 @@ import Database from '@tauri-apps/plugin-sql'
 import type {
   AiResponse,
   AiResponseStatus,
+  AiSource,
+  Document,
+  DocumentStatus,
   Note,
   Notebook,
-  RagChunk,
 } from '../types'
 import type { StorageAdapter } from './index'
 
@@ -27,13 +29,17 @@ interface NoteRow {
   updated_at: number
 }
 
-interface ChunkRow {
+interface DocumentRow {
   id: string
-  note_id: string | null
-  source_name: string
-  content: string
-  embedding: string
-  chunk_index: number
+  notebook_id: string
+  name: string
+  original_path: string
+  mime: string
+  size: number
+  status: string
+  error_message: string | null
+  created_at: number
+  updated_at: number
 }
 
 interface AiResponseRow {
@@ -46,6 +52,7 @@ interface AiResponseRow {
   status: string
   created_at: number
   command_id: string | null
+  sources: string | null
 }
 
 function normalizeStatus(s: string): AiResponseStatus {
@@ -53,6 +60,29 @@ function normalizeStatus(s: string): AiResponseStatus {
     return s
   }
   return 'completed'
+}
+
+function parseSources(raw: string | null): AiSource[] | undefined {
+  if (!raw) return undefined
+  try {
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return undefined
+    const valid: AiSource[] = []
+    for (const item of parsed) {
+      if (
+        item &&
+        typeof item.documentId === 'string' &&
+        typeof item.documentName === 'string' &&
+        typeof item.chunkIndex === 'number' &&
+        typeof item.snippet === 'string'
+      ) {
+        valid.push(item)
+      }
+    }
+    return valid.length > 0 ? valid : undefined
+  } catch {
+    return undefined
+  }
 }
 
 function rowToResponse(r: AiResponseRow): AiResponse {
@@ -66,6 +96,7 @@ function rowToResponse(r: AiResponseRow): AiResponse {
     status: normalizeStatus(r.status ?? 'completed'),
     createdAt: r.created_at,
     commandId: r.command_id ?? null,
+    sources: parseSources(r.sources),
   }
 }
 
@@ -97,36 +128,23 @@ function rowToNote(r: NoteRow): Note {
   }
 }
 
-function rowToChunk(r: ChunkRow): RagChunk {
-  let arr: number[] = []
-  try {
-    const parsed = JSON.parse(r.embedding)
-    if (Array.isArray(parsed)) arr = parsed
-  } catch {
-    arr = []
-  }
-  return {
-    id: r.id,
-    noteId: r.note_id,
-    sourceName: r.source_name,
-    content: r.content,
-    embedding: Float32Array.from(arr),
-    chunkIndex: r.chunk_index,
-  }
+function normalizeDocStatus(s: string): DocumentStatus {
+  if (s === 'indexing' || s === 'available' || s === 'error') return s
+  return 'error'
 }
 
-function cosine(a: Float32Array, b: Float32Array): number {
-  const len = Math.min(a.length, b.length)
-  let dot = 0
-  let na = 0
-  let nb = 0
-  for (let i = 0; i < len; i++) {
-    dot += a[i] * b[i]
-    na += a[i] * a[i]
-    nb += b[i] * b[i]
+function rowToDocument(r: DocumentRow): Document {
+  return {
+    id: r.id,
+    notebookId: r.notebook_id,
+    name: r.name,
+    mime: r.mime,
+    size: r.size,
+    status: normalizeDocStatus(r.status),
+    errorMessage: r.error_message ?? undefined,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
   }
-  const denom = Math.sqrt(na) * Math.sqrt(nb)
-  return denom === 0 ? 0 : dot / denom
 }
 
 export class TauriStorage implements StorageAdapter {
@@ -221,36 +239,32 @@ export class TauriStorage implements StorageAdapter {
     return rows.map(rowToNote)
   }
 
-  async saveChunks(chunks: RagChunk[]): Promise<void> {
+  // Leitura apenas. A tabela `documents` é gerenciada exclusivamente pelo
+  // backend Rust (src-tauri/src/documents.rs) — escritas pelo frontend
+  // quebram o pareamento com vec_chunks/chunks_meta no banco vetorial.
+  async getDocuments(notebookId: string): Promise<Document[]> {
     const db = await this.db()
-    for (const c of chunks) {
-      const embedding = JSON.stringify(Array.from(c.embedding))
-      await db.execute(
-        `INSERT INTO rag_chunks (id, note_id, source_name, content, embedding, chunk_index)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         ON CONFLICT(id) DO UPDATE SET
-           note_id = excluded.note_id,
-           source_name = excluded.source_name,
-           content = excluded.content,
-           embedding = excluded.embedding,
-           chunk_index = excluded.chunk_index`,
-        [c.id, c.noteId, c.sourceName, c.content, embedding, c.chunkIndex]
-      )
-    }
+    const rows = await db.select<DocumentRow[]>(
+      'SELECT * FROM documents WHERE notebook_id = $1 ORDER BY created_at DESC',
+      [notebookId],
+    )
+    return rows.map(rowToDocument)
   }
 
-  async searchChunks(embedding: Float32Array, topK: number): Promise<RagChunk[]> {
+  async updateDocumentStatus(
+    id: string,
+    status: DocumentStatus,
+    errorMessage?: string | null,
+  ): Promise<void> {
     const db = await this.db()
-    const rows = await db.select<ChunkRow[]>('SELECT * FROM rag_chunks')
-    const chunks = rows.map(rowToChunk)
-    const scored = chunks.map((c) => ({ c, score: cosine(embedding, c.embedding) }))
-    scored.sort((a, b) => b.score - a.score)
-    return scored.slice(0, topK).map(({ c }) => c)
-  }
-
-  async deleteChunks(noteId: string): Promise<void> {
-    const db = await this.db()
-    await db.execute('DELETE FROM rag_chunks WHERE note_id = $1', [noteId])
+    await db.execute(
+      `UPDATE documents
+          SET status = $1,
+              error_message = $2,
+              updated_at = $3
+        WHERE id = $4`,
+      [status, errorMessage ?? null, Date.now(), id],
+    )
   }
 
   async getResponses(noteId: string): Promise<AiResponse[]> {
@@ -264,9 +278,10 @@ export class TauriStorage implements StorageAdapter {
 
   async saveResponse(r: AiResponse): Promise<void> {
     const db = await this.db()
+    const sourcesJson = r.sources && r.sources.length > 0 ? JSON.stringify(r.sources) : null
     await db.execute(
-      `INSERT INTO ai_responses (id, note_id, command, query, model, response, status, created_at, command_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `INSERT INTO ai_responses (id, note_id, command, query, model, response, status, created_at, command_id, sources)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        ON CONFLICT(id) DO UPDATE SET
          note_id = excluded.note_id,
          command = excluded.command,
@@ -274,7 +289,8 @@ export class TauriStorage implements StorageAdapter {
          model = excluded.model,
          response = excluded.response,
          status = excluded.status,
-         command_id = excluded.command_id`,
+         command_id = excluded.command_id,
+         sources = excluded.sources`,
       [
         r.id,
         r.noteId,
@@ -285,6 +301,7 @@ export class TauriStorage implements StorageAdapter {
         r.status,
         r.createdAt,
         r.commandId ?? null,
+        sourcesJson,
       ]
     )
   }

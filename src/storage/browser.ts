@@ -1,4 +1,4 @@
-import type { AiResponse, Note, Notebook, RagChunk } from '../types'
+import type { AiResponse, Document, DocumentStatus, Note, Notebook } from '../types'
 import type { StorageAdapter } from './index'
 
 export class BrowserStorage implements StorageAdapter {
@@ -38,14 +38,15 @@ export class BrowserStorage implements StorageAdapter {
   async deleteResponses(_noteId: string): Promise<void> {
     throw new Error('BrowserStorage.deleteResponses not implemented')
   }
-  async saveChunks(_chunks: RagChunk[]): Promise<void> {
-    throw new Error('BrowserStorage.saveChunks not implemented')
+  async getDocuments(_notebookId: string): Promise<Document[]> {
+    throw new Error('BrowserStorage.getDocuments not implemented')
   }
-  async searchChunks(_embedding: Float32Array, _topK: number): Promise<RagChunk[]> {
-    throw new Error('BrowserStorage.searchChunks not implemented')
-  }
-  async deleteChunks(_noteId: string): Promise<void> {
-    throw new Error('BrowserStorage.deleteChunks not implemented')
+  async updateDocumentStatus(
+    _id: string,
+    _status: DocumentStatus,
+    _errorMessage?: string | null,
+  ): Promise<void> {
+    throw new Error('BrowserStorage.updateDocumentStatus not implemented')
   }
   async exportMarkdown(_note: Note): Promise<void> {
     throw new Error('BrowserStorage.exportMarkdown not implemented')

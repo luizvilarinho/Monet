@@ -25,9 +25,9 @@ A IA é silenciosa por padrão e só age quando chamada. Isso diferencia o produ
 | UI | **React 18** + TypeScript | Componentização, reutilizável no webapp futuro |
 | Editor | **CodeMirror 6** | Markdown em tempo real, extensível para parser de `/comandos` |
 | Estilo | **CSS Modules** + variáveis CSS | Sem framework CSS, tema escuro nativo |
-| Banco local | **SQLite** via `tauri-plugin-sql` | Notas + chunks de embeddings |
-| RAG | **Transformers.js** (modelo `all-MiniLM-L6-v2`) | Embeddings locais, sem servidor externo |
-| PDF parsing | **pdf.js** | Leitura e extração de texto de PDFs no frontend |
+| Banco local | **SQLite** via `tauri-plugin-sql` (`monet.db`) + `rusqlite` direto (`monet-vec.db`) | Notas/cadernos no plugin, vetores em arquivo separado com `sqlite-vec` |
+| RAG | **OpenRouter** (`google/gemini-embedding-2-preview`, 768 dim) + **`sqlite-vec`** | Embeddings via API; KNN local em SQLite virtual table `vec0` |
+| PDF parsing | **`pdf-extract`** (Rust) | Extração no backend, sem dependência de DOM |
 | Markdown render | **unified** + **remark** + **rehype** | Pipeline flexível para preview |
 | IA | **Anthropic SDK** (`claude-sonnet-4-5`) | Streaming de respostas, tool use para web search |
 | Portabilidade | **`storage.ts`** (abstraction layer) | Isola Tauri vs browser — mesmo React serve os dois |
@@ -73,7 +73,7 @@ monet/
 │   ├── hooks/
 │   │   ├── useNotes.ts         # CRUD de notas
 │   │   ├── useAi.ts            # Streaming de respostas da IA
-│   │   ├── useRag.ts           # Indexação e busca de PDFs
+│   │   ├── useDocuments.ts     # Lista de documentos por caderno + eventos de status
 │   │   └── useCommands.ts      # Execução de /comandos
 │   │
 │   ├── lib/
@@ -83,7 +83,7 @@ monet/
 │   │   └── markdown.ts         # unified pipeline
 │   │
 │   └── types/
-│       └── index.ts            # Note, Command, AiResponse, RagChunk...
+│       └── index.ts            # Note, Command, AiResponse, AiSource, Document...
 │
 ├── package.json
 ├── tsconfig.json
