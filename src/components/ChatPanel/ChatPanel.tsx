@@ -1,5 +1,5 @@
 import { openUrl } from '@tauri-apps/plugin-opener'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useChat, type ChatMessage } from '../../hooks/useChat'
 import { renderMarkdown } from '../../lib/markdown'
 import type { AiModel } from '../../types'
@@ -23,6 +23,8 @@ export function ChatPanel({
 }: ChatPanelProps) {
   const {
     conversations,
+    folders,
+    looseConversationIds,
     activeId,
     messages,
     model,
@@ -36,10 +38,31 @@ export function ChatPanel({
     send,
     selectConversation,
     newConversation,
+    newConversationInFolder,
     deleteConversation,
+    createFolder,
+    renameFolder,
+    deleteFolder,
+    setFolderExpanded,
+    moveConversation,
+    removeConversationFromFolder,
+    reorderFolders,
+    reorderInFolder,
+    reorderLoose,
   } = useChat()
 
   const [draft, setDraft] = useState('')
+  const inputRef = useRef<HTMLTextAreaElement | null>(null)
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const saved = parseInt(localStorage.getItem('monet:chat-sidebar-width') ?? '', 10)
+    if (isNaN(saved)) return 240
+    return Math.min(480, Math.max(180, saved))
+  })
+
+  useEffect(() => {
+    if (!hasApiKey) return
+    inputRef.current?.focus()
+  }, [hasApiKey])
 
   // Selecionar modelo padrao quando a lista carregar
   useEffect(() => {
@@ -76,10 +99,24 @@ export function ChatPanel({
     <section className={styles.panel} aria-label="Chat com a IA">
       <ChatSidebar
         conversations={conversations}
+        folders={folders}
+        looseConversationIds={looseConversationIds}
         activeId={activeId}
         onSelect={selectConversation}
         onNew={newConversation}
         onDelete={deleteConversation}
+        onCreateFolder={createFolder}
+        onRenameFolder={renameFolder}
+        onDeleteFolder={deleteFolder}
+        onToggleFolderExpanded={setFolderExpanded}
+        onNewConversationInFolder={newConversationInFolder}
+        onMoveConversation={moveConversation}
+        onRemoveConversationFromFolder={removeConversationFromFolder}
+        onReorderFolders={reorderFolders}
+        onReorderInFolder={reorderInFolder}
+        onReorderLoose={reorderLoose}
+        width={sidebarWidth}
+        onWidthChange={setSidebarWidth}
       />
 
       <div className={styles.main}>
@@ -135,6 +172,7 @@ export function ChatPanel({
         <footer className={styles.composer}>
           <div className={styles.composerInner}>
             <textarea
+              ref={inputRef}
               className={styles.input}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}

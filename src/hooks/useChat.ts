@@ -14,50 +14,50 @@ import { formatSearchResults, hasTavilyKey, webSearch } from '../lib/search'
 // ─── System prompt do chat ───────────────────────────────────────────────────
 // Edite aqui para ajustar o comportamento do modelo no modo chat.
 const CHAT_SYSTEM_PROMPT = `
-You are a study and research assistant. Your role is to help curious, 
-intelligent people learn and understand new topics — they may be beginners 
+You are a study and research assistant. Your role is to help curious,
+intelligent people learn and understand new topics — they may be beginners
 in the subject, so always prioritize clarity without being condescending.
 
 ## Tone and posture
-Respond like a knowledgeable, friendly professor: patient, clear, and direct. 
-Adapt the depth automatically — if the question is technical, go technical; 
-if it's from a beginner, make it accessible. When in doubt, lean toward 
+Respond like a knowledgeable, friendly professor: patient, clear, and direct.
+Adapt the depth automatically — if the question is technical, go technical;
+if it's from a beginner, make it accessible. When in doubt, lean toward
 the more technical interpretation.
 
-Get to the point — no openers like "Great question!" or "Sure, I can help 
+Get to the point — no openers like "Great question!" or "Sure, I can help
 with that." But don't be cold: a direct answer can still have personality.
 
-When explaining abstract concepts, use real-world analogies and concrete 
-examples rather than generic definitions. Always make sure the fundamentals 
+When explaining abstract concepts, use real-world analogies and concrete
+examples rather than generic definitions. Always make sure the fundamentals
 of the topic are clear before going deeper.
 
-If the question is ambiguous, pick the most likely interpretation and answer 
-it — don't ask for clarification on simple questions. If you're assuming 
+If the question is ambiguous, pick the most likely interpretation and answer
+it — don't ask for clarification on simple questions. If you're assuming
 something, say so briefly at the start.
 
-When the topic allows, suggest a learning path — not just a list of 
+When the topic allows, suggest a learning path — not just a list of
 resources, but a sequence with a brief reason for the order.
 
-When relevant and natural, suggest complementary study resources: books and 
+When relevant and natural, suggest complementary study resources: books and
 scientific articles are preferred over blog posts.
 
 ## Format
-- Use markdown only when it genuinely helps clarity: code blocks, comparison 
+- Use markdown only when it genuinely helps clarity: code blocks, comparison
   tables, lists when there are truly enumerable items
 - For simple questions, answer in prose — don't turn everything into a list
 - No emojis or decorative formatting
 - For long responses, use headers to organize
 
 ## Web search and citations
-When using web search results, cite sources with inline links next to the 
-claim they support — format: [Title](url). Distribute citations throughout 
-the text, not grouped at the end. When search results include concrete data 
-(ratings, statistics, dates), cite them directly rather than paraphrasing. 
+When using web search results, cite sources with inline links next to the
+claim they support — format: [Title](url). Distribute citations throughout
+the text, not grouped at the end. When search results include concrete data
+(ratings, statistics, dates), cite them directly rather than paraphrasing.
 If results are inconclusive or outdated, say so explicitly.
 
 ## Accuracy
-If you're not sure about something, say so — don't fabricate. When multiple 
-valid approaches exist, present the options with real trade-offs, not just 
+If you're not sure about something, say so — don't fabricate. When multiple
+valid approaches exist, present the options with real trade-offs, not just
 "it depends." Never invent sources, quotes, or statistics.
 
 ## Language
@@ -65,10 +65,13 @@ Always respond in the same language as the user's message.`
 // ─────────────────────────────────────────────────────────────────────────────
 
 const CONVERSATIONS_KEY = 'monet:chat-conversations'
+const FOLDERS_KEY = 'monet:chat-folders'
+const LOOSE_ORDER_KEY = 'monet:chat-loose-order'
 const ACTIVE_ID_KEY = 'monet:chat-active-id'
 const MODEL_KEY = 'monet:chat-model'
 const TOOLS_KEY = 'monet:chat-tools'
 const LEGACY_HISTORY_KEY = 'monet:chat-history'
+const RESPONSE_LINK_KEY = 'monet:ai-response-chat-link'
 
 export interface ChatMessage {
   id: string
@@ -85,9 +88,22 @@ export interface ChatConversation {
   updatedAt: string
 }
 
+export interface ChatFolder {
+  id: string
+  name: string
+  conversationIds: string[]
+  expanded: boolean
+  createdAt: string
+  updatedAt: string
+}
+
 export interface ChatTools {
   webSearch: boolean
 }
+
+export type ConversationLocation =
+  | { type: 'loose'; index: number }
+  | { type: 'folder'; folderId: string; index: number }
 
 const DEFAULT_TOOLS: ChatTools = { webSearch: false }
 
@@ -133,6 +149,20 @@ function isConversation(c: unknown): c is ChatConversation {
     typeof x.title === 'string' &&
     Array.isArray(x.messages) &&
     x.messages.every(isMessage) &&
+    typeof x.createdAt === 'string' &&
+    typeof x.updatedAt === 'string'
+  )
+}
+
+function isFolder(f: unknown): f is ChatFolder {
+  if (!f || typeof f !== 'object') return false
+  const x = f as Record<string, unknown>
+  return (
+    typeof x.id === 'string' &&
+    typeof x.name === 'string' &&
+    Array.isArray(x.conversationIds) &&
+    (x.conversationIds as unknown[]).every((id) => typeof id === 'string') &&
+    typeof x.expanded === 'boolean' &&
     typeof x.createdAt === 'string' &&
     typeof x.updatedAt === 'string'
   )
@@ -196,6 +226,150 @@ function saveConversations(list: ChatConversation[]) {
   }
 }
 
+function loadFolders(): ChatFolder[] {
+  try {
+    const raw = localStorage.getItem(FOLDERS_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (Array.isArray(parsed) && parsed.every(isFolder)) {
+      return parsed as ChatFolder[]
+    }
+  } catch {
+    /* ignore */
+  }
+  return []
+}
+
+function saveFolders(list: ChatFolder[]) {
+  try {
+    localStorage.setItem(FOLDERS_KEY, JSON.stringify(list))
+  } catch (err) {
+    console.error('failed to persist chat folders', err)
+  }
+}
+
+function loadLooseOrder(): string[] {
+  try {
+    const raw = localStorage.getItem(LOOSE_ORDER_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (Array.isArray(parsed) && parsed.every((x) => typeof x === 'string')) {
+      return parsed as string[]
+    }
+  } catch {
+    /* ignore */
+  }
+  return []
+}
+
+function saveLooseOrder(order: string[]) {
+  try {
+    localStorage.setItem(LOOSE_ORDER_KEY, JSON.stringify(order))
+  } catch (err) {
+    console.error('failed to persist loose order', err)
+  }
+}
+
+type ResponseLinks = Record<string, string>
+
+function loadResponseLinks(): ResponseLinks {
+  try {
+    const raw = localStorage.getItem(RESPONSE_LINK_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const out: ResponseLinks = {}
+      for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+        if (typeof v === 'string') out[k] = v
+      }
+      return out
+    }
+  } catch {
+    /* ignore */
+  }
+  return {}
+}
+
+function saveResponseLinks(links: ResponseLinks): void {
+  try {
+    localStorage.setItem(RESPONSE_LINK_KEY, JSON.stringify(links))
+  } catch (err) {
+    console.error('failed to persist response-chat links', err)
+  }
+}
+
+export function getLinkedChatConversationId(responseId: string): string | null {
+  const links = loadResponseLinks()
+  return links[responseId] ?? null
+}
+
+export function linkResponseToChatConversation(
+  responseId: string,
+  conversationId: string
+): void {
+  const links = loadResponseLinks()
+  links[responseId] = conversationId
+  saveResponseLinks(links)
+}
+
+export function unlinkResponseFromChat(responseId: string): void {
+  const links = loadResponseLinks()
+  if (!(responseId in links)) return
+  delete links[responseId]
+  saveResponseLinks(links)
+}
+
+export function chatConversationExists(conversationId: string): boolean {
+  return loadConversations().some((c) => c.id === conversationId)
+}
+
+export function activateChatConversation(conversationId: string): void {
+  try {
+    localStorage.setItem(ACTIVE_ID_KEY, conversationId)
+  } catch (err) {
+    console.error('failed to persist active chat id', err)
+  }
+}
+
+export function createPreloadedChatConversation(params: {
+  title: string
+  userMessage: string
+  assistantMessage: string
+}): string {
+  const id = nanoid()
+  const now = new Date().toISOString()
+  const conv: ChatConversation = {
+    id,
+    title: params.title,
+    messages: [
+      {
+        id: nanoid(),
+        role: 'user',
+        content: params.userMessage,
+        timestamp: now,
+      },
+      {
+        id: nanoid(),
+        role: 'assistant',
+        content: params.assistantMessage,
+        timestamp: now,
+      },
+    ],
+    createdAt: now,
+    updatedAt: now,
+  }
+  const existing = loadConversations()
+  saveConversations([conv, ...existing])
+  const looseExisting = loadLooseOrder()
+  saveLooseOrder([id, ...looseExisting])
+  try {
+    localStorage.setItem(ACTIVE_ID_KEY, id)
+  } catch (err) {
+    console.error('failed to persist active chat id', err)
+  }
+  return id
+}
+
 function makeNewConversation(): ChatConversation {
   const now = new Date().toISOString()
   return {
@@ -207,8 +381,56 @@ function makeNewConversation(): ChatConversation {
   }
 }
 
+function makeNewFolder(name = 'Nova pasta'): ChatFolder {
+  const now = new Date().toISOString()
+  return {
+    id: nanoid(),
+    name,
+    conversationIds: [],
+    expanded: true,
+    createdAt: now,
+    updatedAt: now,
+  }
+}
+
+// Reconcilia ordens persistidas com o conjunto atual de conversas.
+// Conversas novas (sem registro de ordem) vao para o topo da lista solta.
+function reconcileOrders(
+  conversations: ChatConversation[],
+  folders: ChatFolder[],
+  looseOrder: string[]
+): { folders: ChatFolder[]; looseOrder: string[] } {
+  const allIds = new Set(conversations.map((c) => c.id))
+  const seen = new Set<string>()
+
+  const nextFolders = folders.map((f) => {
+    const cleaned = f.conversationIds.filter((id) => {
+      if (!allIds.has(id)) return false
+      if (seen.has(id)) return false
+      seen.add(id)
+      return true
+    })
+    return { ...f, conversationIds: cleaned }
+  })
+
+  const cleanedLoose = looseOrder.filter((id) => {
+    if (!allIds.has(id)) return false
+    if (seen.has(id)) return false
+    seen.add(id)
+    return true
+  })
+
+  // Conversas nao registradas em pasta nem em ordem solta -> topo da lista solta
+  const unseen = conversations.filter((c) => !seen.has(c.id)).map((c) => c.id)
+  const nextLoose = [...unseen, ...cleanedLoose]
+
+  return { folders: nextFolders, looseOrder: nextLoose }
+}
+
 export interface UseChatResult {
   conversations: ChatConversation[]
+  folders: ChatFolder[]
+  looseConversationIds: string[]
   activeId: string | null
   activeConversation: ChatConversation | null
   messages: ChatMessage[]
@@ -224,13 +446,42 @@ export interface UseChatResult {
   send: (text: string) => Promise<void>
   selectConversation: (id: string) => void
   newConversation: () => void
+  newConversationInFolder: (folderId: string) => void
   deleteConversation: (id: string) => void
+  createFolder: () => string
+  renameFolder: (id: string, name: string) => void
+  deleteFolder: (id: string) => void
+  setFolderExpanded: (id: string, expanded: boolean) => void
+  moveConversation: (
+    convId: string,
+    target: { type: 'loose'; index?: number } | { type: 'folder'; folderId: string; index?: number }
+  ) => void
+  removeConversationFromFolder: (convId: string) => void
+  reorderFolders: (newOrder: string[]) => void
+  reorderInFolder: (folderId: string, newOrder: string[]) => void
+  reorderLoose: (newOrder: string[]) => void
 }
 
 export function useChat(): UseChatResult {
+  // Estado inicial reconciliado entre conversas + folders + looseOrder
   const [conversations, setConversations] = useState<ChatConversation[]>(() =>
     loadConversations()
   )
+  const [folders, setFoldersState] = useState<ChatFolder[]>(() => {
+    const initialConvs = loadConversations()
+    const initialFolders = loadFolders()
+    const initialLoose = loadLooseOrder()
+    const reconciled = reconcileOrders(initialConvs, initialFolders, initialLoose)
+    return reconciled.folders
+  })
+  const [looseOrder, setLooseOrderState] = useState<string[]>(() => {
+    const initialConvs = loadConversations()
+    const initialFolders = loadFolders()
+    const initialLoose = loadLooseOrder()
+    const reconciled = reconcileOrders(initialConvs, initialFolders, initialLoose)
+    return reconciled.looseOrder
+  })
+
   const [activeId, setActiveIdState] = useState<string | null>(() => {
     const saved = localStorage.getItem(ACTIVE_ID_KEY)
     return saved && saved.length > 0 ? saved : null
@@ -252,6 +503,42 @@ export function useChat(): UseChatResult {
   } | null>(null)
   const conversationsRef = useRef<ChatConversation[]>(conversations)
   conversationsRef.current = conversations
+  const foldersRef = useRef<ChatFolder[]>(folders)
+  foldersRef.current = folders
+  const looseOrderRef = useRef<string[]>(looseOrder)
+  looseOrderRef.current = looseOrder
+
+  // Auto-expand pasta da conversa ativa ao montar (1x)
+  const autoExpandedOnMountRef = useRef(false)
+  useEffect(() => {
+    if (autoExpandedOnMountRef.current) return
+    if (!activeId) return
+    autoExpandedOnMountRef.current = true
+    const folder = foldersRef.current.find((f) =>
+      f.conversationIds.includes(activeId)
+    )
+    if (folder && !folder.expanded) {
+      setFoldersState((prev) =>
+        prev.map((f) =>
+          f.id === folder.id ? { ...f, expanded: true } : f
+        )
+      )
+    }
+  }, [activeId])
+
+  const setFolders = useCallback(
+    (updater: ChatFolder[] | ((prev: ChatFolder[]) => ChatFolder[])) => {
+      setFoldersState(updater)
+    },
+    []
+  )
+
+  const setLooseOrder = useCallback(
+    (updater: string[] | ((prev: string[]) => string[])) => {
+      setLooseOrderState(updater)
+    },
+    []
+  )
 
   // Garante que activeId aponta pra uma conversa existente
   useEffect(() => {
@@ -263,6 +550,14 @@ export function useChat(): UseChatResult {
   useEffect(() => {
     saveConversations(conversations)
   }, [conversations])
+
+  useEffect(() => {
+    saveFolders(folders)
+  }, [folders])
+
+  useEffect(() => {
+    saveLooseOrder(looseOrder)
+  }, [looseOrder])
 
   useEffect(() => {
     if (activeId) localStorage.setItem(ACTIVE_ID_KEY, activeId)
@@ -296,22 +591,250 @@ export function useChat(): UseChatResult {
 
   const selectConversation = useCallback((id: string) => {
     setActiveIdState(id)
-  }, [])
+    // Se a conversa esta em pasta colapsada, expande
+    const folder = foldersRef.current.find((f) =>
+      f.conversationIds.includes(id)
+    )
+    if (folder && !folder.expanded) {
+      setFolders((prev) =>
+        prev.map((f) => (f.id === folder.id ? { ...f, expanded: true } : f))
+      )
+    }
+  }, [setFolders])
 
   const newConversation = useCallback(() => {
     const conv = makeNewConversation()
     setConversations((prev) => [conv, ...prev])
+    setLooseOrder((prev) => [conv.id, ...prev])
     setActiveIdState(conv.id)
-  }, [])
+  }, [setLooseOrder])
 
-  const deleteConversation = useCallback((id: string) => {
-    setConversations((prev) => prev.filter((c) => c.id !== id))
-    setActiveIdState((current) => {
-      if (current !== id) return current
-      const remaining = conversationsRef.current.filter((c) => c.id !== id)
-      return remaining[0]?.id ?? null
-    })
-  }, [])
+  const newConversationInFolder = useCallback(
+    (folderId: string) => {
+      const conv = makeNewConversation()
+      setConversations((prev) => [conv, ...prev])
+      setFolders((prev) =>
+        prev.map((f) =>
+          f.id === folderId
+            ? {
+                ...f,
+                conversationIds: [conv.id, ...f.conversationIds],
+                expanded: true,
+                updatedAt: new Date().toISOString(),
+              }
+            : f
+        )
+      )
+      setActiveIdState(conv.id)
+    },
+    [setFolders]
+  )
+
+  const deleteConversation = useCallback(
+    (id: string) => {
+      setConversations((prev) => prev.filter((c) => c.id !== id))
+      setFolders((prev) =>
+        prev.map((f) =>
+          f.conversationIds.includes(id)
+            ? {
+                ...f,
+                conversationIds: f.conversationIds.filter((cid) => cid !== id),
+              }
+            : f
+        )
+      )
+      setLooseOrder((prev) => prev.filter((cid) => cid !== id))
+      setActiveIdState((current) => {
+        if (current !== id) return current
+        const remaining = conversationsRef.current.filter((c) => c.id !== id)
+        return remaining[0]?.id ?? null
+      })
+    },
+    [setFolders, setLooseOrder]
+  )
+
+  const createFolder = useCallback((): string => {
+    const folder = makeNewFolder('')
+    setFolders((prev) => [folder, ...prev])
+    return folder.id
+  }, [setFolders])
+
+  const renameFolder = useCallback(
+    (id: string, name: string) => {
+      const trimmed = name.trim()
+      if (!trimmed) return
+      setFolders((prev) =>
+        prev.map((f) =>
+          f.id === id
+            ? { ...f, name: trimmed, updatedAt: new Date().toISOString() }
+            : f
+        )
+      )
+    },
+    [setFolders]
+  )
+
+  const deleteFolder = useCallback(
+    (id: string) => {
+      const folder = foldersRef.current.find((f) => f.id === id)
+      if (!folder) return
+      const convIdsToDelete = new Set(folder.conversationIds)
+      setConversations((prev) =>
+        prev.filter((c) => !convIdsToDelete.has(c.id))
+      )
+      setFolders((prev) => prev.filter((f) => f.id !== id))
+      setActiveIdState((current) => {
+        if (!current) return current
+        if (!convIdsToDelete.has(current)) return current
+        const remaining = conversationsRef.current.filter(
+          (c) => !convIdsToDelete.has(c.id)
+        )
+        return remaining[0]?.id ?? null
+      })
+    },
+    [setFolders]
+  )
+
+  const setFolderExpanded = useCallback(
+    (id: string, expanded: boolean) => {
+      setFolders((prev) =>
+        prev.map((f) => (f.id === id ? { ...f, expanded } : f))
+      )
+    },
+    [setFolders]
+  )
+
+  const moveConversation = useCallback(
+    (
+      convId: string,
+      target:
+        | { type: 'loose'; index?: number }
+        | { type: 'folder'; folderId: string; index?: number }
+    ) => {
+      // Detecta origem
+      const currentFolders = foldersRef.current
+      const currentLoose = looseOrderRef.current
+      const sourceFolder = currentFolders.find((f) =>
+        f.conversationIds.includes(convId)
+      )
+      const sourceContainerKey = sourceFolder
+        ? `folder:${sourceFolder.id}`
+        : 'loose'
+      const targetContainerKey =
+        target.type === 'folder' ? `folder:${target.folderId}` : 'loose'
+
+      // Mesma pasta destino: sem efeito se sem indice especifico
+      if (sourceContainerKey === targetContainerKey && target.index === undefined) {
+        return
+      }
+
+      // Remove da origem
+      let nextFolders = currentFolders
+      let nextLoose = currentLoose
+      if (sourceFolder) {
+        nextFolders = currentFolders.map((f) =>
+          f.id === sourceFolder.id
+            ? {
+                ...f,
+                conversationIds: f.conversationIds.filter(
+                  (id) => id !== convId
+                ),
+              }
+            : f
+        )
+      } else {
+        nextLoose = currentLoose.filter((id) => id !== convId)
+      }
+
+      // Insere no destino
+      if (target.type === 'folder') {
+        nextFolders = nextFolders.map((f) => {
+          if (f.id !== target.folderId) return f
+          const list = [...f.conversationIds]
+          const idx = target.index ?? list.length
+          list.splice(Math.max(0, Math.min(idx, list.length)), 0, convId)
+          return {
+            ...f,
+            conversationIds: list,
+            expanded: true, // BDD: auto expand ao receber conversa
+            updatedAt: new Date().toISOString(),
+          }
+        })
+      } else {
+        const list = [...nextLoose]
+        const idx = target.index ?? 0
+        list.splice(Math.max(0, Math.min(idx, list.length)), 0, convId)
+        nextLoose = list
+      }
+
+      setFolders(nextFolders)
+      setLooseOrder(nextLoose)
+    },
+    [setFolders, setLooseOrder]
+  )
+
+  const removeConversationFromFolder = useCallback(
+    (convId: string) => {
+      const folder = foldersRef.current.find((f) =>
+        f.conversationIds.includes(convId)
+      )
+      if (!folder) return
+      moveConversation(convId, { type: 'loose', index: 0 })
+    },
+    [moveConversation]
+  )
+
+  const reorderFolders = useCallback(
+    (newOrder: string[]) => {
+      setFolders((prev) => {
+        const byId = new Map(prev.map((f) => [f.id, f]))
+        const next: ChatFolder[] = []
+        for (const id of newOrder) {
+          const f = byId.get(id)
+          if (f) {
+            next.push(f)
+            byId.delete(id)
+          }
+        }
+        // Acrescenta qualquer pasta nao listada (defensive)
+        for (const f of byId.values()) next.push(f)
+        return next
+      })
+    },
+    [setFolders]
+  )
+
+  const reorderInFolder = useCallback(
+    (folderId: string, newOrder: string[]) => {
+      setFolders((prev) =>
+        prev.map((f) => {
+          if (f.id !== folderId) return f
+          const set = new Set(f.conversationIds)
+          const filtered = newOrder.filter((id) => set.has(id))
+          // mantem itens nao listados ao final (defensive)
+          for (const id of f.conversationIds) {
+            if (!filtered.includes(id)) filtered.push(id)
+          }
+          return { ...f, conversationIds: filtered }
+        })
+      )
+    },
+    [setFolders]
+  )
+
+  const reorderLoose = useCallback(
+    (newOrder: string[]) => {
+      setLooseOrder((prev) => {
+        const set = new Set(prev)
+        const filtered = newOrder.filter((id) => set.has(id))
+        for (const id of prev) {
+          if (!filtered.includes(id)) filtered.push(id)
+        }
+        return filtered
+      })
+    },
+    [setLooseOrder]
+  )
 
   const updateMessages = useCallback(
     (convId: string, updater: (msgs: ChatMessage[]) => ChatMessage[]) => {
@@ -442,6 +965,7 @@ export function useChat(): UseChatResult {
         const conv = makeNewConversation()
         convId = conv.id
         setConversations((prev) => [conv, ...prev])
+        setLooseOrder((prev) => [conv.id, ...prev])
         setActiveIdState(conv.id)
       }
       const targetId = convId
@@ -501,7 +1025,7 @@ export function useChat(): UseChatResult {
         setIsStreaming(false)
       }
     },
-    [activeId, isStreaming, model, updateMessages]
+    [activeId, isStreaming, model, setLooseOrder, updateMessages]
   )
 
   useEffect(() => {
@@ -522,6 +1046,8 @@ export function useChat(): UseChatResult {
 
   return {
     conversations,
+    folders,
+    looseConversationIds: looseOrder,
     activeId,
     activeConversation,
     messages,
@@ -537,6 +1063,16 @@ export function useChat(): UseChatResult {
     send,
     selectConversation,
     newConversation,
+    newConversationInFolder,
     deleteConversation,
+    createFolder,
+    renameFolder,
+    deleteFolder,
+    setFolderExpanded,
+    moveConversation,
+    removeConversationFromFolder,
+    reorderFolders,
+    reorderInFolder,
+    reorderLoose,
   }
 }

@@ -1,75 +1,829 @@
-import type { ChatConversation } from '../../hooks/useChat'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  SortableContext,
+  arrayMove,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+import { useConfirm } from '../../hooks/useConfirm'
+import type { ChatConversation, ChatFolder } from '../../hooks/useChat'
 import styles from './ChatSidebar.module.css'
 
 export interface ChatSidebarProps {
   conversations: ChatConversation[]
+  folders: ChatFolder[]
+  looseConversationIds: string[]
   activeId: string | null
   onSelect: (id: string) => void
   onNew: () => void
   onDelete: (id: string) => void
+  onCreateFolder: () => string
+  onRenameFolder: (id: string, name: string) => void
+  onDeleteFolder: (id: string) => void
+  onToggleFolderExpanded: (id: string, expanded: boolean) => void
+  onNewConversationInFolder: (folderId: string) => void
+  onMoveConversation: (
+    convId: string,
+    target:
+      | { type: 'loose'; index?: number }
+      | { type: 'folder'; folderId: string; index?: number }
+  ) => void
+  onRemoveConversationFromFolder: (convId: string) => void
+  onReorderFolders: (newOrder: string[]) => void
+  onReorderInFolder: (folderId: string, newOrder: string[]) => void
+  onReorderLoose: (newOrder: string[]) => void
+  width: number
+  onWidthChange: (w: number) => void
 }
+
+const MIN_WIDTH = 180
+const MAX_WIDTH = 480
+
+const ChevronIcon = ({ open }: { open: boolean }) => (
+  <svg
+    viewBox="0 0 16 16"
+    width="12"
+    height="12"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}
+    aria-hidden="true"
+  >
+    <polyline points="6 3.5 10.5 8 6 12.5" />
+  </svg>
+)
+
+const FolderIcon = () => (
+  <svg
+    viewBox="0 0 16 16"
+    width="13"
+    height="13"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.6"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <path d="M2 4.5a1 1 0 0 1 1-1h3.5l1.5 1.5H13a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4.5z" />
+  </svg>
+)
+
+const PlusIcon = () => (
+  <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
+    <line x1="8" y1="3" x2="8" y2="13" />
+    <line x1="3" y1="8" x2="13" y2="8" />
+  </svg>
+)
+
+const RemoveFromFolderIcon = () => (
+  <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    {/* arrow exiting a small box */}
+    <path d="M9 3h-5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h5" />
+    <polyline points="11 5 14 8 11 11" />
+    <line x1="6" y1="8" x2="14" y2="8" />
+  </svg>
+)
+
+type ActiveDragKind = 'folder' | 'conv' | null
 
 export function ChatSidebar({
   conversations,
+  folders,
+  looseConversationIds,
   activeId,
   onSelect,
   onNew,
   onDelete,
+  onCreateFolder,
+  onRenameFolder,
+  onDeleteFolder,
+  onToggleFolderExpanded,
+  onNewConversationInFolder,
+  onMoveConversation,
+  onRemoveConversationFromFolder,
+  onReorderFolders,
+  onReorderInFolder,
+  onReorderLoose,
+  width,
+  onWidthChange,
 }: ChatSidebarProps) {
-  const sorted = [...conversations].sort(
-    (a, b) => +new Date(b.updatedAt) - +new Date(a.updatedAt)
+  const { confirm, modal } = useConfirm()
+  const [editingFolderId, setEditingFolderId] = useState<string | null>(null)
+  const [editingFolderName, setEditingFolderName] = useState('')
+  const editingInputRef = useRef<HTMLInputElement>(null)
+  const [activeDragKind, setActiveDragKind] = useState<ActiveDragKind>(null)
+  const dragging = useRef(false)
+  const startX = useRef(0)
+  const startWidth = useRef(width)
+  const currentWidthRef = useRef(width)
+
+  useEffect(() => {
+    currentWidthRef.current = width
+  }, [width])
+
+  const onResizeMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      dragging.current = true
+      startX.current = e.clientX
+      startWidth.current = width
+      document.body.style.cursor = 'col-resize'
+      document.body.style.userSelect = 'none'
+    },
+    [width]
   )
 
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      if (!dragging.current) return
+      const delta = e.clientX - startX.current
+      const next = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startWidth.current + delta))
+      currentWidthRef.current = next
+      onWidthChange(next)
+    }
+    const onMouseUp = () => {
+      if (!dragging.current) return
+      dragging.current = false
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      localStorage.setItem('monet:chat-sidebar-width', String(currentWidthRef.current))
+    }
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+    return () => {
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [onWidthChange])
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
+  )
+
+  const conversationById = useMemo(() => {
+    const map = new Map<string, ChatConversation>()
+    for (const c of conversations) map.set(c.id, c)
+    return map
+  }, [conversations])
+
+  const folderIds = useMemo(() => folders.map((f) => `folder:${f.id}`), [folders])
+
+  // Auto-foco no input quando entra em modo edicao
+  useEffect(() => {
+    if (editingFolderId && editingInputRef.current) {
+      editingInputRef.current.focus()
+      editingInputRef.current.select()
+    }
+  }, [editingFolderId])
+
+  function startCreateFolder() {
+    const id = onCreateFolder()
+    setEditingFolderId(id)
+    setEditingFolderName('')
+  }
+
+  function commitFolderEdit() {
+    if (!editingFolderId) return
+    const trimmed = editingFolderName.trim()
+    if (trimmed) {
+      onRenameFolder(editingFolderId, trimmed)
+    } else {
+      // Sem nome: BDD requer cancelar criacao (e restaurar nome ao renomear).
+      // Pastas criadas com nome vazio sao removidas; renomeacao com vazio nao altera.
+      const folder = folders.find((f) => f.id === editingFolderId)
+      if (folder && folder.name.length === 0) {
+        onDeleteFolder(editingFolderId)
+      }
+    }
+    setEditingFolderId(null)
+    setEditingFolderName('')
+  }
+
+  function cancelFolderEdit() {
+    if (!editingFolderId) return
+    const folder = folders.find((f) => f.id === editingFolderId)
+    if (folder && folder.name.length === 0) {
+      // Pasta criada e nunca nomeada: cancelar = remover
+      onDeleteFolder(editingFolderId)
+    }
+    setEditingFolderId(null)
+    setEditingFolderName('')
+  }
+
+  async function handleDeleteFolder(folder: ChatFolder) {
+    const hasConvs = folder.conversationIds.length > 0
+    const message = hasConvs
+      ? `A pasta "${folder.name || 'sem nome'}" contém ${folder.conversationIds.length} conversa${folder.conversationIds.length === 1 ? '' : 's'}. Excluir a pasta excluirá permanentemente todas as conversas dentro dela.`
+      : `Excluir a pasta "${folder.name || 'sem nome'}"?`
+    const ok = await confirm(message, {
+      title: hasConvs ? 'Excluir pasta e conversas' : 'Excluir pasta',
+      confirmLabel: 'excluir',
+    })
+    if (ok) onDeleteFolder(folder.id)
+  }
+
+  // ───── DnD ─────────────────────────────────────────────────────────────
+
+  function handleDragStart(event: { active: { id: string | number } }) {
+    const id = String(event.active.id)
+    if (id.startsWith('folder:')) setActiveDragKind('folder')
+    else if (id.startsWith('conv:')) setActiveDragKind('conv')
+    else setActiveDragKind(null)
+  }
+
+  function handleDragEnd(event: DragEndEvent) {
+    setActiveDragKind(null)
+    const { active, over } = event
+    if (!over) return
+    const activeId = String(active.id)
+    const overId = String(over.id)
+    if (activeId === overId) return
+
+    // Folder reorder
+    if (activeId.startsWith('folder:') && overId.startsWith('folder:')) {
+      const oldIndex = folderIds.indexOf(activeId)
+      const newIndex = folderIds.indexOf(overId)
+      if (oldIndex === -1 || newIndex === -1) return
+      const reordered = arrayMove(folderIds, oldIndex, newIndex)
+      onReorderFolders(reordered.map((s) => s.replace(/^folder:/, '')))
+      return
+    }
+
+    // Conversation move/reorder
+    if (activeId.startsWith('conv:')) {
+      const convId = activeId.slice('conv:'.length)
+      const sourceContainer = active.data.current?.sortable?.containerId as
+        | string
+        | undefined
+
+      // Determina container destino
+      let targetContainer: string | undefined
+      let targetIndex: number | undefined
+
+      if (overId.startsWith('folder:')) {
+        // Drop no header de uma pasta -> entra nela. Se ja esta nela, no-op
+        // (BDD: "Tentar mover conversa para a mesma pasta onde ja esta").
+        if (sourceContainer === overId) return
+        targetContainer = overId
+        targetIndex = 0
+      } else if (overId.startsWith('folder-body:')) {
+        // Drop em pasta vazia/area-vazia
+        targetContainer = `folder:${overId.slice('folder-body:'.length)}`
+        targetIndex = undefined // fim
+      } else if (overId === 'loose-body') {
+        targetContainer = '__loose__'
+        targetIndex = undefined // fim
+      } else if (overId.startsWith('conv:')) {
+        const overContainer = over.data.current?.sortable?.containerId as
+          | string
+          | undefined
+        if (!overContainer) return
+        targetContainer = overContainer
+        // Indice = posicao do over no container destino
+        const overConvId = overId.slice('conv:'.length)
+        if (overContainer === '__loose__') {
+          targetIndex = looseConversationIds.indexOf(overConvId)
+        } else if (overContainer.startsWith('folder:')) {
+          const fid = overContainer.slice('folder:'.length)
+          const folder = folders.find((f) => f.id === fid)
+          targetIndex = folder?.conversationIds.indexOf(overConvId) ?? undefined
+        }
+      } else {
+        return
+      }
+
+      if (!targetContainer) return
+
+      // Mesmo container -> reorder
+      if (sourceContainer === targetContainer) {
+        if (targetContainer === '__loose__') {
+          const oldIndex = looseConversationIds.indexOf(convId)
+          if (oldIndex === -1 || targetIndex === undefined) return
+          if (oldIndex === targetIndex) return
+          const reordered = arrayMove(
+            looseConversationIds,
+            oldIndex,
+            targetIndex
+          )
+          onReorderLoose(reordered)
+        } else if (targetContainer.startsWith('folder:')) {
+          const fid = targetContainer.slice('folder:'.length)
+          const folder = folders.find((f) => f.id === fid)
+          if (!folder) return
+          const oldIndex = folder.conversationIds.indexOf(convId)
+          if (oldIndex === -1 || targetIndex === undefined) return
+          if (oldIndex === targetIndex) return
+          const reordered = arrayMove(
+            folder.conversationIds,
+            oldIndex,
+            targetIndex
+          )
+          onReorderInFolder(fid, reordered)
+        }
+        return
+      }
+
+      // Container diferente -> mover
+      if (targetContainer === '__loose__') {
+        onMoveConversation(convId, { type: 'loose', index: targetIndex })
+      } else if (targetContainer.startsWith('folder:')) {
+        const fid = targetContainer.slice('folder:'.length)
+        onMoveConversation(convId, {
+          type: 'folder',
+          folderId: fid,
+          index: targetIndex,
+        })
+      }
+    }
+  }
+
   return (
-    <aside className={styles.sidebar} aria-label="Conversas">
+    <aside className={styles.sidebar} aria-label="Conversas" style={{ width }}>
+      {modal}
+      <div className={styles.resizeHandle} onMouseDown={onResizeMouseDown} />
       <div className={styles.header}>
         <button type="button" className={styles.newBtn} onClick={onNew}>
-          <span className={styles.plus} aria-hidden="true">
-            +
-          </span>
+          <span className={styles.plus} aria-hidden="true">+</span>
           Nova conversa
         </button>
+        <button
+          type="button"
+          className={styles.newFolderBtn}
+          onClick={startCreateFolder}
+          aria-label="nova pasta"
+          title="nova pasta"
+        >
+          <FolderIcon />
+          <span className={styles.plus} aria-hidden="true">+</span>
+        </button>
       </div>
-      <div className={styles.list}>
-        {sorted.length === 0 ? (
-          <p className={styles.empty}>
-            Nenhuma conversa ainda. Crie uma para começar.
-          </p>
-        ) : (
-          sorted.map((c) => {
-            const active = c.id === activeId
-            return (
-              <div
-                key={c.id}
-                className={active ? styles.itemActive : styles.item}
-                onClick={() => onSelect(c.id)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault()
-                    onSelect(c.id)
-                  }
+
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragStart={handleDragStart}
+        onDragCancel={() => setActiveDragKind(null)}
+        onDragEnd={handleDragEnd}
+      >
+        <div className={styles.list}>
+          {/* Folders */}
+          <SortableContext
+            id="__folders__"
+            items={folderIds}
+            strategy={verticalListSortingStrategy}
+          >
+            {folders.map((folder) => (
+              <SortableFolder
+                key={folder.id}
+                folder={folder}
+                conversationById={conversationById}
+                activeId={activeId}
+                editing={editingFolderId === folder.id}
+                editingName={editingFolderName}
+                onEditingNameChange={setEditingFolderName}
+                inputRef={editingInputRef}
+                onCommitEdit={commitFolderEdit}
+                onCancelEdit={cancelFolderEdit}
+                onStartEdit={(f) => {
+                  setEditingFolderId(f.id)
+                  setEditingFolderName(f.name)
                 }}
-              >
-                <span className={styles.itemTitle}>{c.title}</span>
-                <button
-                  type="button"
-                  className={styles.deleteBtn}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onDelete(c.id)
-                  }}
-                  aria-label="apagar conversa"
-                  title="apagar conversa"
-                >
-                  ×
-                </button>
-              </div>
-            )
-          })
+                onSelectConv={onSelect}
+                onDeleteConv={onDelete}
+                onRemoveFromFolder={onRemoveConversationFromFolder}
+                onNewConversation={() => onNewConversationInFolder(folder.id)}
+                onToggleExpanded={() =>
+                  onToggleFolderExpanded(folder.id, !folder.expanded)
+                }
+                onDeleteFolder={() => handleDeleteFolder(folder)}
+                isAnyConvDragging={activeDragKind === 'conv'}
+              />
+            ))}
+          </SortableContext>
+
+          {/* Loose conversations */}
+          {(looseConversationIds.length > 0 || folders.length > 0) && (
+            <div className={styles.looseLabel}>conversas</div>
+          )}
+          <SortableContext
+            id="__loose__"
+            items={looseConversationIds.map((id) => `conv:${id}`)}
+            strategy={verticalListSortingStrategy}
+          >
+            {looseConversationIds.length === 0 && folders.length === 0 ? (
+              <p className={styles.empty}>
+                Nenhuma conversa ainda. Crie uma para começar.
+              </p>
+            ) : (
+              looseConversationIds.map((cid) => {
+                const conv = conversationById.get(cid)
+                if (!conv) return null
+                return (
+                  <SortableConversation
+                    key={cid}
+                    conv={conv}
+                    isActive={cid === activeId}
+                    inFolder={false}
+                    onSelect={() => onSelect(cid)}
+                    onDelete={() => onDelete(cid)}
+                  />
+                )
+              })
+            )}
+            <LooseDropZone active={activeDragKind === 'conv'} />
+          </SortableContext>
+        </div>
+      </DndContext>
+    </aside>
+  )
+}
+
+// ─── Sortable Folder ─────────────────────────────────────────────────────────
+
+interface SortableFolderProps {
+  folder: ChatFolder
+  conversationById: Map<string, ChatConversation>
+  activeId: string | null
+  editing: boolean
+  editingName: string
+  onEditingNameChange: (v: string) => void
+  inputRef: React.RefObject<HTMLInputElement | null>
+  onCommitEdit: () => void
+  onCancelEdit: () => void
+  onStartEdit: (folder: ChatFolder) => void
+  onSelectConv: (id: string) => void
+  onDeleteConv: (id: string) => void
+  onRemoveFromFolder: (convId: string) => void
+  onNewConversation: () => void
+  onToggleExpanded: () => void
+  onDeleteFolder: () => void
+  isAnyConvDragging: boolean
+}
+
+function SortableFolder({
+  folder,
+  conversationById,
+  activeId,
+  editing,
+  editingName,
+  onEditingNameChange,
+  inputRef,
+  onCommitEdit,
+  onCancelEdit,
+  onStartEdit,
+  onSelectConv,
+  onDeleteConv,
+  onRemoveFromFolder,
+  onNewConversation,
+  onToggleExpanded,
+  onDeleteFolder,
+  isAnyConvDragging,
+}: SortableFolderProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+    isOver,
+    over,
+  } = useSortable({
+    id: `folder:${folder.id}`,
+    data: { type: 'folder' },
+  })
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : undefined,
+  }
+
+  // Drop visual: quando uma conversa esta sendo arrastada por cima do header
+  const showDropHighlight =
+    isOver && over && String(over.id) === `folder:${folder.id}` &&
+    /* nao reagir a drag de pasta sobre pasta */
+    isAnyConvDragging
+
+  return (
+    <div className={styles.folder} ref={setNodeRef} style={style}>
+      <div
+        className={`${styles.folderHeader} ${showDropHighlight ? styles.folderHeaderDropOver : ''}`}
+        onClick={() => {
+          if (editing) return
+          onToggleExpanded()
+        }}
+        onDoubleClick={(e) => {
+          if ((e.target as HTMLElement).closest('button, input')) return
+          onStartEdit(folder)
+        }}
+        {...attributes}
+        {...listeners}
+      >
+        <span
+          className={styles.folderChevron}
+          aria-label={folder.expanded ? 'colapsar pasta' : 'expandir pasta'}
+        >
+          <ChevronIcon open={folder.expanded} />
+        </span>
+        {editing ? (
+          <input
+            ref={inputRef}
+            className={styles.folderRenameInput}
+            value={editingName}
+            onChange={(e) => onEditingNameChange(e.target.value)}
+            onBlur={onCommitEdit}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                onCommitEdit()
+              } else if (e.key === 'Escape') {
+                e.preventDefault()
+                onCancelEdit()
+              }
+              e.stopPropagation()
+            }}
+            onClick={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+            placeholder="nome da pasta"
+            aria-label="nome da pasta"
+          />
+        ) : (
+          <span className={styles.folderName}>
+            {folder.name || 'sem nome'}
+          </span>
+        )}
+        {!editing && (
+          <span
+            className={styles.folderActions}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              className={styles.folderActionBtn}
+              onClick={(e) => {
+                e.stopPropagation()
+                onNewConversation()
+              }}
+              aria-label={`nova conversa em ${folder.name || 'pasta'}`}
+              title="nova conversa nesta pasta"
+            >
+              <PlusIcon />
+            </button>
+            <button
+              type="button"
+              className={`${styles.folderActionBtn} ${styles.folderActionBtnDelete}`}
+              onClick={(e) => {
+                e.stopPropagation()
+                onDeleteFolder()
+              }}
+              aria-label={`excluir pasta ${folder.name || ''}`}
+              title="excluir pasta"
+            >
+              ×
+            </button>
+          </span>
         )}
       </div>
-    </aside>
+
+      {folder.expanded && (
+        <FolderBody
+          folder={folder}
+          conversationById={conversationById}
+          activeId={activeId}
+          onSelectConv={onSelectConv}
+          onDeleteConv={onDeleteConv}
+          onRemoveFromFolder={onRemoveFromFolder}
+          isAnyConvDragging={isAnyConvDragging}
+        />
+      )}
+    </div>
+  )
+}
+
+// ─── Folder body (drop zone + sortable list) ────────────────────────────────
+
+interface FolderBodyProps {
+  folder: ChatFolder
+  conversationById: Map<string, ChatConversation>
+  activeId: string | null
+  onSelectConv: (id: string) => void
+  onDeleteConv: (id: string) => void
+  onRemoveFromFolder: (convId: string) => void
+  isAnyConvDragging: boolean
+}
+
+function FolderBody({
+  folder,
+  conversationById,
+  activeId,
+  onSelectConv,
+  onDeleteConv,
+  onRemoveFromFolder,
+  isAnyConvDragging,
+}: FolderBodyProps) {
+  const items = folder.conversationIds.map((id) => `conv:${id}`)
+  return (
+    <SortableContext
+      id={`folder:${folder.id}`}
+      items={items}
+      strategy={verticalListSortingStrategy}
+    >
+      <div className={styles.folderBody}>
+        {folder.conversationIds.length === 0 ? (
+          <FolderEmptyDropZone folderId={folder.id} active={isAnyConvDragging} />
+        ) : (
+          <>
+            {folder.conversationIds.map((cid) => {
+              const conv = conversationById.get(cid)
+              if (!conv) return null
+              return (
+                <SortableConversation
+                  key={cid}
+                  conv={conv}
+                  isActive={cid === activeId}
+                  inFolder
+                  onSelect={() => onSelectConv(cid)}
+                  onDelete={() => onDeleteConv(cid)}
+                  onRemoveFromFolder={() => onRemoveFromFolder(cid)}
+                />
+              )
+            })}
+            <FolderTailDropZone folderId={folder.id} active={isAnyConvDragging} />
+          </>
+        )}
+      </div>
+    </SortableContext>
+  )
+}
+
+function FolderEmptyDropZone({
+  folderId,
+  active,
+}: {
+  folderId: string
+  active: boolean
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: `folder-body:${folderId}` })
+  return (
+    <div
+      ref={setNodeRef}
+      className={
+        active
+          ? `${styles.folderDropZone} ${styles.folderDropZoneActive}`
+          : styles.folderDropZone
+      }
+    >
+      {!active && (
+        <span className={styles.folderEmpty}>pasta vazia</span>
+      )}
+      {active && isOver && (
+        <span className={styles.folderEmpty}>soltar aqui</span>
+      )}
+    </div>
+  )
+}
+
+function FolderTailDropZone({
+  folderId,
+  active,
+}: {
+  folderId: string
+  active: boolean
+}) {
+  const { setNodeRef } = useDroppable({ id: `folder-body:${folderId}` })
+  return (
+    <div
+      ref={setNodeRef}
+      className={
+        active
+          ? `${styles.folderDropZone} ${styles.folderDropZoneActive}`
+          : styles.folderDropZone
+      }
+    />
+  )
+}
+
+function LooseDropZone({ active }: { active: boolean }) {
+  const { setNodeRef } = useDroppable({ id: 'loose-body' })
+  return (
+    <div
+      ref={setNodeRef}
+      className={
+        active
+          ? `${styles.looseDropZone} ${styles.looseDropZoneActive}`
+          : styles.looseDropZone
+      }
+    />
+  )
+}
+
+// ─── Sortable Conversation ────────────────────────────────────────────────────
+
+interface SortableConversationProps {
+  conv: ChatConversation
+  isActive: boolean
+  inFolder: boolean
+  onSelect: () => void
+  onDelete: () => void
+  onRemoveFromFolder?: () => void
+}
+
+function SortableConversation({
+  conv,
+  isActive,
+  inFolder,
+  onSelect,
+  onDelete,
+  onRemoveFromFolder,
+}: SortableConversationProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
+    id: `conv:${conv.id}`,
+    data: { type: 'conv' },
+  })
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  }
+
+  const className = [
+    isActive ? styles.convActive : styles.conv,
+    isDragging ? styles.convDragging : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={className}
+      {...attributes}
+      {...listeners}
+      role="button"
+      tabIndex={0}
+      onClick={onSelect}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onSelect()
+        }
+      }}
+    >
+      <span className={styles.convTitle}>{conv.title}</span>
+      <span
+        className={styles.convActions}
+        onPointerDown={(e) => e.stopPropagation()}
+      >
+        {inFolder && onRemoveFromFolder && (
+          <button
+            type="button"
+            className={styles.convActionBtn}
+            onClick={(e) => {
+              e.stopPropagation()
+              onRemoveFromFolder()
+            }}
+            aria-label="retirar da pasta"
+            title="retirar da pasta"
+          >
+            <RemoveFromFolderIcon />
+          </button>
+        )}
+        <button
+          type="button"
+          className={`${styles.convActionBtn} ${styles.convActionBtnDelete}`}
+          onClick={(e) => {
+            e.stopPropagation()
+            onDelete()
+          }}
+          aria-label="apagar conversa"
+          title="apagar conversa"
+        >
+          ×
+        </button>
+      </span>
+    </div>
   )
 }

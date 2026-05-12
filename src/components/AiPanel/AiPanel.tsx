@@ -33,9 +33,11 @@ interface SortableAiCardProps {
   forceOpen?: boolean
   globalExpand?: boolean | null
   onDelete?: (id: string) => void
+  hasApiKey?: boolean
+  onOpenInChat?: (response: AiResponse) => void
 }
 
-function SortableAiCard({ response, execIndex, forceOpen, globalExpand, onDelete }: SortableAiCardProps) {
+function SortableAiCard({ response, execIndex, forceOpen, globalExpand, onDelete, hasApiKey, onOpenInChat }: SortableAiCardProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: response.id,
   })
@@ -69,6 +71,8 @@ function SortableAiCard({ response, execIndex, forceOpen, globalExpand, onDelete
         forceOpen={forceOpen}
         globalExpand={globalExpand}
         onDelete={onDelete}
+        hasApiKey={hasApiKey}
+        onOpenInChat={onOpenInChat}
       />
     </div>
   )
@@ -88,6 +92,7 @@ export interface AiPanelProps {
   onOpenSettings: () => void
   navigateToCard?: { index: number; ts: number } | null
   onDeleteResponse?: (id: string) => void
+  onOpenInChat?: (response: AiResponse) => void
 }
 
 export function AiPanel({
@@ -104,6 +109,7 @@ export function AiPanel({
   onOpenSettings,
   navigateToCard,
   onDeleteResponse,
+  onOpenInChat,
 }: AiPanelProps) {
   const [width, setWidth] = useState(() => {
     const saved = parseInt(localStorage.getItem('monet:ai-width') ?? '', 10)
@@ -265,6 +271,8 @@ export function AiPanel({
                   forceOpen={forceOpenIndex === i}
                   globalExpand={expandAll}
                   onDelete={onDeleteResponse}
+                  hasApiKey={hasApiKey}
+                  onOpenInChat={onOpenInChat}
                 />
               ))}
             </SortableContext>

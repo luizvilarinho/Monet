@@ -13,6 +13,14 @@ import { SettingsModal } from './components/Settings/SettingsModal'
 import { Sidebar } from './components/Sidebar/Sidebar'
 import { Toolbar, type ActiveMode } from './components/Toolbar/Toolbar'
 import { useAi } from './hooks/useAi'
+import {
+  activateChatConversation,
+  chatConversationExists,
+  createPreloadedChatConversation,
+  getLinkedChatConversationId,
+  linkResponseToChatConversation,
+  unlinkResponseFromChat,
+} from './hooks/useChat'
 import { useNotebooks } from './hooks/useNotebooks'
 import { useNotes } from './hooks/useNotes'
 import { findCommand } from './lib/commands'
@@ -33,7 +41,7 @@ import {
   embedText,
   type ChunkResult,
 } from './lib/documents'
-import type { AiModel, AiSource, CommandExecutionRequest, Note } from './types'
+import type { AiModel, AiResponse, AiSource, CommandExecutionRequest, Note } from './types'
 
 const SYSTEM_PROMPT = `Você é o assistente de estudo do Monet.
 
@@ -375,6 +383,24 @@ function App() {
     })
   }
 
+  const handleOpenResponseInChat = useCallback((response: AiResponse) => {
+    const linkedId = getLinkedChatConversationId(response.id)
+    if (linkedId && chatConversationExists(linkedId)) {
+      activateChatConversation(linkedId)
+    } else {
+      const cmd = response.command.trim()
+      const q = response.query.trim()
+      const fullCommand = q ? `${cmd} ${q}` : cmd
+      const newId = createPreloadedChatConversation({
+        title: fullCommand,
+        userMessage: fullCommand,
+        assistantMessage: response.response,
+      })
+      linkResponseToChatConversation(response.id, newId)
+    }
+    setActiveMode('chat')
+  }, [])
+
   const handleNotebookReorder = useCallback((newOrder: string[]) => {
     setNotebookOrder(newOrder)
     saveOrder('monet:notebook-order', newOrder)
@@ -651,8 +677,10 @@ function App() {
           navigateToCard={navigateToCard}
           onDeleteResponse={(id) => {
             removeResponse(id)
+            unlinkResponseFromChat(id)
             setCommandLineToRemove({ id, ts: Date.now() })
           }}
+          onOpenInChat={handleOpenResponseInChat}
         />
       </div>
       )}

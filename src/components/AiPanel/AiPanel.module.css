@@ -569,6 +569,47 @@
   to { visibility: hidden; }
 }
 
+.cardActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border, #333340);
+  margin-top: 2px;
+}
+
+.cardActionBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: transparent;
+  border: 1px solid var(--border, #333340);
+  border-radius: 5px;
+  color: var(--text-secondary, #a0a0b8);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1;
+  padding: 5px 9px;
+  transition: color 0.15s, border-color 0.15s, background 0.15s, opacity 0.15s;
+}
+
+.cardActionBtn:hover:not(:disabled) {
+  color: var(--accent-ai, #5dcaa5);
+  border-color: var(--accent-ai, #5dcaa5);
+  background: rgba(93, 202, 165, 0.08);
+}
+
+.cardActionBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.cardActionBtnConfirmed {
+  color: var(--accent-ai, #5dcaa5);
+  border-color: var(--accent-ai, #5dcaa5);
+}
+
 .sources {
   border-top: 1px dashed var(--border, #333340);
   padding-top: 6px;

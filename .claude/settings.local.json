@@ -46,7 +46,8 @@
       "mcp__context7__resolve-library-id",
       "mcp__context7__query-docs",
       "Bash(cargo build *)",
-      "Bash(pdftotext \"C:/Users/User/Downloads/A cidade nas artes.pdf\" -)"
+      "Bash(pdftotext \"C:/Users/User/Downloads/A cidade nas artes.pdf\" -)",
+      "PowerShell(\\(Get-Content src/components/ChatPanel/ChatSidebar.tsx | Measure-Object -Line\\).Lines)"
     ]
   }
 }

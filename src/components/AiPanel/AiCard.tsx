@@ -56,7 +56,28 @@ export interface AiCardProps {
   forceOpen?: boolean
   globalExpand?: boolean | null
   onDelete?: (id: string) => void
+  hasApiKey?: boolean
+  onOpenInChat?: (response: AiResponse) => void
 }
+
+const CopyIcon = () => (
+  <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+    <rect x="5" y="5" width="9" height="9" rx="1" />
+    <path d="M11 4V3a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h1" />
+  </svg>
+)
+
+const CheckIcon = () => (
+  <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <polyline points="3,8 6,11 13,4" />
+  </svg>
+)
+
+const ChatIcon = () => (
+  <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M2.5 3.5h11a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H6.5l-3 2.5v-2.5h-1a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1z" />
+  </svg>
+)
 
 const STATUS_LABEL: Record<AiResponse['status'], string> = {
   streaming: 'respondendo...',
@@ -65,9 +86,24 @@ const STATUS_LABEL: Record<AiResponse['status'], string> = {
   error: 'erro',
 }
 
-export function AiCard({ response, execIndex, forceOpen, globalExpand, onDelete }: AiCardProps) {
+export function AiCard({ response, execIndex, forceOpen, globalExpand, onDelete, hasApiKey, onOpenInChat }: AiCardProps) {
   const [open, setOpen] = useState(response.status === 'streaming')
   const [renderedHtml, setRenderedHtml] = useState('')
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    if (!copied) return
+    const timer = setTimeout(() => setCopied(false), 2000)
+    return () => clearTimeout(timer)
+  }, [copied])
+
+  const handleCopy = () => {
+    if (!response.response) return
+    navigator.clipboard
+      .writeText(response.response)
+      .then(() => setCopied(true))
+      .catch((err) => console.error('failed to copy response', err))
+  }
 
   useEffect(() => {
     if (forceOpen) setOpen(true)
@@ -168,6 +204,35 @@ export function AiCard({ response, execIndex, forceOpen, globalExpand, onDelete 
       {response.status === 'interrupted' && open && (
         <div className={styles.interruptedNote}>
           Resposta interrompida antes de terminar.
+        </div>
+      )}
+      {response.status === 'completed' && open && hasBody && (
+        <div className={styles.cardActions}>
+          <button
+            type="button"
+            className={`${styles.cardActionBtn} ${copied ? styles.cardActionBtnConfirmed : ''}`}
+            onClick={handleCopy}
+            aria-label={copied ? 'resposta copiada' : 'copiar resposta'}
+            title={copied ? 'Copiado!' : 'Copiar resposta'}
+          >
+            {copied ? <CheckIcon /> : <CopyIcon />}
+            <span>{copied ? 'Copiado' : 'Copiar'}</span>
+          </button>
+          <button
+            type="button"
+            className={styles.cardActionBtn}
+            onClick={() => {
+              if (!hasApiKey) return
+              onOpenInChat?.(response)
+            }}
+            disabled={!hasApiKey}
+            aria-label="continuar no modo Chat"
+            aria-disabled={!hasApiKey}
+            title={hasApiKey ? 'Continuar conversa no modo Chat' : 'Cadastre a chave do OpenRouter em Settings'}
+          >
+            <ChatIcon />
+            <span>Chat</span>
+          </button>
         </div>
       )}
       {response.sources && response.sources.length > 0 && response.status !== 'streaming' && (
