@@ -1,3 +1,9 @@
+import {
+  DotsSixVertical,
+  PlusCircle,
+  SidebarSimple,
+  X,
+} from '@phosphor-icons/react'
 import { useCallback, useEffect, useRef } from 'react'
 import {
   DndContext,
@@ -20,12 +26,6 @@ import styles from './Sidebar.module.css'
 
 const MIN_WIDTH = 160
 const MAX_WIDTH = 400
-
-const ChevronIcon = ({ collapsed }: { collapsed: boolean }) => (
-  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    {collapsed ? <polyline points="6 3.5 10.5 8 6 12.5" /> : <polyline points="10 3.5 5.5 8 10 12.5" />}
-  </svg>
-)
 
 interface SortableNoteItemProps {
   note: Note
@@ -59,14 +59,7 @@ function SortableNoteItem({ note, isActive, onSelect, onDelete }: SortableNoteIt
         onClick={(e) => e.stopPropagation()}
         aria-label="arrastar para reordenar"
       >
-        <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true">
-          <circle cx="5" cy="4" r="1.2" />
-          <circle cx="5" cy="8" r="1.2" />
-          <circle cx="5" cy="12" r="1.2" />
-          <circle cx="11" cy="4" r="1.2" />
-          <circle cx="11" cy="8" r="1.2" />
-          <circle cx="11" cy="12" r="1.2" />
-        </svg>
+        <DotsSixVertical size={12} weight="bold" aria-hidden />
       </span>
       <span className={styles.rowLabel}>{note.title || 'sem título'}</span>
       <button
@@ -75,7 +68,7 @@ function SortableNoteItem({ note, isActive, onSelect, onDelete }: SortableNoteIt
         aria-label={`apagar anotação ${note.title || 'sem título'}`}
         type="button"
       >
-        ×
+        <X size={12} weight="bold" aria-hidden />
       </button>
     </li>
   )
@@ -183,7 +176,7 @@ export function Sidebar({
             title="expandir anotações"
             type="button"
           >
-            <ChevronIcon collapsed />
+            <SidebarSimple size={16} aria-hidden />
           </button>
         </div>
       ) : (
@@ -198,7 +191,7 @@ export function Sidebar({
                 title="recolher anotações"
                 type="button"
               >
-                <ChevronIcon collapsed={false} />
+                <SidebarSimple size={16} aria-hidden />
               </button>
               <button
                 className={styles.headerAdd}
@@ -207,10 +200,7 @@ export function Sidebar({
                 aria-label="nova anotação"
                 type="button"
               >
-                <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
-                  <line x1="8" y1="3" x2="8" y2="13" />
-                  <line x1="3" y1="8" x2="13" y2="8" />
-                </svg>
+                <PlusCircle size={16} weight="fill" aria-hidden />
               </button>
             </div>
           </div>

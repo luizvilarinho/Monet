@@ -229,7 +229,7 @@
   border-top: 1px solid var(--border, #333340);
   padding: 8px 12px;
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
 }
 
 .footerCollapsed {
@@ -253,4 +253,12 @@
 .settings:hover {
   color: var(--accent, #7c6af5);
   background: var(--surface-1, #1e1e22);
+}
+
+.version {
+  font-size: 10px;
+  margin-top: 10px;
+  color: var(--text-muted, #606070);
+  margin-left: 4px;
+  letter-spacing: 0.02em;
 }
