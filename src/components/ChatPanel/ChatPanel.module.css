@@ -302,8 +302,15 @@
   cursor: not-allowed;
 }
 
-.copyBtn {
+.assistantActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   align-self: flex-end;
+  margin-top: 8px;
+}
+
+.copyBtn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -315,7 +322,6 @@
   padding: 4px;
   opacity: 0;
   transition: opacity 0.15s, color 0.15s, border-color 0.15s;
-  margin-top: 4px;
 }
 
 .bubbleAssistant:hover .copyBtn {
@@ -325,4 +331,25 @@
 .copyBtn:hover {
   color: var(--accent-ai, #5dcaa5);
   border-color: var(--accent-ai, #5dcaa5);
+}
+
+.saveBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid var(--border, #333340);
+  border-radius: 5px;
+  color: var(--text-secondary, #a0a0b8);
+  cursor: pointer;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.saveBtn:hover {
+  color: var(--accent-ai, #5dcaa5);
+  border-color: var(--accent-ai, #5dcaa5);
+  background: rgba(93, 202, 165, 0.08);
 }

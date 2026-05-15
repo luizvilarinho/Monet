@@ -383,6 +383,51 @@ function App() {
     })
   }
 
+  const handleCreateNotebookFromChat = useCallback(
+    async (name: string) => {
+      const nb = await createNotebook(name)
+      setNotebookOrder((prev) => {
+        const next = [nb.id, ...prev.filter((x) => x !== nb.id)]
+        saveOrder('monet:notebook-order', next)
+        return next
+      })
+      return nb
+    },
+    [createNotebook]
+  )
+
+  const handleCreateNoteFromChat = useCallback(
+    async (notebookId: string, title: string, content: string) => {
+      const note = await createNote(notebookId)
+      const filled: Note = {
+        ...note,
+        title,
+        content,
+        updatedAt: Date.now(),
+      }
+      await saveNote(filled)
+      setNoteOrder((prev) => {
+        const next = [filled.id, ...prev.filter((x) => x !== filled.id)]
+        saveNoteOrder(next)
+        return next
+      })
+      return filled
+    },
+    [createNote, saveNote]
+  )
+
+  const handleNavigateToNote = useCallback(
+    (notebookId: string, noteId: string) => {
+      setActiveMode('caderno')
+      setActiveNotebookId(notebookId)
+      setActiveId(noteId)
+      setActiveTag(null)
+      setSearch('')
+      setPreviewOpen(false)
+    },
+    []
+  )
+
   const handleOpenResponseInChat = useCallback((response: AiResponse) => {
     const linkedId = getLinkedChatConversationId(response.id)
     if (linkedId && chatConversationExists(linkedId)) {
@@ -588,6 +633,12 @@ function App() {
             modelsLoading={modelsLoading}
             modelsError={modelsError}
             onOpenSettings={() => setSettingsOpen(true)}
+            notebooks={orderedNotebooks}
+            notes={notes}
+            onCreateNotebook={handleCreateNotebookFromChat}
+            onCreateNote={handleCreateNoteFromChat}
+            onSaveNote={saveNote}
+            onNavigateToNote={handleNavigateToNote}
           />
         </div>
       ) : (
