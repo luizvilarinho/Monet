@@ -49,7 +49,13 @@
       "Bash(pdftotext \"C:/Users/User/Downloads/A cidade nas artes.pdf\" -)",
       "PowerShell(\\(Get-Content src/components/ChatPanel/ChatSidebar.tsx | Measure-Object -Line\\).Lines)",
       "Bash(not exist *)",
-      "PowerShell(New-Item *)"
+      "PowerShell(New-Item *)",
+      "Bash(npm view *)",
+      "Bash(curl -s -o /dev/null http://localhost:5001/)",
+      "Bash(curl -s http://localhost:5001/src/components/Editor/Editor.tsx)",
+      "Bash(curl -s http://localhost:5001/)",
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(echo \"TSC exit: $?\")"
     ]
   }
 }

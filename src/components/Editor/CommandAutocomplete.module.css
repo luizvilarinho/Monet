@@ -1,0 +1,55 @@
+.popover {
+  position: fixed;
+  z-index: 1000;
+  background: var(--surface-1, #1e1e22);
+  border: 1px solid var(--border, #333340);
+  border-radius: 10px;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  min-width: 240px;
+  max-width: 360px;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+}
+
+.list {
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 12px;
+  cursor: pointer;
+  color: var(--text-secondary, #a0a0b8);
+}
+
+.item:hover {
+  background: var(--surface-2, #26262c);
+}
+
+.item.selected {
+  background: rgba(124, 106, 245, 0.16);
+  color: var(--text-primary, #e8e8f0);
+}
+
+.name {
+  font-weight: 600;
+  color: var(--accent, #7c6af5);
+}
+
+.item.selected .name {
+  color: var(--accent, #7c6af5);
+}
+
+.desc {
+  font-size: 11px;
+  color: var(--text-muted, #606070);
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

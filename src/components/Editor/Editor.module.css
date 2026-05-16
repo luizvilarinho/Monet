@@ -101,11 +101,345 @@
   overflow-y: auto;
   background: var(--bg-app, #0e0e10);
   color: var(--text-primary, #e8e8f0);
-  border: none;
+}
+
+/* TipTap ProseMirror content */
+.proseEditor {
   outline: none;
-  resize: none;
-  padding: 20px 0px 23px;
+  min-height: 100%;
+  padding: 20px 32px 24px;
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   font-size: 14px;
   line-height: 1.6;
+  color: var(--text-primary, #e8e8f0);
+  caret-color: var(--text-primary, #e8e8f0);
+}
+
+.proseEditor :global(p) {
+  margin: 0.4em 0;
+}
+.proseEditor :global(p:first-child) {
+  margin-top: 0;
+}
+.proseEditor :global(p:last-child) {
+  margin-bottom: 0;
+}
+
+.proseEditor :global(h1),
+.proseEditor :global(h2),
+.proseEditor :global(h3) {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-primary, #e8e8f0);
+  line-height: 1.25;
+  margin: 0.9em 0 0.3em;
+}
+.proseEditor :global(h1) { font-size: 1.6em; }
+.proseEditor :global(h2) { font-size: 1.35em; }
+.proseEditor :global(h3) { font-size: 1.15em; }
+
+.proseEditor :global(strong) {
+  font-weight: 700;
+  color: var(--text-primary, #e8e8f0);
+}
+.proseEditor :global(em) {
+  font-style: italic;
+}
+.proseEditor :global(s) {
+  text-decoration: line-through;
+  color: var(--text-muted, #606070);
+}
+
+.proseEditor :global(a) {
+  color: var(--accent, #7c6af5);
+  text-decoration: none;
+  border-bottom: 1px dotted currentColor;
+}
+.proseEditor :global(a:hover) {
+  text-decoration: none;
+  border-bottom-style: solid;
+}
+
+.proseEditor :global(code) {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.88em;
+  background: var(--surface-2, #26262c);
+  color: var(--accent-ai, #5dcaa5);
+  border-radius: 3px;
+  padding: 0.1em 0.35em;
+}
+
+.proseEditor :global(pre) {
+  background: var(--surface-2, #26262c);
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin: 0.7em 0;
+  overflow-x: auto;
+}
+.proseEditor :global(pre code) {
+  background: none;
+  color: var(--text-primary, #e8e8f0);
+  padding: 0;
+  font-size: 13px;
+}
+
+.proseEditor :global(blockquote) {
+  margin: 0.6em 0;
+  padding: 0.2em 0.9em;
+  border-left: 2px solid var(--accent, #7c6af5);
+  color: var(--text-secondary, #a0a0b8);
+}
+
+.proseEditor :global(hr) {
+  border: none;
+  border-top: 1px solid var(--border, #333340);
+  margin: 1em 0;
+}
+
+.proseEditor :global(ul),
+.proseEditor :global(ol) {
+  margin: 0.4em 0;
+  padding-left: 1.4em;
+}
+.proseEditor :global(ul) { list-style: disc; }
+.proseEditor :global(ol) { list-style: decimal; }
+.proseEditor :global(li) { margin: 0.15em 0; }
+.proseEditor :global(li > p) { margin: 0; }
+
+/* TaskList / TaskItem */
+.proseEditor :global(ul[data-type="taskList"]) {
+  list-style: none;
+  padding-left: 0;
+}
+.proseEditor :global(ul[data-type="taskList"] li) {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0.15em 0;
+}
+.proseEditor :global(ul[data-type="taskList"] li > label) {
+  flex: 0 0 auto;
+  margin-top: 4px;
+  user-select: none;
+  cursor: pointer;
+}
+.proseEditor :global(ul[data-type="taskList"] li > label > input[type="checkbox"]) {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--accent, #333340);
+  border-radius: 3px;
+  background: transparent;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  vertical-align: middle;
+  margin: 0;
+}
+.proseEditor :global(ul[data-type="taskList"] li > label > input[type="checkbox"]:checked) {
+  background: var(--accent, #7c6af5);
+  border-color: var(--accent, #7c6af5);
+}
+.proseEditor :global(ul[data-type="taskList"] li > label > input[type="checkbox"]:checked::after) {
+  content: '';
+  position: absolute;
+  left: 3.5px;
+  top: 0.5px;
+  width: 4px;
+  height: 8px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.proseEditor :global(ul[data-type="taskList"] li > div) {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-top: 5px;
+}
+.proseEditor :global(ul[data-type="taskList"] li[data-checked="true"] > div) {
+  text-decoration: line-through;
+  color: var(--text-muted, #606070);
+}
+
+/* Placeholder (Tiptap Placeholder extension) */
+.proseEditor :global(.is-editor-empty:first-child::before) {
+  content: attr(data-placeholder);
+  float: left;
+  color: var(--text-muted, #606070);
+  pointer-events: none;
+  height: 0;
+}
+
+/* /comandos — linha em digitação (reconhecida como /comando) */
+.proseEditor :global(p.monetCmdDraft) {
+  color: var(--accent, #7c6af5);
+}
+
+/* /comando executado com sucesso */
+.proseEditor :global(p.monetCmdExecuted) {
+  color: var(--accent-ai, #5dcaa5);
+  background-color: rgba(93, 202, 165, 0.12);
+  border-left: 2px solid var(--accent-ai, #5dcaa5);
+  padding-left: 10px;
+  margin-left: -12px;
+}
+
+/* /comando inválido ou incompleto */
+.proseEditor :global(p.monetCmdError) {
+  color: #ff8b8b;
+  background-color: rgba(239, 79, 79, 0.1);
+  border-left: 2px solid #ef4f4f;
+  padding-left: 10px;
+  margin-left: -12px;
+}
+
+/* Botões inline na linha do /comando — flutuam à direita do parágrafo */
+.proseEditor :global(.monetCmdButtons) {
+  float: right;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 12px;
+
+  user-select: none;
+  white-space: nowrap;
+}
+
+.proseEditor :global(.monetCmdBtn) {
+  display: inline-flex;
+  align-items: center;
+  background: var(--surface-1, #1e1e22);
+  border: 1px solid var(--border, #333340);
+  color: var(--text-secondary, #a0a0b8);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-family: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  line-height: 1.4;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.proseEditor :global(.monetCmdBtn:hover) {
+  background: var(--surface-2, #26262c);
+  color: var(--text-primary, #e8e8f0);
+  border-color: var(--accent, #7c6af5);
+}
+
+.proseEditor :global(.monetCmdBtnInsert) {
+  color: var(--accent-ai, #5dcaa5);
+  border-color: rgba(93, 202, 165, 0.4);
+}
+.proseEditor :global(.monetCmdBtnInsert:hover) {
+  background: rgba(93, 202, 165, 0.12);
+  border-color: var(--accent-ai, #5dcaa5);
+}
+
+.proseEditor :global(.monetCmdBtnRemove) {
+  color: var(--accent-warn, #ef9f27);
+  border-color: rgba(239, 159, 39, 0.4);
+}
+.proseEditor :global(.monetCmdBtnRemove:hover) {
+  background: rgba(239, 159, 39, 0.12);
+  border-color: var(--accent-warn, #ef9f27);
+}
+
+.proseEditor :global(.monetCmdBtnDelete) {
+  color: #ff8b8b;
+  border-color: rgba(239, 79, 79, 0.4);
+  padding: 1px 7px;
+  font-size: 13px;
+  line-height: 1;
+}
+.proseEditor :global(.monetCmdBtnDelete:hover) {
+  background: rgba(239, 79, 79, 0.14);
+  border-color: #ef4f4f;
+}
+
+/* Indicador "..." durante streaming */
+.proseEditor :global(.monetCmdDots) {
+  color: var(--accent, #7c6af5);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  line-height: 1;
+  padding: 1px 6px;
+  animation: monetCmdDotsPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes monetCmdDotsPulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+/* EmbedBlock — espaçamento dentro do editor */
+.proseEditor :global(embed-block) {
+  display: block;
+  margin: 0.5em 0;
+}
+
+/* Imagens inline (base64) */
+.proseEditor :global(img) {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+  margin: 0.6em 0;
+  background: var(--surface-1, #1e1e22);
+}
+
+.proseEditor :global(img.ProseMirror-selectednode) {
+  outline: 2px solid var(--accent, #7c6af5);
+  outline-offset: 2px;
+}
+
+
+/* Tabela */
+.proseEditor :global(table) {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+  margin: 0.7em 0;
+  overflow: hidden;
+}
+.proseEditor :global(table td),
+.proseEditor :global(table th) {
+  border: 1px solid var(--border, #333340);
+  padding: 6px 10px;
+  vertical-align: top;
+  position: relative;
+  min-width: 60px;
+}
+.proseEditor :global(table th) {
+  background: var(--surface-2, #26262c);
+  font-weight: 600;
+  text-align: left;
+}
+.proseEditor :global(table td > p),
+.proseEditor :global(table th > p) {
+  margin: 0;
+}
+.proseEditor :global(table .selectedCell) {
+  background: rgba(124, 106, 245, 0.18);
+}
+.proseEditor :global(table .column-resize-handle) {
+  position: absolute;
+  right: -2px;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--accent, #7c6af5);
+  cursor: col-resize;
+  pointer-events: none;
+}
+.proseEditor :global(.tableWrapper) {
+  overflow-x: auto;
+  margin: 0.7em 0;
+}
+.proseEditor :global(.resize-cursor) {
+  cursor: col-resize;
 }

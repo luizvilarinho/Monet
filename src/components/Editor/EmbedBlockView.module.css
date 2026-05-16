@@ -1,0 +1,133 @@
+.embed {
+  margin: 0.5em 0;
+  border: 1px solid var(--border, #333340);
+  border-radius: 6px;
+  background: rgba(93, 202, 165, 0.06);
+  overflow: hidden;
+  user-select: none;
+}
+
+.embed.selected {
+  outline: 2px solid var(--accent, #7c6af5);
+  outline-offset: -2px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  color: var(--accent-ai, #5dcaa5);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.header:hover {
+  background: rgba(93, 202, 165, 0.08);
+}
+
+.chevron {
+  display: inline-block;
+  font-size: 12px;
+  line-height: 1;
+  transition: transform 0.15s ease;
+  color: var(--text-secondary, #a0a0b8);
+}
+
+.chevronOpen {
+  transform: rotate(90deg);
+}
+
+.title {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.body {
+  padding: 4px 14px 12px 28px;
+  color: var(--text-primary, #e8e8f0);
+  font-size: 13.5px;
+  line-height: 1.55;
+  border-top: 1px solid var(--border, #333340);
+}
+
+.body :global(p) {
+  margin: 0.4em 0;
+}
+.body :global(p:first-child) {
+  margin-top: 0.5em;
+}
+.body :global(p:last-child) {
+  margin-bottom: 0;
+}
+
+.body :global(h1),
+.body :global(h2),
+.body :global(h3) {
+  font-weight: 600;
+  margin: 0.6em 0 0.3em;
+  color: var(--text-primary, #e8e8f0);
+}
+.body :global(h1) { font-size: 1.15em; }
+.body :global(h2) { font-size: 1.08em; }
+.body :global(h3) { font-size: 1.02em; }
+
+.body :global(ul),
+.body :global(ol) {
+  margin: 0.3em 0;
+  padding-left: 1.4em;
+}
+
+.body :global(code) {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.88em;
+  background: var(--surface-2, #26262c);
+  color: var(--accent-ai, #5dcaa5);
+  border-radius: 3px;
+  padding: 0.1em 0.3em;
+}
+
+.body :global(pre) {
+  background: var(--surface-2, #26262c);
+  border-radius: 4px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  margin: 0.5em 0;
+}
+.body :global(pre code) {
+  background: none;
+  color: var(--text-primary, #e8e8f0);
+  padding: 0;
+}
+
+.body :global(table) {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  font-size: 0.95em;
+}
+.body :global(th),
+.body :global(td) {
+  border: 1px solid var(--border, #333340);
+  padding: 4px 8px;
+  text-align: left;
+}
+.body :global(th) {
+  background: var(--surface-2, #26262c);
+  font-weight: 600;
+}
+
+.empty {
+  padding: 6px 14px 12px 28px;
+  color: var(--text-muted, #606070);
+  font-style: italic;
+  font-size: 13px;
+}

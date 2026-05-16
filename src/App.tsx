@@ -6,7 +6,6 @@ import { ChatPanel } from './components/ChatPanel/ChatPanel'
 import { DocumentsModal } from './components/DocumentsModal/DocumentsModal'
 import { Editor } from './components/Editor/Editor'
 import { EmptyEditor } from './components/Editor/EmptyEditor'
-import { MarkdownPreview } from './components/Editor/MarkdownPreview'
 import { NotebookList } from './components/NotebookList/NotebookList'
 import { RelatedContent } from './components/RelatedContent/RelatedContent'
 import { SettingsModal } from './components/Settings/SettingsModal'
@@ -24,6 +23,13 @@ import {
 import { useNotebooks } from './hooks/useNotebooks'
 import { useNotes } from './hooks/useNotes'
 import { findCommand } from './lib/commands'
+import { getToggleTitle } from './components/Editor/commandParser'
+import {
+  documentsList,
+  documentsSearch,
+  embedText,
+  type ChunkResult,
+} from './lib/documents'
 import { applyOrder, loadNoteOrder, loadOrder, mergeOrder, saveNoteOrder, saveOrder } from './lib/noteOrder'
 import {
   hasOpenRouterKey,
@@ -35,13 +41,13 @@ import {
   hasTavilyKey,
   webSearch,
 } from './lib/search'
-import {
-  documentsList,
-  documentsSearch,
-  embedText,
-  type ChunkResult,
-} from './lib/documents'
-import type { AiModel, AiResponse, AiSource, CommandExecutionRequest, Note } from './types'
+import type {
+  AiModel,
+  AiResponse,
+  AiSource,
+  CommandExecutionRequest,
+  Note,
+} from './types'
 
 const SYSTEM_PROMPT = `Você é o assistente de estudo do Monet.
 
@@ -78,6 +84,28 @@ function stripCommandLines(content: string): string {
     .filter((line) => !/^\/[a-zA-Z]/.test(line.trim()))
     .join('\n')
     .trim()
+}
+
+const EMBED_BLOCK_RE = /<embed-block\b[^>]*><\/embed-block>/g
+
+function expandEmbedBlocks(content: string, responses: AiResponse[]): string {
+  if (!EMBED_BLOCK_RE.test(content)) return content
+  EMBED_BLOCK_RE.lastIndex = 0
+  const byId = new Map(responses.map((r) => [r.id, r]))
+  return content.replace(EMBED_BLOCK_RE, (match) => {
+    const cmdMatch = match.match(/data-cmd="([^"]+)"/)
+    if (!cmdMatch) return ''
+    const response = byId.get(cmdMatch[1])
+    if (!response) return ''
+    const body = response.response.trim()
+    if (!body) return ''
+    const title = getToggleTitle(response.command)
+    const quoted = body
+      .split('\n')
+      .map((l) => (l.length > 0 ? `> ${l}` : '>'))
+      .join('\n')
+    return `> **${title}**\n>\n${quoted}`
+  })
 }
 
 function formatRagContext(chunks: ChunkResult[]): string {
@@ -128,7 +156,6 @@ function App() {
   const [search, setSearch] = useState('')
   const [activeTag, setActiveTag] = useState<string | null>(null)
   const [aiOpen, setAiOpen] = useState(true)
-  const [previewOpen, setPreviewOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [documentsModalNotebookId, setDocumentsModalNotebookId] = useState<string | null>(null)
 
@@ -138,7 +165,6 @@ function App() {
   const [modelsLoading, setModelsLoading] = useState<boolean>(false)
   const [modelsError, setModelsError] = useState<string | null>(null)
   const [modelId, setModelId] = useState<string | null>(null)
-  const [navigateToCard, setNavigateToCard] = useState<{ index: number; ts: number } | null>(null)
   const [notebookWidth, setNotebookWidth] = useState(() => {
     const saved = parseInt(localStorage.getItem('monet:notebook-width') ?? '', 10)
     return isNaN(saved) ? 180 : saved
@@ -156,21 +182,26 @@ function App() {
   const [focusMode, setFocusMode] = useState(false)
   const [exportSuccess, setExportSuccess] = useState(false)
   const exportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const [commandLineToRemove, setCommandLineToRemove] = useState<{ id: string; ts: number } | null>(null)
   const [noteOrder, setNoteOrder] = useState<string[]>(() => loadNoteOrder())
   const [notebookOrder, setNotebookOrder] = useState<string[]>(() => loadOrder('monet:notebook-order'))
 
   const { responses, start, addErrorCard, removeResponse } = useAi(activeId)
+
+  const executedCommandTexts = useMemo(() => {
+    const set = new Set<string>()
+    for (const r of responses) {
+      if (r.status === 'error') continue
+      const text = r.query.trim() ? `${r.command} ${r.query.trim()}` : r.command
+      set.add(text)
+    }
+    return set
+  }, [responses])
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.key === ' ') {
         e.preventDefault()
         setFocusMode((v) => !v)
-      }
-      if (e.ctrlKey && e.key === '\\') {
-        e.preventDefault()
-        setPreviewOpen((v) => !v)
       }
     }
     document.addEventListener('keydown', handleKeyDown, true)
@@ -305,7 +336,8 @@ function App() {
 
   const handleExport = useCallback(async () => {
     if (!activeNote) return
-    const content = stripCommandLines(activeNote.content)
+    const expanded = expandEmbedBlocks(activeNote.content, responses)
+    const content = stripCommandLines(expanded)
     const defaultName = activeNote.title.trim()
       ? `${activeNote.title.trim()}.md`
       : 'nota-sem-titulo.md'
@@ -319,145 +351,7 @@ function App() {
     } catch (err) {
       console.error('export failed:', err)
     }
-  }, [activeNote])
-
-  const executedCommandIds = useMemo(
-    () => new Set(responses.map((r) => r.commandId ?? r.id)),
-    [responses]
-  )
-
-  const effectiveNotebookWidth = notebookCollapsed ? COLLAPSED_PANEL_WIDTH : notebookWidth
-  const effectiveSidebarWidth = sidebarCollapsed ? COLLAPSED_PANEL_WIDTH : sidebarWidth
-
-  function updateActive(patch: Partial<Note>) {
-    if (!activeNote) return
-    void saveNote({ ...activeNote, ...patch, updatedAt: Date.now() })
-  }
-
-  async function handleCreateNotebook() {
-    const name = window.prompt('nome do caderno')
-    if (name === null) return
-    const nb = await createNotebook(name)
-    setActiveNotebookId(nb.id)
-    setActiveId(null)
-    setNotebookOrder((prev) => {
-      const next = [nb.id, ...prev]
-      saveOrder('monet:notebook-order', next)
-      return next
-    })
-  }
-
-  async function handleCreateNote() {
-    if (!activeNotebookId) return
-    const note = await createNote(activeNotebookId)
-    setActiveId(note.id)
-    setNoteOrder((prev) => {
-      const next = [note.id, ...prev]
-      saveNoteOrder(next)
-      return next
-    })
-  }
-
-  async function handleDeleteNotebook(id: string) {
-    const childNotes = notes.filter((n) => n.notebookId === id)
-    await Promise.all(childNotes.map((n) => removeNote(n.id)))
-    await removeNotebook(id)
-    if (activeNotebookId === id) {
-      setActiveNotebookId(null)
-      setActiveId(null)
-    }
-    setNotebookOrder((prev) => {
-      const next = prev.filter((x) => x !== id)
-      saveOrder('monet:notebook-order', next)
-      return next
-    })
-  }
-
-  async function handleDeleteNote(id: string) {
-    await removeNote(id)
-    if (activeId === id) setActiveId(null)
-    setNoteOrder((prev) => {
-      const next = prev.filter((x) => x !== id)
-      saveNoteOrder(next)
-      return next
-    })
-  }
-
-  const handleCreateNotebookFromChat = useCallback(
-    async (name: string) => {
-      const nb = await createNotebook(name)
-      setNotebookOrder((prev) => {
-        const next = [nb.id, ...prev.filter((x) => x !== nb.id)]
-        saveOrder('monet:notebook-order', next)
-        return next
-      })
-      return nb
-    },
-    [createNotebook]
-  )
-
-  const handleCreateNoteFromChat = useCallback(
-    async (notebookId: string, title: string, content: string) => {
-      const note = await createNote(notebookId)
-      const filled: Note = {
-        ...note,
-        title,
-        content,
-        updatedAt: Date.now(),
-      }
-      await saveNote(filled)
-      setNoteOrder((prev) => {
-        const next = [filled.id, ...prev.filter((x) => x !== filled.id)]
-        saveNoteOrder(next)
-        return next
-      })
-      return filled
-    },
-    [createNote, saveNote]
-  )
-
-  const handleNavigateToNote = useCallback(
-    (notebookId: string, noteId: string) => {
-      setActiveMode('caderno')
-      setActiveNotebookId(notebookId)
-      setActiveId(noteId)
-      setActiveTag(null)
-      setSearch('')
-      setPreviewOpen(false)
-    },
-    []
-  )
-
-  const handleOpenResponseInChat = useCallback((response: AiResponse) => {
-    const linkedId = getLinkedChatConversationId(response.id)
-    if (linkedId && chatConversationExists(linkedId)) {
-      activateChatConversation(linkedId)
-    } else {
-      const cmd = response.command.trim()
-      const q = response.query.trim()
-      const fullCommand = q ? `${cmd} ${q}` : cmd
-      const newId = createPreloadedChatConversation({
-        title: fullCommand,
-        userMessage: fullCommand,
-        assistantMessage: response.response,
-      })
-      linkResponseToChatConversation(response.id, newId)
-    }
-    setActiveMode('chat')
-  }, [])
-
-  const handleNotebookReorder = useCallback((newOrder: string[]) => {
-    setNotebookOrder(newOrder)
-    saveOrder('monet:notebook-order', newOrder)
-  }, [])
-
-  const handleReorder = useCallback((newVisibleOrder: string[]) => {
-    setNoteOrder((prev) => {
-      const next = mergeOrder(prev, newVisibleOrder)
-      saveNoteOrder(next)
-      return next
-    })
-  }, [])
+  }, [activeNote, responses])
 
   const handleCommand = useCallback(
     async ({ cmd, query, commandId }: CommandExecutionRequest) => {
@@ -609,6 +503,138 @@ function App() {
     [activeId, activeNote, modelId, models.length, start, addErrorCard]
   )
 
+  const effectiveNotebookWidth = notebookCollapsed ? COLLAPSED_PANEL_WIDTH : notebookWidth
+  const effectiveSidebarWidth = sidebarCollapsed ? COLLAPSED_PANEL_WIDTH : sidebarWidth
+
+  function updateActive(patch: Partial<Note>) {
+    if (!activeNote) return
+    void saveNote({ ...activeNote, ...patch, updatedAt: Date.now() })
+  }
+
+  async function handleCreateNotebook() {
+    const name = window.prompt('nome do caderno')
+    if (name === null) return
+    const nb = await createNotebook(name)
+    setActiveNotebookId(nb.id)
+    setActiveId(null)
+    setNotebookOrder((prev) => {
+      const next = [nb.id, ...prev]
+      saveOrder('monet:notebook-order', next)
+      return next
+    })
+  }
+
+  async function handleCreateNote() {
+    if (!activeNotebookId) return
+    const note = await createNote(activeNotebookId)
+    setActiveId(note.id)
+    setNoteOrder((prev) => {
+      const next = [note.id, ...prev]
+      saveNoteOrder(next)
+      return next
+    })
+  }
+
+  async function handleDeleteNotebook(id: string) {
+    const childNotes = notes.filter((n) => n.notebookId === id)
+    await Promise.all(childNotes.map((n) => removeNote(n.id)))
+    await removeNotebook(id)
+    if (activeNotebookId === id) {
+      setActiveNotebookId(null)
+      setActiveId(null)
+    }
+    setNotebookOrder((prev) => {
+      const next = prev.filter((x) => x !== id)
+      saveOrder('monet:notebook-order', next)
+      return next
+    })
+  }
+
+  async function handleDeleteNote(id: string) {
+    await removeNote(id)
+    if (activeId === id) setActiveId(null)
+    setNoteOrder((prev) => {
+      const next = prev.filter((x) => x !== id)
+      saveNoteOrder(next)
+      return next
+    })
+  }
+
+  const handleCreateNotebookFromChat = useCallback(
+    async (name: string) => {
+      const nb = await createNotebook(name)
+      setNotebookOrder((prev) => {
+        const next = [nb.id, ...prev.filter((x) => x !== nb.id)]
+        saveOrder('monet:notebook-order', next)
+        return next
+      })
+      return nb
+    },
+    [createNotebook]
+  )
+
+  const handleCreateNoteFromChat = useCallback(
+    async (notebookId: string, title: string, content: string) => {
+      const note = await createNote(notebookId)
+      const filled: Note = {
+        ...note,
+        title,
+        content,
+        updatedAt: Date.now(),
+      }
+      await saveNote(filled)
+      setNoteOrder((prev) => {
+        const next = [filled.id, ...prev.filter((x) => x !== filled.id)]
+        saveNoteOrder(next)
+        return next
+      })
+      return filled
+    },
+    [createNote, saveNote]
+  )
+
+  const handleNavigateToNote = useCallback(
+    (notebookId: string, noteId: string) => {
+      setActiveMode('caderno')
+      setActiveNotebookId(notebookId)
+      setActiveId(noteId)
+      setActiveTag(null)
+      setSearch('')
+    },
+    []
+  )
+
+  const handleOpenResponseInChat = useCallback((response: AiResponse) => {
+    const linkedId = getLinkedChatConversationId(response.id)
+    if (linkedId && chatConversationExists(linkedId)) {
+      activateChatConversation(linkedId)
+    } else {
+      const cmd = response.command.trim()
+      const q = response.query.trim()
+      const fullCommand = q ? `${cmd} ${q}` : cmd
+      const newId = createPreloadedChatConversation({
+        title: fullCommand,
+        userMessage: fullCommand,
+        assistantMessage: response.response,
+      })
+      linkResponseToChatConversation(response.id, newId)
+    }
+    setActiveMode('chat')
+  }, [])
+
+  const handleNotebookReorder = useCallback((newOrder: string[]) => {
+    setNotebookOrder(newOrder)
+    saveOrder('monet:notebook-order', newOrder)
+  }, [])
+
+  const handleReorder = useCallback((newVisibleOrder: string[]) => {
+    setNoteOrder((prev) => {
+      const next = mergeOrder(prev, newVisibleOrder)
+      saveNoteOrder(next)
+      return next
+    })
+  }, [])
+
   return (
     <div className="app">
       <Toolbar
@@ -619,8 +645,6 @@ function App() {
         onExport={handleExport}
         hasNote={!!activeNote}
         exportSuccess={exportSuccess}
-        previewOpen={previewOpen}
-        onTogglePreview={() => setPreviewOpen((v) => !v)}
         aiOpen={aiOpen}
         onToggleAi={() => setAiOpen((v) => !v)}
         focusMode={focusMode}
@@ -680,18 +704,8 @@ function App() {
           onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
           onWidthChange={setSidebarWidth}
         />}
-        {previewOpen && activeNote ? (
-          <MarkdownPreview
-            title={activeNote.title}
-            tags={activeNote.tags}
-            content={activeNote.content}
-            relatedContent={
-              <RelatedContent activeNote={activeNote} notes={notes} onSelect={setActiveId} />
-            }
-          />
-        ) : activeNote ? (
+        {activeNote ? (
           <Editor
-            executedCommandIds={executedCommandIds}
             title={activeNote.title}
             onTitleChange={(title) => updateActive({ title })}
             tags={activeNote.tags}
@@ -699,10 +713,12 @@ function App() {
             value={activeNote.content}
             onChange={(content) => updateActive({ content })}
             onCommand={handleCommand}
-            onNavigateToCard={(index) => setNavigateToCard({ index, ts: Date.now() })}
-            onDeleteCommand={(id) => removeResponse(id)}
-            commandLineToRemove={commandLineToRemove}
+            executedCommandTexts={executedCommandTexts}
             responses={responses}
+            onRemoveResponse={(id) => {
+              removeResponse(id)
+              unlinkResponseFromChat(id)
+            }}
             relatedContent={
               <RelatedContent activeNote={activeNote} notes={notes} onSelect={setActiveId} />
             }
@@ -725,11 +741,10 @@ function App() {
           modelId={modelId}
           onModelChange={setModelId}
           onOpenSettings={() => setSettingsOpen(true)}
-          navigateToCard={navigateToCard}
+          navigateToCard={null}
           onDeleteResponse={(id) => {
             removeResponse(id)
             unlinkResponseFromChat(id)
-            setCommandLineToRemove({ id, ts: Date.now() })
           }}
           onOpenInChat={handleOpenResponseInChat}
         />

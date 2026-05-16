@@ -11,8 +11,6 @@ export interface ToolbarProps {
   onExport: () => void
   hasNote: boolean
   exportSuccess?: boolean
-  previewOpen: boolean
-  onTogglePreview: () => void
   aiOpen: boolean
   onToggleAi: () => void
   focusMode?: boolean
@@ -27,8 +25,6 @@ export function Toolbar({
   onExport,
   hasNote,
   exportSuccess,
-  previewOpen,
-  onTogglePreview,
   aiOpen,
   onToggleAi,
   focusMode = false,
@@ -82,15 +78,6 @@ export function Toolbar({
               title="Foco (Ctrl+Space)"
             >
               foco
-            </button>
-            <button
-              type="button"
-              onClick={onTogglePreview}
-              aria-pressed={previewOpen}
-              className={styles.actionBtn}
-              title="Preview (Ctrl+\)"
-            >
-              preview
             </button>
             <button
               type="button"

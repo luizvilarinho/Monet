@@ -1,6 +1,4 @@
 .toolbar {
-  position: fixed;
-  z-index: 200;
   display: flex;
   align-items: center;
   background: var(--surface-1, #1e1e22);
@@ -8,7 +6,6 @@
   border-radius: 8px;
   padding: 3px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
-  transform: translateX(-50%) translateY(-100%);
   pointer-events: all;
   user-select: none;
 }

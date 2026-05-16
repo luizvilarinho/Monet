@@ -1,25 +1,20 @@
-import { ViewPlugin, type EditorView } from '@codemirror/view'
+/**
+ * Workaround Windows spellcheck (typo-js falhou). Força reativação periódica
+ * do atributo spellcheck no contenteditable para manter o sublinhado do SO.
+ */
+export function attachSpellCheckEnforcer(element: HTMLElement): () => void {
+  let timer: ReturnType<typeof setTimeout> | null = null
+  const observer = new MutationObserver(() => {
+    if (timer) clearTimeout(timer)
+    timer = setTimeout(() => {
+      element.setAttribute('spellcheck', 'false')
+      requestAnimationFrame(() => element.setAttribute('spellcheck', 'true'))
+    }, 500)
+  })
+  observer.observe(element, { childList: true, subtree: true })
 
-export const spellCheckEnforcer = ViewPlugin.fromClass(
-  class {
-    private observer: MutationObserver
-    private timer: ReturnType<typeof setTimeout> | null = null
-
-    constructor(private view: EditorView) {
-      this.observer = new MutationObserver(() => {
-        if (this.timer) clearTimeout(this.timer)
-        this.timer = setTimeout(() => {
-          const el = this.view.contentDOM
-          el.setAttribute('spellcheck', 'false')
-          requestAnimationFrame(() => el.setAttribute('spellcheck', 'true'))
-        }, 500)
-      })
-      this.observer.observe(view.contentDOM, { childList: true, subtree: true })
-    }
-
-    destroy() {
-      this.observer.disconnect()
-      if (this.timer) clearTimeout(this.timer)
-    }
+  return () => {
+    observer.disconnect()
+    if (timer) clearTimeout(timer)
   }
-)
+}

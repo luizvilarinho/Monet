@@ -1,45 +1,40 @@
+import { EditorContent, useEditor } from '@tiptap/react'
+import { Placeholder } from '@tiptap/extensions'
+import TaskItem from '@tiptap/extension-task-item'
+import TaskList from '@tiptap/extension-task-list'
+import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table'
+import Image from '@tiptap/extension-image'
+import Code from '@tiptap/extension-code'
+import StarterKit from '@tiptap/starter-kit'
+import { Markdown } from 'tiptap-markdown'
+import { defaultMarkdownSerializer } from 'prosemirror-markdown'
 import {
-  acceptCompletion,
-  autocompletion,
-  completionStatus,
-  type Completion,
-  type CompletionContext,
-} from '@codemirror/autocomplete'
-import { defaultKeymap, history, historyKeymap, insertNewlineAndIndent } from '@codemirror/commands'
-import { markdown } from '@codemirror/lang-markdown'
-import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
-import { EditorSelection, EditorState, RangeSetBuilder, StateEffect, StateField, type Text } from '@codemirror/state'
-import {
-  Decoration,
-  EditorView,
-  WidgetType,
-  keymap,
-  placeholder,
-  type DecorationSet,
-} from '@codemirror/view'
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+} from 'react'
 import { nanoid } from 'nanoid'
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
-import { findClosestHeading, parseHeadings } from '../../lib/headingParser'
-import { renderMarkdown } from '../../lib/markdown'
-import { spellCheckEnforcer } from '../../lib/spellcheck'
-import type { AiResponse, CommandExecutionRequest } from '../../types'
+import type { Editor as TiptapEditor } from '@tiptap/core'
+import { TextSelection } from '@tiptap/pm/state'
+import { findClosestHeading, parseHeadings, type Heading } from '../../lib/headingParser'
+import { attachSpellCheckEnforcer } from '../../lib/spellcheck'
 import { HeadingNavigator } from '../HeadingNavigator/HeadingNavigator'
-import {
-  buildCommandExecutionDraft,
-  extractCommandId,
-  getCommandLineStatus,
-  getCommandSuggestions,
-  getEmbeddedCommandIds,
-  getToggleTitle,
-  insertEmbeddedBlock,
-  isPotentialCommandLine,
-  parseCommandLine,
-  removeEmbeddedBlock,
-  type CommandLineStatus,
-} from './commandParser'
 import styles from './Editor.module.css'
-import { detectActiveFormats, type ActiveFormat } from './formatting'
 import { FormattingToolbar } from './FormattingToolbar'
+import { CommandAutocomplete, type AutocompleteState } from './CommandAutocomplete'
+import {
+  CommandExtension,
+  commandPluginKey,
+  getCurrentCommandLine,
+} from './CommandExtension'
+import { EmbedBlock } from './EmbedBlock'
+import { EditorResponsesProvider } from './EditorResponsesContext'
+import { getCommandSuggestions } from './commandParser'
+import type { AiResponse, CommandExecutionRequest } from '../../types'
 
 export interface EditorProps {
   title: string
@@ -49,708 +44,65 @@ export interface EditorProps {
   value: string
   onChange: (value: string) => void
   onCommand?: (request: CommandExecutionRequest) => Promise<boolean> | boolean
-  onNavigateToCard?: (executionIndex: number) => void
-  onDeleteCommand?: (commandId: string) => void
-  executedCommandIds?: Set<string>
-  commandLineToRemove?: { id: string; ts: number } | null
+  executedCommandTexts?: Set<string>
   responses?: AiResponse[]
+  onRemoveResponse?: (id: string) => void
   relatedContent?: ReactNode
 }
 
-const commandStatusTheme = EditorView.baseTheme({
-  '.cm-editor': {
-    height: '100%',
-    backgroundColor: 'var(--bg-app, #0e0e10)',
-  },
-  '.cm-scroller': {
-    fontFamily: "'Inter', system-ui, -apple-system, sans-serif",
-    fontSize: '14px',
-    lineHeight: '1.6',
-    padding: '20px 32px 24px',
-  },
-  '.cm-content': {
-    minHeight: '100%',
-    color: 'var(--text-primary, #e8e8f0)',
-    caretColor: 'var(--text-primary, #e8e8f0)',
-  },
-  '.cm-line': {
-    padding: 0,
-  },
-  '.cm-gutters': {
-    display: 'none',
-  },
-  '.cm-tooltip.cm-tooltip-autocomplete': {
-    backgroundColor: 'var(--surface-1, #1e1e22)',
-    border: '1px solid var(--border, #333340)',
-    borderRadius: '12px',
-    overflow: 'hidden',
-  },
-  '.cm-tooltip-autocomplete > ul': {
-    fontFamily: 'system-ui, sans-serif',
-    fontSize: '13px',
-  },
-  '.cm-tooltip-autocomplete ul li': {
-    color: 'var(--text-secondary, #a0a0b8)',
-    padding: '8px 12px',
-  },
-  '.cm-tooltip-autocomplete ul li[aria-selected]': {
-    backgroundColor: 'rgba(124, 106, 245, 0.16)',
-    color: 'var(--text-primary, #e8e8f0)',
-  },
-  '.cm-completionDetail': {
-    color: 'var(--text-muted, #606070)',
-  },
-  '.cm-commandDraft': {
-    color: 'var(--accent, #7c6af5)',
-  },
-  '.cm-commandExecuted': {
-    color: 'var(--accent-ai, #5dcaa5)',
-    backgroundColor: 'rgba(93, 202, 165, 0.12)',
-    borderLeft: '2px solid var(--accent-ai, #5dcaa5)',
-    paddingLeft: '10px',
-    cursor: 'pointer',
-    position: 'relative',
-  },
-  '.cm-commandError': {
-    color: '#ff8b8b',
-    backgroundColor: 'rgba(239, 79, 79, 0.1)',
-    borderLeft: '2px solid #ef4f4f',
-    paddingLeft: '10px',
-  },
-  '.cm-cmdDelete': {
-    fontSize: '15px',
-    color: 'var(--text-muted, #606070)',
-    cursor: 'pointer',
-    opacity: '0.5',
-    lineHeight: 'inherit',
-    userSelect: 'none',
-    padding: '0 2px',
-  },
-  '.cm-cmdDelete:hover': {
-    color: '#ff6b6b',
-    opacity: '1',
-  },
-  '.cm-cmdInsert': {
-    fontSize: '11px',
-    color: 'var(--accent-ai, #5dcaa5)',
-    cursor: 'pointer',
-    opacity: '0.7',
-    lineHeight: 'inherit',
-    userSelect: 'none',
-    padding: '0 4px',
-    fontFamily: 'system-ui, sans-serif',
-  },
-  '.cm-cmdInsert:hover': {
-    opacity: '1',
-    textDecoration: 'underline',
-  },
-  '.cm-cmdRemove': {
-    fontSize: '11px',
-    color: 'var(--text-muted, #606070)',
-    cursor: 'pointer',
-    opacity: '0.7',
-    lineHeight: 'inherit',
-    userSelect: 'none',
-    padding: '0 4px',
-    fontFamily: 'system-ui, sans-serif',
-  },
-  '.cm-cmdRemove:hover': {
-    color: '#ff6b6b',
-    opacity: '1',
-  },
-  '.cm-todo-check': {
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: '13px',
-    height: '13px',
-    border: '1.5px solid var(--border, #333340)',
-    borderRadius: '3px',
-    verticalAlign: 'middle',
-    marginRight: '3px',
-    cursor: 'pointer',
-    fontSize: '9px',
-    lineHeight: '1',
-    color: 'transparent',
-    userSelect: 'none',
-    flexShrink: '0',
-  },
-  '.cm-todo-check-done': {
-    borderColor: 'var(--accent, #7c6af5)',
-    backgroundColor: 'var(--accent, #7c6af5)',
-    color: '#fff',
-  },
-  '.cm-todo-done-line': {
-    color: 'var(--text-muted, #606070)',
-    textDecoration: 'line-through',
-  },
-  '.cm-embedToggle': {
-    background: 'var(--surface-1, #1e1e22)',
-    border: '1px solid var(--border, #333340)',
-    borderRadius: '3px',
-    margin: '4px 0 4px 10px',
-    overflow: 'hidden',
-    position: 'relative',
-    display: 'block',
-    whiteSpace: 'normal',
-  },
-  '.cm-embedToggleHeader': {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    padding: '6px 10px',
-    cursor: 'pointer',
-    fontSize: '13px',
-    color: 'var(--text-secondary, #a0a0b8)',
-    userSelect: 'none',
-  },
-  '.cm-embedToggleHeader:hover': {
-    background: 'var(--surface-2, #26262c)',
-  },
-  '.cm-embedToggleChevron': {
-    fontSize: '12px',
-    color: 'var(--text-muted, #606070)',
-    transition: 'transform 0.15s ease',
-    display: 'inline-block',
-  },
-  '.cm-embedToggleChevronOpen': {
-    transform: 'rotate(90deg)',
-  },
-  '.cm-embedToggleBody': {
-    padding: '0 10px 8px 28px',
-    fontSize: '13px',
-    lineHeight: '1.55',
-    fontFamily: 'system-ui, -apple-system, sans-serif',
-    color: 'var(--text-primary, #e8e8f0)',
-  },
-  '.cm-embedToggleBody p': { margin: '0.4em 0' },
-  '.cm-embedToggleBody p:first-child': { marginTop: 0 },
-  '.cm-embedToggleBody p:last-child': { marginBottom: 0 },
-  '.cm-embedToggleBody h1, .cm-embedToggleBody h2, .cm-embedToggleBody h3': {
-    fontWeight: 600,
-    color: 'var(--text-primary, #e8e8f0)',
-    lineHeight: '1.3',
-    margin: '0.8em 0 0.3em',
-  },
-  '.cm-embedToggleBody h1': { fontSize: '1.2em' },
-  '.cm-embedToggleBody h2': { fontSize: '1.1em' },
-  '.cm-embedToggleBody h3': { fontSize: '1em' },
-  '.cm-embedToggleBody strong': { fontWeight: 700 },
-  '.cm-embedToggleBody em': { fontStyle: 'italic', color: 'var(--text-secondary, #a0a0b8)' },
-  '.cm-embedToggleBody del': { color: 'var(--text-muted, #606070)', textDecoration: 'line-through' },
-  '.cm-embedToggleBody code': {
-    fontFamily: "'Inter', system-ui, -apple-system, sans-serif",
-    fontSize: '0.85em',
-    background: 'var(--surface-2, #26262c)',
-    borderRadius: '3px',
-    padding: '0.1em 0.35em',
-    color: 'var(--accent-ai, #5dcaa5)',
-  },
-  '.cm-embedToggleBody pre': {
-    background: 'var(--surface-2, #26262c)',
-    borderRadius: '6px',
-    padding: '10px 12px',
-    overflowX: 'auto',
-    margin: '0.5em 0',
-  },
-  '.cm-embedToggleBody pre code': {
-    background: 'none',
-    padding: 0,
-    fontSize: '12px',
-    color: 'var(--text-primary, #e8e8f0)',
-  },
-  '.cm-embedToggleBody blockquote': {
-    margin: '0.5em 0',
-    padding: '0.3em 0.8em',
-    borderLeft: '2px solid var(--accent-ai, #5dcaa5)',
-    color: 'var(--text-secondary, #a0a0b8)',
-  },
-  '.cm-embedToggleBody blockquote p': { margin: '0' },
-  '.cm-embedToggleBody ul, .cm-embedToggleBody ol': {
-    margin: '0.3em 0',
-    paddingLeft: '1.4em',
-  },
-  '.cm-embedToggleBody li': { margin: '0.15em 0' },
-  '.cm-embedToggleBody li p': { margin: '0' },
-  '.cm-embedToggleBody a': { color: 'var(--accent, #7c6af5)', textDecoration: 'none' },
-  '.cm-embedToggleBody a:hover': { textDecoration: 'underline' },
-  '.cm-embedToggleBody hr': {
-    border: 'none',
-    borderTop: '1px solid var(--border, #333340)',
-    margin: '0.8em 0',
-  },
-  '.cm-embedToggleBody table': {
-    width: '100%',
-    borderCollapse: 'collapse',
-    margin: '0.5em 0',
-    fontSize: '12px',
-  },
-  '.cm-embedToggleBody th, .cm-embedToggleBody td': {
-    border: '1px solid var(--border, #333340)',
-    padding: '4px 8px',
-    textAlign: 'left',
-  },
-  '.cm-embedToggleBody th': {
-    background: 'var(--surface-2, #26262c)',
-    fontWeight: 600,
-  },
-  '.cm-cmdActionContainer': {
-    display: 'inline-flex',
-    gap: '8px',
-    alignItems: 'center',
-    flex: '0 0 auto',
-    marginLeft: 'auto',
-    whiteSpace: 'nowrap',
-  },
-  '.cm-commandActionLine': {
-    display: 'flex',
-    gap: '12px',
-    alignItems: 'start',
-  },
-  '.cm-commandText': {
-    flex: '1 1 0',
-    minWidth: '0',
-    overflowWrap: 'anywhere',
-  },
-  '.cm-commandActionLine > .cm-widgetBuffer': {
-    width: '0',
-    minWidth: '0',
-    flex: '0 0 0',
-    overflow: 'hidden',
-  },
-  '.cm-embedLoading': {
-    fontStyle: 'italic',
-    color: 'var(--text-muted, #606070)',
-  },
-  '.cm-embedError': {
-    fontStyle: 'italic',
-    color: 'var(--text-muted, #606070)',
+function getMarkdown(editor: TiptapEditor): string {
+  const storage = editor.storage as unknown as { markdown?: { getMarkdown(): string } }
+  return storage.markdown?.getMarkdown() ?? editor.getText()
+}
+
+function findHeadingDomElements(root: HTMLElement | null): HTMLElement[] {
+  if (!root) return []
+  return Array.from(root.querySelectorAll('h1, h2, h3')) as HTMLElement[]
+}
+
+const HIDDEN_AUTOCOMPLETE: AutocompleteState = {
+  visible: false,
+  filter: '',
+  suggestions: [],
+  selectedIdx: 0,
+  top: 0,
+  left: 0,
+}
+
+// Custom inline-code mark — força serialização com um único backtick
+// (defaultMarkdownSerializer.marks.code usa `backticksFor` que adiciona mais
+// crases apenas quando o texto contém crases; texto comum vira `text`)
+const InlineCode = Code.extend({
+  addStorage() {
+    return {
+      markdown: {
+        serialize: defaultMarkdownSerializer.marks.code,
+        parse: {},
+      },
+    }
   },
 })
 
-class TodoCheckboxWidget extends WidgetType {
-  constructor(readonly checked: boolean) { super() }
-  eq(other: WidgetType) {
-    return other instanceof TodoCheckboxWidget && this.checked === other.checked
-  }
-  toDOM(view: EditorView): HTMLElement {
-    const span = document.createElement('span')
-    span.className = `cm-todo-check${this.checked ? ' cm-todo-check-done' : ''}`
-    span.textContent = this.checked ? 'x' : ' '
-    span.setAttribute('aria-hidden', 'true')
-    span.addEventListener('mousedown', (e) => {
-      e.preventDefault()
-      e.stopPropagation()
-      const pos = view.posAtCoords({ x: e.clientX, y: e.clientY }, false)
-      const line = view.state.doc.lineAt(pos)
-      const m = line.text.match(/^- \[([ x])\] /)
-      if (!m) return
-      const charPos = line.from + 3
-      view.dispatch({ changes: { from: charPos, to: charPos + 1, insert: m[1] === 'x' ? ' ' : 'x' } })
-    })
-    return span
-  }
-  ignoreEvent() { return false }
-}
-
-function buildTodoDecorations(state: EditorState): DecorationSet {
-  const builder = new RangeSetBuilder<Decoration>()
-  for (let i = 1; i <= state.doc.lines; i++) {
-    const line = state.doc.line(i)
-    const m = line.text.match(/^- \[([ x])\] /)
-    if (!m) continue
-    const checked = m[1] === 'x'
-    if (checked) {
-      builder.add(line.from, line.from, Decoration.line({ class: 'cm-todo-done-line' }))
-    }
-    builder.add(
-      line.from + 2,
-      line.from + 5,
-      Decoration.replace({ widget: new TodoCheckboxWidget(checked) })
-    )
-  }
-  return builder.finish()
-}
-
-const todoDecorationsField = StateField.define<DecorationSet>({
-  create: (state) => buildTodoDecorations(state),
-  update: (deco, tr) => tr.docChanged ? buildTodoDecorations(tr.state) : deco,
-  provide: (f) => EditorView.decorations.from(f),
-})
-
-const MARKER_RE = / <!--monet:[a-zA-Z0-9_-]+-->/g
-const MARKER_ID_RE = /<!--monet:([a-zA-Z0-9_-]+)-->/
-
-const EMBED_START_RE = /<!--monet-embed:([a-zA-Z0-9_-]+)-->/
-
-// ── Toggle block (embedded AI response) ──────────────────
-
-const embedRenderCache = new Map<string, string>()
-
-const toggleOpenEffect = StateEffect.define<{ commandId: string; open: boolean }>()
-
-const toggleOpenState = StateField.define<Map<string, boolean>>({
-  create: () => new Map(),
-  update: (value, tr) => {
-    let next = value
-    for (const effect of tr.effects) {
-      if (effect.is(toggleOpenEffect)) {
-        if (next === value) next = new Map(value)
-        next.set(effect.value.commandId, effect.value.open)
-      }
-    }
-    return next
-  },
-})
-
-class ToggleBlockWidget extends WidgetType {
-  constructor(
-    readonly commandId: string,
-    readonly title: string,
-    readonly body: string,
-    readonly open: boolean,
-    readonly getView: () => EditorView | null
-  ) { super() }
-
-  eq(other: WidgetType) {
-    return other instanceof ToggleBlockWidget &&
-      this.commandId === other.commandId &&
-      this.title === other.title &&
-      this.body === other.body &&
-      this.open === other.open
-  }
-
-  toDOM(): HTMLElement {
-    const wrapper = document.createElement('div')
-    wrapper.className = 'cm-embedToggle'
-
-    const header = document.createElement('div')
-    header.className = 'cm-embedToggleHeader'
-
-    const chevron = document.createElement('span')
-    chevron.className = `cm-embedToggleChevron${this.open ? ' cm-embedToggleChevronOpen' : ''}`
-    chevron.textContent = '›'
-    chevron.setAttribute('aria-hidden', 'true')
-
-    const title = document.createElement('span')
-    title.textContent = this.title
-
-    header.appendChild(chevron)
-    header.appendChild(title)
-
-    header.addEventListener('click', () => {
-      const view = this.getView()
-      if (view) {
-        view.dispatch({ effects: toggleOpenEffect.of({ commandId: this.commandId, open: !this.open }) })
-      }
-    })
-
-    wrapper.appendChild(header)
-
-    if (this.open) {
-      const bodyDiv = document.createElement('div')
-      bodyDiv.className = 'cm-embedToggleBody'
-      const cached = embedRenderCache.get(this.body)
-      if (cached !== undefined) {
-        bodyDiv.innerHTML = cached
-      } else {
-        bodyDiv.innerHTML = '<em class="cm-embedLoading">carregando...</em>'
-        renderMarkdown(this.body).then((html) => {
-          embedRenderCache.set(this.body, html)
-          bodyDiv.innerHTML = html
-        }).catch(() => {
-          bodyDiv.innerHTML = '<em class="cm-embedError">erro ao renderizar</em>'
-        })
-      }
-      wrapper.appendChild(bodyDiv)
-    }
-
-    return wrapper
-  }
-
-  ignoreEvent() { return false }
-}
-
-interface EmbedSpec {
-  from: number
-  to: number
-  deco: Decoration
-}
-
-function buildEmbedDecorations(
-  state: EditorState,
-  openMap: Map<string, boolean>,
-  getView: () => EditorView | null
-): DecorationSet {
-  const text = state.doc.toString()
-  const specs: EmbedSpec[] = []
-
-  // 1. Ocultar os blocos embed no texto (invisíveis, não-editáveis)
-  const startRe = new RegExp(EMBED_START_RE.source, 'g')
-  let startMatch: RegExpExecArray | null
-  while ((startMatch = startRe.exec(text)) !== null) {
-    const cmdId = startMatch[1]
-    const endMarker = `<!--monet-embed-end:${cmdId}-->`
-    const endIdx = text.indexOf(endMarker, startMatch.index + startMatch[0].length)
-    if (endIdx === -1) continue
-    specs.push({
-      from: startMatch.index,
-      to: endIdx + endMarker.length,
-      deco: Decoration.replace({}),
-    })
-  }
-
-  // 2. Inserir widgets externos abaixo da linha de comando correspondente
-  for (let i = 1; i <= state.doc.lines; i++) {
-    const line = state.doc.line(i)
-    const cmdId = extractCommandId(line.text)
-    if (!cmdId) continue
-
-    const blockStart = text.indexOf(`<!--monet-embed:${cmdId}-->`)
-    if (blockStart === -1) continue
-    const blockEndMarker = `<!--monet-embed-end:${cmdId}-->`
-    const blockEnd = text.indexOf(blockEndMarker, blockStart)
-    if (blockEnd === -1) continue
-
-    const content = text.slice(blockStart + `<!--monet-embed:${cmdId}-->`.length, blockEnd)
-    const lines = content.split('\n')
-    const bodyLines = lines.map((l) => l.replace(/^> /, ''))
-    const bodyText = bodyLines.join('\n').trim()
-    const titleMatch = bodyText.match(/^\*\*([^*]+)\*\*/)
-    const title = titleMatch ? titleMatch[1] : 'Resposta gerada pela IA'
-    const body = bodyText.replace(/^\*\*[^*]+\*\*\n\n?/, '')
-    const isOpen = openMap.get(cmdId) ?? false
-
-    specs.push({
-      from: line.to,
-      to: line.to,
-      deco: Decoration.widget({
-        widget: new ToggleBlockWidget(cmdId, title, body, isOpen, getView),
-        block: true,
-        side: 1,
-      }),
-    })
-  }
-
-  // Sort by from position; widget side=1 must come after replace at same position
-  specs.sort((a, b) => {
-    if (a.from !== b.from) return a.from - b.from
-    const aSide = (a.deco as any).startSide ?? 0
-    const bSide = (b.deco as any).startSide ?? 0
-    return aSide - bSide
-  })
-
-  const builder = new RangeSetBuilder<Decoration>()
-  for (const s of specs) {
-    builder.add(s.from, s.to, s.deco)
-  }
-  return builder.finish()
-}
-
-// ── Command markers (delete + insert/remove buttons) ─────
-
-function createMarkerDecorations(
-  getView: () => EditorView | null,
-  getOnDelete: () => ((id: string) => void) | undefined,
-  getOnInsert: () => ((id: string) => void) | undefined,
-  getOnRemove: () => ((id: string) => void) | undefined,
-  getCompletedIds: () => Set<string>,
-): StateField<DecorationSet> {
-
-  class CommandActionsWidget extends WidgetType {
-    constructor(readonly commandId: string, readonly hasEmbed: boolean, readonly canInsert: boolean) { super() }
-
-    toDOM() {
-      const container = document.createElement('span')
-      container.className = 'cm-cmdActionContainer'
-
-      if (this.hasEmbed) {
-        const removeBtn = document.createElement('span')
-        removeBtn.className = 'cm-cmdRemove'
-        removeBtn.textContent = '↑ remover'
-        removeBtn.title = 'remover bloco da nota'
-        removeBtn.addEventListener('click', (e) => {
-          e.preventDefault()
-          e.stopPropagation()
-          getOnRemove()?.(this.commandId)
-        })
-        container.appendChild(removeBtn)
-      } else if (this.canInsert) {
-        const insertBtn = document.createElement('span')
-        insertBtn.className = 'cm-cmdInsert'
-        insertBtn.textContent = '↓ inserir'
-        insertBtn.title = 'inserir resposta na nota'
-        insertBtn.addEventListener('click', (e) => {
-          e.preventDefault()
-          e.stopPropagation()
-          getOnInsert()?.(this.commandId)
-        })
-        container.appendChild(insertBtn)
-      }
-
-      const deleteBtn = document.createElement('span')
-      deleteBtn.className = 'cm-cmdDelete'
-      deleteBtn.textContent = '×'
-      deleteBtn.title = 'apagar comando e resposta'
-      deleteBtn.addEventListener('mousedown', (e) => {
-        e.preventDefault()
-        e.stopPropagation()
-      })
-      deleteBtn.addEventListener('click', (e) => {
-        e.preventDefault()
-        e.stopPropagation()
-        const view = getView()
-        if (view) {
-          let newText = view.state.doc.toString()
-          // Remove embed block first
-          newText = removeEmbeddedBlock(newText, this.commandId)
-          // Remove command line
-          const lines = newText.split('\n')
-          for (let i = 0; i < lines.length; i++) {
-            if (lines[i].includes(`<!--monet:${this.commandId}-->`)) {
-              lines.splice(i, 1)
-              break
-            }
-          }
-          newText = lines.join('\n')
-          view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: newText } })
-        }
-        getOnDelete()?.(this.commandId)
-      })
-      container.appendChild(deleteBtn)
-
-      return container
-    }
-
-    eq(other: CommandActionsWidget) {
-      return other.commandId === this.commandId && other.hasEmbed === this.hasEmbed && other.canInsert === this.canInsert
-    }
-  }
-
-  function build(state: EditorState): DecorationSet {
-    const builder = new RangeSetBuilder<Decoration>()
-    const text = state.doc.toString()
-    const embeddedIds = getEmbeddedCommandIds(text)
-    const completedIds = getCompletedIds()
-    for (let i = 1; i <= state.doc.lines; i++) {
-      const line = state.doc.line(i)
-      MARKER_RE.lastIndex = 0
-      const match = MARKER_RE.exec(line.text)
-      if (!match) continue
-
-      const cmdId = MARKER_ID_RE.exec(match[0])?.[1] ?? ''
-      const hasEmbed = embeddedIds.has(cmdId)
-      const canInsert = completedIds.has(cmdId)
-
-      // Workaround: força cm-commandExecuted aqui também porque o StateField de
-      // cor (createCommandDecorations) está perdendo o status 'executed' em
-      // edições abaixo da linha por motivo ainda não diagnosticado.
-      const isExecuted = hasEmbed || canInsert
-      builder.add(
-        line.from,
-        line.from,
-        Decoration.line({
-          class: isExecuted
-            ? 'cm-commandActionLine cm-commandExecuted'
-            : 'cm-commandActionLine',
-          attributes: { spellcheck: 'false' },
-        })
-      )
-      if (match.index > 0) {
-        builder.add(
-          line.from,
-          line.from + match.index,
-          Decoration.mark({
-            class: 'cm-commandText',
-            attributes: { spellcheck: 'false' },
-          })
-        )
-      }
-      builder.add(
-        line.from + match.index,
-        line.from + match.index + match[0].length,
-        Decoration.replace({ widget: new CommandActionsWidget(cmdId, hasEmbed, canInsert) })
-      )
-    }
-    return builder.finish()
-  }
-
-  return StateField.define<DecorationSet>({
-    create: (state) => build(state),
-    update: (deco, tr) => (
-      tr.docChanged || tr.effects.some((effect) => effect.is(refreshCommandDecorations))
-        ? build(tr.state)
-        : deco
-    ),
-    provide: (f) => EditorView.decorations.from(f),
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = () => reject(reader.error ?? new Error('failed to read file'))
+    reader.readAsDataURL(file)
   })
 }
 
-const refreshCommandDecorations = StateEffect.define<null>()
-
-function createCommandDecorations(
-  getStatusByLine: () => Map<number, CommandLineStatus>
-): StateField<DecorationSet> {
-
-  function build(state: EditorState): DecorationSet {
-    const statusByLine = getStatusByLine()
-    const builder = new RangeSetBuilder<Decoration>()
-    for (let lineNumber = 1; lineNumber <= state.doc.lines; lineNumber++) {
-      const line = state.doc.line(lineNumber)
-      if (!isPotentialCommandLine(line.text)) continue
-      const status = statusByLine.get(line.from) ?? getCommandLineStatus(line.text)
-      const className =
-        status === 'executed'
-          ? 'cm-commandExecuted'
-          : status === 'invalid' || status === 'incomplete'
-            ? 'cm-commandError'
-            : status === 'draft' || status === 'valid'
-              ? 'cm-commandDraft'
-              : null
-      if (className) {
-        builder.add(line.from, line.from, Decoration.line({ class: className }))
-      }
+function extractImageFile(items: ArrayLike<DataTransferItem> | null | undefined): File | null {
+  if (!items) return null
+  const arr = Array.from(items)
+  for (const item of arr) {
+    if (item.kind === 'file' && item.type.startsWith('image/')) {
+      const f = item.getAsFile()
+      if (f) return f
     }
-    return builder.finish()
   }
-
-  return StateField.define<DecorationSet>({
-    create(state) {
-      return build(state)
-    },
-    update(decorations, transaction) {
-      if (
-        !transaction.docChanged &&
-        !transaction.effects.some((effect) => effect.is(refreshCommandDecorations))
-      ) {
-        return decorations
-      }
-      return build(transaction.state)
-    },
-    provide(field) {
-      return EditorView.decorations.from(field)
-    },
-  })
+  return null
 }
-
-function commandCompletionSource(context: CompletionContext) {
-  const line = context.state.doc.lineAt(context.pos)
-  const lineBeforeCursor = line.text.slice(0, context.pos - line.from)
-  if (!/^\s*\/[^\s]*$/.test(lineBeforeCursor)) {
-    return null
-  }
-  const from = line.from + lineBeforeCursor.search(/\//)
-  const suggestions = getCommandSuggestions(lineBeforeCursor.trim()).map<Completion>((name) => ({
-    label: name,
-    type: 'keyword',
-  }))
-  return {
-    from,
-    options: suggestions,
-    validFor: /^\/[a-z]*$/i,
-  }
-}
-
 
 export function Editor({
   title,
@@ -760,354 +112,376 @@ export function Editor({
   value,
   onChange,
   onCommand,
-  onNavigateToCard,
-  onDeleteCommand,
-  executedCommandIds,
-  commandLineToRemove,
+  executedCommandTexts,
   responses,
+  onRemoveResponse,
   relatedContent,
 }: EditorProps) {
   const [adding, setAdding] = useState(false)
   const [draft, setDraft] = useState('')
-  const [toolbarState, setToolbarState] = useState<{
-    top: number
-    left: number
-    activeFormats: Set<ActiveFormat>
-  } | null>(null)
   const [activeOffset, setActiveOffset] = useState<number | null>(null)
-  const hostRef = useRef<HTMLDivElement | null>(null)
-  const viewRef = useRef<EditorView | null>(null)
-  const commandStatusRef = useRef<Map<number, CommandLineStatus>>(new Map())
-  const initialValueRef = useRef(value)
-  const executedCommandIdsRef = useRef(executedCommandIds ?? new Set<string>())
-  executedCommandIdsRef.current = executedCommandIds ?? new Set<string>()
-  const onCommandRef = useRef(onCommand)
-  const onDeleteCommandRef = useRef(onDeleteCommand)
-  onDeleteCommandRef.current = onDeleteCommand
+  const [autocomplete, setAutocomplete] = useState<AutocompleteState>(HIDDEN_AUTOCOMPLETE)
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+
   const onChangeRef = useRef(onChange)
-  const onNavigateToCardRef = useRef(onNavigateToCard)
-  const setToolbarRef = useRef(setToolbarState)
-  onCommandRef.current = onCommand
   onChangeRef.current = onChange
-  onNavigateToCardRef.current = onNavigateToCard
-  setToolbarRef.current = setToolbarState
+  const onCommandRef = useRef(onCommand)
+  onCommandRef.current = onCommand
+  const autocompleteRef = useRef(autocomplete)
+  autocompleteRef.current = autocomplete
+  const dismissedFingerprintRef = useRef<string | null>(null)
+  const acceptSuggestionRef = useRef<(suggestion: string) => void>(() => {})
 
-  const responsesRef = useRef(responses)
-  responsesRef.current = responses
+  const responsesRef = useRef<AiResponse[]>(responses ?? [])
+  responsesRef.current = responses ?? []
+  const onRemoveResponseRef = useRef(onRemoveResponse)
+  onRemoveResponseRef.current = onRemoveResponse
 
-  const syncCommandUi = useCallback(() => {
-    const view = viewRef.current
-    if (!view) return
+  const contextValue = useMemo(
+    () => ({ responses: responses ?? [] }),
+    [responses]
+  )
 
-    const map = commandStatusRef.current
-    map.clear()
-    const execIds = executedCommandIdsRef.current
-    for (let lineNumber = 1; lineNumber <= view.state.doc.lines; lineNumber++) {
-      const line = view.state.doc.line(lineNumber)
-      if (!isPotentialCommandLine(line.text)) continue
-      const cmdId = extractCommandId(line.text)
-      map.set(
-        line.from,
-        cmdId && execIds.has(cmdId) ? 'executed' : getCommandLineStatus(line.text)
-      )
-    }
-
-    view.dispatch({ effects: refreshCommandDecorations.of(null) })
-  }, [])
-
-  const handleInsert = useCallback((commandId: string) => {
-    const view = viewRef.current
-    if (!view) return
-    const response = responsesRef.current?.find((r) => r.commandId === commandId || r.id === commandId)
-    if (!response) return
-    const newContent = insertEmbeddedBlock(
-      view.state.doc.toString(),
-      commandId,
-      getToggleTitle(response.command),
-      response.response
-    )
-    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: newContent } })
-    // Trigger decorations refresh so the insert button becomes remove
-    view.dispatch({ effects: refreshCommandDecorations.of(null) })
-  }, [])
-
-  const handleRemove = useCallback((commandId: string) => {
-    const view = viewRef.current
-    if (!view) return
-    const newContent = removeEmbeddedBlock(view.state.doc.toString(), commandId)
-    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: newContent } })
-    view.dispatch({ effects: refreshCommandDecorations.of(null) })
-  }, [])
-
-  const handleNavigateToHeading = useCallback((offset: number) => {
-    const view = viewRef.current
-    if (!view) return
-    setActiveOffset(offset)
-    view.dispatch({
-      effects: EditorView.scrollIntoView(offset, { y: 'start' }),
-    })
-  }, [])
-
-  const handleInsertRef = useRef(handleInsert)
-  const handleRemoveRef = useRef(handleRemove)
-  handleInsertRef.current = handleInsert
-  handleRemoveRef.current = handleRemove
-
-  useEffect(() => {
-    if (!hostRef.current || viewRef.current) return
-    let cachedHeadingsDoc: Text | null = null
-    let cachedHeadings: ReturnType<typeof parseHeadings> = []
-    const syncListener = EditorView.updateListener.of((update) => {
-      if (update.docChanged) {
-        onChangeRef.current(update.state.doc.toString())
-        const map = commandStatusRef.current
-
-        // Map old line.from to new line.from via the change set so edits above
-        // a command line don't lose the 'executed' status when the line shifts.
-        const mapped = new Map<number, CommandLineStatus>()
-        for (const [oldFrom, status] of map) {
-          const newFrom = update.changes.mapPos(oldFrom, 1)
-          if (newFrom < 0 || newFrom > update.state.doc.length) continue
-          const line = update.state.doc.lineAt(newFrom)
-          if (line.from !== newFrom) continue
-          if (!isPotentialCommandLine(line.text)) continue
-          mapped.set(line.from, status)
-        }
-
-        const preserved = new Map<number, CommandLineStatus>()
-        for (let lineNumber = 1; lineNumber <= update.state.doc.lines; lineNumber++) {
-          const line = update.state.doc.line(lineNumber)
-          if (!isPotentialCommandLine(line.text)) continue
-          const prevStatus = mapped.get(line.from)
-          preserved.set(
-            line.from,
-            prevStatus === 'executed' ? 'executed' : getCommandLineStatus(line.text)
-          )
-        }
-        map.clear()
-        for (const [from, status] of preserved) map.set(from, status)
-      }
-
-      if (update.selectionSet || update.docChanged || update.viewportChanged) {
-        const sel = update.state.selection.main
-        if (sel.empty) {
-          setToolbarRef.current(null)
-        } else {
-          const fromCoords = update.view.coordsAtPos(sel.from)
-          const toCoords = update.view.coordsAtPos(sel.to)
-          if (!fromCoords) {
-            setToolbarRef.current(null)
-          } else {
-            const midX = toCoords
-              ? (fromCoords.left + toCoords.left) / 2
-              : fromCoords.left
-            setToolbarRef.current({
-              top: fromCoords.top,
-              left: midX,
-              activeFormats: detectActiveFormats(update.view),
-            })
-          }
-        }
-
-        if (update.viewportChanged || update.docChanged) {
-          if (cachedHeadingsDoc !== update.state.doc) {
-            cachedHeadings = parseHeadings(update.state.doc.toString())
-            cachedHeadingsDoc = update.state.doc
-          }
-          const viewportTop = update.view.viewport.from
-          const closest = findClosestHeading(cachedHeadings, viewportTop)
-          setActiveOffset(closest?.offset ?? null)
-        }
-      }
-    })
-
-    const runCommand = async (view: EditorView) => {
-      const selection = view.state.selection.main
-      const draft = buildCommandExecutionDraft(
-        view.state.doc.toString(),
-        selection.from,
-        selection.to
-      )
-      if (!draft) {
-        insertNewlineAndIndent(view)
-        return
-      }
-
-      view.dispatch({
-        changes: { from: draft.lineEnd, to: draft.lineEnd, insert: '\n' },
-        selection: EditorSelection.cursor(draft.lineEnd + 1),
-      })
-
-      const commandId = nanoid()
-      const allowed = await onCommandRef.current?.({
-        cmd: draft.cmd,
-        query: draft.query,
-        commandId,
-      })
-      if (allowed) {
-        commandStatusRef.current.set(draft.lineStart, 'executed')
-        const marker = ` <!--monet:${commandId}-->`
-        view.dispatch({
-          changes: { from: draft.lineEnd, to: draft.lineEnd, insert: marker },
-          effects: refreshCommandDecorations.of(null),
-        })
-      } else {
-        commandStatusRef.current.set(
-          draft.lineStart,
-          getCommandLineStatus(view.state.doc.lineAt(draft.lineStart).text)
-        )
-        view.dispatch({ effects: refreshCommandDecorations.of(null) })
-      }
-    }
-
-    const shouldHandleEnterAsCommand = (view: EditorView) => {
-      if (!onCommandRef.current) return false
-      const selection = view.state.selection.main
-      if (!selection.empty) return false
-      const line = view.state.doc.lineAt(selection.from)
-      if (selection.from !== line.to) return false
-      const parsed = parseCommandLine(line.text)
-      if (!parsed?.definition) return false
-      if (parsed.definition.takesQuery && parsed.query.length === 0) return false
-      return true
-    }
-
-    const state = EditorState.create({
-      doc: initialValueRef.current,
-      extensions: [
-        history(),
-        markdown(),
-        syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-        keymap.of([
-          {
-            key: 'Enter',
-            run(view) {
-              if (!shouldHandleEnterAsCommand(view)) return false
-              void runCommand(view)
-              return true
-            },
-          },
-          {
-            key: 'Tab',
-            run(view) {
-              if (completionStatus(view.state) !== 'active') {
-                return false
-              }
-              return acceptCompletion(view)
-            },
-          },
-          ...defaultKeymap,
-          ...historyKeymap,
-        ]),
-        autocompletion({
-          override: [commandCompletionSource],
-          activateOnTyping: true,
-          icons: false,
-          defaultKeymap: true,
-        }),
-        EditorView.lineWrapping,
-        placeholder('Anote a impressão do momento...'),
-        commandStatusTheme,
-        EditorView.contentAttributes.of({ spellcheck: 'true' }),
-        spellCheckEnforcer,
-        todoDecorationsField,
-        toggleOpenState,
-        createMarkerDecorations(
-          () => viewRef.current,
-          () => onDeleteCommandRef.current,
-          () => handleInsertRef.current,
-          () => handleRemoveRef.current,
-          () => new Set(responsesRef.current?.filter((r) => r.status === 'completed').map((r) => r.commandId ?? r.id) ?? [])
-        ),
-        StateField.define<DecorationSet>({
-          create(state) {
-            return buildEmbedDecorations(state, new Map(), () => viewRef.current)
-          },
-          update(deco, tr) {
-            if (!tr.docChanged && !tr.effects.some((e) => e.is(toggleOpenEffect))) {
-              return deco
-            }
-            return buildEmbedDecorations(tr.state, tr.state.field(toggleOpenState), () => viewRef.current)
-          },
-          provide: (f) => EditorView.decorations.from(f),
-        }),
-        createCommandDecorations(() => commandStatusRef.current),
-        syncListener,
-        EditorView.domEventHandlers({
-          click(event, view) {
-            const pos = view.posAtCoords(event)
-            if (pos == null) return false
-            const line = view.state.doc.lineAt(pos)
-            const status = commandStatusRef.current.get(line.from)
-            if (status !== 'executed') return false
-            let execIndex = 0
-            for (let i = 1; i < line.number; i++) {
-              const prevLine = view.state.doc.line(i)
-              if (commandStatusRef.current.get(prevLine.from) === 'executed') {
-                execIndex++
-              }
-            }
-            onNavigateToCardRef.current?.(execIndex)
+  const editor = useEditor({
+    immediatelyRender: false,
+    extensions: [
+      StarterKit.configure({
+        heading: { levels: [1, 2, 3] },
+        link: { openOnClick: true, autolink: false },
+        code: false,
+      }),
+      InlineCode,
+      TaskList,
+      TaskItem.configure({ nested: false }),
+      Table.configure({ resizable: true }),
+      TableRow,
+      TableHeader,
+      TableCell,
+      Image.configure({ inline: false, allowBase64: true }),
+      Placeholder.configure({
+        placeholder: 'Anote a impressão do momento...',
+      }),
+      Markdown.configure({
+        html: true,
+        tightLists: true,
+        bulletListMarker: '-',
+        linkify: false,
+        breaks: false,
+        transformPastedText: true,
+        transformCopiedText: true,
+      }),
+      EmbedBlock,
+      CommandExtension.configure({
+        getResponses: () => responsesRef.current,
+        onRemoveResponse: (id) => {
+          onRemoveResponseRef.current?.(id)
+        },
+      }),
+    ],
+    content: value,
+    editorProps: {
+      attributes: {
+        class: styles.proseEditor,
+        spellcheck: 'true',
+      },
+      handlePaste: (view, event) => {
+        const file = extractImageFile(event.clipboardData?.items)
+        if (!file) return false
+        event.preventDefault()
+        fileToDataUrl(file)
+          .then((dataUrl) => {
+            const imageType = view.state.schema.nodes['image']
+            if (!imageType) return
+            const node = imageType.create({ src: dataUrl })
+            view.dispatch(view.state.tr.replaceSelectionWith(node))
+          })
+          .catch((err) => console.error('paste image failed', err))
+        return true
+      },
+      handleDrop: (view, event, _slice, moved) => {
+        if (moved) return false
+        const file = extractImageFile(event.dataTransfer?.items)
+        if (!file) return false
+        event.preventDefault()
+        const coords = { left: event.clientX, top: event.clientY }
+        const pos = view.posAtCoords(coords)
+        fileToDataUrl(file)
+          .then((dataUrl) => {
+            const imageType = view.state.schema.nodes['image']
+            if (!imageType) return
+            const node = imageType.create({ src: dataUrl })
+            const insertPos = pos?.pos ?? view.state.selection.from
+            view.dispatch(view.state.tr.insert(insertPos, node))
+          })
+          .catch((err) => console.error('drop image failed', err))
+        return true
+      },
+      handleKeyDown: (view, event) => {
+        const ac = autocompleteRef.current
+        if (ac.visible && ac.suggestions.length > 0) {
+          if (event.key === 'ArrowDown') {
+            event.preventDefault()
+            setAutocomplete((prev) =>
+              prev.visible
+                ? { ...prev, selectedIdx: (prev.selectedIdx + 1) % prev.suggestions.length }
+                : prev
+            )
             return true
-          },
-        }),
-      ],
-    })
-    const execIds = executedCommandIdsRef.current
-    for (let i = 1; i <= state.doc.lines; i++) {
-      const line = state.doc.line(i)
-      const cmdId = extractCommandId(line.text)
-      if (cmdId && execIds.has(cmdId)) {
-        commandStatusRef.current.set(line.from, 'executed')
+          }
+          if (event.key === 'ArrowUp') {
+            event.preventDefault()
+            setAutocomplete((prev) =>
+              prev.visible
+                ? {
+                    ...prev,
+                    selectedIdx:
+                      (prev.selectedIdx - 1 + prev.suggestions.length) %
+                      prev.suggestions.length,
+                  }
+                : prev
+            )
+            return true
+          }
+          if (event.key === 'Escape') {
+            event.preventDefault()
+            const info = getCurrentCommandLine(view.state)
+            dismissedFingerprintRef.current = info?.text ?? null
+            setAutocomplete(HIDDEN_AUTOCOMPLETE)
+            return true
+          }
+          if (event.key === 'Enter' || event.key === 'Tab') {
+            event.preventDefault()
+            const selected = ac.suggestions[ac.selectedIdx]
+            if (selected) {
+              acceptSuggestionRef.current(selected)
+            }
+            return true
+          }
+        }
+
+        if (event.key === 'Enter' && !event.shiftKey) {
+          const info = getCurrentCommandLine(view.state)
+          if (!info) return false
+          const { selection } = view.state
+          const $from = selection.$from
+          const atEnd = $from.parentOffset === $from.parent.content.size
+          if (!atEnd) return false
+          if (info.status === 'idle') return false
+
+          const pluginState = commandPluginKey.getState(view.state)
+          const existingMark = pluginState?.marks.get(info.paragraphPos)
+          if (existingMark?.status === 'executed') {
+            return false
+          }
+
+          if (info.status === 'valid') {
+            view.dispatch(
+              view.state.tr.setMeta(commandPluginKey, {
+                type: 'setMark',
+                pos: info.paragraphPos,
+                text: info.text,
+                status: 'executed',
+              })
+            )
+            const commandId = nanoid()
+            const fn = onCommandRef.current
+            if (fn) {
+              try {
+                const result = fn({
+                  cmd: info.cmd,
+                  query: info.query,
+                  commandId,
+                })
+                if (result && typeof (result as Promise<boolean>).then === 'function') {
+                  ;(result as Promise<boolean>).catch((err) =>
+                    console.error('command execution failed', err)
+                  )
+                }
+              } catch (err) {
+                console.error('command execution failed', err)
+              }
+            }
+          } else if (info.status === 'invalid' || info.status === 'incomplete') {
+            view.dispatch(
+              view.state.tr.setMeta(commandPluginKey, {
+                type: 'setMark',
+                pos: info.paragraphPos,
+                text: info.text,
+                status: info.status,
+              })
+            )
+          }
+          return false
+        }
+        return false
+      },
+    },
+    onUpdate: ({ editor }) => {
+      const md = getMarkdown(editor)
+      onChangeRef.current(md)
+    },
+  })
+
+  acceptSuggestionRef.current = (suggestion: string) => {
+    if (!editor) return
+    const info = getCurrentCommandLine(editor.state)
+    if (!info) {
+      setAutocomplete(HIDDEN_AUTOCOMPLETE)
+      return
+    }
+    const from = info.paragraphPos + 1
+    const to = info.paragraphEnd - 1
+    const tr = editor.state.tr.insertText(suggestion, from, to)
+    const newPos = from + suggestion.length
+    tr.setSelection(TextSelection.create(tr.doc, newPos))
+    editor.view.dispatch(tr)
+    editor.view.focus()
+    dismissedFingerprintRef.current = suggestion
+    setAutocomplete(HIDDEN_AUTOCOMPLETE)
+  }
+
+  const updateAutocomplete = useCallback(() => {
+    if (!editor) return
+    const info = getCurrentCommandLine(editor.state)
+    if (!info) {
+      dismissedFingerprintRef.current = null
+      if (autocompleteRef.current.visible) {
+        setAutocomplete(HIDDEN_AUTOCOMPLETE)
       }
+      return
     }
-    const view = new EditorView({ state, parent: hostRef.current })
-    viewRef.current = view
-    return () => {
-      view.destroy()
-      viewRef.current = null
+    if (info.text.includes(' ')) {
+      if (autocompleteRef.current.visible) {
+        setAutocomplete(HIDDEN_AUTOCOMPLETE)
+      }
+      return
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  useEffect(() => {
-    const view = viewRef.current
-    if (!view) return
-    const current = view.state.doc.toString()
-    if (current === value) return
-    const selection = view.state.selection.main
-    view.dispatch({
-      changes: { from: 0, to: current.length, insert: value },
-      selection: EditorSelection.single(
-        Math.min(selection.from, value.length),
-        Math.min(selection.to, value.length)
-      ),
+    const suggestions = getCommandSuggestions(info.text)
+    if (suggestions.length === 0) {
+      if (autocompleteRef.current.visible) {
+        setAutocomplete(HIDDEN_AUTOCOMPLETE)
+      }
+      return
+    }
+    if (dismissedFingerprintRef.current === info.text) {
+      return
+    }
+    dismissedFingerprintRef.current = null
+    const coords = editor.view.coordsAtPos(editor.state.selection.from)
+    setAutocomplete((prev) => {
+      const sameSuggestions =
+        prev.visible &&
+        prev.suggestions.length === suggestions.length &&
+        prev.suggestions.every((s, i) => s === suggestions[i])
+      const selectedIdx = sameSuggestions
+        ? Math.min(prev.selectedIdx, suggestions.length - 1)
+        : 0
+      return {
+        visible: true,
+        filter: info.text,
+        suggestions,
+        selectedIdx,
+        top: coords.bottom + 4,
+        left: coords.left,
+      }
     })
-    syncCommandUi()
-  }, [value, syncCommandUi])
+  }, [editor])
 
   useEffect(() => {
-    syncCommandUi()
-  }, [responses, executedCommandIds, syncCommandUi])
+    if (!editor) return
+    const handler = () => updateAutocomplete()
+    const blurHandler = () => setAutocomplete(HIDDEN_AUTOCOMPLETE)
+    editor.on('transaction', handler)
+    editor.on('blur', blurHandler)
+    updateAutocomplete()
+    return () => {
+      editor.off('transaction', handler)
+      editor.off('blur', blurHandler)
+    }
+  }, [editor, updateAutocomplete])
 
   useEffect(() => {
-    if (!commandLineToRemove) return
-    const view = viewRef.current
-    if (!view) return
-    const current = view.state.doc.toString()
-    let newText = removeEmbeddedBlock(current, commandLineToRemove.id)
-    const lines = newText.split('\n')
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i].includes(`<!--monet:${commandLineToRemove.id}-->`)) {
-        lines.splice(i, 1)
+    if (!editor) return
+    const texts = executedCommandTexts ?? new Set<string>()
+    editor.view.dispatch(
+      editor.state.tr.setMeta(commandPluginKey, {
+        type: 'syncExecuted',
+        texts,
+      })
+    )
+  }, [editor, executedCommandTexts])
+
+  useEffect(() => {
+    if (!editor) return
+    editor.view.dispatch(
+      editor.state.tr.setMeta(commandPluginKey, { type: 'bumpResponses' })
+    )
+  }, [editor, responses])
+
+  useEffect(() => {
+    if (!editor) return
+    const current = getMarkdown(editor)
+    if (current === value) return
+    editor.commands.setContent(value, { emitUpdate: false })
+  }, [value, editor])
+
+  useEffect(() => {
+    if (!editor) return
+    const detach = attachSpellCheckEnforcer(editor.view.dom)
+    return detach
+  }, [editor])
+
+  const headings: Heading[] = parseHeadings(value)
+
+  const updateActiveHeading = useCallback(() => {
+    const scrollEl = scrollRef.current
+    if (!scrollEl || headings.length === 0) {
+      setActiveOffset(null)
+      return
+    }
+    const headingEls = findHeadingDomElements(scrollEl)
+    if (headingEls.length === 0) {
+      setActiveOffset(null)
+      return
+    }
+    const scrollTop = scrollEl.getBoundingClientRect().top
+    let visibleIndex = 0
+    for (let i = 0; i < headingEls.length; i++) {
+      const rect = headingEls[i].getBoundingClientRect()
+      if (rect.top - scrollTop <= 8) {
+        visibleIndex = i
+      } else {
         break
       }
     }
-    newText = lines.join('\n')
-    if (newText !== current) {
-      view.dispatch({ changes: { from: 0, to: current.length, insert: newText } })
-    }
-  }, [commandLineToRemove])
+    const matched = headings[visibleIndex] ?? findClosestHeading(headings, 0)
+    setActiveOffset(matched?.offset ?? null)
+  }, [headings])
+
+  useEffect(() => {
+    const scrollEl = scrollRef.current
+    if (!scrollEl) return
+    updateActiveHeading()
+    scrollEl.addEventListener('scroll', updateActiveHeading, { passive: true })
+    return () => scrollEl.removeEventListener('scroll', updateActiveHeading)
+  }, [updateActiveHeading])
+
+  const handleNavigateToHeading = useCallback(
+    (offset: number) => {
+      const scrollEl = scrollRef.current
+      if (!scrollEl) return
+      const idx = headings.findIndex((h) => h.offset === offset)
+      if (idx < 0) return
+      const headingEls = findHeadingDomElements(scrollEl)
+      const target = headingEls[idx]
+      if (!target) return
+      const scrollRect = scrollEl.getBoundingClientRect()
+      const targetRect = target.getBoundingClientRect()
+      scrollEl.scrollBy({ top: targetRect.top - scrollRect.top - 12, behavior: 'smooth' })
+      setActiveOffset(offset)
+    },
+    [headings]
+  )
 
   function commitTag() {
     const clean = draft.trim().replace(/^#/, '')
@@ -1185,8 +559,10 @@ export function Editor({
         )}
       </div>
       <div className={styles.bodyWrap}>
-        <div className={styles.body}>
-          <div ref={hostRef} />
+        <div className={styles.body} ref={scrollRef}>
+          <EditorResponsesProvider value={contextValue}>
+            <EditorContent editor={editor} />
+          </EditorResponsesProvider>
         </div>
         <HeadingNavigator
           content={value}
@@ -1195,13 +571,14 @@ export function Editor({
         />
       </div>
       {relatedContent}
-      {toolbarState && viewRef.current && (
-        <FormattingToolbar
-          view={viewRef.current}
-          activeFormats={toolbarState.activeFormats}
-          position={{ top: toolbarState.top, left: toolbarState.left }}
-        />
-      )}
+      {editor && <FormattingToolbar editor={editor as TiptapEditor} />}
+      <CommandAutocomplete
+        state={autocomplete}
+        onSelect={(s) => acceptSuggestionRef.current(s)}
+        onHover={(idx) =>
+          setAutocomplete((prev) => (prev.visible ? { ...prev, selectedIdx: idx } : prev))
+        }
+      />
     </div>
   )
 }
