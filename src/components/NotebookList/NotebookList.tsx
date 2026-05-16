@@ -15,10 +15,10 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import {
   DotsSixVertical,
-  SidebarSimple,
   FileText,
   Gear,
   PlusCircle,
+  SidebarSimple,
   X,
 } from '@phosphor-icons/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -340,7 +340,7 @@ export function NotebookList({
       )}
 
       <div className={`${styles.footer} ${collapsed ? styles.footerCollapsed : ''}`}>
-        {!collapsed && <span className={styles.version}>v1.1.2</span>}
+        {!collapsed && <span className={styles.version}>v1.2.1</span>}
         <button
           className={styles.settings}
           onClick={onOpenSettings}
