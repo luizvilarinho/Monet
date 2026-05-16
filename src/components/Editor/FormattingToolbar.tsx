@@ -1,4 +1,5 @@
 import { BubbleMenu } from '@tiptap/react/menus'
+import { useEditorState } from '@tiptap/react'
 import type { Editor } from '@tiptap/core'
 import { useEffect, useState } from 'react'
 import styles from './FormattingToolbar.module.css'
@@ -88,6 +89,15 @@ function isActive(editor: Editor, id: FormatId): boolean {
   }
 }
 
+function isSafeLinkUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
 function runAction(editor: Editor, id: FormatId) {
   const chain = editor.chain().focus()
   switch (id) {
@@ -107,7 +117,7 @@ function runAction(editor: Editor, id: FormatId) {
         chain.unsetLink().run()
       } else {
         const url = window.prompt('URL do link:')?.trim()
-        if (url) chain.setLink({ href: url }).run()
+        if (url && isSafeLinkUrl(url)) chain.setLink({ href: url }).run()
         else chain.run()
       }
       return
@@ -199,9 +209,16 @@ export function FormattingToolbar({ editor }: Props) {
     }
   }, [editor, hiddenByEscape])
 
-  const inTable = editor.isActive('table')
-  const { from, to } = editor.state.selection
-  const hasSelection = from !== to
+  const { inTable, hasSelection } = useEditorState({
+    editor,
+    selector: ({ editor: ed }) => {
+      const { from, to } = ed.state.selection
+      return {
+        inTable: ed.isActive('table'),
+        hasSelection: from !== to,
+      }
+    },
+  })
 
   const formattingGroups = inTable
     ? FORMATTING_GROUPS.map((g) => g.filter((b) => b.id !== 'table'))

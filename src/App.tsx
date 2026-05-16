@@ -86,13 +86,10 @@ function stripCommandLines(content: string): string {
     .trim()
 }
 
-const EMBED_BLOCK_RE = /<embed-block\b[^>]*><\/embed-block>/g
-
 function expandEmbedBlocks(content: string, responses: AiResponse[]): string {
-  if (!EMBED_BLOCK_RE.test(content)) return content
-  EMBED_BLOCK_RE.lastIndex = 0
+  if (!content.includes('<embed-block')) return content
   const byId = new Map(responses.map((r) => [r.id, r]))
-  return content.replace(EMBED_BLOCK_RE, (match) => {
+  return content.replace(/<embed-block\b[^>]*><\/embed-block>/g, (match) => {
     const cmdMatch = match.match(/data-cmd="([^"]+)"/)
     if (!cmdMatch) return ''
     const response = byId.get(cmdMatch[1])

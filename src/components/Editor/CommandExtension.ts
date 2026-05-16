@@ -14,6 +14,11 @@ interface MarkEntry {
   status: CommandPersistedStatus
 }
 
+interface DragSourceRange {
+  from: number
+  to: number
+}
+
 export interface CommandPluginState {
   marks: Map<number, MarkEntry>
   responsesVersion: number
@@ -262,6 +267,155 @@ function deleteCommandLine(
   view.dispatch(tr)
 }
 
+function computeDropTarget(view: EditorView, clientX: number, clientY: number): number | null {
+  const dropResult = view.posAtCoords({ left: clientX, top: clientY })
+  if (!dropResult) return null
+  const $drop = view.state.doc.resolve(dropResult.pos)
+  if ($drop.depth === 0) return dropResult.pos
+  const blockStart = $drop.before(1)
+  const blockEnd = $drop.after(1)
+  const blockDom = view.nodeDOM(blockStart)
+  if (blockDom instanceof HTMLElement) {
+    const rect = blockDom.getBoundingClientRect()
+    return clientY < rect.top + rect.height / 2 ? blockStart : blockEnd
+  }
+  return blockStart
+}
+
+function findCommandRange(
+  view: EditorView,
+  entry: ParagraphCommandInfo,
+  getResponses: () => AiResponse[]
+): DragSourceRange | null {
+  const found = findCommandParagraph(
+    view.state.doc,
+    entry.response.id,
+    entry.text,
+    getResponses()
+  )
+  if (!found) return null
+  let to = found.end
+  if (to < view.state.doc.content.size) {
+    const after = view.state.doc.nodeAt(to)
+    if (after && after.type.name === 'embedBlock') {
+      to += after.nodeSize
+    }
+  }
+  return { from: found.pos, to }
+}
+
+function makeDragHandle(
+  view: EditorView,
+  entry: ParagraphCommandInfo,
+  getResponses: () => AiResponse[]
+): HTMLElement {
+  const handle = document.createElement('span')
+  handle.className = 'monetCmdDragHandle'
+  handle.contentEditable = 'false'
+  handle.setAttribute('aria-label', 'arrastar para reordenar')
+  handle.title = 'arrastar para reordenar'
+  handle.textContent = '⋮⋮'
+
+  handle.addEventListener('mousedown', (mouseDownEvent) => {
+    if (mouseDownEvent.button !== 0) return
+    mouseDownEvent.preventDefault()
+    mouseDownEvent.stopPropagation()
+
+    const initialRange = findCommandRange(view, entry, getResponses)
+    if (!initialRange) return
+
+    const startX = mouseDownEvent.clientX
+    const startY = mouseDownEvent.clientY
+    const DRAG_THRESHOLD = 4
+
+    let isDragging = false
+    let dropTarget: number | null = null
+    let indicator: HTMLDivElement | null = null
+
+    const ensureIndicator = (): HTMLDivElement => {
+      if (indicator) return indicator
+      const el = document.createElement('div')
+      el.className = 'monetCmdDropIndicator'
+      document.body.appendChild(el)
+      indicator = el
+      return el
+    }
+
+    const positionIndicator = (target: number) => {
+      try {
+        const coords = view.coordsAtPos(target)
+        const editorRect = view.dom.getBoundingClientRect()
+        const el = ensureIndicator()
+        el.style.display = 'block'
+        el.style.left = `${editorRect.left}px`
+        el.style.top = `${coords.top - 1}px`
+        el.style.width = `${editorRect.width}px`
+      } catch {
+        if (indicator) indicator.style.display = 'none'
+      }
+    }
+
+    const onMouseMove = (mv: MouseEvent) => {
+      if (!isDragging) {
+        const dx = mv.clientX - startX
+        const dy = mv.clientY - startY
+        if (Math.sqrt(dx * dx + dy * dy) < DRAG_THRESHOLD) return
+        isDragging = true
+        document.body.style.cursor = 'grabbing'
+        document.body.style.userSelect = 'none'
+      }
+      const target = computeDropTarget(view, mv.clientX, mv.clientY)
+      dropTarget = target
+      if (target === null) {
+        if (indicator) indicator.style.display = 'none'
+        return
+      }
+      const live = findCommandRange(view, entry, getResponses) ?? initialRange
+      if (target >= live.from && target <= live.to) {
+        if (indicator) indicator.style.display = 'none'
+        return
+      }
+      positionIndicator(target)
+    }
+
+    const cleanup = () => {
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+      document.removeEventListener('keydown', onKeyDown)
+      if (indicator) {
+        indicator.remove()
+        indicator = null
+      }
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+
+    const onMouseUp = () => {
+      if (isDragging && dropTarget !== null) {
+        const live = findCommandRange(view, entry, getResponses)
+        if (live && !(dropTarget >= live.from && dropTarget <= live.to)) {
+          const sliceContent = view.state.doc.slice(live.from, live.to).content
+          let tr = view.state.tr.delete(live.from, live.to)
+          const mappedTarget = tr.mapping.map(dropTarget)
+          tr.insert(mappedTarget, sliceContent)
+          view.dispatch(tr)
+        }
+      }
+      cleanup()
+    }
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') cleanup()
+    }
+
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+    document.addEventListener('keydown', onKeyDown)
+  })
+
+  return handle
+}
+
 function makeButtonsWidget(
   view: EditorView,
   entry: ParagraphCommandInfo,
@@ -377,6 +531,18 @@ function buildDecorations(
     )
 
     if (indexEntry && view) {
+      decorations.push(
+        Decoration.widget(
+          pos + 1,
+          () => makeDragHandle(view, indexEntry, options.getResponses),
+          {
+            side: -1,
+            ignoreSelection: true,
+            stopEvent: () => true,
+            key: `cmddrag-${indexEntry.response.id}`,
+          }
+        )
+      )
       const widgetPos = nodeEnd - 1
       decorations.push(
         Decoration.widget(widgetPos, () => makeButtonsWidget(view, indexEntry, options), {
@@ -446,7 +612,13 @@ export const CommandExtension = Extension.create<CommandExtensionOptions>({
             const pluginState = commandPluginKey.getState(state)
             if (!pluginState) return null
             const responses = ext.options.getResponses()
-            return buildDecorations(state, pluginState, responses, viewRef.current, ext.options)
+            return buildDecorations(
+              state,
+              pluginState,
+              responses,
+              viewRef.current,
+              ext.options
+            )
           },
         },
         view(editorView) {

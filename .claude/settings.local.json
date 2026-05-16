@@ -55,7 +55,9 @@
       "Bash(curl -s http://localhost:5001/src/components/Editor/Editor.tsx)",
       "Bash(curl -s http://localhost:5001/)",
       "Bash(echo \"EXIT=$?\")",
-      "Bash(echo \"TSC exit: $?\")"
+      "Bash(echo \"TSC exit: $?\")",
+      "Bash(npx eslint *)",
+      "WebFetch(domain:discuss.prosemirror.net)"
     ]
   }
 }

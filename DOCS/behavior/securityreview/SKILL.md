@@ -1,7 +1,7 @@
 ---
 name: securityreview
-description: >
-  Revisão geral de código com foco em performance, segurança, boas práticas e organização.
+description:
+  Revisão geral de código com foco em performance, segurança, boas práticas e organização de código.
   Use esta skill SEMPRE que o usuário pedir para revisar, auditar, analisar ou dar feedback
   sobre um trecho de código — independente da linguagem (JavaScript, TypeScript, Java, Python,
   etc.). Ative também quando o usuário disser "o que você acha desse código?", "tem algo errado
@@ -177,6 +177,7 @@ Stack/Linguagem detectada: [ex: TypeScript + Node.js, Java 21 + Spring Boot]
 [Lista priorizada: o que resolver primeiro e por quê]
 ```
 - Gere um relatório em formato markdown seguindo a estrutura acima.
+- O relatório deve ser escrito em linguagem clara e simples para ser entendido por um humano.
 - Grave o relatório no path `/AI/historico/securityreview` 
 ---
 

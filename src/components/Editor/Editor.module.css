@@ -285,6 +285,7 @@
   border-left: 2px solid var(--accent-ai, #5dcaa5);
   padding-left: 10px;
   margin-left: -12px;
+  position: relative;
 }
 
 /* /comando inválido ou incompleto */
@@ -294,6 +295,49 @@
   border-left: 2px solid #ef4f4f;
   padding-left: 10px;
   margin-left: -12px;
+}
+
+/* Handle de arrastar — aparece à esquerda da linha do /comando executado */
+.proseEditor :global(.monetCmdDragHandle) {
+  position: absolute;
+  left: -22px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  color: var(--text-muted, #606070);
+  font-size: 12px;
+  line-height: 1;
+  letter-spacing: -1px;
+  user-select: none;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+.proseEditor :global(p.monetCmdExecuted:hover .monetCmdDragHandle) {
+  opacity: 0.55;
+}
+.proseEditor :global(.monetCmdDragHandle:hover) {
+  opacity: 1;
+  color: var(--text-primary, #e8e8f0);
+}
+.proseEditor :global(.monetCmdDragHandle:active) {
+  cursor: grabbing;
+}
+
+/* Indicador visual da posição de drop durante o arrasto manual */
+:global(.monetCmdDropIndicator) {
+  position: fixed;
+  height: 2px;
+  background: var(--accent, #7c6af5);
+  pointer-events: none;
+  z-index: 9999;
+  display: none;
+  border-radius: 1px;
+  box-shadow: 0 0 6px rgba(124, 106, 245, 0.5);
 }
 
 /* Botões inline na linha do /comando — flutuam à direita do parágrafo */

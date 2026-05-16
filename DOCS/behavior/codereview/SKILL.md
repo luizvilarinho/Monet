@@ -1,5 +1,5 @@
 ---
-name: code-review
+name: codereview
 description: Revisão de código guiada por tarefas. Use esta skill SEMPRE que o usuário pedir para revisar código, encontrar bugs, verificar segurança, checar inconsistências ou quando mencionar "code review", "revisar o código", "olhar o código", "checar bugs" ou similar. Ative também quando o usuário mencionar TASKS.md junto com qualquer arquivo de código.
 ---
 
@@ -7,13 +7,13 @@ description: Revisão de código guiada por tarefas. Use esta skill SEMPRE que o
 
 ## Objetivo
 
-Fazer uma revisão completa do código do projeto, guiada pelas tarefas definidas no `TASKS.md`, buscando bugs, inconsistências e problemas de segurança.
+Fazer uma revisão completa do código do projeto, guiada pelas tarefas passadas pelo coordenador humano, buscando bugs, inconsistências e problemas de segurança.
 
 ---
 
 ## Passo 1 — Ler o TASKS.md
 
-O Coordenador irá fornecer os arquivos TASKS.md que vc deve ler para entender o contexto do projeto e as funcionalidades que estão sendo implementadas.
+O Coordenador irá fornecer os arquivos relevantes que vc deve ler para entender o contexto do projeto e as funcionalidades que estão sendo implementadas.
 
 Use o conteúdo para entender:
 - Quais funcionalidades estão sendo implementadas
@@ -64,7 +64,7 @@ Analise cada arquivo relevante procurando os três tipos de problema abaixo.
 
 ## Passo 4 — OUTPUT em Formato de relatório markdown
 - faça um relatório contendo os problemas encontrados e grave no path /AI/historico/codereview
-- o coordenador irá passar o nome do arquivo a ser usado. 
+- O relatório deve ser escrito em linguagem clara e simples para ser entendido facilmente pelo coordenador.
 
 Apresente os problemas encontrados neste formato:
 
