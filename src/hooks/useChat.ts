@@ -88,11 +88,15 @@ export interface ChatConversation {
   updatedAt: string
 }
 
+export type SystemPromptMode = 'replace' | 'append'
+
 export interface ChatFolder {
   id: string
   name: string
   conversationIds: string[]
   expanded: boolean
+  systemPrompt: string
+  systemPromptMode: SystemPromptMode
   createdAt: string
   updatedAt: string
 }
@@ -157,6 +161,7 @@ function isConversation(c: unknown): c is ChatConversation {
 function isFolder(f: unknown): f is ChatFolder {
   if (!f || typeof f !== 'object') return false
   const x = f as Record<string, unknown>
+  // systemPrompt / systemPromptMode sao opcionais aqui — normalizados em normalizeFolder
   return (
     typeof x.id === 'string' &&
     typeof x.name === 'string' &&
@@ -166,6 +171,14 @@ function isFolder(f: unknown): f is ChatFolder {
     typeof x.createdAt === 'string' &&
     typeof x.updatedAt === 'string'
   )
+}
+
+function normalizeFolder(f: ChatFolder): ChatFolder {
+  const raw = f as ChatFolder & Partial<Record<string, unknown>>
+  const sp = typeof raw.systemPrompt === 'string' ? raw.systemPrompt : ''
+  const mode: SystemPromptMode =
+    raw.systemPromptMode === 'append' ? 'append' : 'replace'
+  return { ...f, systemPrompt: sp, systemPromptMode: mode }
 }
 
 function deriveTitle(messages: ChatMessage[]): string {
@@ -232,7 +245,7 @@ function loadFolders(): ChatFolder[] {
     if (!raw) return []
     const parsed = JSON.parse(raw)
     if (Array.isArray(parsed) && parsed.every(isFolder)) {
-      return parsed as ChatFolder[]
+      return (parsed as ChatFolder[]).map(normalizeFolder)
     }
   } catch {
     /* ignore */
@@ -388,6 +401,8 @@ function makeNewFolder(name = 'Nova pasta'): ChatFolder {
     name,
     conversationIds: [],
     expanded: true,
+    systemPrompt: '',
+    systemPromptMode: 'replace',
     createdAt: now,
     updatedAt: now,
   }
@@ -452,6 +467,11 @@ export interface UseChatResult {
   renameFolder: (id: string, name: string) => void
   deleteFolder: (id: string) => void
   setFolderExpanded: (id: string, expanded: boolean) => void
+  setFolderSystemPrompt: (
+    folderId: string,
+    text: string,
+    mode: SystemPromptMode
+  ) => void
   moveConversation: (
     convId: string,
     target: { type: 'loose'; index?: number } | { type: 'folder'; folderId: string; index?: number }
@@ -704,6 +724,24 @@ export function useChat(): UseChatResult {
     [setFolders]
   )
 
+  const setFolderSystemPrompt = useCallback(
+    (folderId: string, text: string, mode: SystemPromptMode) => {
+      setFolders((prev) =>
+        prev.map((f) =>
+          f.id === folderId
+            ? {
+                ...f,
+                systemPrompt: text,
+                systemPromptMode: mode,
+                updatedAt: new Date().toISOString(),
+              }
+            : f
+        )
+      )
+    },
+    [setFolders]
+  )
+
   const moveConversation = useCallback(
     (
       convId: string,
@@ -920,11 +958,63 @@ export function useChat(): UseChatResult {
       }
       setError(null)
 
+      // Garante uma conversa ativa
+      let convId = activeId
+      if (!convId) {
+        const conv = makeNewConversation()
+        convId = conv.id
+        setConversations((prev) => [conv, ...prev])
+        setLooseOrder((prev) => [conv.id, ...prev])
+        setActiveIdState(conv.id)
+      }
+      const targetId = convId
+
+      // Captura o historico ANTES de inserir a nova mensagem do usuario,
+      // senao ela apareceria duplicada no payload (no historico + na ultima msg).
+      const currentConv = conversationsRef.current.find((c) => c.id === targetId)
+      const historyForApi: ChatMessageInput[] =
+        currentConv?.messages.map((m) => ({
+          role: m.role,
+          content: m.content,
+        })) ?? []
+
+      // Insere a mensagem do usuario + placeholder do assistant ANTES dos awaits
+      // (chave de API, web search) para a UI responder imediatamente. Erros sao
+      // refletidos no proprio placeholder do assistant.
+      const userMsg: ChatMessage = {
+        id: nanoid(),
+        role: 'user',
+        content: trimmed,
+        timestamp: new Date().toISOString(),
+      }
+      const assistantId = nanoid()
+      const assistantMsg: ChatMessage = {
+        id: assistantId,
+        role: 'assistant',
+        content: '',
+        timestamp: new Date().toISOString(),
+      }
+      updateMessages(targetId, (msgs) => [...msgs, userMsg, assistantMsg])
+      setIsStreaming(true)
+
+      const failOnAssistant = (message: string) => {
+        updateMessages(targetId, (msgs) =>
+          msgs.map((m) =>
+            m.id === assistantId && m.content === ''
+              ? { ...m, content: `Erro: ${message}` }
+              : m
+          )
+        )
+        setError(message)
+        activeStreamRef.current = null
+        setIsStreaming(false)
+      }
+
       const keyPresent = await hasOpenRouterKey()
       if (!keyPresent) {
         setHasApiKey(false)
         setApiKeyChecked(true)
-        setError(
+        failOnAssistant(
           'Chave de API não configurada. Cadastre a chave do OpenRouter em Settings.'
         )
         return
@@ -937,7 +1027,7 @@ export function useChat(): UseChatResult {
       if (toolsRef.current.webSearch) {
         const tavilyOk = await hasTavilyKey()
         if (!tavilyOk) {
-          setError(
+          failOnAssistant(
             'Web Search está ativo mas a chave Tavily não está configurada em Settings > Busca Web.'
           )
           return
@@ -959,42 +1049,30 @@ export function useChat(): UseChatResult {
         }
       }
 
-      // Garante uma conversa ativa
-      let convId = activeId
-      if (!convId) {
-        const conv = makeNewConversation()
-        convId = conv.id
-        setConversations((prev) => [conv, ...prev])
-        setLooseOrder((prev) => [conv.id, ...prev])
-        setActiveIdState(conv.id)
+      // System prompt da pasta (se houver) + modo de aplicacao
+      // - sem pasta ou prompt vazio -> apenas o prompt padrao
+      // - modo "replace" -> apenas o prompt da pasta (padrao nao entra)
+      // - modo "append"  -> prompt padrao primeiro, depois o da pasta
+      const containingFolder = foldersRef.current.find((f) =>
+        f.conversationIds.includes(targetId)
+      )
+      const folderPrompt = containingFolder?.systemPrompt.trim() ?? ''
+      let systemMessages: ChatMessageInput[]
+      if (containingFolder && folderPrompt.length > 0) {
+        if (containingFolder.systemPromptMode === 'replace') {
+          systemMessages = [{ role: 'system', content: folderPrompt }]
+        } else {
+          systemMessages = [
+            { role: 'system', content: CHAT_SYSTEM_PROMPT },
+            { role: 'system', content: folderPrompt },
+          ]
+        }
+      } else {
+        systemMessages = [{ role: 'system', content: CHAT_SYSTEM_PROMPT }]
       }
-      const targetId = convId
-
-      const userMsg: ChatMessage = {
-        id: nanoid(),
-        role: 'user',
-        content: trimmed,
-        timestamp: new Date().toISOString(),
-      }
-      const assistantId = nanoid()
-      const assistantMsg: ChatMessage = {
-        id: assistantId,
-        role: 'assistant',
-        content: '',
-        timestamp: new Date().toISOString(),
-      }
-
-      const currentConv = conversationsRef.current.find((c) => c.id === targetId)
-      const historyForApi: ChatMessageInput[] =
-        currentConv?.messages.map((m) => ({
-          role: m.role,
-          content: m.content,
-        })) ?? []
-
-      updateMessages(targetId, (msgs) => [...msgs, userMsg, assistantMsg])
 
       const apiMessages: ChatMessageInput[] = [
-        { role: 'system', content: CHAT_SYSTEM_PROMPT },
+        ...systemMessages,
         ...(searchSystemMessage ? [searchSystemMessage] : []),
         ...historyForApi,
         { role: 'user', content: trimmed },
@@ -1002,7 +1080,6 @@ export function useChat(): UseChatResult {
 
       const requestId = assistantId
       activeStreamRef.current = { requestId, convId: targetId, assistantId }
-      setIsStreaming(true)
 
       try {
         await startOpenRouterStreamMessages({
@@ -1013,16 +1090,7 @@ export function useChat(): UseChatResult {
       } catch (err) {
         const message =
           err instanceof Error ? err.message : String(err ?? 'erro desconhecido')
-        updateMessages(targetId, (msgs) =>
-          msgs.map((m) =>
-            m.id === assistantId && m.content === ''
-              ? { ...m, content: `Erro: ${message}` }
-              : m
-          )
-        )
-        setError(message)
-        activeStreamRef.current = null
-        setIsStreaming(false)
+        failOnAssistant(message)
       }
     },
     [activeId, isStreaming, model, setLooseOrder, updateMessages]
@@ -1069,6 +1137,7 @@ export function useChat(): UseChatResult {
     renameFolder,
     deleteFolder,
     setFolderExpanded,
+    setFolderSystemPrompt,
     moveConversation,
     removeConversationFromFolder,
     reorderFolders,

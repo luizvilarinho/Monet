@@ -1,12 +1,13 @@
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useChat, type ChatMessage } from '../../hooks/useChat'
+import { useChat, type ChatFolder, type ChatMessage } from '../../hooks/useChat'
 import { renderMarkdown } from '../../lib/markdown'
 import type { AiModel, Note, Notebook } from '../../types'
 import { ModelSelector } from '../AiPanel/ModelSelector'
 import styles from './ChatPanel.module.css'
 import { ChatSidebar } from './ChatSidebar'
 import { ChatToolsMenu } from './ChatToolsMenu'
+import { FolderSystemPromptModal } from './FolderSystemPromptModal'
 import { SaveToNoteModal } from './SaveToNoteModal'
 
 export interface ChatPanelProps {
@@ -57,6 +58,7 @@ export function ChatPanel({
     renameFolder,
     deleteFolder,
     setFolderExpanded,
+    setFolderSystemPrompt,
     moveConversation,
     removeConversationFromFolder,
     reorderFolders,
@@ -66,7 +68,11 @@ export function ChatPanel({
 
   const [draft, setDraft] = useState('')
   const [saveTarget, setSaveTarget] = useState<{ messageId: string; content: string } | null>(null)
+  const [systemPromptFolderId, setSystemPromptFolderId] = useState<string | null>(
+    null,
+  )
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
+  const historyRef = useRef<HTMLDivElement | null>(null)
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const saved = parseInt(localStorage.getItem('monet:chat-sidebar-width') ?? '', 10)
     if (isNaN(saved)) return 240
@@ -113,6 +119,37 @@ export function ChatPanel({
     return null
   }, [isStreaming, messages])
 
+  const systemPromptFolder: ChatFolder | null = useMemo(() => {
+    if (!systemPromptFolderId) return null
+    return folders.find((f) => f.id === systemPromptFolderId) ?? null
+  }, [folders, systemPromptFolderId])
+
+  // Scroll unico ao final do historico quando o usuario envia uma nova mensagem
+  // na mesma conversa. Trocas de conversa nao disparam (cada conversa preserva
+  // sua posicao). Streaming nao dispara (so o id da ultima msg de user importa).
+  const lastUserMessageId = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') return messages[i].id
+    }
+    return null
+  }, [messages])
+  const prevActiveIdRef = useRef(activeId)
+  const prevLastUserMessageIdRef = useRef(lastUserMessageId)
+  useEffect(() => {
+    const sameConv = prevActiveIdRef.current === activeId
+    const userMsgChanged =
+      prevLastUserMessageIdRef.current !== lastUserMessageId
+    prevActiveIdRef.current = activeId
+    prevLastUserMessageIdRef.current = lastUserMessageId
+    if (!sameConv || !userMsgChanged || !lastUserMessageId) return
+    const el = historyRef.current
+    if (!el) return
+    // requestAnimationFrame garante que o DOM da nova bolha ja foi medido
+    requestAnimationFrame(() => {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+    })
+  }, [activeId, lastUserMessageId])
+
   function handleSend() {
     if (!canSend) return
     const text = draft
@@ -140,6 +177,9 @@ export function ChatPanel({
         onReorderFolders={reorderFolders}
         onReorderInFolder={reorderInFolder}
         onReorderLoose={reorderLoose}
+        onOpenFolderSystemPrompt={(folder) =>
+          setSystemPromptFolderId(folder.id)
+        }
         width={sidebarWidth}
         onWidthChange={setSidebarWidth}
       />
@@ -174,7 +214,7 @@ export function ChatPanel({
           </div>
         )}
 
-        <div className={styles.history}>
+        <div className={styles.history} ref={historyRef}>
           {messages.length === 0 ? (
             <div className={styles.empty}>
               <p className={styles.emptyTitle}>Olá! Eu sou o seu assistente.</p>
@@ -250,6 +290,15 @@ export function ChatPanel({
         onSaveNote={onSaveNote}
         onNavigateToNote={onNavigateToNote}
         onClose={() => setSaveTarget(null)}
+      />
+
+      <FolderSystemPromptModal
+        open={systemPromptFolder !== null}
+        folder={systemPromptFolder}
+        onConfirm={(folderId, text, mode) =>
+          setFolderSystemPrompt(folderId, text, mode)
+        }
+        onClose={() => setSystemPromptFolderId(null)}
       />
     </section>
   )

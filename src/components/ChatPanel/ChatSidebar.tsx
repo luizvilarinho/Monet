@@ -42,6 +42,7 @@ export interface ChatSidebarProps {
   onReorderFolders: (newOrder: string[]) => void
   onReorderInFolder: (folderId: string, newOrder: string[]) => void
   onReorderLoose: (newOrder: string[]) => void
+  onOpenFolderSystemPrompt: (folder: ChatFolder) => void
   width: number
   onWidthChange: (w: number) => void
 }
@@ -98,6 +99,24 @@ const RemoveFromFolderIcon = () => (
   </svg>
 )
 
+// Icone de "system prompt" / configuracao de IA na pasta — sparkle estilizado.
+const SystemPromptIcon = () => (
+  <svg
+    viewBox="0 0 16 16"
+    width="12"
+    height="12"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.6"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <path d="M8 1.5l1.4 3.6L13 6.5l-3.6 1.4L8 11.5 6.6 7.9 3 6.5l3.6-1.4L8 1.5z" />
+    <path d="M12.5 11.5l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6.6-1.4z" />
+  </svg>
+)
+
 type ActiveDragKind = 'folder' | 'conv' | null
 
 export function ChatSidebar({
@@ -118,6 +137,7 @@ export function ChatSidebar({
   onReorderFolders,
   onReorderInFolder,
   onReorderLoose,
+  onOpenFolderSystemPrompt,
   width,
   onWidthChange,
 }: ChatSidebarProps) {
@@ -410,6 +430,7 @@ export function ChatSidebar({
                   onToggleFolderExpanded(folder.id, !folder.expanded)
                 }
                 onDeleteFolder={() => handleDeleteFolder(folder)}
+                onOpenSystemPrompt={() => onOpenFolderSystemPrompt(folder)}
                 isAnyConvDragging={activeDragKind === 'conv'}
               />
             ))}
@@ -471,6 +492,7 @@ interface SortableFolderProps {
   onNewConversation: () => void
   onToggleExpanded: () => void
   onDeleteFolder: () => void
+  onOpenSystemPrompt: () => void
   isAnyConvDragging: boolean
 }
 
@@ -491,6 +513,7 @@ function SortableFolder({
   onNewConversation,
   onToggleExpanded,
   onDeleteFolder,
+  onOpenSystemPrompt,
   isAnyConvDragging,
 }: SortableFolderProps) {
   const {
@@ -568,35 +591,58 @@ function SortableFolder({
           </span>
         )}
         {!editing && (
-          <span
-            className={styles.folderActions}
-            onPointerDown={(e) => e.stopPropagation()}
-          >
+          <>
             <button
               type="button"
-              className={styles.folderActionBtn}
+              className={`${styles.folderSysPromptBtn} ${
+                folder.systemPrompt.trim().length > 0
+                  ? styles.folderSysPromptBtnActive
+                  : ''
+              }`}
               onClick={(e) => {
                 e.stopPropagation()
-                onNewConversation()
+                onOpenSystemPrompt()
               }}
-              aria-label={`nova conversa em ${folder.name || 'pasta'}`}
-              title="nova conversa nesta pasta"
+              onPointerDown={(e) => e.stopPropagation()}
+              aria-label={`configurar system prompt de ${folder.name || 'pasta'}`}
+              title={
+                folder.systemPrompt.trim().length > 0
+                  ? 'system prompt ativo (clique para editar)'
+                  : 'definir system prompt da pasta'
+              }
             >
-              <PlusIcon />
+              <SystemPromptIcon />
             </button>
-            <button
-              type="button"
-              className={`${styles.folderActionBtn} ${styles.folderActionBtnDelete}`}
-              onClick={(e) => {
-                e.stopPropagation()
-                onDeleteFolder()
-              }}
-              aria-label={`excluir pasta ${folder.name || ''}`}
-              title="excluir pasta"
+            <span
+              className={styles.folderActions}
+              onPointerDown={(e) => e.stopPropagation()}
             >
-              ×
-            </button>
-          </span>
+              <button
+                type="button"
+                className={styles.folderActionBtn}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onNewConversation()
+                }}
+                aria-label={`nova conversa em ${folder.name || 'pasta'}`}
+                title="nova conversa nesta pasta"
+              >
+                <PlusIcon />
+              </button>
+              <button
+                type="button"
+                className={`${styles.folderActionBtn} ${styles.folderActionBtnDelete}`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onDeleteFolder()
+                }}
+                aria-label={`excluir pasta ${folder.name || ''}`}
+                title="excluir pasta"
+              >
+                ×
+              </button>
+            </span>
+          </>
         )}
       </div>
 
