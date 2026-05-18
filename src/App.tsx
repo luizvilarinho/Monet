@@ -7,6 +7,7 @@ import { DocumentsModal } from './components/DocumentsModal/DocumentsModal'
 import { Editor } from './components/Editor/Editor'
 import { EmptyEditor } from './components/Editor/EmptyEditor'
 import { NotebookList } from './components/NotebookList/NotebookList'
+import { Onboarding } from './components/Onboarding/Onboarding'
 import { RelatedContent } from './components/RelatedContent/RelatedContent'
 import { SettingsModal } from './components/Settings/SettingsModal'
 import { Sidebar } from './components/Sidebar/Sidebar'
@@ -172,6 +173,9 @@ function App() {
 
   const [hasApiKey, setHasApiKey] = useState<boolean>(false)
   const [apiKeyChecked, setApiKeyChecked] = useState<boolean>(false)
+  const [onboardingActive, setOnboardingActive] = useState<boolean>(
+    () => localStorage.getItem('onboarding_completed') !== '1'
+  )
   const [models, setModels] = useState<AiModel[]>([])
   const [modelsLoading, setModelsLoading] = useState<boolean>(false)
   const [modelsError, setModelsError] = useState<string | null>(null)
@@ -633,6 +637,20 @@ function App() {
     setActiveMode('chat')
   }, [])
 
+  const handleCompleteOnboarding = useCallback(() => {
+    localStorage.setItem('onboarding_completed', '1')
+    setOnboardingActive(false)
+  }, [])
+
+  const handleSkipOnboarding = useCallback(() => {
+    setOnboardingActive(false)
+  }, [])
+
+  const handleOpenSettings = useCallback(() => {
+    if (onboardingActive) return
+    setSettingsOpen(true)
+  }, [onboardingActive])
+
   const handleNotebookReorder = useCallback((newOrder: string[]) => {
     setNotebookOrder(newOrder)
     saveOrder('monet:notebook-order', newOrder)
@@ -667,7 +685,7 @@ function App() {
             models={models}
             modelsLoading={modelsLoading}
             modelsError={modelsError}
-            onOpenSettings={() => setSettingsOpen(true)}
+            onOpenSettings={handleOpenSettings}
             notebooks={orderedNotebooks}
             notes={notes}
             onCreateNotebook={handleCreateNotebookFromChat}
@@ -695,7 +713,7 @@ function App() {
           tags={allTags}
           activeTag={activeTag}
           onSelectTag={setActiveTag}
-          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenSettings={handleOpenSettings}
           width={effectiveNotebookWidth}
           collapsed={notebookCollapsed}
           onToggleCollapsed={() => setNotebookCollapsed((v) => !v)}
@@ -751,7 +769,7 @@ function App() {
           models={models}
           modelId={modelId}
           onModelChange={setModelId}
-          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenSettings={handleOpenSettings}
           navigateToCard={null}
           onDeleteResponse={(id) => {
             removeResponse(id)
@@ -762,7 +780,7 @@ function App() {
       </div>
       )}
       <SettingsModal
-        open={settingsOpen}
+        open={settingsOpen && !onboardingActive}
         onClose={() => setSettingsOpen(false)}
         onApiKeyChanged={handleApiKeyChanged}
       />
@@ -774,6 +792,13 @@ function App() {
         }
         onClose={() => setDocumentsModalNotebookId(null)}
       />
+      {onboardingActive && (
+        <Onboarding
+          onComplete={handleCompleteOnboarding}
+          onSkip={handleSkipOnboarding}
+          onApiKeyChanged={handleApiKeyChanged}
+        />
+      )}
     </div>
   )
 }

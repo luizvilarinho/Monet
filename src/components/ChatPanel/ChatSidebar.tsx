@@ -222,8 +222,8 @@ export function ChatSidebar({
     if (trimmed) {
       onRenameFolder(editingFolderId, trimmed)
     } else {
-      // Sem nome: BDD requer cancelar criacao (e restaurar nome ao renomear).
-      // Pastas criadas com nome vazio sao removidas; renomeacao com vazio nao altera.
+      // No name: BDD requires cancelling creation (and restoring name on rename).
+      // Folders created with empty name are removed; rename with empty name is a no-op.
       const folder = folders.find((f) => f.id === editingFolderId)
       if (folder && folder.name.length === 0) {
         onDeleteFolder(editingFolderId)

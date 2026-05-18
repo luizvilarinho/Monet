@@ -57,7 +57,8 @@
       "Bash(echo \"EXIT=$?\")",
       "Bash(echo \"TSC exit: $?\")",
       "Bash(npx eslint *)",
-      "WebFetch(domain:discuss.prosemirror.net)"
+      "WebFetch(domain:discuss.prosemirror.net)",
+      "Bash(New-Item *)"
     ]
   }
 }

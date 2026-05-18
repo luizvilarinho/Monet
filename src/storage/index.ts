@@ -18,9 +18,9 @@ export interface StorageAdapter {
   deleteResponse(id: string): Promise<void>
   deleteResponses(noteId: string): Promise<void>
 
-  // Documentos têm ciclo de vida no backend Rust (documents_upload /
-  // documents_delete em src-tauri/src/documents.rs). O StorageAdapter só
-  // expõe leitura e atualização de status.
+  // Documents are lifecycle-managed by the Rust backend (documents_upload /
+  // documents_delete in src-tauri/src/documents.rs). StorageAdapter only
+  // exposes reads and status updates.
   getDocuments(notebookId: string): Promise<Document[]>
   updateDocumentStatus(
     id: string,

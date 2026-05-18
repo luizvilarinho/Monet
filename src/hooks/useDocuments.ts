@@ -43,8 +43,8 @@ export function useDocuments(notebookId: string | null) {
     let unlisten: (() => void) | null = null
     let cancelled = false
     onDocumentStatus(({ documentId, notebookId: eventNotebookId, status, errorMessage }) => {
-      // Filtra eventos de outros cadernos para evitar refresh espúrio quando
-      // o usuário troca de caderno enquanto outro indexa em background.
+      // Filter events from other notebooks to avoid spurious refresh when
+      // the user switches notebooks while another indexes in background.
       if (notebookIdRef.current !== eventNotebookId) return
       setDocuments((prev) => {
         const idx = prev.findIndex((d) => d.id === documentId)

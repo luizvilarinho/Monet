@@ -239,9 +239,9 @@ export class TauriStorage implements StorageAdapter {
     return rows.map(rowToNote)
   }
 
-  // Leitura apenas. A tabela `documents` é gerenciada exclusivamente pelo
-  // backend Rust (src-tauri/src/documents.rs) — escritas pelo frontend
-  // quebram o pareamento com vec_chunks/chunks_meta no banco vetorial.
+  // Read-only. The `documents` table is managed exclusively by the
+  // Rust backend (src-tauri/src/documents.rs) — frontend writes break
+  // the pairing with vec_chunks/chunks_meta in the vector store.
   async getDocuments(notebookId: string): Promise<Document[]> {
     const db = await this.db()
     const rows = await db.select<DocumentRow[]>(

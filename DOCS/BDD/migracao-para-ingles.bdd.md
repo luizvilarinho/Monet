@@ -71,7 +71,7 @@ Feature: Migração completa da interface para inglês
     Given que o usuario está editando uma nota no editor
     When ele iniciar uma linha com /
     Then o sistema deve exibir autocomplete com os comandos em inglês
-    And a lista deve conter /search, /profile, /define, /summarize, /opinion, /table, /expand, /explain, /guide, /mindmap e /ask
+    And a lista deve conter /search, /profile, /define, /summarize, /opinion, /table, /expand, /explain, /guide, /mindmap, /ask e /docs
 
   Scenario: Executar comando /search
     Given que o usuario digitou /search seguido de um termo
@@ -142,6 +142,13 @@ Feature: Migração completa da interface para inglês
     Then o sistema deve iniciar uma solicitação para a IA usando o comando /ask
     And a resposta deve ser exibida no painel IA da nota atual
 
+  Scenario: Executar comando /docs
+    Given que o usuario digitou /docs seguido de uma pergunta
+    When ele pressionar Enter
+    Then o sistema deve iniciar uma solicitação para a IA usando o comando /docs
+    And a solicitação deve usar apenas os documentos do caderno atual como contexto
+    And a resposta deve ser exibida no painel IA da nota atual
+
   Scenario: Rejeitar comandos antigos em português
     Given que o usuario digita um comando em português (ex: /pesquisa, /resumir)
     When ele pressionar Enter
@@ -207,7 +214,7 @@ Feature: Migração completa da interface para inglês
 
 1. Toda string visível na interface (labels, botões, títulos, placeholders, tooltips, mensagens de status) deve estar em inglês após a migração.
 2. Nenhuma string em português deve permanecer acessível ao usuário na interface.
-3. O autocomplete de comandos deve listar exclusivamente os comandos em inglês: /search, /profile, /define, /summarize, /opinion, /table, /expand, /explain, /guide, /mindmap e /ask.
+3. O autocomplete de comandos deve listar exclusivamente os comandos em inglês: /search, /profile, /define, /summarize, /opinion, /table, /expand, /explain, /guide, /mindmap, /ask e /docs.
 4. Comandos antigos em português não devem ser reconhecidos como válidos.
 5. A IA deve responder no idioma detectado via `navigator.language` do sistema operacional do usuário.
 6. Quando o idioma do sistema não puder ser detectado, a IA deve responder em inglês.
@@ -240,6 +247,7 @@ Feature: Migração completa da interface para inglês
 - /guide: substituto em inglês do /guia — roteiro de estudos com tópicos e sequência lógica.
 - /mindmap: substituto em inglês do /mapa-mental — mapa mental hierárquico em markdown.
 - /ask: substituto em inglês do /perguntar — pergunta livre ao modelo de IA.
+- /docs: substituto em inglês do /documentos — resposta baseada exclusivamente nos documentos do caderno.
 - Backend Rust: camada de servidor local do app escrita em Rust via Tauri, responsável por operações de arquivo e banco de dados.
 - Conteúdo gerado automaticamente: strings criadas pelo sistema sem input direto do usuário, como títulos padrão de notas; devem seguir o mesmo padrão de idioma da interface.
 - localStorage: armazenamento chave-valor disponível na WebView do Tauri, usado para persistir a preferência de idioma detectada entre sessões.
@@ -250,7 +258,7 @@ Feature: Migração completa da interface para inglês
 
 1. ~~**Idioma da IA vs idioma da interface:** A interface será em inglês, mas a IA responderá no idioma do sistema do usuário.~~ **Decidido:** comportamento intencional. UI em inglês; IA responde no idioma do sistema do usuário.
 
-2. ~~**Nomes dos comandos:** Confirmar se todos os nomes estão aprovados antes da implementação.~~ **Decidido:** lista aprovada — /search, /profile, /define, /summarize, /opinion, /table, /expand, /explain, /guide, /mindmap, /ask.
+2. ~~**Nomes dos comandos:** Confirmar se todos os nomes estão aprovados antes da implementação.~~ **Decidido:** lista aprovada — /search, /profile, /define, /summarize, /opinion, /table, /expand, /explain, /guide, /mindmap, /ask, /docs.
 
 3. ~~**Textos de conteúdo gerado:** Títulos gerados automaticamente devem ser traduzidos?~~ **Decidido:** sim, traduzir para inglês (ex: "Nova nota" → "New note").
 

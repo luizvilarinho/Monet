@@ -147,7 +147,7 @@ async fn export_markdown(default_name: String, content: String) -> Result<bool, 
         None => Ok(false),
         Some(path) => {
             std::fs::write(&path, content.as_bytes())
-                .map_err(|e| format!("Failed to save: {}", e))?;
+                .map_err(|e| format!("failed to save: {}", e))?;
             Ok(true)
         }
     }

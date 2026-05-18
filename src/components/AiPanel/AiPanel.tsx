@@ -236,7 +236,7 @@ export function AiPanel({
       {showMissingKeyBanner && (
         <div className={styles.keyBanner} role="alert">
           <span>
-            An OpenRouter key is required in Settings to use the AI.
+            Set up your OpenRouter key in Settings to enable AI features.
           </span>
           <button type="button" onClick={onOpenSettings} className={styles.keyBannerCta}>
             open Settings
@@ -258,7 +258,7 @@ export function AiPanel({
         )}
         {orderedResponses.length === 0 ? (
           <p className={styles.empty}>
-            Use /comandos no editor para acionar a IA.
+            Use /commands in the editor to trigger the AI.
           </p>
         ) : (
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>

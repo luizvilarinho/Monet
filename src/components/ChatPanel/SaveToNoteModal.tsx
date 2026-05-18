@@ -7,14 +7,14 @@ const LAST_NOTEBOOK_KEY = 'monet:chat-save-last-notebook-id'
 
 export interface SaveToNoteModalProps {
   open: boolean
-  /** Markdown bruto da resposta da IA. */
+  /** Raw AI response markdown. */
   content: string
   notebooks: Notebook[]
   notes: Note[]
   onCreateNotebook: (name: string) => Promise<Notebook>
-  /** Cria nota dentro do caderno com o título informado. */
+  /** Creates a note inside the notebook with the given title. */
   onCreateNote: (notebookId: string, title: string, content: string) => Promise<Note>
-  /** Salva uma nota existente (upsert). */
+  /** Saves an existing note (upsert). */
   onSaveNote: (note: Note) => Promise<void>
   onNavigateToNote: (notebookId: string, noteId: string) => void
   onClose: () => void
@@ -72,8 +72,7 @@ function formatTimestamp(now = new Date()): string {
 
 export function buildToggleBlock(rawMarkdown: string, timestamp = formatTimestamp()): string {
   const body = rawMarkdown.trim()
-  // Markdown puro: cabeçalho com timestamp + conteúdo. Sem tags HTML,
-  // totalmente editável e renderizado normalmente no preview.
+  // Pure markdown: timestamp header + content. No HTML, fully editable and rendered normally in preview.
   return `**Chat Response — ${timestamp}**\n\n${body}`
 }
 
@@ -98,7 +97,7 @@ export function SaveToNoteModal({
   const [newNotebookName, setNewNotebookName] = useState('')
   const [newNoteTitle, setNewNoteTitle] = useState('')
   const [titleError, setTitleError] = useState<string | null>(null)
-  /** Caderno escolhido na etapa anterior (para destaque ao voltar). */
+  /** Notebook selected in the previous stage (highlighted when going back). */
   const [recentlyPickedNotebookId, setRecentlyPickedNotebookId] = useState<string | null>(null)
 
   const newNotebookInputRef = useRef<HTMLInputElement | null>(null)
@@ -109,7 +108,7 @@ export function SaveToNoteModal({
     return { kind: 'notebook-select' }
   }
 
-  // Reinicia ao abrir
+  // Reset on open
   useEffect(() => {
     if (!open) return
     setStage(initialStage(notebooks.length))

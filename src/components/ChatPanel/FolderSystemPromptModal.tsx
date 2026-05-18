@@ -20,7 +20,7 @@ export function FolderSystemPromptModal({
   const [mode, setMode] = useState<SystemPromptMode>('replace')
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
 
-  // Carrega os valores salvos da pasta ao abrir
+  // Load saved folder values on open
   useEffect(() => {
     if (!open || !folder) return
     setText(folder.systemPrompt ?? '')

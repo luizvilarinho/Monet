@@ -55,7 +55,7 @@ export function ModelSelector({
     return (
       <div className={styles.selectorWarn} role="status">
         <span className={styles.warnDot} aria-hidden="true" />
-        <span className={styles.warnText}>Sem chave de API</span>
+        <span className={styles.warnText}>No API key</span>
         <button
           type="button"
           className={styles.warnCta}
@@ -106,11 +106,11 @@ export function ModelSelector({
         <div className={styles.popover} role="listbox">
           <input
             className={styles.search}
-            placeholder="search model..."
+            placeholder="search models..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             autoFocus
-            aria-label="search model"
+            aria-label="search models"
           />
           <div className={styles.modelList}>
             {loading && (

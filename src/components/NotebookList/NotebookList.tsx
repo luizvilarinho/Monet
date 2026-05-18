@@ -340,7 +340,7 @@ export function NotebookList({
       )}
 
       <div className={`${styles.footer} ${collapsed ? styles.footerCollapsed : ''}`}>
-        {!collapsed && <span className={styles.version}>v1.2.2</span>}
+        {!collapsed && <span className={styles.version}>v1.3.1</span>}
         <button
           className={styles.settings}
           onClick={onOpenSettings}
