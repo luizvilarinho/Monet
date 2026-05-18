@@ -57,15 +57,15 @@ function SortableNoteItem({ note, isActive, onSelect, onDelete }: SortableNoteIt
         {...attributes}
         {...listeners}
         onClick={(e) => e.stopPropagation()}
-        aria-label="arrastar para reordenar"
+        aria-label="drag to reorder"
       >
         <DotsSixVertical size={12} weight="bold" aria-hidden />
       </span>
-      <span className={styles.rowLabel}>{note.title || 'sem título'}</span>
+      <span className={styles.rowLabel}>{note.title || 'untitled'}</span>
       <button
         className={styles.rowDelete}
         onClick={(e) => { e.stopPropagation(); onDelete(note.id) }}
-        aria-label={`apagar anotação ${note.title || 'sem título'}`}
+        aria-label={`delete note ${note.title || 'untitled'}`}
         type="button"
       >
         <X size={12} weight="bold" aria-hidden />
@@ -148,8 +148,8 @@ export function Sidebar({
 
   async function handleDeleteNote(id: string, title: string) {
     const ok = await confirm(
-      `Apagar a anotação "${title || 'sem título'}"?`,
-      { title: 'Apagar anotação' }
+      `Delete note "${title || 'untitled'}"?`,
+      { title: 'Delete note' }
     )
     if (ok) onDelete(id)
   }
@@ -172,8 +172,8 @@ export function Sidebar({
           <button
             className={styles.headerToggle}
             onClick={onToggleCollapsed}
-            aria-label="expandir anotações"
-            title="expandir anotações"
+            aria-label="expand notes"
+            title="expand notes"
             type="button"
           >
             <SidebarSimple size={16} aria-hidden />
@@ -182,13 +182,13 @@ export function Sidebar({
       ) : (
         <>
           <div className={styles.header}>
-            <span>anotações</span>
+            <span>notes</span>
             <div className={styles.headerActions}>
               <button
                 className={styles.headerToggle}
                 onClick={onToggleCollapsed}
-                aria-label="recolher anotações"
-                title="recolher anotações"
+                aria-label="collapse notes"
+                title="collapse notes"
                 type="button"
               >
                 <SidebarSimple size={16} aria-hidden />
@@ -197,7 +197,7 @@ export function Sidebar({
                 className={styles.headerAdd}
                 onClick={onCreate}
                 disabled={!notebookSelected}
-                aria-label="nova anotação"
+                aria-label="new note"
                 type="button"
               >
                 <PlusCircle size={16} weight="fill" aria-hidden />
@@ -206,7 +206,7 @@ export function Sidebar({
           </div>
           <ul className={styles.list}>
             {notes.length === 0 ? (
-              <li className={styles.empty}>nenhuma anotação</li>
+              <li className={styles.empty}>no notes</li>
             ) : (
               <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
                 <SortableContext items={notes.map((n) => n.id)} strategy={verticalListSortingStrategy}>

@@ -20,8 +20,8 @@ export interface SettingsModalProps {
 type Section = 'openrouter' | 'search'
 
 const SECTIONS: Array<{ id: Section; label: string }> = [
-  { id: 'openrouter', label: 'Integração OpenRouter' },
-  { id: 'search', label: 'Busca Web' },
+  { id: 'openrouter', label: 'OpenRouter Integration' },
+  { id: 'search', label: 'Web Search' },
 ]
 
 export function SettingsModal({
@@ -77,13 +77,13 @@ export function SettingsModal({
   async function handleSave() {
     const trimmed = keyValue.trim()
     if (!trimmed) {
-      setStatus({ kind: 'error', message: 'Informe uma chave válida.' })
+      setStatus({ kind: 'error', message: 'Please enter a valid key.' })
       return
     }
     if (!trimmed.startsWith('sk-or-v1-')) {
       setStatus({
         kind: 'error',
-        message: 'Chave OpenRouter inválida (deve começar com sk-or-v1-).',
+        message: 'Invalid OpenRouter key (must start with sk-or-v1-).',
       })
       return
     }
@@ -92,12 +92,12 @@ export function SettingsModal({
       await saveOpenRouterKey(trimmed)
       setHasKey(true)
       setKeyValue('')
-      setStatus({ kind: 'success', message: 'Chave salva com segurança.' })
+      setStatus({ kind: 'success', message: 'Key saved securely.' })
       onApiKeyChanged(true)
     } catch (err) {
       setStatus({
         kind: 'error',
-        message: err instanceof Error ? err.message : 'Falha ao salvar chave.',
+        message: err instanceof Error ? err.message : 'Failed to save key.',
       })
     } finally {
       setSaving(false)
@@ -109,12 +109,12 @@ export function SettingsModal({
     try {
       await clearOpenRouterKey()
       setHasKey(false)
-      setStatus({ kind: 'success', message: 'Chave removida.' })
+      setStatus({ kind: 'success', message: 'Key removed.' })
       onApiKeyChanged(false)
     } catch (err) {
       setStatus({
         kind: 'error',
-        message: err instanceof Error ? err.message : 'Falha ao remover chave.',
+        message: err instanceof Error ? err.message : 'Failed to remove key.',
       })
     } finally {
       setSaving(false)
@@ -124,13 +124,13 @@ export function SettingsModal({
   async function handleTavilySave() {
     const trimmed = tavilyValue.trim()
     if (!trimmed) {
-      setTavStatus({ kind: 'error', message: 'Informe uma chave válida.' })
+      setTavStatus({ kind: 'error', message: 'Please enter a valid key.' })
       return
     }
     if (!trimmed.startsWith('tvly-')) {
       setTavStatus({
         kind: 'error',
-        message: 'Chave Tavily inválida (deve começar com tvly-).',
+        message: 'Invalid Tavily key (must start with tvly-).',
       })
       return
     }
@@ -139,11 +139,11 @@ export function SettingsModal({
       await saveTavilyKey(trimmed)
       setHasTavily(true)
       setTavilyValue('')
-      setTavStatus({ kind: 'success', message: 'Chave salva.' })
+      setTavStatus({ kind: 'success', message: 'Key saved.' })
     } catch (err) {
       setTavStatus({
         kind: 'error',
-        message: err instanceof Error ? err.message : 'Falha ao salvar chave.',
+        message: err instanceof Error ? err.message : 'Failed to save key.',
       })
     } finally {
       setTavSaving(false)
@@ -154,31 +154,31 @@ export function SettingsModal({
     try {
       await clearTavilyKey()
       setHasTavily(false)
-      setTavStatus({ kind: 'success', message: 'Chave removida.' })
+      setTavStatus({ kind: 'success', message: 'Key removed.' })
     } catch (err) {
       setTavStatus({
         kind: 'error',
-        message: err instanceof Error ? err.message : 'Falha ao remover chave.',
+        message: err instanceof Error ? err.message : 'Failed to remove key.',
       })
     }
   }
 
   return (
-    <div className={styles.overlay} role="dialog" aria-modal="true" aria-label="Configurações">
+    <div className={styles.overlay} role="dialog" aria-modal="true" aria-label="Settings">
       <div className={styles.modal}>
         <header className={styles.header}>
-          <h2 className={styles.title}>Configurações</h2>
+          <h2 className={styles.title}>Settings</h2>
           <button
             className={styles.close}
             onClick={onClose}
-            aria-label="fechar"
+            aria-label="close"
             type="button"
           >
             ×
           </button>
         </header>
         <div className={styles.body}>
-          <nav className={styles.sidebar} aria-label="seções">
+          <nav className={styles.sidebar} aria-label="sections">
             <ul className={styles.sectionList}>
               {SECTIONS.map((s) => (
                 <li key={s.id}>
@@ -198,13 +198,13 @@ export function SettingsModal({
           <div className={styles.content}>
             {section === 'openrouter' && (
               <div className={styles.form}>
-                <h3 className={styles.formTitle}>Integração OpenRouter</h3>
+                <h3 className={styles.formTitle}>OpenRouter Integration</h3>
                 <p className={styles.formHelp}>
-                  Sua chave é salva em arquivo local pelo app. Ela nunca é
-                  exposta ao frontend depois de salva.
+                  Your key is saved in a local file by the app. It is never
+                  exposed to the frontend after saving.
                 </p>
                 <label className={styles.label} htmlFor="or-key">
-                  Chave de API
+                  API Key
                 </label>
                 <input
                   id="or-key"
@@ -213,7 +213,7 @@ export function SettingsModal({
                   value={keyValue}
                   placeholder={
                     hasKey
-                      ? 'chave configurada — digite para substituir'
+                      ? 'key configured — type to replace'
                       : 'sk-or-v1-...'
                   }
                   onChange={(e) => setKeyValue(e.target.value)}
@@ -227,7 +227,7 @@ export function SettingsModal({
                     onClick={handleSave}
                     disabled={saving}
                   >
-                    {saving ? 'salvando...' : 'salvar chave'}
+                    {saving ? 'saving...' : 'save key'}
                   </button>
                   {hasKey && (
                     <button
@@ -236,7 +236,7 @@ export function SettingsModal({
                       onClick={handleClear}
                       disabled={saving}
                     >
-                      remover chave
+                      remove key
                     </button>
                   )}
                 </div>
@@ -253,21 +253,21 @@ export function SettingsModal({
                 )}
                 <p className={styles.footNote}>
                   {hasKey
-                    ? 'Uma chave já está configurada neste app.'
-                    : 'Nenhuma chave configurada. Sem a chave, o painel IA não inicia solicitações.'}
+                    ? 'A key is already configured in this app.'
+                    : 'No key configured. Without the key, the AI panel cannot start requests.'}
                 </p>
               </div>
             )}
 
             {section === 'search' && (
               <div className={styles.form}>
-                <h3 className={styles.formTitle}>Busca Web (Tavily)</h3>
+                <h3 className={styles.formTitle}>Web Search (Tavily)</h3>
                 <p className={styles.formHelp}>
-                  A chave Tavily habilita os comandos <code>/pesquisa</code> e <code>/quem</code> a consultar a internet antes de responder. Crie uma conta gratuita em{' '}
-                  <strong>tavily.com</strong> (1.000 buscas/mês grátis).
+                  The Tavily key enables the <code>/search</code> and <code>/profile</code> commands to query the internet before responding. Create a free account at{' '}
+                  <strong>tavily.com</strong> (1,000 searches/month free).
                 </p>
                 <label className={styles.label} htmlFor="tav-key">
-                  Chave de API
+                  API Key
                 </label>
                 <input
                   id="tav-key"
@@ -276,7 +276,7 @@ export function SettingsModal({
                   value={tavilyValue}
                   placeholder={
                     hasTavily
-                      ? 'chave configurada — digite para substituir'
+                      ? 'key configured — type to replace'
                       : 'tvly-...'
                   }
                   onChange={(e) => setTavilyValue(e.target.value)}
@@ -291,7 +291,7 @@ export function SettingsModal({
                     onClick={handleTavilySave}
                     disabled={tavSaving}
                   >
-                    salvar chave
+                    save key
                   </button>
                   {hasTavily && (
                     <button
@@ -300,7 +300,7 @@ export function SettingsModal({
                       onClick={handleTavilyClear}
                       disabled={tavSaving}
                     >
-                      remover chave
+                      remove key
                     </button>
                   )}
                 </div>
@@ -311,8 +311,8 @@ export function SettingsModal({
                 )}
                 <p className={styles.footNote}>
                   {hasTavily
-                    ? 'Busca web ativa. Comandos /pesquisa e /quem consultam a internet.'
-                    : 'Sem a chave, /pesquisa e /quem usam apenas o conhecimento do modelo.'}
+                    ? 'Web search active. /search and /profile commands query the internet.'
+                    : 'Without the key, /search and /profile use only the model\'s knowledge.'}
                 </p>
               </div>
             )}

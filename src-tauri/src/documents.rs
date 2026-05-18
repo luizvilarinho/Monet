@@ -19,9 +19,9 @@ use zerocopy::AsBytes;
 pub async fn documents_pick_file() -> Result<Option<String>, String> {
     let result = spawn_blocking(|| {
         rfd::FileDialog::new()
-            .add_filter("Documentos", &["pdf", "txt", "md"])
+            .add_filter("Documents", &["pdf", "txt", "md"])
             .add_filter("PDF", &["pdf"])
-            .add_filter("Texto", &["txt", "md"])
+            .add_filter("Text", &["txt", "md"])
             .pick_file()
     })
     .await
@@ -96,8 +96,8 @@ fn doc_db_path(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app
         .path()
         .app_data_dir()
-        .map_err(|e| format!("app_data_dir indisponivel: {}", e))?;
-    fs::create_dir_all(&dir).map_err(|e| format!("falha ao criar app_data_dir: {}", e))?;
+        .map_err(|e| format!("app_data_dir unavailable: {}", e))?;
+    fs::create_dir_all(&dir).map_err(|e| format!("failed to create app_data_dir: {}", e))?;
     Ok(dir.join("monet.db"))
 }
 
@@ -105,19 +105,19 @@ fn documents_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app
         .path()
         .app_data_dir()
-        .map_err(|e| format!("app_data_dir indisponivel: {}", e))?
+        .map_err(|e| format!("app_data_dir unavailable: {}", e))?
         .join("documents");
-    fs::create_dir_all(&dir).map_err(|e| format!("falha ao criar pasta documents: {}", e))?;
+    fs::create_dir_all(&dir).map_err(|e| format!("failed to create documents folder: {}", e))?;
     Ok(dir)
 }
 
 fn open_doc_db(app: &AppHandle) -> Result<Connection, String> {
     let path = doc_db_path(app)?;
-    let conn = Connection::open(&path).map_err(|e| format!("falha ao abrir monet.db: {}", e))?;
+    let conn = Connection::open(&path).map_err(|e| format!("failed to open monet.db: {}", e))?;
     conn.pragma_update(None, "journal_mode", &"WAL")
-        .map_err(|e| format!("falha ao configurar WAL: {}", e))?;
+        .map_err(|e| format!("failed to configure WAL: {}", e))?;
     conn.pragma_update(None, "foreign_keys", &true)
-        .map_err(|e| format!("falha ao habilitar foreign_keys: {}", e))?;
+        .map_err(|e| format!("failed to enable foreign_keys: {}", e))?;
     Ok(conn)
 }
 
@@ -244,10 +244,10 @@ async fn embed_batch(key: &str, texts: &[String]) -> Result<Vec<Vec<f32>>, Strin
             Ok(r) => r,
             Err(e) => {
                 if e.is_connect() || e.is_timeout() {
-                    return Err("Sem conexão. Indexação requer internet.".into());
+                    return Err("No connection. Indexing requires internet access.".into());
                 }
                 eprintln!("OpenRouter embeddings network error: {}", e);
-                return Err("Falha na geração de embeddings. Tente novamente.".into());
+                return Err("Embedding generation failed. Please try again.".into());
             }
         };
 
@@ -256,7 +256,7 @@ async fn embed_batch(key: &str, texts: &[String]) -> Result<Vec<Vec<f32>>, Strin
             attempt += 1;
             if attempt > 5 {
                 return Err(
-                    "Limite de requisições excedido. Tente novamente em alguns minutos.".into(),
+                    "Rate limit exceeded. Please try again in a few minutes.".into(),
                 );
             }
             // Backoff exponencial com jitter para evitar thundering herd quando
@@ -275,37 +275,37 @@ async fn embed_batch(key: &str, texts: &[String]) -> Result<Vec<Vec<f32>>, Strin
         if !status.is_success() {
             let body_text = resp.text().await.unwrap_or_default();
             eprintln!("OpenRouter embeddings {} body: {}", status, body_text);
-            return Err("Falha na geração de embeddings. Tente novamente.".into());
+            return Err("Embedding generation failed. Please try again.".into());
         }
 
         let parsed: EmbeddingApiResponse = match resp.json().await {
             Ok(v) => v,
             Err(e) => {
                 eprintln!("OpenRouter embeddings parse error: {}", e);
-                return Err("Falha na geração de embeddings. Tente novamente.".into());
+                return Err("Embedding generation failed. Please try again.".into());
             }
         };
 
         let mut entries = parsed.data;
         if entries.len() != texts.len() {
             eprintln!(
-                "OpenRouter retornou {} embeddings para {} entradas",
+                "OpenRouter returned {} embeddings for {} entries",
                 entries.len(),
                 texts.len()
             );
-            return Err("Falha na geração de embeddings. Tente novamente.".into());
+            return Err("Embedding generation failed. Please try again.".into());
         }
         entries.sort_by_key(|e| e.index);
 
         for (i, e) in entries.iter().enumerate() {
             if e.embedding.len() != EMBEDDING_DIM {
                 eprintln!(
-                    "Embedding {} tem dimensão {}, esperado {}",
+                    "Embedding {} has dimension {}, expected {}",
                     i,
                     e.embedding.len(),
                     EMBEDDING_DIM
                 );
-                return Err("Falha na geração de embeddings. Tente novamente.".into());
+                return Err("Embedding generation failed. Please try again.".into());
             }
         }
 
@@ -325,7 +325,7 @@ fn store_chunks(
     let mut conn = state.0.lock().map_err(|e| e.to_string())?;
     let tx = conn
         .transaction()
-        .map_err(|e| format!("falha ao iniciar transação: {}", e))?;
+        .map_err(|e| format!("failed to start transaction: {}", e))?;
 
     for (idx, (chunk, emb)) in chunks.iter().zip(embeddings.iter()).enumerate() {
         if emb.len() != EMBEDDING_DIM {
@@ -345,7 +345,7 @@ fn store_chunks(
              VALUES (?1, ?2, ?3, ?4, ?5)",
             params![document_id, notebook_id, source_name, chunk, idx as i64],
         )
-        .map_err(|e| format!("falha ao inserir metadata {}: {}", idx, e))?;
+        .map_err(|e| format!("failed to insert metadata {}: {}", idx, e))?;
 
         let rowid = tx.last_insert_rowid();
 
@@ -353,11 +353,11 @@ fn store_chunks(
             "INSERT INTO vec_chunks(rowid, embedding) VALUES (?1, ?2)",
             params![rowid, emb.as_bytes()],
         )
-        .map_err(|e| format!("falha ao inserir vetor {}: {}", idx, e))?;
+        .map_err(|e| format!("failed to insert vector {}: {}", idx, e))?;
     }
 
     tx.commit()
-        .map_err(|e| format!("falha ao commitar transação: {}", e))?;
+        .map_err(|e| format!("failed to commit transaction: {}", e))?;
     Ok(())
 }
 
@@ -366,21 +366,21 @@ fn delete_chunks_for_document(app: &AppHandle, document_id: &str) -> Result<(), 
     let mut conn = state.0.lock().map_err(|e| e.to_string())?;
     let tx = conn
         .transaction()
-        .map_err(|e| format!("falha ao iniciar transação: {}", e))?;
+        .map_err(|e| format!("failed to start transaction: {}", e))?;
 
     tx.execute(
         "DELETE FROM vec_chunks WHERE rowid IN (SELECT rowid FROM chunks_meta WHERE document_id = ?1)",
         params![document_id],
     )
-    .map_err(|e| format!("falha ao deletar vetores: {}", e))?;
+    .map_err(|e| format!("failed to delete vectors: {}", e))?;
     tx.execute(
         "DELETE FROM chunks_meta WHERE document_id = ?1",
         params![document_id],
     )
-    .map_err(|e| format!("falha ao deletar chunks_meta: {}", e))?;
+    .map_err(|e| format!("failed to delete chunks_meta: {}", e))?;
 
     tx.commit()
-        .map_err(|e| format!("falha ao commitar exclusão: {}", e))?;
+        .map_err(|e| format!("failed to commit deletion: {}", e))?;
     Ok(())
 }
 
@@ -396,7 +396,7 @@ fn update_document_status(
             "UPDATE documents SET status = ?1, error_message = ?2, updated_at = ?3 WHERE id = ?4",
             params![status, error_message, now_ms(), document_id],
         )
-        .map_err(|e| format!("falha ao atualizar status: {}", e))?;
+        .map_err(|e| format!("failed to update status: {}", e))?;
         Ok(())
     })
 }
@@ -425,39 +425,39 @@ async fn read_document_text(path: PathBuf, mime: String) -> Result<String, Strin
         let join = spawn_blocking(move || pdf_extract::extract_text(&path_clone)).await;
         let text = match join {
             Err(e) if e.is_panic() => {
-                return Err("PDF corrompido ou em formato não suportado".into());
+                return Err("Corrupted PDF or unsupported format".into());
             }
             Err(e) => {
                 eprintln!("pdf_extract join error: {}", e);
-                return Err("Falha ao processar PDF".into());
+                return Err("Failed to process PDF".into());
             }
             Ok(Err(e)) => {
                 eprintln!("pdf_extract error: {}", e);
-                return Err("PDF corrompido ou em formato não suportado".into());
+                return Err("Corrupted PDF or unsupported format".into());
             }
             Ok(Ok(t)) => t,
         };
         if text.trim().is_empty() {
-            return Err("PDF sem texto extraível (pode ser escaneado)".into());
+            return Err("PDF has no extractable text (may be scanned)".into());
         }
         Ok(text)
     } else {
         let text = match spawn_blocking(move || fs::read_to_string(&path)).await {
             Err(e) => {
                 eprintln!("read_to_string join error: {}", e);
-                return Err("Falha ao ler arquivo".into());
+                return Err("Failed to read file".into());
             }
             Ok(Err(e)) if e.kind() == std::io::ErrorKind::InvalidData => {
-                return Err("Arquivo não é texto válido em UTF-8".into());
+                return Err("File is not valid UTF-8 text".into());
             }
             Ok(Err(e)) => {
                 eprintln!("read_to_string io error: {}", e);
-                return Err("Falha ao ler arquivo".into());
+                return Err("Failed to read file".into());
             }
             Ok(Ok(t)) => t,
         };
         if text.trim().is_empty() {
-            return Err("Arquivo vazio".into());
+            return Err("Empty file".into());
         }
         Ok(text)
     }
@@ -476,7 +476,7 @@ async fn run_indexing(
     let key = match crate::read_key(&app, "openrouter_key") {
         Some(k) => k,
         None => {
-            let msg = "Chave OpenRouter não configurada";
+            let msg = "OpenRouter key not configured";
             let _ = update_document_status(&app, &document_id, "error", Some(msg));
             emit_status(&app, &document_id, &notebook_id, "error", Some(msg));
             return;
@@ -494,7 +494,7 @@ async fn run_indexing(
 
     let chunks = chunk_text(&text);
     if chunks.is_empty() {
-        let msg = "Nenhum conteúdo indexável encontrado";
+        let msg = "No indexable content found";
         let _ = update_document_status(&app, &document_id, "error", Some(msg));
         emit_status(&app, &document_id, &notebook_id, "error", Some(msg));
         return;
@@ -542,22 +542,22 @@ pub async fn documents_upload(
 ) -> Result<String, String> {
     let src = PathBuf::from(&source_path);
     let mime = detect_mime(&src)
-        .ok_or_else(|| "Tipo de arquivo não suportado (apenas .pdf, .txt, .md)".to_string())?;
+        .ok_or_else(|| "Unsupported file type (only .pdf, .txt, .md are accepted)".to_string())?;
 
     let metadata =
-        fs::metadata(&src).map_err(|e| format!("não foi possível ler o arquivo: {}", e))?;
+        fs::metadata(&src).map_err(|e| format!("could not read file: {}", e))?;
     if !metadata.is_file() {
-        return Err("Caminho não aponta para um arquivo".into());
+        return Err("Path does not point to a file".into());
     }
     if metadata.len() > MAX_FILE_BYTES {
         return Err(format!(
-            "Arquivo muito grande ({:.1} MB). Limite: {} MB.",
+            "File too large ({:.1} MB). Limit: {} MB.",
             metadata.len() as f64 / (1024.0 * 1024.0),
             MAX_FILE_BYTES / (1024 * 1024)
         ));
     }
     if metadata.len() == 0 {
-        return Err("Arquivo vazio".into());
+        return Err("Empty file".into());
     }
     let size = metadata.len() as i64;
 
@@ -565,7 +565,7 @@ pub async fn documents_upload(
         .file_name()
         .and_then(|n| n.to_str())
         .map(|s| s.to_string())
-        .unwrap_or_else(|| "documento".to_string());
+        .unwrap_or_else(|| "document".to_string());
 
     let id = Uuid::new_v4().to_string();
     let ext = src
@@ -575,7 +575,7 @@ pub async fn documents_upload(
         .to_lowercase();
     let dest = documents_dir(&app)?.join(format!("{}.{}", id, ext));
 
-    fs::copy(&src, &dest).map_err(|e| format!("falha ao copiar arquivo: {}", e))?;
+    fs::copy(&src, &dest).map_err(|e| format!("failed to copy file: {}", e))?;
 
     let dest_str = dest.to_string_lossy().to_string();
     let now = now_ms();
@@ -586,7 +586,7 @@ pub async fn documents_upload(
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'indexing', NULL, ?7, ?7)",
             params![id, notebook_id, name, dest_str, mime, size, now],
         )
-        .map_err(|e| format!("falha ao inserir documento: {}", e))?;
+        .map_err(|e| format!("failed to insert document: {}", e))?;
         Ok(())
     })?;
 
@@ -615,7 +615,7 @@ pub async fn documents_reindex(
         with_doc_db(&app, &state, |conn| {
             let tx = conn
                 .transaction()
-                .map_err(|e| format!("falha ao iniciar transação: {}", e))?;
+                .map_err(|e| format!("failed to start transaction: {}", e))?;
 
             let result: Result<(String, String, String, String, String), rusqlite::Error> =
                 tx.query_row(
@@ -628,7 +628,7 @@ pub async fn documents_reindex(
             let (notebook_id, name, original_path, mime, status) = match result {
                 Ok(row) => row,
                 Err(e) => {
-                    return Err(format!("documento não encontrado: {}", e));
+                    return Err(format!("document not found: {}", e));
                 }
             };
 
@@ -641,10 +641,10 @@ pub async fn documents_reindex(
                 "UPDATE documents SET status = 'indexing', error_message = NULL, updated_at = ?1 WHERE id = ?2",
                 params![now_ms(), document_id],
             )
-            .map_err(|e| format!("falha ao marcar reindex: {}", e))?;
+            .map_err(|e| format!("failed to mark reindex: {}", e))?;
 
             tx.commit()
-                .map_err(|e| format!("falha ao commitar reindex: {}", e))?;
+                .map_err(|e| format!("failed to commit reindex: {}", e))?;
 
             Ok(Some((notebook_id, name, original_path, mime)))
         })?;
@@ -679,7 +679,7 @@ pub async fn documents_delete(
         ) {
             Ok(p) => Ok(Some(p)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(format!("falha ao consultar documento: {}", e)),
+            Err(e) => Err(format!("failed to query document: {}", e)),
         }
     })?;
 
@@ -690,7 +690,7 @@ pub async fn documents_delete(
             "DELETE FROM documents WHERE id = ?1",
             params![document_id],
         )
-        .map_err(|e| format!("falha ao deletar documento: {}", e))?;
+        .map_err(|e| format!("failed to delete document: {}", e))?;
         Ok(())
     })?;
 
@@ -713,7 +713,7 @@ pub async fn documents_list(
                 "SELECT id, notebook_id, name, mime, size, status, error_message, created_at, updated_at
                  FROM documents WHERE notebook_id = ?1 ORDER BY created_at DESC",
             )
-            .map_err(|e| format!("falha ao preparar listagem: {}", e))?;
+            .map_err(|e| format!("failed to prepare listing: {}", e))?;
         let rows = stmt
             .query_map(params![notebook_id], |r| {
                 Ok(DocumentInfo {
@@ -728,10 +728,10 @@ pub async fn documents_list(
                     updated_at: r.get(8)?,
                 })
             })
-            .map_err(|e| format!("falha ao listar: {}", e))?;
+            .map_err(|e| format!("failed to list: {}", e))?;
         let mut out = Vec::new();
         for r in rows {
-            out.push(r.map_err(|e| format!("linha inválida: {}", e))?);
+            out.push(r.map_err(|e| format!("invalid row: {}", e))?);
         }
         Ok(out)
     })
@@ -771,7 +771,7 @@ pub async fn documents_search(
              ORDER BY vc.distance
              LIMIT ?4",
         )
-        .map_err(|e| format!("falha ao preparar busca: {}", e))?;
+        .map_err(|e| format!("failed to prepare search: {}", e))?;
 
     let rows = stmt
         .query_map(
@@ -786,11 +786,11 @@ pub async fn documents_search(
                 })
             },
         )
-        .map_err(|e| format!("falha na busca: {}", e))?;
+        .map_err(|e| format!("search failed: {}", e))?;
 
     let mut out = Vec::new();
     for r in rows {
-        out.push(r.map_err(|e| format!("linha inválida: {}", e))?);
+        out.push(r.map_err(|e| format!("invalid row: {}", e))?);
     }
     Ok(out)
 }
@@ -799,13 +799,13 @@ pub async fn documents_search(
 pub async fn embed_text(app: AppHandle, text: String) -> Result<Vec<f32>, String> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
-        return Err("texto vazio".into());
+        return Err("empty text".into());
     }
     let key = crate::read_key(&app, "openrouter_key")
-        .ok_or_else(|| "Chave OpenRouter não configurada".to_string())?;
+        .ok_or_else(|| "OpenRouter key not configured".to_string())?;
     let batch = vec![trimmed.to_string()];
     let mut embs = embed_batch(&key, &batch).await?;
-    embs.pop().ok_or_else(|| "API não retornou embedding".into())
+    embs.pop().ok_or_else(|| "API returned no embedding".into())
 }
 
 pub async fn cleanup_stuck_indexing(app: AppHandle) {
@@ -820,9 +820,9 @@ pub async fn cleanup_stuck_indexing(app: AppHandle) {
     let result = with_doc_db(&app, &state, |conn| {
         conn.execute(
             "UPDATE documents SET status = 'error', error_message = ?1, updated_at = ?2 WHERE status = 'indexing'",
-            params!["Indexação interrompida (app encerrado)", now_ms()],
+            params!["Indexing interrupted (app closed)", now_ms()],
         )
-        .map_err(|e| format!("cleanup falhou: {}", e))?;
+        .map_err(|e| format!("cleanup failed: {}", e))?;
         Ok(())
     });
 

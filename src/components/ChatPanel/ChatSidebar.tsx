@@ -247,11 +247,11 @@ export function ChatSidebar({
   async function handleDeleteFolder(folder: ChatFolder) {
     const hasConvs = folder.conversationIds.length > 0
     const message = hasConvs
-      ? `A pasta "${folder.name || 'sem nome'}" contém ${folder.conversationIds.length} conversa${folder.conversationIds.length === 1 ? '' : 's'}. Excluir a pasta excluirá permanentemente todas as conversas dentro dela.`
-      : `Excluir a pasta "${folder.name || 'sem nome'}"?`
+      ? `Folder "${folder.name || 'unnamed'}" contains ${folder.conversationIds.length} conversation${folder.conversationIds.length === 1 ? '' : 's'}. Deleting the folder will permanently delete all conversations inside it.`
+      : `Delete folder "${folder.name || 'unnamed'}"?`
     const ok = await confirm(message, {
-      title: hasConvs ? 'Excluir pasta e conversas' : 'Excluir pasta',
-      confirmLabel: 'excluir',
+      title: hasConvs ? 'Delete folder and conversations' : 'Delete folder',
+      confirmLabel: 'delete',
     })
     if (ok) onDeleteFolder(folder.id)
   }
@@ -372,20 +372,20 @@ export function ChatSidebar({
   }
 
   return (
-    <aside className={styles.sidebar} aria-label="Conversas" style={{ width }}>
+    <aside className={styles.sidebar} aria-label="Conversations" style={{ width }}>
       {modal}
       <div className={styles.resizeHandle} onMouseDown={onResizeMouseDown} />
       <div className={styles.header}>
         <button type="button" className={styles.newBtn} onClick={onNew}>
           <span className={styles.plus} aria-hidden="true">+</span>
-          Nova conversa
+          New conversation
         </button>
         <button
           type="button"
           className={styles.newFolderBtn}
           onClick={startCreateFolder}
-          aria-label="nova pasta"
-          title="nova pasta"
+          aria-label="new folder"
+          title="new folder"
         >
           <FolderIcon />
           <span className={styles.plus} aria-hidden="true">+</span>
@@ -438,7 +438,7 @@ export function ChatSidebar({
 
           {/* Loose conversations */}
           {(looseConversationIds.length > 0 || folders.length > 0) && (
-            <div className={styles.looseLabel}>conversas</div>
+            <div className={styles.looseLabel}>conversations</div>
           )}
           <SortableContext
             id="__loose__"
@@ -447,7 +447,7 @@ export function ChatSidebar({
           >
             {looseConversationIds.length === 0 && folders.length === 0 ? (
               <p className={styles.empty}>
-                Nenhuma conversa ainda. Crie uma para começar.
+                No conversations yet. Create one to get started.
               </p>
             ) : (
               looseConversationIds.map((cid) => {
@@ -559,7 +559,7 @@ function SortableFolder({
       >
         <span
           className={styles.folderChevron}
-          aria-label={folder.expanded ? 'colapsar pasta' : 'expandir pasta'}
+          aria-label={folder.expanded ? 'collapse folder' : 'expand folder'}
         >
           <ChevronIcon open={folder.expanded} />
         </span>
@@ -582,12 +582,12 @@ function SortableFolder({
             }}
             onClick={(e) => e.stopPropagation()}
             onPointerDown={(e) => e.stopPropagation()}
-            placeholder="nome da pasta"
-            aria-label="nome da pasta"
+            placeholder="folder name"
+            aria-label="folder name"
           />
         ) : (
           <span className={styles.folderName}>
-            {folder.name || 'sem nome'}
+            {folder.name || 'unnamed'}
           </span>
         )}
         {!editing && (
@@ -604,11 +604,11 @@ function SortableFolder({
                 onOpenSystemPrompt()
               }}
               onPointerDown={(e) => e.stopPropagation()}
-              aria-label={`configurar system prompt de ${folder.name || 'pasta'}`}
+              aria-label={`configure system prompt for ${folder.name || 'folder'}`}
               title={
                 folder.systemPrompt.trim().length > 0
-                  ? 'system prompt ativo (clique para editar)'
-                  : 'definir system prompt da pasta'
+                  ? 'system prompt active (click to edit)'
+                  : 'set folder system prompt'
               }
             >
               <SystemPromptIcon />
@@ -624,8 +624,8 @@ function SortableFolder({
                   e.stopPropagation()
                   onNewConversation()
                 }}
-                aria-label={`nova conversa em ${folder.name || 'pasta'}`}
-                title="nova conversa nesta pasta"
+                aria-label={`new conversation in ${folder.name || 'folder'}`}
+                title="new conversation in this folder"
               >
                 <PlusIcon />
               </button>
@@ -636,8 +636,8 @@ function SortableFolder({
                   e.stopPropagation()
                   onDeleteFolder()
                 }}
-                aria-label={`excluir pasta ${folder.name || ''}`}
-                title="excluir pasta"
+                aria-label={`delete folder ${folder.name || ''}`}
+                title="delete folder"
               >
                 ×
               </button>
@@ -735,10 +735,10 @@ function FolderEmptyDropZone({
       }
     >
       {!active && (
-        <span className={styles.folderEmpty}>pasta vazia</span>
+        <span className={styles.folderEmpty}>empty folder</span>
       )}
       {active && isOver && (
-        <span className={styles.folderEmpty}>soltar aqui</span>
+        <span className={styles.folderEmpty}>drop here</span>
       )}
     </div>
   )
@@ -851,8 +851,8 @@ function SortableConversation({
               e.stopPropagation()
               onRemoveFromFolder()
             }}
-            aria-label="retirar da pasta"
-            title="retirar da pasta"
+            aria-label="remove from folder"
+            title="remove from folder"
           >
             <RemoveFromFolderIcon />
           </button>
@@ -864,8 +864,8 @@ function SortableConversation({
             e.stopPropagation()
             onDelete()
           }}
-          aria-label="apagar conversa"
-          title="apagar conversa"
+          aria-label="delete conversation"
+          title="delete conversation"
         >
           ×
         </button>

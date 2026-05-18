@@ -70,10 +70,10 @@ export function ModelSelector({
   const buttonLabel = selected
     ? selected.name
     : loading
-      ? 'carregando modelos...'
+      ? 'loading models...'
       : models.length === 0
-        ? 'nenhum modelo disponível'
-        : 'selecionar modelo'
+        ? 'no model available'
+        : 'select model'
 
   return (
     <div className={styles.selectorWrap} ref={wrapperRef}>
@@ -83,7 +83,7 @@ export function ModelSelector({
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="listbox"
         aria-expanded={open}
-        aria-label="selecionar modelo"
+        aria-label="select model"
         disabled={!loading && models.length === 0 && !error}
       >
         <span className={styles.selectorLabel}>{buttonLabel}</span>
@@ -106,27 +106,27 @@ export function ModelSelector({
         <div className={styles.popover} role="listbox">
           <input
             className={styles.search}
-            placeholder="buscar modelo..."
+            placeholder="search model..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             autoFocus
-            aria-label="buscar modelo"
+            aria-label="search model"
           />
           <div className={styles.modelList}>
             {loading && (
-              <div className={styles.popoverInfo}>carregando modelos...</div>
+              <div className={styles.popoverInfo}>loading models...</div>
             )}
             {error && !loading && (
               <div className={styles.popoverError}>{error}</div>
             )}
             {!loading && !error && filtered.length === 0 && models.length === 0 && (
               <div className={styles.popoverInfo}>
-                nenhum modelo disponível no momento.
+                no models available at the moment.
               </div>
             )}
             {!loading && !error && filtered.length === 0 && models.length > 0 && (
               <div className={styles.popoverInfo}>
-                nenhum modelo corresponde ao filtro.
+                no model matches the filter.
               </div>
             )}
             {!loading &&

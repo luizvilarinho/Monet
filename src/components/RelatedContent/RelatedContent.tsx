@@ -35,7 +35,7 @@ export function RelatedContent({ activeNote, notes, onSelect }: Props) {
         onClick={() => setOpen((v) => !v)}
       >
         <span className={`${styles.chevron} ${open ? styles.chevronOpen : ''}`}>›</span>
-        <span className={styles.title}>Conteúdo relacionado</span>
+        <span className={styles.title}>Related content</span>
         <span className={styles.count}>{related.length}</span>
       </button>
       {open && (
@@ -50,7 +50,7 @@ export function RelatedContent({ activeNote, notes, onSelect }: Props) {
                   onClick={() => onSelect(note.id)}
                 >
                   <div className={styles.itemTitle}>
-                    {note.title.trim() || 'Sem título'}
+                    {note.title.trim() || 'Untitled'}
                   </div>
                   {preview && <div className={styles.itemSnippet}>{preview}</div>}
                   {note.tags.length > 0 && (

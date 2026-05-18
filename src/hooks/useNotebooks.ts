@@ -46,7 +46,7 @@ export function useNotebooks() {
       const now = Date.now()
       const nb: Notebook = {
         id: nanoid(),
-        name: name.trim() || 'sem nome',
+        name: name.trim() || 'unnamed',
         createdAt: now,
         updatedAt: now,
       }

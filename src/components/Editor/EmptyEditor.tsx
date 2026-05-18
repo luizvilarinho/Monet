@@ -39,12 +39,12 @@ export function EmptyEditor({ onCreate, hasNotebook }: EmptyEditorProps) {
         )}
       </svg>
       <h2 className={styles.heading}>
-        {hasNotebook ? 'Nenhuma anotação selecionada' : 'Selecione um caderno para começar'}
+        {hasNotebook ? 'No note selected' : 'Select a notebook to get started'}
       </h2>
       <p className={styles.hint}>
         {hasNotebook
-          ? 'Escolha uma anotação na barra lateral ou crie uma nova.'
-          : 'Escolha um caderno na barra lateral ou crie um novo.'}
+          ? 'Choose a note from the sidebar or create a new one.'
+          : 'Choose a notebook from the sidebar or create a new one.'}
       </p>
       {hasNotebook && (
         <button className={styles.createBtn} onClick={onCreate} type="button">
@@ -62,7 +62,7 @@ export function EmptyEditor({ onCreate, hasNotebook }: EmptyEditorProps) {
             <line x1="12" y1="5" x2="12" y2="19" />
             <line x1="5" y1="12" x2="19" y2="12" />
           </svg>
-          Nova anotação
+          New note
         </button>
       )}
     </div>

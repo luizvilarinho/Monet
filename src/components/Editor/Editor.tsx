@@ -159,7 +159,7 @@ export function Editor({
       TableCell,
       Image.configure({ inline: false, allowBase64: true }),
       Placeholder.configure({
-        placeholder: 'Anote a impressão do momento...',
+        placeholder: 'Capture your thoughts...',
       }),
       Markdown.configure({
         html: true,
@@ -502,13 +502,13 @@ export function Editor({
         className={styles.title}
         value={title}
         onChange={(e) => onTitleChange(e.target.value)}
-        placeholder="título da anotação"
+        placeholder="note title"
       />
       <div className={styles.tagsRow}>
         <button
           className={styles.tagAdd}
           onClick={() => setAdding(true)}
-          aria-label="adicionar tag"
+          aria-label="add tag"
           type="button"
         >
           <svg
@@ -533,7 +533,7 @@ export function Editor({
             <button
               className={styles.tagRemove}
               onClick={() => removeTag(t)}
-              aria-label={`remover tag ${t}`}
+              aria-label={`remove tag ${t}`}
               type="button"
             >
               ×
@@ -554,7 +554,7 @@ export function Editor({
                 setAdding(false)
               }
             }}
-            placeholder="nova tag"
+            placeholder="new tag"
           />
         )}
       </div>

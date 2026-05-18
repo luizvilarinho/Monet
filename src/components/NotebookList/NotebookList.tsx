@@ -86,7 +86,7 @@ function SortableNotebookItem({
           {...attributes}
           {...listeners}
           onClick={(e) => e.stopPropagation()}
-          aria-label="arrastar para reordenar"
+          aria-label="drag to reorder"
         >
           <DotsSixVertical size={12} weight="bold" aria-hidden />
         </span>
@@ -107,7 +107,7 @@ function SortableNotebookItem({
           onClick={(e) => e.stopPropagation()}
         />
       ) : (
-        <span className={styles.rowLabel}>{nb.name || 'sem nome'}</span>
+        <span className={styles.rowLabel}>{nb.name || 'unnamed'}</span>
       )}
       {editing?.id !== nb.id && (
         <>
@@ -115,8 +115,8 @@ function SortableNotebookItem({
             className={styles.rowDocs}
             onClick={(e) => { e.stopPropagation(); onSelect(nb.id); onOpenDocuments(nb.id) }}
             onDoubleClick={(e) => e.stopPropagation()}
-            aria-label={`documentos do caderno ${nb.name}`}
-            title="documentos do caderno"
+            aria-label={`documents for notebook ${nb.name}`}
+            title="notebook documents"
             type="button"
           >
             <FileText size={13} aria-hidden />
@@ -125,7 +125,7 @@ function SortableNotebookItem({
             className={styles.rowDelete}
             onClick={(e) => { e.stopPropagation(); onDelete(nb.id) }}
             onDoubleClick={(e) => e.stopPropagation()}
-            aria-label={`apagar caderno ${nb.name}`}
+            aria-label={`delete notebook ${nb.name}`}
             type="button"
           >
             <X size={12} weight="bold" aria-hidden />
@@ -223,8 +223,8 @@ export function NotebookList({
 
   async function handleDeleteNotebook(id: string, name: string) {
     const ok = await confirm(
-      `Apagar o caderno "${name}" e todas as anotações dele?`,
-      { title: 'Apagar caderno' }
+      `Delete notebook "${name}" and all its notes?`,
+      { title: 'Delete notebook' }
     )
     if (ok) onDelete(id)
   }
@@ -254,8 +254,8 @@ export function NotebookList({
           <button
             className={styles.headerToggle}
             onClick={onToggleCollapsed}
-            aria-label="expandir cadernos"
-            title="expandir cadernos"
+            aria-label="expand notebooks"
+            title="expand notebooks"
             type="button"
           >
             <SidebarSimple size={16} aria-hidden />
@@ -265,18 +265,18 @@ export function NotebookList({
         <div className={styles.scrollArea}>
           <section className={styles.section}>
             <div className={styles.header}>
-              <span>cadernos</span>
+              <span>notebooks</span>
               <div className={styles.headerActions}>
                 <button
                   className={styles.headerToggle}
                   onClick={onToggleCollapsed}
-                  aria-label="recolher cadernos"
-                  title="recolher cadernos"
+                  aria-label="collapse notebooks"
+                  title="collapse notebooks"
                   type="button"
                 >
                   <SidebarSimple size={16} aria-hidden />
                 </button>
-                <button className={styles.headerAdd} onClick={onCreate} aria-label="novo caderno" type="button">
+                <button className={styles.headerAdd} onClick={onCreate} aria-label="new notebook" type="button">
                   <PlusCircle size={16} weight="fill" aria-hidden />
                 </button>
               </div>
@@ -286,11 +286,11 @@ export function NotebookList({
                 className={`${styles.row} ${activeId === null ? styles.active : ''}`}
                 onClick={() => onSelect(null)}
               >
-                <span className={`${styles.rowLabel} ${styles.allNotes}`}>todas as notas</span>
+                <span className={`${styles.rowLabel} ${styles.allNotes}`}>all notes</span>
               </li>
 
               {notebooks.length === 0 ? (
-                <li className={styles.empty}>nenhum caderno</li>
+                <li className={styles.empty}>no notebooks</li>
               ) : (
                 <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
                   <SortableContext items={notebooks.map((n) => n.id)} strategy={verticalListSortingStrategy}>
@@ -322,7 +322,7 @@ export function NotebookList({
             <div className={styles.header}>tags</div>
             <ul className={styles.list}>
               {tags.length === 0 ? (
-                <li className={styles.empty}>nenhuma tag</li>
+                <li className={styles.empty}>no tags</li>
               ) : (
                 tags.map((t) => (
                   <li
@@ -344,7 +344,7 @@ export function NotebookList({
         <button
           className={styles.settings}
           onClick={onOpenSettings}
-          aria-label="configurações"
+          aria-label="settings"
           type="button"
         >
           <Gear size={16} aria-hidden />

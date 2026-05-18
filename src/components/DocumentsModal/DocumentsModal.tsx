@@ -14,9 +14,9 @@ export interface DocumentsModalProps {
 }
 
 function statusLabel(status: Document['status']): string {
-  if (status === 'available') return 'disponível'
-  if (status === 'indexing') return 'indexando'
-  return 'erro'
+  if (status === 'available') return 'available'
+  if (status === 'indexing') return 'indexing'
+  return 'error'
 }
 
 function StatusPill({ doc }: { doc: Document }) {
@@ -29,7 +29,7 @@ function StatusPill({ doc }: { doc: Document }) {
   return (
     <span
       className={`${styles.pill} ${cls}`}
-      title={doc.status === 'error' ? doc.errorMessage ?? 'erro' : undefined}
+      title={doc.status === 'error' ? doc.errorMessage ?? 'error' : undefined}
     >
       {statusLabel(doc.status)}
     </span>
@@ -88,8 +88,8 @@ export function DocumentsModal({
 
   async function handleRemove(doc: Document) {
     const ok = await confirm(
-      `Apagar "${doc.name}"? Os trechos indexados serão removidos.`,
-      { title: 'Apagar documento' },
+      `Delete "${doc.name}"? Indexed excerpts will be removed.`,
+      { title: 'Delete document' },
     )
     if (!ok) return
     try {
@@ -114,7 +114,7 @@ export function DocumentsModal({
         className={styles.overlay}
         role="dialog"
         aria-modal="true"
-        aria-label={`Documentos do caderno ${notebookName}`}
+        aria-label={`Documents for notebook ${notebookName}`}
         onMouseDown={(e) => {
           if (e.target === e.currentTarget) onClose()
         }}
@@ -122,13 +122,13 @@ export function DocumentsModal({
         <div className={styles.modal}>
           <header className={styles.header}>
             <h2 className={styles.title}>
-              Documentos · <span className={styles.notebookName}>{notebookName}</span>
+              Documents · <span className={styles.notebookName}>{notebookName}</span>
             </h2>
             <button
               className={styles.close}
               type="button"
               onClick={onClose}
-              aria-label="fechar"
+              aria-label="close"
             >
               ×
             </button>
@@ -149,9 +149,9 @@ export function DocumentsModal({
               <p className={styles.errorText}>{error}</p>
             ) : documents.length === 0 ? (
               <div className={styles.empty}>
-                <p className={styles.emptyTitle}>Nenhum documento ainda</p>
+                <p className={styles.emptyTitle}>No documents yet</p>
                 <p className={styles.emptyHelp}>
-                  Documentos são usados como contexto da IA neste caderno.
+                  Documents are used as AI context for this notebook.
                 </p>
                 <button
                   className={styles.primary}
@@ -159,16 +159,16 @@ export function DocumentsModal({
                   onClick={handleUpload}
                   disabled={uploading}
                 >
-                  {uploading ? 'enviando…' : '+ adicionar documento'}
+                  {uploading ? 'uploading…' : '+ add document'}
                 </button>
               </div>
             ) : (
               <table className={styles.table}>
                 <thead>
                   <tr>
-                    <th className={styles.colName}>nome</th>
+                    <th className={styles.colName}>name</th>
                     <th className={styles.colStatus}>status</th>
-                    <th className={styles.colActions}>ações</th>
+                    <th className={styles.colActions}>actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -190,16 +190,16 @@ export function DocumentsModal({
                             type="button"
                             onClick={() => handleReindex(doc)}
                           >
-                            retentar
+                            retry
                           </button>
                         )}
                         <button
                           className={styles.danger}
                           type="button"
                           onClick={() => handleRemove(doc)}
-                          aria-label={`remover ${doc.name}`}
+                          aria-label={`remove ${doc.name}`}
                         >
-                          remover
+                          remove
                         </button>
                       </td>
                     </tr>
@@ -213,7 +213,7 @@ export function DocumentsModal({
 
           <footer className={styles.footer}>
             <p className={styles.footerHint}>
-              Indexação requer conexão com internet.
+              Indexing requires an internet connection.
             </p>
             {documents.length > 0 && (
               <button
@@ -222,7 +222,7 @@ export function DocumentsModal({
                 onClick={handleUpload}
                 disabled={uploading}
               >
-                {uploading ? 'enviando…' : '+ adicionar documento'}
+                {uploading ? 'uploading…' : '+ add document'}
               </button>
             )}
           </footer>

@@ -82,17 +82,17 @@ pub(crate) fn read_key(app: &AppHandle, name: &str) -> Option<String> {
 fn save_key(app: &AppHandle, name: &str, key: String) -> Result<(), String> {
     let trimmed = key.trim();
     if trimmed.is_empty() {
-        return Err("chave vazia".into());
+        return Err("empty key".into());
     }
     let path = key_file(app, name)?;
-    fs::write(&path, trimmed).map_err(|e| format!("falha ao salvar chave: {}", e))?;
+    fs::write(&path, trimmed).map_err(|e| format!("failed to save key: {}", e))?;
     Ok(())
 }
 
 fn clear_key(app: &AppHandle, name: &str) -> Result<(), String> {
     let path = key_file(app, name)?;
     if path.exists() {
-        fs::remove_file(&path).map_err(|e| format!("falha ao remover chave: {}", e))?;
+        fs::remove_file(&path).map_err(|e| format!("failed to remove key: {}", e))?;
     }
     Ok(())
 }
@@ -147,7 +147,7 @@ async fn export_markdown(default_name: String, content: String) -> Result<bool, 
         None => Ok(false),
         Some(path) => {
             std::fs::write(&path, content.as_bytes())
-                .map_err(|e| format!("Falha ao salvar: {}", e))?;
+                .map_err(|e| format!("Failed to save: {}", e))?;
             Ok(true)
         }
     }
@@ -182,19 +182,19 @@ async fn openrouter_list_models(app: AppHandle) -> Result<Vec<ModelInfo>, String
         .header("X-Title", "Monet")
         .send()
         .await
-        .map_err(|e| format!("falha de rede: {}", e))?;
+        .map_err(|e| format!("network error: {}", e))?;
 
     let status = resp.status();
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
         eprintln!("OpenRouter list_models {} body: {}", status, body);
-        return Err(format!("OpenRouter respondeu {}", status));
+        return Err(format!("OpenRouter responded {}", status));
     }
 
     let parsed: OpenRouterModelsResponse = resp
         .json()
         .await
-        .map_err(|e| format!("resposta invalida: {}", e))?;
+        .map_err(|e| format!("invalid response: {}", e))?;
 
     let models = parsed
         .data
@@ -228,7 +228,7 @@ fn spawn_openrouter_stream(
             StreamErrorEvent {
                 request_id: request_id.clone(),
                 code: "INVALID_MODEL".into(),
-                message: "Identificador de modelo inválido".into(),
+                message: "Invalid model identifier".into(),
             },
         );
         return Err("INVALID_MODEL".into());
@@ -242,7 +242,7 @@ fn spawn_openrouter_stream(
                 StreamErrorEvent {
                     request_id: request_id.clone(),
                     code: "OPENROUTER_KEY_MISSING".into(),
-                    message: "Chave de API nao configurada".into(),
+                    message: "API key not configured".into(),
                 },
             );
             return Err("OPENROUTER_KEY_MISSING".into());
@@ -284,7 +284,7 @@ fn spawn_openrouter_stream(
                 );
             }
             Err(StreamError::Cancelled) => {
-                // nada a emitir: cancelamento vem do frontend
+                // nothing to emit: cancellation comes from the frontend
             }
             Err(StreamError::Failed { code, message }) => {
                 let _ = app_clone.emit(
@@ -382,7 +382,7 @@ async fn run_openrouter_stream(
         .await
         .map_err(|e| StreamError::Failed {
             code: "NETWORK_ERROR".into(),
-            message: format!("Nao foi possivel conectar a OpenRouter: {}", e),
+            message: format!("Could not connect to OpenRouter: {}", e),
         })?;
 
     let status = resp.status();
@@ -391,7 +391,7 @@ async fn run_openrouter_stream(
         eprintln!("OpenRouter stream {} body: {}", status, body_text);
         return Err(StreamError::Failed {
             code: "HTTP_ERROR".into(),
-            message: format!("OpenRouter respondeu {}", status),
+            message: format!("OpenRouter responded {}", status),
         });
     }
 
@@ -408,7 +408,7 @@ async fn run_openrouter_stream(
                     Err(_) => {
                         return Err(StreamError::Failed {
                             code: "STREAM_TIMEOUT".into(),
-                            message: "Tempo limite excedido aguardando resposta".into(),
+                            message: "Timeout waiting for response".into(),
                         });
                     }
                     Ok(None) => break,
@@ -417,7 +417,7 @@ async fn run_openrouter_stream(
                         eprintln!("OpenRouter stream error: {}", e);
                         return Err(StreamError::Failed {
                             code: "STREAM_ERROR".into(),
-                            message: "Conexão interrompida".into(),
+                            message: "Connection interrupted".into(),
                         });
                     }
                 };
@@ -445,7 +445,7 @@ async fn run_openrouter_stream(
                         let message = err
                             .get("message")
                             .and_then(|m| m.as_str())
-                            .unwrap_or("Erro desconhecido")
+                            .unwrap_or("Unknown error")
                             .to_string();
                         return Err(StreamError::Failed {
                             code: "OPENROUTER_ERROR".into(),

@@ -13,10 +13,10 @@ export interface ConfirmModalProps {
 
 export function ConfirmModal({
   open,
-  title = 'Confirmar',
+  title = 'Confirm',
   message,
-  confirmLabel = 'apagar',
-  cancelLabel = 'cancelar',
+  confirmLabel = 'delete',
+  cancelLabel = 'cancel',
   onConfirm,
   onCancel,
 }: ConfirmModalProps) {

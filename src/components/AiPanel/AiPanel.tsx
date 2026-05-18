@@ -54,7 +54,7 @@ function SortableAiCard({ response, execIndex, forceOpen, globalExpand, onDelete
         className={styles.cardDragHandle}
         {...attributes}
         {...listeners}
-        aria-label="arrastar para reordenar"
+        aria-label="drag to reorder"
       >
         <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true">
           <circle cx="5" cy="4" r="1.2" />
@@ -236,10 +236,10 @@ export function AiPanel({
       {showMissingKeyBanner && (
         <div className={styles.keyBanner} role="alert">
           <span>
-            É necessário cadastrar a chave do OpenRouter em Settings para usar a IA.
+            An OpenRouter key is required in Settings to use the AI.
           </span>
           <button type="button" onClick={onOpenSettings} className={styles.keyBannerCta}>
-            abrir Settings
+            open Settings
           </button>
         </div>
       )}
@@ -249,7 +249,7 @@ export function AiPanel({
             <button
               className={styles.expandToggle}
               onClick={() => setExpandAll((v) => v === true ? false : true)}
-              title={expandAll === true ? 'fechar todas' : 'abrir todas'}
+              title={expandAll === true ? 'collapse all' : 'expand all'}
               type="button"
             >
               {expandAll === true ? '−' : '+'}

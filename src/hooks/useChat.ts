@@ -183,9 +183,9 @@ function normalizeFolder(f: ChatFolder): ChatFolder {
 
 function deriveTitle(messages: ChatMessage[]): string {
   const first = messages.find((m) => m.role === 'user')
-  if (!first) return 'Nova conversa'
+  if (!first) return 'New conversation'
   const cleaned = first.content.replace(/\s+/g, ' ').trim()
-  if (!cleaned) return 'Nova conversa'
+  if (!cleaned) return 'New conversation'
   return cleaned.length > 50 ? cleaned.slice(0, 50) + '…' : cleaned
 }
 
@@ -387,14 +387,14 @@ function makeNewConversation(): ChatConversation {
   const now = new Date().toISOString()
   return {
     id: nanoid(),
-    title: 'Nova conversa',
+    title: 'New conversation',
     messages: [],
     createdAt: now,
     updatedAt: now,
   }
 }
 
-function makeNewFolder(name = 'Nova pasta'): ChatFolder {
+function makeNewFolder(name = 'New folder'): ChatFolder {
   const now = new Date().toISOString()
   return {
     id: nanoid(),
@@ -881,7 +881,7 @@ export function useChat(): UseChatResult {
           if (c.id !== convId) return c
           const nextMessages = updater(c.messages)
           const titleNeedsUpdate =
-            c.title === 'Nova conversa' ||
+            c.title === 'New conversation' ||
             c.title.length === 0
           const nextTitle = titleNeedsUpdate
             ? deriveTitle(nextMessages)
@@ -925,7 +925,7 @@ export function useChat(): UseChatResult {
         updateMessages(stream.convId, (msgs) =>
           msgs.map((m) =>
             m.id === stream.assistantId && m.content === ''
-              ? { ...m, content: `Erro: ${message}` }
+              ? { ...m, content: `Error: ${message}` }
               : m
           )
         )
@@ -953,7 +953,7 @@ export function useChat(): UseChatResult {
       if (!trimmed) return
       if (isStreaming) return
       if (!model) {
-        setError('Selecione um modelo antes de enviar.')
+        setError('Select a model before sending.')
         return
       }
       setError(null)
@@ -1001,7 +1001,7 @@ export function useChat(): UseChatResult {
         updateMessages(targetId, (msgs) =>
           msgs.map((m) =>
             m.id === assistantId && m.content === ''
-              ? { ...m, content: `Erro: ${message}` }
+              ? { ...m, content: `Error: ${message}` }
               : m
           )
         )
@@ -1015,7 +1015,7 @@ export function useChat(): UseChatResult {
         setHasApiKey(false)
         setApiKeyChecked(true)
         failOnAssistant(
-          'Chave de API não configurada. Cadastre a chave do OpenRouter em Settings.'
+          'API key not configured. Add your OpenRouter key in Settings.'
         )
         return
       }
@@ -1028,7 +1028,7 @@ export function useChat(): UseChatResult {
         const tavilyOk = await hasTavilyKey()
         if (!tavilyOk) {
           failOnAssistant(
-            'Web Search está ativo mas a chave Tavily não está configurada em Settings > Busca Web.'
+            'Web Search is active but the Tavily key is not configured in Settings > Web Search.'
           )
           return
         }
@@ -1038,13 +1038,13 @@ export function useChat(): UseChatResult {
           if (formatted) {
             searchSystemMessage = {
               role: 'system',
-              content: `Você tem acesso aos seguintes resultados de busca na web. Use-os para embasar sua resposta e cite obrigatoriamente as fontes com links inline no formato [Título](url), próximo à afirmação que cada fonte suporta. Não agrupe as fontes no final — distribua as citações ao longo do texto.\n\n${formatted}`,
+              content: `You have access to the following web search results. Use them to support your response and always cite sources with inline links in the format [Title](url), close to the claim each source supports. Do not group sources at the end — distribute citations throughout the text.\n\n${formatted}`,
             }
           }
         } catch (err) {
           console.warn('webSearch failed:', err)
           setError(
-            `Falha ao buscar na web: ${err instanceof Error ? err.message : 'erro desconhecido'}. Enviando sem contexto de busca.`
+            `Web search failed: ${err instanceof Error ? err.message : 'unknown error'}. Sending without search context.`
           )
         }
       }

@@ -1,18 +1,18 @@
 import type { CommandDef } from '../types'
 
 export const COMMANDS: CommandDef[] = [
-  { name: '/pesquisa', description: 'Busca rápida, resposta objetiva', example: '/pesquisa Delta Sharing', takesQuery: true, usesSearch: true },
-  { name: '/quem', description: 'Perfil profissional de uma pessoa', example: '/quem Adriana Silva, Banco Inter', takesQuery: true, usesSearch: true },
-  { name: '/definir', description: 'Definição técnica concisa', example: '/definir RAG', takesQuery: true },
-  { name: '/resumir', description: 'Resume a nota atual', example: '/resumir', takesQuery: false },
-  { name: '/opiniao', description: 'Resposta opinativa e direta', example: '/opiniao usar RAG vs fine-tuning', takesQuery: true },
-  { name: '/tabela', description: 'Resposta formatada como tabela markdown', example: '/tabela REST vs GraphQL', takesQuery: true },
-  { name: '/aprofundar', description: 'Adicione apenas informações novas e úteis que não estejam explícitas na nota, sem resumir, reformular ou parafrasear o texto existente', example: '/aprofundar', takesQuery: true },
-  { name: '/explicar', description: 'Explica um conceito de forma simples, como se fosse para um iniciante (técnica Feynman)', example: '/explicar entrelaçamento quântico', takesQuery: true, usesSearch: true },
-  { name: '/guia', description: 'Cria um roteiro de estudos com tópicos e sequência lógica para dominar o assunto', example: '/guia cálculo diferencial', takesQuery: true, usesSearch: true },
-  { name: '/mapa-mental', description: 'Gera um mapa mental hierárquico da nota atual em markdown', example: '/mapa-mental', takesQuery: false },
-  { name: '/perguntar', description: 'Faz uma pergunta livre ao modelo', example: '/perguntar qual a diferença entre HTTP/1.1 e HTTP/2?', takesQuery: true, usesSearch: true },
-  { name: '/documentos', description: 'Responde usando apenas os documentos do caderno', example: '/documentos quais empresas a pessoa trabalhou?', takesQuery: true },
+  { name: '/search', description: 'Quick search, objective answer', example: '/search Delta Sharing', takesQuery: true, usesSearch: true },
+  { name: '/profile', description: 'Professional profile of a person', example: '/profile Adriana Silva, Banco Inter', takesQuery: true, usesSearch: true },
+  { name: '/define', description: 'Concise technical definition', example: '/define RAG', takesQuery: true },
+  { name: '/summarize', description: 'Summarizes the current note', example: '/summarize', takesQuery: false },
+  { name: '/opinion', description: 'Direct opinionated answer', example: '/opinion using RAG vs fine-tuning', takesQuery: true },
+  { name: '/table', description: 'Response formatted as markdown table', example: '/table REST vs GraphQL', takesQuery: true },
+  { name: '/expand', description: 'Add only new and useful information not already in the note', example: '/expand', takesQuery: true },
+  { name: '/explain', description: 'Explains a concept simply, using the Feynman technique', example: '/explain quantum entanglement', takesQuery: true, usesSearch: true },
+  { name: '/guide', description: 'Creates a study roadmap with topics and logical sequence', example: '/guide differential calculus', takesQuery: true, usesSearch: true },
+  { name: '/mindmap', description: 'Generates a hierarchical mindmap of the current note in markdown', example: '/mindmap', takesQuery: false },
+  { name: '/ask', description: 'Ask a free question to the AI model', example: '/ask what is the difference between HTTP/1.1 and HTTP/2?', takesQuery: true, usesSearch: true },
+  { name: '/docs', description: 'Answer using only the notebook documents', example: '/docs which companies did the person work for?', takesQuery: true },
 ]
 
 export function findCommand(name: string): CommandDef | undefined {

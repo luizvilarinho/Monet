@@ -80,10 +80,10 @@ const ChatIcon = () => (
 )
 
 const STATUS_LABEL: Record<AiResponse['status'], string> = {
-  streaming: 'respondendo...',
-  completed: 'concluído',
-  interrupted: 'interrompido',
-  error: 'erro',
+  streaming: 'responding...',
+  completed: 'completed',
+  interrupted: 'interrupted',
+  error: 'error',
 }
 
 export function AiCard({ response, execIndex, forceOpen, globalExpand, onDelete, hasApiKey, onOpenInChat }: AiCardProps) {
@@ -175,7 +175,7 @@ export function AiCard({ response, execIndex, forceOpen, globalExpand, onDelete,
               e.stopPropagation()
               onDelete(response.id)
             }}
-            aria-label="apagar resposta"
+            aria-label="delete response"
             type="button"
           >
             ×
@@ -226,9 +226,9 @@ export function AiCard({ response, execIndex, forceOpen, globalExpand, onDelete,
               onOpenInChat?.(response)
             }}
             disabled={!hasApiKey}
-            aria-label="continuar no modo Chat"
+            aria-label="continue in Chat mode"
             aria-disabled={!hasApiKey}
-            title={hasApiKey ? 'Continuar conversa no modo Chat' : 'Cadastre a chave do OpenRouter em Settings'}
+            title={hasApiKey ? 'Continue conversation in Chat mode' : 'Add your OpenRouter key in Settings'}
           >
             <ChatIcon />
             <span>Chat</span>

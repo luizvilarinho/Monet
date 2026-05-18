@@ -49,32 +49,46 @@ import type {
   Note,
 } from './types'
 
-const SYSTEM_PROMPT = `Você é o assistente de estudo do Monet.
+function getSystemLanguage(): string {
+  const stored = localStorage.getItem('monet:user-language')
+  if (stored) return stored
+  const detected = navigator.language || 'en'
+  localStorage.setItem('monet:user-language', detected)
+  return detected
+}
 
-Responda sempre em português do Brasil, com Markdown enxuto e sem saudações, despedidas ou frases de enchimento.
+const USER_LANGUAGE = getSystemLanguage()
 
-Objetivo geral:
-- Complementar a nota atual sem repetir literalmente o que já está escrito.
-- Tratar a nota como contexto principal.
-- Priorizar informação útil que não esteja explicitamente presente na nota: exemplos concretos, implicações práticas, conexões entre conceitos, exceções, riscos, contrapontos e contexto relevante.
+function buildSystemPrompt(language: string): string {
+  return `You are the Monet study assistant.
 
-Regras gerais:
-- Não reescreva, resuma ou parafraseie trechos da nota, exceto quando o próprio comando pedir síntese.
-- Não transforme o conteúdo existente apenas em outras palavras.
-- Se precisar mencionar algo que já está na nota, faça isso de forma breve e apenas para conectar a nova informação.
-- Não invente fatos, nomes, números, datas ou referências.
-- Se o comando depender de pesquisa web, use somente os resultados fornecidos.
-- Se os resultados de pesquisa forem insuficientes, responda exatamente: "Não encontrei informações suficientes nos resultados disponíveis."
-- Se não houver complemento relevante além do que já está explícito na nota, responda exatamente: "Sem complemento relevante além do que já está na nota."
+Always respond in the user's language: ${language}. Use concise Markdown with no greetings, farewells, or filler phrases.
 
-Comportamento por comando:
-- /resumir: sintetize apenas o essencial da nota em bullets curtos. Aqui pode reformular o conteúdo da nota, mas sem floreio.
-- /definir: dê uma definição curta e, se útil, acrescente 1 exemplo, contraste ou implicação que não esteja explícito na nota.
-- /tabela: responda em tabela Markdown, comparativa e simétrica.
-- /opiniao: organize em prós, contras e conclusão direta.
-- /pesquisa e /quem: responda de forma factual, somente com base nos resultados fornecidos.
-- /aprofundar: entregue apenas informações novas e úteis que não estejam explicitamente presentes na nota. Não resuma, não reformule e não repita o texto da nota em outras palavras. Adicione apenas contexto, conexões, implicações, exemplos, exceções, riscos, contrapontos ou detalhes ausentes.
-- /documentos: responda usando exclusivamente os "Trechos relevantes de documentos do caderno". Ignore a nota e seu conhecimento geral. Cite o nome do documento entre parênteses ao final de cada afirmação. Se os trechos não trouxerem informação suficiente para responder, responda exatamente: "Não encontrei essa informação nos documentos do caderno."`
+General goal:
+- Complement the current note without literally repeating what is already written.
+- Treat the note as the main context.
+- Prioritize useful information not explicitly present in the note: concrete examples, practical implications, connections between concepts, exceptions, risks, counterpoints, and relevant context.
+
+General rules:
+- Do not rewrite, summarize, or paraphrase sections of the note, unless the command itself asks for synthesis.
+- Do not rephrase existing content in other words.
+- If you need to reference something already in the note, do so briefly and only to connect new information.
+- Do not invent facts, names, numbers, dates, or references.
+- If the command depends on web search, use only the provided results.
+- If search results are insufficient, respond exactly: "I could not find enough information in the available results."
+- If there is no relevant complement beyond what is already explicit in the note, respond exactly: "No relevant complement beyond what is already in the note."
+
+Command behavior:
+- /summarize: synthesize only the essentials of the note in short bullets. Here you may rephrase note content, but without embellishment.
+- /define: give a short definition and, if useful, add 1 example, contrast, or implication not explicit in the note.
+- /table: respond with a comparative, symmetric Markdown table.
+- /opinion: organize into pros, cons, and a direct conclusion.
+- /search and /profile: respond factually, based only on the provided results.
+- /expand: deliver only new and useful information not explicitly present in the note. Do not summarize, rephrase, or repeat the note's text in other words. Add only context, connections, implications, examples, exceptions, risks, counterpoints, or missing details.
+- /docs: respond using exclusively the "Relevant document excerpts from the notebook". Ignore the note and your general knowledge. Cite the document name in parentheses at the end of each claim. If the excerpts do not contain enough information to answer, respond exactly: "I could not find this information in the notebook documents."`
+}
+
+const SYSTEM_PROMPT = buildSystemPrompt(USER_LANGUAGE)
 
 const COLLAPSED_PANEL_WIDTH = 48
 
@@ -108,10 +122,10 @@ function expandEmbedBlocks(content: string, responses: AiResponse[]): string {
 function formatRagContext(chunks: ChunkResult[]): string {
   if (chunks.length === 0) return ''
   const blocks = chunks.map((c) => {
-    const header = `[${c.documentName}, trecho ${c.chunkIndex + 1}]`
+    const header = `[${c.documentName}, excerpt ${c.chunkIndex + 1}]`
     return `${header}\n${c.snippet}`
   })
-  return `Trechos relevantes de documentos do caderno:\n\n${blocks.join('\n\n')}\n\n---`
+  return `Relevant document excerpts from the notebook:\n\n${blocks.join('\n\n')}\n\n---`
 }
 
 function buildUserMessage(
@@ -123,13 +137,13 @@ function buildUserMessage(
   ragContext?: string
 ): string {
   const parts: string[] = []
-  parts.push(`Comando: ${command} - ${description}`)
-  if (query.trim()) parts.push(`Parametro: ${query.trim()}`)
+  parts.push(`Command: ${command} - ${description}`)
+  if (query.trim()) parts.push(`Parameter: ${query.trim()}`)
   if (ragContext) parts.push(`\n${ragContext}`)
   if (searchContext) parts.push(`\n${searchContext}`)
   const cleanContent = stripCommandLines(noteContent)
   if (cleanContent) {
-    parts.push(`\nConteudo da nota atual:\n${cleanContent}`)
+    parts.push(`\nCurrent note content:\n${cleanContent}`)
   }
   return parts.join('\n')
 }
@@ -146,7 +160,7 @@ function App() {
 
   const [activeMode, setActiveMode] = useState<ActiveMode>(() => {
     const saved = localStorage.getItem('monet:active-mode')
-    return saved === 'chat' ? 'chat' : 'caderno'
+    return saved === 'chat' ? 'chat' : 'notebook'
   })
   const [activeNotebookId, setActiveNotebookId] = useState<string | null>(null)
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -226,7 +240,7 @@ function App() {
       })
     } catch (err) {
       const message =
-        err instanceof Error ? err.message : String(err ?? 'falha ao carregar modelos')
+        err instanceof Error ? err.message : String(err ?? 'failed to load models')
       if (message.includes(OPENROUTER_KEY_MISSING)) {
         setModels([])
         setModelsError(null)
@@ -337,7 +351,7 @@ function App() {
     const content = stripCommandLines(expanded)
     const defaultName = activeNote.title.trim()
       ? `${activeNote.title.trim()}.md`
-      : 'nota-sem-titulo.md'
+      : 'untitled-note.md'
     try {
       const saved = await invoke<boolean>('export_markdown', { defaultName, content })
       if (saved) {
@@ -366,7 +380,7 @@ function App() {
           activeId,
           cmd,
           query,
-          'Chave de API não configurada. Cadastre a chave do OpenRouter em Settings para iniciar solicitações.'
+          'API key not configured. Add your OpenRouter key in Settings to start requests.'
         )
         return true
       }
@@ -375,7 +389,7 @@ function App() {
           activeId,
           cmd,
           query,
-          'Nenhum modelo disponível para selecionar. Verifique sua conta OpenRouter.'
+          'No model available to select. Check your OpenRouter account.'
         )
         return true
       }
@@ -385,7 +399,7 @@ function App() {
             activeId,
             cmd,
             query,
-            'Busca web não configurada. Cadastre a chave Tavily em Settings > Busca Web para usar este comando.'
+            'Web search not configured. Add your Tavily key in Settings > Web Search to use this command.'
           )
           return true
         }
@@ -402,7 +416,7 @@ function App() {
         }
       }
 
-      const isDocsOnly = cmd === '/documentos'
+      const isDocsOnly = cmd === '/docs'
       const notebookId = activeNote?.notebookId ?? null
 
       let availableDocsCount = 0
@@ -419,8 +433,8 @@ function App() {
               cmd,
               query,
               indexing
-                ? 'Nenhum documento disponível ainda — aguarde a indexação terminar.'
-                : 'Nenhum documento neste caderno. Adicione um pelo ícone de documentos no caderno.'
+                ? 'No document available yet — wait for indexing to finish.'
+                : 'No document in this notebook. Add one via the documents icon on the notebook.'
             )
             return true
           }
@@ -432,7 +446,7 @@ function App() {
               activeId,
               cmd,
               query,
-              'Falha ao consultar documentos do caderno.'
+              'Failed to query notebook documents.'
             )
             return true
           }
@@ -442,7 +456,7 @@ function App() {
           activeId,
           cmd,
           query,
-          'Esta nota não pertence a um caderno. /documentos requer um caderno com documentos indexados.'
+          'This note does not belong to a notebook. /docs requires a notebook with indexed documents.'
         )
         return true
       }
@@ -476,7 +490,7 @@ function App() {
           activeId,
           cmd,
           query,
-          'Não consegui buscar trechos relevantes nos documentos. Verifique a conexão e tente novamente.'
+          'Could not retrieve relevant document excerpts. Check your connection and try again.'
         )
         return true
       }
@@ -509,7 +523,7 @@ function App() {
   }
 
   async function handleCreateNotebook() {
-    const name = window.prompt('nome do caderno')
+    const name = window.prompt('Notebook name')
     if (name === null) return
     const nb = await createNotebook(name)
     setActiveNotebookId(nb.id)
@@ -592,7 +606,7 @@ function App() {
 
   const handleNavigateToNote = useCallback(
     (notebookId: string, noteId: string) => {
-      setActiveMode('caderno')
+      setActiveMode('notebook')
       setActiveNotebookId(notebookId)
       setActiveId(noteId)
       setActiveTag(null)

@@ -57,12 +57,13 @@ function saveLastNotebookId(id: string): void {
 }
 
 function formatTimestamp(now = new Date()): string {
-  const date = now.toLocaleDateString('pt-BR', {
+  const locale = localStorage.getItem('monet:user-language') ?? navigator.language
+  const date = now.toLocaleDateString(locale, {
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
   })
-  const time = now.toLocaleTimeString('pt-BR', {
+  const time = now.toLocaleTimeString(locale, {
     hour: '2-digit',
     minute: '2-digit',
   })
@@ -73,7 +74,7 @@ export function buildToggleBlock(rawMarkdown: string, timestamp = formatTimestam
   const body = rawMarkdown.trim()
   // Markdown puro: cabeçalho com timestamp + conteúdo. Sem tags HTML,
   // totalmente editável e renderizado normalmente no preview.
-  return `**Resposta do Chat — ${timestamp}**\n\n${body}`
+  return `**Chat Response — ${timestamp}**\n\n${body}`
 }
 
 export function appendToggleToContent(existing: string, block: string): string {
@@ -180,7 +181,7 @@ export function SaveToNoteModal({
     } catch (err) {
       setStage({
         kind: 'error',
-        message: err instanceof Error ? err.message : 'Falha ao criar caderno.',
+        message: err instanceof Error ? err.message : 'Failed to create notebook.',
         retry: () => setStage({ kind: 'notebook-empty-create' }),
       })
     }
@@ -203,11 +204,11 @@ export function SaveToNoteModal({
         notebookId,
         notebookName: nb?.name ?? '',
         noteId: note.id,
-        noteTitle: note.title.trim() || 'sem título',
+        noteTitle: note.title.trim() || 'untitled',
       })
     } catch (err) {
       const message =
-        err instanceof Error ? err.message : 'Falha ao salvar a resposta na nota.'
+        err instanceof Error ? err.message : 'Failed to save response to note.'
       setStage({
         kind: 'error',
         message,
@@ -232,7 +233,7 @@ export function SaveToNoteModal({
       })
     } catch (err) {
       const message =
-        err instanceof Error ? err.message : 'Falha ao criar a nota.'
+        err instanceof Error ? err.message : 'Failed to create note.'
       setStage({
         kind: 'error',
         message,
@@ -244,7 +245,7 @@ export function SaveToNoteModal({
   function handleConfirmNewNoteTitle(notebookId: string) {
     const title = newNoteTitle.trim()
     if (!title) {
-      setTitleError('Informe um título para a nova nota.')
+      setTitleError('Please enter a title for the new note.')
       return
     }
     setTitleError(null)
@@ -255,9 +256,9 @@ export function SaveToNoteModal({
     if (stage.kind === 'notebook-empty-create') {
       return (
         <div className={styles.body}>
-          <p className={styles.emptyTitle}>Você ainda não tem cadernos</p>
+          <p className={styles.emptyTitle}>You have no notebooks yet</p>
           <p className={styles.emptyHelp}>
-            Crie um caderno para salvar esta resposta como uma nota.
+            Create a notebook to save this response as a note.
           </p>
           <input
             ref={newNotebookInputRef}
@@ -267,8 +268,8 @@ export function SaveToNoteModal({
             onKeyDown={(e) => {
               if (e.key === 'Enter') void handleCreateNotebookFromEmpty()
             }}
-            placeholder="nome do caderno"
-            aria-label="nome do caderno"
+            placeholder="notebook name"
+            aria-label="notebook name"
           />
           <div className={styles.footerActions}>
             <button
@@ -276,7 +277,7 @@ export function SaveToNoteModal({
               className={styles.btnSecondary}
               onClick={onClose}
             >
-              cancelar
+              cancel
             </button>
             <button
               type="button"
@@ -284,7 +285,7 @@ export function SaveToNoteModal({
               onClick={handleCreateNotebookFromEmpty}
               disabled={newNotebookName.trim().length === 0}
             >
-              criar caderno
+              create notebook
             </button>
           </div>
         </div>
@@ -294,7 +295,7 @@ export function SaveToNoteModal({
     if (stage.kind === 'notebook-select') {
       return (
         <div className={styles.body}>
-          <p className={styles.stepLabel}>Etapa 1 de 2 · escolha o caderno</p>
+          <p className={styles.stepLabel}>Step 1 of 2 · choose a notebook</p>
           <ul className={styles.list} role="listbox">
             {orderedNotebooks.map((nb) => {
               const isLast = nb.id === lastNotebookId
@@ -315,7 +316,7 @@ export function SaveToNoteModal({
                   >
                     <span className={styles.listItemLabel}>{nb.name}</span>
                     {isLast && (
-                      <span className={styles.pillLast}>Usado por último</span>
+                      <span className={styles.pillLast}>Last used</span>
                     )}
                   </button>
                 </li>
@@ -335,15 +336,15 @@ export function SaveToNoteModal({
               type="button"
               className={styles.linkBack}
               onClick={() => setStage({ kind: 'notebook-select' })}
-              aria-label="voltar para seleção de caderno"
+              aria-label="go back to notebook selection"
             >
-              ← voltar
+              ← back
             </button>
             <span className={styles.breadcrumbName}>
               {selectedNotebookName}
             </span>
           </div>
-          <p className={styles.stepLabel}>Etapa 2 de 2 · escolha a nota</p>
+          <p className={styles.stepLabel}>Step 2 of 2 · choose a note</p>
           <ul className={styles.list} role="listbox">
             <li>
               <button
@@ -353,12 +354,12 @@ export function SaveToNoteModal({
                   setStage({ kind: 'new-note-title', notebookId })
                 }
               >
-                <span className={styles.listItemLabel}>+ Criar nova nota</span>
+                <span className={styles.listItemLabel}>+ Create new note</span>
               </button>
             </li>
             {notesOfSelected.length === 0 ? (
               <li className={styles.muted}>
-                Este caderno ainda não tem notas.
+                This notebook has no notes yet.
               </li>
             ) : (
               notesOfSelected.map((n) => (
@@ -369,7 +370,7 @@ export function SaveToNoteModal({
                     onClick={() => void appendToExistingNote(notebookId, n)}
                   >
                     <span className={styles.listItemLabel}>
-                      {n.title.trim() || 'sem título'}
+                      {n.title.trim() || 'untitled'}
                     </span>
                   </button>
                 </li>
@@ -393,15 +394,15 @@ export function SaveToNoteModal({
                 setTitleError(null)
                 setStage({ kind: 'note-select', notebookId })
               }}
-              aria-label="cancelar criação de nota"
+              aria-label="cancel note creation"
             >
-              ← voltar
+              ← back
             </button>
             <span className={styles.breadcrumbName}>
               {selectedNotebookName}
             </span>
           </div>
-          <p className={styles.stepLabel}>Título da nova nota</p>
+          <p className={styles.stepLabel}>New note title</p>
           <input
             ref={newNoteTitleInputRef}
             className={styles.input}
@@ -413,8 +414,8 @@ export function SaveToNoteModal({
             onKeyDown={(e) => {
               if (e.key === 'Enter') handleConfirmNewNoteTitle(notebookId)
             }}
-            placeholder="ex.: Resumo da conversa"
-            aria-label="título da nova nota"
+            placeholder="e.g.: Conversation summary"
+            aria-label="new note title"
             aria-invalid={!!titleError}
           />
           {titleError && (
@@ -432,14 +433,14 @@ export function SaveToNoteModal({
                 setStage({ kind: 'note-select', notebookId })
               }}
             >
-              cancelar
+              cancel
             </button>
             <button
               type="button"
               className={styles.btnPrimary}
               onClick={() => handleConfirmNewNoteTitle(notebookId)}
             >
-              criar e salvar
+              create and save
             </button>
           </div>
         </div>
@@ -449,7 +450,7 @@ export function SaveToNoteModal({
     if (stage.kind === 'saving') {
       return (
         <div className={styles.body}>
-          <p className={styles.stepLabel}>Salvando...</p>
+          <p className={styles.stepLabel}>Saving...</p>
           <div className={styles.savingDots} aria-hidden="true">
             <span />
             <span />
@@ -462,9 +463,9 @@ export function SaveToNoteModal({
     if (stage.kind === 'success') {
       return (
         <div className={styles.body}>
-          <p className={styles.successTitle}>Resposta salva</p>
+          <p className={styles.successTitle}>Response saved</p>
           <p className={styles.successHelp}>
-            Adicionada em{' '}
+            Added to{' '}
             <span className={styles.targetNotebook}>{stage.notebookName}</span>
             {' / '}
             <span className={styles.targetNote}>{stage.noteTitle}</span>.
@@ -475,7 +476,7 @@ export function SaveToNoteModal({
               className={styles.btnSecondary}
               onClick={onClose}
             >
-              Fechar
+              Close
             </button>
             <button
               type="button"
@@ -485,7 +486,7 @@ export function SaveToNoteModal({
                 onClose()
               }}
             >
-              Ir para nota
+              Go to note
             </button>
           </div>
         </div>
@@ -495,7 +496,7 @@ export function SaveToNoteModal({
     if (stage.kind === 'error') {
       return (
         <div className={styles.body}>
-          <p className={styles.errorTitle}>Não foi possível salvar</p>
+          <p className={styles.errorTitle}>Could not save</p>
           <p className={styles.errorBody}>{stage.message}</p>
           <div className={styles.footerActions}>
             <button
@@ -503,14 +504,14 @@ export function SaveToNoteModal({
               className={styles.btnSecondary}
               onClick={onClose}
             >
-              Fechar
+              Close
             </button>
             <button
               type="button"
               className={styles.btnPrimary}
               onClick={stage.retry}
             >
-              Tentar novamente
+              Try again
             </button>
           </div>
         </div>
@@ -525,19 +526,19 @@ export function SaveToNoteModal({
       className={styles.overlay}
       role="dialog"
       aria-modal="true"
-      aria-label="Salvar resposta em uma nota"
+      aria-label="Save response to a note"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose()
       }}
     >
       <div className={styles.modal}>
         <header className={styles.header}>
-          <h2 className={styles.title}>Salvar em nota</h2>
+          <h2 className={styles.title}>Save to note</h2>
           <button
             type="button"
             className={styles.close}
             onClick={onClose}
-            aria-label="fechar"
+            aria-label="close"
           >
             ×
           </button>

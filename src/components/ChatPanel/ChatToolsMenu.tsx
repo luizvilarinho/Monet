@@ -13,7 +13,7 @@ const TOOLS: ToolDef[] = [
   {
     key: 'webSearch',
     name: 'Web Search',
-    description: 'Busca na web por informações atuais (usa Tavily).',
+    description: 'Searches the web for current information (uses Tavily).',
     icon: (
       <svg
         viewBox="0 0 24 24"
@@ -65,8 +65,8 @@ export function ChatToolsMenu({ tools, onToggle }: ChatToolsMenuProps) {
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label="ferramentas"
-        title="ferramentas"
+        aria-label="tools"
+        title="tools"
       >
         <svg
           viewBox="0 0 24 24"

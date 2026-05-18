@@ -21,43 +21,43 @@ type ButtonDef = { id: FormatId; label: string; title: string; cls?: string }
 
 const FORMATTING_GROUPS: ButtonDef[][] = [
   [
-    { id: 'h1', label: 'H1', title: 'Título H1' },
-    { id: 'h2', label: 'H2', title: 'Subtítulo H2' },
-    { id: 'h3', label: 'H3', title: 'Subtítulo H3' },
+    { id: 'h1', label: 'H1', title: 'Heading H1' },
+    { id: 'h2', label: 'H2', title: 'Heading H2' },
+    { id: 'h3', label: 'H3', title: 'Heading H3' },
   ],
   [
-    { id: 'bold', label: 'B', title: 'Negrito (Ctrl+B)', cls: 'bold' },
-    { id: 'italic', label: 'I', title: 'Itálico (Ctrl+I)', cls: 'italic' },
+    { id: 'bold', label: 'B', title: 'Bold (Ctrl+B)', cls: 'bold' },
+    { id: 'italic', label: 'I', title: 'Italic (Ctrl+I)', cls: 'italic' },
   ],
   [
-    { id: 'ul', label: '≡', title: 'Lista' },
-    { id: 'ol', label: '1.', title: 'Lista Numerada' },
+    { id: 'ul', label: '≡', title: 'List' },
+    { id: 'ol', label: '1.', title: 'Numbered List' },
     { id: 'todo', label: '☐', title: 'TODO' },
   ],
   [
-    { id: 'blockquote', label: '"', title: 'Citação' },
-    { id: 'code', label: '</>', title: 'Código inline' },
-    { id: 'codeBlock', label: '{ }', title: 'Bloco de código (multilinha)' },
-    { id: 'table', label: '⊞', title: 'Inserir tabela 3×3' },
-    { id: 'image', label: '🖼', title: 'Inserir imagem (também aceita colar / arrastar)' },
+    { id: 'blockquote', label: '"', title: 'Quote' },
+    { id: 'code', label: '</>', title: 'Inline code' },
+    { id: 'codeBlock', label: '{ }', title: 'Code block (multiline)' },
+    { id: 'table', label: '⊞', title: 'Insert 3×3 table' },
+    { id: 'image', label: '🖼', title: 'Insert image (also supports paste / drag)' },
     { id: 'link', label: '🔗', title: 'Link' },
-    { id: 'hr', label: '―', title: 'Separador' },
+    { id: 'hr', label: '―', title: 'Divider' },
   ],
 ]
 
 const TABLE_GROUPS: ButtonDef[][] = [
   [
-    { id: 'colBefore', label: '+◀', title: 'Adicionar coluna à esquerda' },
-    { id: 'colAfter', label: '▶+', title: 'Adicionar coluna à direita' },
-    { id: 'delCol', label: '× col', title: 'Excluir coluna atual' },
+    { id: 'colBefore', label: '+◀', title: 'Add column to the left' },
+    { id: 'colAfter', label: '▶+', title: 'Add column to the right' },
+    { id: 'delCol', label: '× col', title: 'Delete current column' },
   ],
   [
-    { id: 'rowBefore', label: '+▲', title: 'Adicionar linha acima' },
-    { id: 'rowAfter', label: '▼+', title: 'Adicionar linha abaixo' },
-    { id: 'delRow', label: '× lin', title: 'Excluir linha atual' },
+    { id: 'rowBefore', label: '+▲', title: 'Add row above' },
+    { id: 'rowAfter', label: '▼+', title: 'Add row below' },
+    { id: 'delRow', label: '× lin', title: 'Delete current row' },
   ],
   [
-    { id: 'delTable', label: '× tabela', title: 'Excluir tabela inteira' },
+    { id: 'delTable', label: '× table', title: 'Delete entire table' },
   ],
 ]
 
@@ -116,7 +116,7 @@ function runAction(editor: Editor, id: FormatId) {
       if (editor.isActive('link')) {
         chain.unsetLink().run()
       } else {
-        const url = window.prompt('URL do link:')?.trim()
+        const url = window.prompt('Link URL:')?.trim()
         if (url && isSafeLinkUrl(url)) chain.setLink({ href: url }).run()
         else chain.run()
       }

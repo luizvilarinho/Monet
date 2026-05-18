@@ -64,7 +64,7 @@ export function EmbedBlockView({ node, updateAttributes, editor, selected }: Nod
             dangerouslySetInnerHTML={{ __html: renderedHtml }}
           />
         ) : (
-          <div className={styles.empty}>Resposta não disponível.</div>
+          <div className={styles.empty}>Response not available.</div>
         )
       )}
     </NodeViewWrapper>

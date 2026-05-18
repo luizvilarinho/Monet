@@ -43,7 +43,7 @@ function isSearchResult(value: unknown): value is SearchResult {
 
 export async function webSearch(query: string): Promise<SearchResult[]> {
   const key = await getTavilyKey()
-  if (!key) throw new Error('Chave Tavily não configurada')
+  if (!key) throw new Error('Tavily key not configured')
 
   const res = await fetch('https://api.tavily.com/search', {
     method: 'POST',
@@ -57,7 +57,7 @@ export async function webSearch(query: string): Promise<SearchResult[]> {
   })
 
   if (!res.ok) {
-    throw new Error(`Tavily ${res.status}`)
+    throw new Error(`Tavily error ${res.status}`)
   }
 
   const data: unknown = await res.json()
@@ -66,7 +66,7 @@ export async function webSearch(query: string): Promise<SearchResult[]> {
     typeof data !== 'object' ||
     !Array.isArray((data as { results?: unknown }).results)
   ) {
-    throw new Error('Tavily: resposta com formato inesperado')
+    throw new Error('Tavily: unexpected response format')
   }
 
   const rawResults = (data as { results: unknown[] }).results
@@ -87,5 +87,5 @@ export function formatSearchResults(results: SearchResult[]): string {
   const lines = results.map(
     (r, i) => `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.content}`
   )
-  return `Resultados de busca na web:\n\n${lines.join('\n\n')}`
+  return `Web search results:\n\n${lines.join('\n\n')}`
 }

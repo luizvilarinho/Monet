@@ -1,7 +1,7 @@
 import logoUrl from '../../assets/logo_monet_vector.svg'
 import styles from './Toolbar.module.css'
 
-export type ActiveMode = 'caderno' | 'chat'
+export type ActiveMode = 'notebook' | 'chat'
 
 export interface ToolbarProps {
   activeMode: ActiveMode
@@ -32,9 +32,9 @@ export function Toolbar({
 }: ToolbarProps) {
   return (
     <header className={styles.toolbar}>
-      <img src={logoUrl} alt="monet" className={styles.brand} onClick={() => onSetMode('caderno')} />
+      <img src={logoUrl} alt="Monet" className={styles.brand} onClick={() => onSetMode('notebook')} />
 
-      {activeMode === 'caderno' && (
+      {activeMode === 'notebook' && (
         <div className={styles.noteBar}>
           <div className={styles.searchWrap}>
             <svg
@@ -57,7 +57,7 @@ export function Toolbar({
               type="search"
               value={search}
               onChange={(e) => onSearchChange(e.target.value)}
-              placeholder="buscar anotações..."
+              placeholder="search notes..."
             />
           </div>
           <div className={styles.noteActions}>
@@ -66,18 +66,18 @@ export function Toolbar({
               onClick={onExport}
               disabled={!hasNote}
               className={exportSuccess ? styles.exportSuccess : styles.actionBtn}
-              title="Exportar nota como .md"
+              title="Export note as .md"
             >
-              {exportSuccess ? 'salvo!' : 'export .md'}
+              {exportSuccess ? 'saved!' : 'export .md'}
             </button>
             <button
               type="button"
               onClick={onToggleFocus}
               aria-pressed={focusMode}
               className={styles.actionBtn}
-              title="Foco (Ctrl+Space)"
+              title="Focus (Ctrl+Space)"
             >
-              foco
+              focus
             </button>
             <button
               type="button"
@@ -91,14 +91,14 @@ export function Toolbar({
         </div>
       )}
 
-      <nav className={styles.modes} aria-label="modos do app">
+      <nav className={styles.modes} aria-label="app modes">
         <button
           type="button"
-          className={activeMode === 'caderno' ? styles.modeButtonActive : styles.modeButton}
-          onClick={() => onSetMode('caderno')}
-          aria-pressed={activeMode === 'caderno'}
+          className={activeMode === 'notebook' ? styles.modeButtonActive : styles.modeButton}
+          onClick={() => onSetMode('notebook')}
+          aria-pressed={activeMode === 'notebook'}
         >
-          Caderno
+          Notebook
         </button>
 
         <button

@@ -61,7 +61,7 @@ export function FolderSystemPromptModal({
       className={styles.overlay}
       role="dialog"
       aria-modal="true"
-      aria-label="Configurar system prompt da pasta"
+      aria-label="Configure folder system prompt"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose()
       }}
@@ -69,13 +69,13 @@ export function FolderSystemPromptModal({
       <div className={styles.modal}>
         <header className={styles.header}>
           <h2 className={styles.title}>
-            System prompt — {folder.name || 'sem nome'}
+            System prompt — {folder.name || 'unnamed'}
           </h2>
           <button
             type="button"
             className={styles.close}
             onClick={onClose}
-            aria-label="fechar"
+            aria-label="close"
           >
             ×
           </button>
@@ -83,14 +83,13 @@ export function FolderSystemPromptModal({
 
         <div className={styles.body}>
           <p className={styles.intro}>
-            Este é um espaço para personalizar como a IA se comporta nas
-            conversas desta pasta. Escreva uma instrução para definir tom,
-            foco ou contexto — todas as conversas dentro da pasta passarão a
-            usá-la automaticamente.
+            This is a space to customize how the AI behaves in conversations
+            within this folder. Write an instruction to set tone, focus, or
+            context — all conversations inside the folder will use it automatically.
           </p>
 
           <label className={styles.label} htmlFor="folder-sysprompt-text">
-            Instrução para a IA
+            Instruction for the AI
           </label>
           <textarea
             id="folder-sysprompt-text"
@@ -98,13 +97,13 @@ export function FolderSystemPromptModal({
             className={styles.textarea}
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder="ex.: Você é um tutor de biologia. Use linguagem técnica, cite estudos recentes e sempre relacione conceitos com exemplos práticos."
+            placeholder="e.g.: You are a biology tutor. Use technical language, cite recent studies, and always relate concepts to practical examples."
             rows={8}
-            aria-label="instrução para a IA"
+            aria-label="instruction for the AI"
           />
 
           <label className={styles.label} htmlFor="folder-sysprompt-mode">
-            Modo de aplicação
+            Application mode
           </label>
           <select
             id="folder-sysprompt-mode"
@@ -113,13 +112,13 @@ export function FolderSystemPromptModal({
             onChange={(e) =>
               setMode(e.target.value as SystemPromptMode)
             }
-            aria-label="modo de aplicação"
+            aria-label="application mode"
           >
             <option value="replace">
-              Substituir — usar apenas este prompt
+              Replace — use only this prompt
             </option>
             <option value="append">
-              Adicionar — combinar com o prompt padrão
+              Append — combine with the default prompt
             </option>
           </select>
 
@@ -129,14 +128,14 @@ export function FolderSystemPromptModal({
               className={styles.btnSecondary}
               onClick={onClose}
             >
-              cancelar
+              cancel
             </button>
             <button
               type="button"
               className={styles.btnPrimary}
               onClick={handleConfirm}
             >
-              salvar
+              save
             </button>
           </div>
         </div>

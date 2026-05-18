@@ -78,7 +78,7 @@ export function useDocuments(notebookId: string | null) {
   const upload = useCallback(
     async (sourcePath: string) => {
       const targetNotebook = notebookIdRef.current
-      if (!targetNotebook) throw new Error('Caderno não selecionado')
+      if (!targetNotebook) throw new Error('No notebook selected')
       const id = await documentsUpload(targetNotebook, sourcePath)
       await refresh()
       return id

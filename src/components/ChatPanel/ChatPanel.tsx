@@ -158,7 +158,7 @@ export function ChatPanel({
   }
 
   return (
-    <section className={styles.panel} aria-label="Chat com a IA">
+    <section className={styles.panel} aria-label="AI Chat">
       <ChatSidebar
         conversations={conversations}
         folders={folders}
@@ -202,14 +202,14 @@ export function ChatPanel({
         {apiKeyChecked && !hasApiKey && (
           <div className={styles.keyBanner} role="alert">
             <span>
-              Configure a chave do OpenRouter em Settings para conversar com a IA.
+              Add your OpenRouter key in Settings to chat with the AI.
             </span>
             <button
               type="button"
               onClick={onOpenSettings}
               className={styles.keyBannerCta}
             >
-              abrir Settings
+              open Settings
             </button>
           </div>
         )}
@@ -217,10 +217,9 @@ export function ChatPanel({
         <div className={styles.history} ref={historyRef}>
           {messages.length === 0 ? (
             <div className={styles.empty}>
-              <p className={styles.emptyTitle}>Olá! Eu sou o seu assistente.</p>
+              <p className={styles.emptyTitle}>Hi! I am your assistant.</p>
               <p className={styles.emptyHint}>
-                Pergunte qualquer coisa, discuta ideias ou peça ajuda — sem
-                precisar criar uma nota.
+                Ask anything, discuss ideas, or get help — no note needed.
               </p>
             </div>
           ) : (
@@ -258,12 +257,12 @@ export function ChatPanel({
               }}
               placeholder={
                 hasApiKey
-                  ? 'Escreva uma mensagem...'
-                  : 'Configure a chave do OpenRouter para começar.'
+                  ? 'Write a message...'
+                  : 'Configure your OpenRouter key to get started.'
               }
               rows={3}
               disabled={!hasApiKey}
-              aria-label="mensagem"
+              aria-label="message"
             />
             <div className={styles.composerActions}>
               <ChatToolsMenu tools={tools} onToggle={setTool} />
@@ -273,7 +272,7 @@ export function ChatPanel({
                 onClick={handleSend}
                 disabled={!canSend}
               >
-                {isStreaming ? 'Enviando...' : 'Enviar'}
+                {isStreaming ? 'Sending...' : 'Send'}
               </button>
             </div>
           </div>
@@ -317,7 +316,7 @@ function ChatBubble({ message, isStreaming, onSaveToNote }: ChatBubbleProps) {
   const isStreamingPlaceholder = !isUser && message.content.length === 0
   const isErrorMessage =
     !isUser &&
-    message.content.startsWith('Erro:')
+    message.content.startsWith('Error:')
   const canSaveToNote =
     !isUser &&
     !isStreaming &&
@@ -386,7 +385,7 @@ function ChatBubble({ message, isStreaming, onSaveToNote }: ChatBubbleProps) {
                 type="button"
                 className={styles.saveBtn}
                 onClick={() => onSaveToNote(message.content)}
-                aria-label="Salvar resposta em uma nota"
+                aria-label="Save response to a note"
               >
                 <svg
                   viewBox="0 0 16 16"
@@ -403,15 +402,15 @@ function ChatBubble({ message, isStreaming, onSaveToNote }: ChatBubbleProps) {
                   <polyline points="5,2 5,7 10,7 10,2" />
                   <line x1="5" y1="11" x2="11" y2="11" />
                 </svg>
-                Salvar em nota
+                Save to note
               </button>
             )}
             <button
               type="button"
               className={styles.copyBtn}
               onClick={handleCopy}
-              title={copied ? 'Copiado!' : 'Copiar resposta'}
-              aria-label="Copiar resposta"
+              title={copied ? 'Copied!' : 'Copy response'}
+              aria-label="Copy response"
             >
               {copied ? (
                 <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5">
