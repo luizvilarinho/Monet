@@ -61,7 +61,7 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  max-width: 900px;
+  padding: 0 21%;
   min-width: 350px;
   margin: 0 auto;
   display: flex;

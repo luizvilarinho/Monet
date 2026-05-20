@@ -199,3 +199,31 @@
   font-size: 11px;
   margin-top: 8px;
 }
+
+.select {
+  background: var(--surface-1, #1e1e22);
+  border: 1px solid var(--border, #333340);
+  border-radius: 6px;
+  padding: 7px 10px;
+  color: var(--text-primary, #e8e8f0);
+  font-size: 13px;
+  outline: none;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  cursor: pointer;
+}
+
+.select:focus {
+  border-color: var(--accent, #7c6af5);
+}
+
+.versionRow {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.versionText {
+  font-size: 13px;
+  color: var(--text-primary, #e8e8f0);
+}

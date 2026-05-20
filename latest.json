@@ -1,0 +1,11 @@
+{
+  "version": "0.1.0",
+  "notes": "Monet v0.1.0-beta — primeira versão pública.",
+  "pub_date": "2026-05-20T00:00:00Z",
+  "platforms": {
+    "windows-x86_64": {
+      "url": "https://github.com/luizvilarinho/Monet/releases/download/v1.3.2/Monet-v1.3.2-beta-windows.msi",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRlFHSkpLWXhzcklSaTVVT05UbjhUNkxYbnRnbmZhYmQrQUlIMHBJa0NKVmdyNnVXTS83MHdqUy9vam1kdExMenRMaVFEdFVZb0cyZEM5cUFsVytac3dIbkhJbDN1ckFZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc5MzA1MzUzCWZpbGU6bW9uZXRfMC4xLjBfeDY0X2VuLVVTLm1zaQphaWNyRWs0bEVaanNjakg3Q2dJUytXQ1g2VzM2bDVSd1ZZN2xWTVM5VUNGenZKemJXdmlieVpZNWFWeHZteDZjNlplSy8xa3ozaEZkTjFnYmlScmFCZz09Cg=="
+    }
+  }
+}

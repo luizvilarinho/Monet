@@ -58,7 +58,10 @@
       "Bash(echo \"TSC exit: $?\")",
       "Bash(npx eslint *)",
       "WebFetch(domain:discuss.prosemirror.net)",
-      "Bash(New-Item *)"
+      "Bash(New-Item *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\User\\\\Documents\\\\projetos\\\\Monet\" -Recurse -Depth 2)",
+      "Bash(Select-Object FullName, PSIsContainer)",
+      "Bash(ConvertTo-Json)"
     ]
   }
 }

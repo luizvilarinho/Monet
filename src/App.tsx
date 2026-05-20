@@ -1,4 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
+import { check } from '@tauri-apps/plugin-updater'
+import type { Update } from '@tauri-apps/plugin-updater'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import { AiPanel } from './components/AiPanel/AiPanel'
@@ -10,6 +12,7 @@ import { NotebookList } from './components/NotebookList/NotebookList'
 import { Onboarding } from './components/Onboarding/Onboarding'
 import { RelatedContent } from './components/RelatedContent/RelatedContent'
 import { SettingsModal } from './components/Settings/SettingsModal'
+import { UpdaterDialog } from './components/UpdaterDialog/UpdaterDialog'
 import { Sidebar } from './components/Sidebar/Sidebar'
 import { Toolbar, type ActiveMode } from './components/Toolbar/Toolbar'
 import { useAi } from './hooks/useAi'
@@ -24,6 +27,14 @@ import {
 import { useNotebooks } from './hooks/useNotebooks'
 import { useNotes } from './hooks/useNotes'
 import { findCommand } from './lib/commands'
+import {
+  getUpdatePreference,
+  getSkippedVersion,
+  isCheckDue,
+  recordCheck,
+  isMandatory,
+  setSkippedVersion,
+} from './lib/updater'
 import { getToggleTitle } from './components/Editor/commandParser'
 import {
   documentsList,
@@ -199,6 +210,11 @@ function App() {
   const exportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [noteOrder, setNoteOrder] = useState<string[]>(() => loadNoteOrder())
   const [notebookOrder, setNotebookOrder] = useState<string[]>(() => loadOrder('monet:notebook-order'))
+  const [updateDialog, setUpdateDialog] = useState<{
+    update: Update
+    mandatory: boolean
+    autoStart: boolean
+  } | null>(null)
 
   const { responses, start, addErrorCard, removeResponse } = useAi(activeId)
 
@@ -268,6 +284,42 @@ function App() {
       cancelled = true
     }
   }, [refreshApiKey, refreshModels])
+
+  useEffect(() => {
+    async function runUpdateCheck() {
+      const pref = getUpdatePreference()
+      if (!isCheckDue()) return
+
+      try {
+        recordCheck()
+        const update = await check()
+        if (!update?.available) return
+
+        const mandatory = isMandatory(update.body)
+        if (pref === 'never' && !mandatory) return
+        if (!mandatory && update.version === getSkippedVersion()) return
+
+        setUpdateDialog({
+          update,
+          mandatory,
+          autoStart: pref === 'auto' && !mandatory,
+        })
+      } catch {
+        // silent failure — no internet or server unavailable
+      }
+    }
+
+    runUpdateCheck()
+  }, [])
+
+  const handleUpdateFound = useCallback((update: Update, mandatory: boolean) => {
+    setSettingsOpen(false)
+    setUpdateDialog({
+      update,
+      mandatory,
+      autoStart: getUpdatePreference() === 'auto' && !mandatory,
+    })
+  }, [])
 
   const handleApiKeyChanged = useCallback(
     (present: boolean) => {
@@ -783,7 +835,18 @@ function App() {
         open={settingsOpen && !onboardingActive}
         onClose={() => setSettingsOpen(false)}
         onApiKeyChanged={handleApiKeyChanged}
+        onUpdateFound={handleUpdateFound}
       />
+      {updateDialog && (
+        <UpdaterDialog
+          update={updateDialog.update}
+          mandatory={updateDialog.mandatory}
+          autoStart={updateDialog.autoStart}
+          onLater={() => {}}
+          onSkip={(version) => setSkippedVersion(version)}
+          onClose={() => setUpdateDialog(null)}
+        />
+      )}
       <DocumentsModal
         open={documentsModalNotebookId !== null}
         notebookId={documentsModalNotebookId}
