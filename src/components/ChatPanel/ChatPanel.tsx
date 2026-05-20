@@ -78,6 +78,13 @@ export function ChatPanel({
     if (isNaN(saved)) return 240
     return Math.min(480, Math.max(180, saved))
   })
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => localStorage.getItem('monet:chat-sidebar-collapsed') === '1'
+  )
+
+  useEffect(() => {
+    localStorage.setItem('monet:chat-sidebar-collapsed', sidebarCollapsed ? '1' : '0')
+  }, [sidebarCollapsed])
 
   useEffect(() => {
     if (!hasApiKey) return
@@ -180,7 +187,9 @@ export function ChatPanel({
         onOpenFolderSystemPrompt={(folder) =>
           setSystemPromptFolderId(folder.id)
         }
-        width={sidebarWidth}
+        width={sidebarCollapsed ? 48 : sidebarWidth}
+        collapsed={sidebarCollapsed}
+        onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
         onWidthChange={setSidebarWidth}
       />
 

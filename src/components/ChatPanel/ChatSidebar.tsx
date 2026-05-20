@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { SidebarSimple } from '@phosphor-icons/react'
 import {
   DndContext,
   PointerSensor,
@@ -44,6 +45,8 @@ export interface ChatSidebarProps {
   onReorderLoose: (newOrder: string[]) => void
   onOpenFolderSystemPrompt: (folder: ChatFolder) => void
   width: number
+  collapsed?: boolean
+  onToggleCollapsed?: () => void
   onWidthChange: (w: number) => void
 }
 
@@ -139,6 +142,8 @@ export function ChatSidebar({
   onReorderLoose,
   onOpenFolderSystemPrompt,
   width,
+  collapsed = false,
+  onToggleCollapsed,
   onWidthChange,
 }: ChatSidebarProps) {
   const { confirm, modal } = useConfirm()
@@ -372,10 +377,33 @@ export function ChatSidebar({
   }
 
   return (
-    <aside className={styles.sidebar} aria-label="Conversations" style={{ width }}>
+    <aside className={`${styles.sidebar} ${collapsed ? styles.collapsed : ''}`} aria-label="Conversations" style={{ width }}>
       {modal}
+      {collapsed ? (
+        <div className={styles.collapsedTop}>
+          <button
+            type="button"
+            className={styles.toggleBtn}
+            onClick={onToggleCollapsed}
+            aria-label="expand conversations"
+            title="expand conversations"
+          >
+            <SidebarSimple size={16} aria-hidden />
+          </button>
+        </div>
+      ) : (
+      <>
       <div className={styles.resizeHandle} onMouseDown={onResizeMouseDown} />
       <div className={styles.header}>
+        <button
+          type="button"
+          className={styles.toggleBtn}
+          onClick={onToggleCollapsed}
+          aria-label="collapse conversations"
+          title="collapse conversations"
+        >
+          <SidebarSimple size={16} aria-hidden />
+        </button>
         <button type="button" className={styles.newBtn} onClick={onNew}>
           <span className={styles.plus} aria-hidden="true">+</span>
           New conversation
@@ -469,6 +497,8 @@ export function ChatSidebar({
           </SortableContext>
         </div>
       </DndContext>
+      </>
+      )}
     </aside>
   )
 }

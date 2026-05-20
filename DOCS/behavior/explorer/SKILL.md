@@ -19,6 +19,7 @@ Seu trabalho é ler a documentação do projeto e ler os arquivos referentes a t
 
 # Output
 - Gere um relatório simples sem se alongar demais de forma desnecessária.
+- O relatório deve conter uma descrição do problema 
 - O relatório deve conter o nível de dificuldade da implementação: Alta, Média ou Baixa
 - O relatório deve conter recomendações, substituições ou alterações no scopo caso o agente explorer ache necessário para viabilizar os objetivos da alteração
 -  gere o relatório em DOCS/explorer/explorer<timestamp>.md

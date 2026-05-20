@@ -4,7 +4,7 @@ import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import type { EditorState, Transaction } from '@tiptap/pm/state'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { EditorView } from '@tiptap/pm/view'
-import { getCommandLineStatus, isPotentialCommandLine } from './commandParser'
+import { getCommandLineStatus, isPotentialCommandLine, parseCommandLine } from './commandParser'
 import type { AiResponse } from '../../types'
 
 export type CommandPersistedStatus = 'executed' | 'invalid' | 'incomplete'
@@ -65,6 +65,15 @@ function commandTextFromResponse(r: AiResponse): string {
   return r.query.trim() ? `${r.command} ${r.query.trim()}` : r.command
 }
 
+// For !takesQuery commands, the stored query is always '' so the executed key is
+// just the command name. Normalize the paragraph text to the same form so that
+// '/mindmap extra instructions' correctly matches the '/mindmap' entry in the set.
+function resolveExecutedKey(text: string): string {
+  const parsed = parseCommandLine(text)
+  if (parsed?.definition && !parsed.definition.takesQuery) return parsed.commandName
+  return text
+}
+
 function syncExecutedMarks(
   doc: PMNode,
   current: Map<number, MarkEntry>,
@@ -74,12 +83,14 @@ function syncExecutedMarks(
   doc.descendants((node, pos) => {
     if (!isParagraph(node)) return true
     const text = paragraphText(node).trim()
-    if (text && isPotentialCommandLine(text) && texts.has(text)) {
-      next.set(pos, { text, status: 'executed' })
-    } else {
-      const existing = next.get(pos)
-      if (existing?.status === 'executed' && !texts.has(existing.text)) {
-        next.delete(pos)
+    if (text && isPotentialCommandLine(text)) {
+      if (texts.has(resolveExecutedKey(text))) {
+        next.set(pos, { text, status: 'executed' })
+      } else {
+        const existing = next.get(pos)
+        if (existing?.status === 'executed' && !texts.has(resolveExecutedKey(existing.text))) {
+          next.delete(pos)
+        }
       }
     }
     return false
@@ -163,7 +174,7 @@ function buildCommandIndex(doc: PMNode, responses: AiResponse[]): ParagraphComma
     }
 
     if (!response) {
-      const candidates = byText.get(text) ?? []
+      const candidates = byText.get(resolveExecutedKey(text)) ?? []
       for (const r of candidates) {
         if (!consumed.has(r.id)) {
           response = r

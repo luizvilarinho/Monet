@@ -122,6 +122,7 @@ export function Editor({
   const [activeOffset, setActiveOffset] = useState<number | null>(null)
   const [autocomplete, setAutocomplete] = useState<AutocompleteState>(HIDDEN_AUTOCOMPLETE)
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  const titleRef = useRef<HTMLInputElement>(null)
 
   const onChangeRef = useRef(onChange)
   onChangeRef.current = onChange
@@ -466,6 +467,12 @@ export function Editor({
     return () => scrollEl.removeEventListener('scroll', updateActiveHeading)
   }, [updateActiveHeading])
 
+  useEffect(() => {
+    if (title === '' && value === '') {
+      titleRef.current?.focus()
+    }
+  }, [])
+
   const handleNavigateToHeading = useCallback(
     (offset: number) => {
       const scrollEl = scrollRef.current
@@ -499,6 +506,7 @@ export function Editor({
   return (
     <div className={styles.editor}>
       <input
+        ref={titleRef}
         className={styles.title}
         value={title}
         onChange={(e) => onTitleChange(e.target.value)}
