@@ -1,7 +1,6 @@
 import {
   ArrowsMerge,
   DotsSixVertical,
-  Link,
   PlusCircle,
   SidebarSimple,
   X,
@@ -36,10 +35,9 @@ interface SortableNoteItemProps {
   onSelect: (id: string) => void
   onDelete: (id: string) => void
   onMerge?: (id: string) => void
-  onCopyLink?: (note: Note) => void
 }
 
-function SortableNoteItem({ note, isActive, onSelect, onDelete, onMerge, onCopyLink }: SortableNoteItemProps) {
+function SortableNoteItem({ note, isActive, onSelect, onDelete, onMerge }: SortableNoteItemProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: note.id,
   })
@@ -67,17 +65,6 @@ function SortableNoteItem({ note, isActive, onSelect, onDelete, onMerge, onCopyL
         <DotsSixVertical size={12} weight="bold" aria-hidden />
       </span>
       <span className={styles.rowLabel}>{note.title || 'untitled'}</span>
-      {onCopyLink && (
-        <button
-          className={styles.rowCopyLink}
-          onClick={(e) => { e.stopPropagation(); onCopyLink(note) }}
-          aria-label={`copy link to ${note.title || 'untitled'}`}
-          type="button"
-          title="copy note link"
-        >
-          <Link size={11} aria-hidden />
-        </button>
-      )}
       {onMerge && (
         <button
           className={styles.rowMerge}
@@ -130,11 +117,6 @@ export function Sidebar({
   onToggleCollapsed,
   onWidthChange,
 }: SidebarProps) {
-  function handleCopyNoteLink(note: Note) {
-    const title = note.title || 'untitled'
-    const link = `[${title}](monet://note/${note.id})`
-    navigator.clipboard.writeText(link).catch(() => {})
-  }
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
   )
@@ -268,7 +250,6 @@ export function Sidebar({
                       onSelect={onSelect}
                       onDelete={(id) => handleDeleteNote(id, n.title)}
                       onMerge={onMerge ? setMergeSourceId : undefined}
-                      onCopyLink={handleCopyNoteLink}
                     />
                   ))}
                 </SortableContext>
