@@ -249,6 +249,7 @@ export function FormattingToolbar({ editor }: Props) {
       pluginKey={PLUGIN_KEY}
       shouldShow={({ editor: ed, from: f, to: t }) => {
         if (hiddenByEscape) return false
+        if (ed.isActive('linkedNoteBlock')) return false
         const sel = f !== t
         const tbl = ed.isActive('table')
         return sel || tbl
