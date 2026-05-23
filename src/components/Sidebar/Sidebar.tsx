@@ -1,10 +1,11 @@
 import {
+  ArrowsMerge,
   DotsSixVertical,
   PlusCircle,
   SidebarSimple,
   X,
 } from '@phosphor-icons/react'
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   DndContext,
   closestCenter,
@@ -22,6 +23,7 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import type { Note } from '../../types'
 import { useConfirm } from '../../hooks/useConfirm'
+import { MergeNoteModal } from './MergeNoteModal'
 import styles from './Sidebar.module.css'
 
 const MIN_WIDTH = 160
@@ -32,9 +34,10 @@ interface SortableNoteItemProps {
   isActive: boolean
   onSelect: (id: string) => void
   onDelete: (id: string) => void
+  onMerge?: (id: string) => void
 }
 
-function SortableNoteItem({ note, isActive, onSelect, onDelete }: SortableNoteItemProps) {
+function SortableNoteItem({ note, isActive, onSelect, onDelete, onMerge }: SortableNoteItemProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: note.id,
   })
@@ -62,6 +65,17 @@ function SortableNoteItem({ note, isActive, onSelect, onDelete }: SortableNoteIt
         <DotsSixVertical size={12} weight="bold" aria-hidden />
       </span>
       <span className={styles.rowLabel}>{note.title || 'untitled'}</span>
+      {onMerge && (
+        <button
+          className={styles.rowMerge}
+          onClick={(e) => { e.stopPropagation(); onMerge(note.id) }}
+          aria-label={`merge note ${note.title || 'untitled'}`}
+          type="button"
+          title="merge into another note"
+        >
+          <ArrowsMerge size={11} aria-hidden />
+        </button>
+      )}
       <button
         className={styles.rowDelete}
         onClick={(e) => { e.stopPropagation(); onDelete(note.id) }}
@@ -82,6 +96,7 @@ export interface SidebarProps {
   onCreate: () => void
   onDelete: (id: string) => void
   onReorder: (newOrder: string[]) => void
+  onMerge?: (sourceId: string, targetId: string) => void
   width?: number
   collapsed?: boolean
   onToggleCollapsed?: () => void
@@ -96,6 +111,7 @@ export function Sidebar({
   onCreate,
   onDelete,
   onReorder,
+  onMerge,
   width = 220,
   collapsed = false,
   onToggleCollapsed,
@@ -105,6 +121,7 @@ export function Sidebar({
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
   )
   const { confirm, modal } = useConfirm()
+  const [mergeSourceId, setMergeSourceId] = useState<string | null>(null)
   const dragging = useRef(false)
   const startX = useRef(0)
   const startWidth = useRef(0)
@@ -166,6 +183,21 @@ export function Sidebar({
   return (
     <aside className={`${styles.sidebar} ${collapsed ? styles.collapsed : ''}`} style={{ width }}>
       {modal}
+      {mergeSourceId !== null && (() => {
+        const sourceNote = notes.find((n) => n.id === mergeSourceId)
+        if (!sourceNote) return null
+        return (
+          <MergeNoteModal
+            sourceNote={sourceNote}
+            notes={notes.filter((n) => n.id !== mergeSourceId)}
+            onMerge={(targetId) => {
+              onMerge?.(mergeSourceId, targetId)
+              setMergeSourceId(null)
+            }}
+            onClose={() => setMergeSourceId(null)}
+          />
+        )
+      })()}
       {!collapsed && <div className={styles.resizeHandle} onMouseDown={onMouseDown} />}
       {collapsed ? (
         <div className={styles.collapsedTop}>
@@ -217,6 +249,7 @@ export function Sidebar({
                       isActive={n.id === activeId}
                       onSelect={onSelect}
                       onDelete={(id) => handleDeleteNote(id, n.title)}
+                      onMerge={onMerge ? setMergeSourceId : undefined}
                     />
                   ))}
                 </SortableContext>

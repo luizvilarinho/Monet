@@ -633,6 +633,21 @@ function App() {
     })
   }
 
+  const handleMergeNotes = useCallback(
+    async (sourceId: string, targetId: string) => {
+      const source = notes.find((n) => n.id === sourceId)
+      const target = notes.find((n) => n.id === targetId)
+      if (!source || !target) return
+      const mergedContent = target.content
+        ? target.content + '\n\n---\n\n' + source.content
+        : source.content
+      await saveNote({ ...target, content: mergedContent, updatedAt: Date.now() })
+      await removeNote(sourceId)
+      if (activeId === sourceId) setActiveId(targetId)
+    },
+    [notes, saveNote, removeNote, activeId]
+  )
+
   const handleCreateNotebookFromChat = useCallback(
     async (name: string) => {
       const nb = await createNotebook(name)
@@ -790,6 +805,7 @@ function App() {
           onCreate={handleCreateNote}
           onDelete={handleDeleteNote}
           onReorder={handleReorder}
+          onMerge={handleMergeNotes}
           width={effectiveSidebarWidth}
           collapsed={sidebarCollapsed}
           onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
