@@ -276,24 +276,6 @@ export function Editor({
           const atEnd = $from.parentOffset === $from.parent.content.size
           if (!atEnd) return false
 
-          // Interceptar /toggle ANTES do dispatch principal
-          if (info?.cmd === '/toggle' && info.status === 'valid') {
-            const title = info.query || ''
-            const { schema } = view.state
-            const { $from: $sel } = view.state.selection
-            const start = $sel.before($sel.depth)
-            const end = $sel.after($sel.depth)
-            const toggleNode = schema.nodes['toggleBlock']?.create(
-              { title, collapsed: false },
-              schema.nodes['paragraph']?.create() ?? []
-            )
-            if (toggleNode) {
-              const insertTr = view.state.tr.replaceWith(start, end, toggleNode)
-              view.dispatch(insertTr)
-              return true
-            }
-          }
-
           if (info.status === 'idle') return false
 
           const pluginState = commandPluginKey.getState(view.state)
