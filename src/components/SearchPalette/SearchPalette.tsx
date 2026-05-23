@@ -62,7 +62,7 @@ export function SearchPalette({ open, onClose, onSelectNote }: SearchPaletteProp
       } else if (e.key === 'Enter') {
         e.preventDefault()
         const note = results[selectedIndex]
-        if (note) {
+        if (note && note.notebookId) {
           onSelectNote(note.notebookId, note.id)
           onClose()
         }
@@ -95,8 +95,10 @@ export function SearchPalette({ open, onClose, onSelectNote }: SearchPaletteProp
               className={`${styles.item} ${i === selectedIndex ? styles.itemActive : ''}`}
               onMouseEnter={() => setSelectedIndex(i)}
               onMouseDown={() => {
-                onSelectNote(note.notebookId, note.id)
-                onClose()
+                if (note.notebookId) {
+                  onSelectNote(note.notebookId, note.id)
+                  onClose()
+                }
               }}
             >
               <div className={styles.itemTitle}>{note.title || 'Untitled'}</div>

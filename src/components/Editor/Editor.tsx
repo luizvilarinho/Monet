@@ -50,6 +50,7 @@ export interface EditorProps {
   responses?: AiResponse[]
   onRemoveResponse?: (id: string) => void
   relatedContent?: ReactNode
+  onNavigateToNote?: (noteId: string) => void
 }
 
 function getMarkdown(editor: TiptapEditor): string {
@@ -118,6 +119,7 @@ export function Editor({
   responses,
   onRemoveResponse,
   relatedContent,
+  onNavigateToNote,
 }: EditorProps) {
   const [adding, setAdding] = useState(false)
   const [draft, setDraft] = useState('')
@@ -140,6 +142,8 @@ export function Editor({
   responsesRef.current = responses ?? []
   const onRemoveResponseRef = useRef(onRemoveResponse)
   onRemoveResponseRef.current = onRemoveResponse
+  const onNavigateToNoteRef = useRef(onNavigateToNote)
+  onNavigateToNoteRef.current = onNavigateToNote
 
   const contextValue = useMemo(
     () => ({ responses: responses ?? [] }),
@@ -453,6 +457,24 @@ export function Editor({
     if (!editor) return
     const detach = attachSpellCheckEnforcer(editor.view.dom)
     return detach
+  }, [editor])
+
+  useEffect(() => {
+    if (!editor) return
+    const dom = editor.view.dom
+    const handler = (e: MouseEvent) => {
+      const anchor = (e.target as Element).closest('a')
+      if (!anchor) return
+      const href = anchor.getAttribute('href') ?? ''
+      if (href.startsWith('monet://note/')) {
+        e.preventDefault()
+        e.stopPropagation()
+        const noteId = href.slice('monet://note/'.length)
+        if (noteId) onNavigateToNoteRef.current?.(noteId)
+      }
+    }
+    dom.addEventListener('click', handler, true)
+    return () => dom.removeEventListener('click', handler, true)
   }, [editor])
 
   useEffect(() => {

@@ -692,6 +692,15 @@ function App() {
     []
   )
 
+  const handleNoteLinkNavigation = useCallback(
+    (noteId: string) => {
+      const note = notes.find((n) => n.id === noteId)
+      if (!note || !note.notebookId) return
+      handleNavigateToNote(note.notebookId, noteId)
+    },
+    [notes, handleNavigateToNote]
+  )
+
   const handleOpenResponseInChat = useCallback((response: AiResponse) => {
     const linkedId = getLinkedChatConversationId(response.id)
     if (linkedId && chatConversationExists(linkedId)) {
@@ -826,6 +835,7 @@ function App() {
               removeResponse(id)
               unlinkResponseFromChat(id)
             }}
+            onNavigateToNote={handleNoteLinkNavigation}
             relatedContent={
               <RelatedContent activeNote={activeNote} notes={notes} onSelect={setActiveId} />
             }

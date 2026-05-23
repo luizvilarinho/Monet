@@ -150,6 +150,34 @@
   white-space: nowrap;
 }
 
+.rowCopyLink {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text-muted, #606070);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0;
+  padding: 0;
+}
+
+.row:hover .rowCopyLink,
+.rowCopyLink:focus-visible {
+  opacity: 1;
+}
+
+.rowCopyLink:hover {
+  color: var(--accent, #7c6af5);
+  background: rgba(124, 106, 245, 0.1);
+}
+
 .rowMerge {
   flex-shrink: 0;
   width: 18px;
