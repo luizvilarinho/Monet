@@ -13,6 +13,7 @@ import { Onboarding } from './components/Onboarding/Onboarding'
 import { RelatedContent } from './components/RelatedContent/RelatedContent'
 import { SettingsModal } from './components/Settings/SettingsModal'
 import { UpdaterDialog } from './components/UpdaterDialog/UpdaterDialog'
+import { SearchPalette } from './components/SearchPalette/SearchPalette'
 import { Sidebar } from './components/Sidebar/Sidebar'
 import { Toolbar, type ActiveMode } from './components/Toolbar/Toolbar'
 import { useAi } from './hooks/useAi'
@@ -206,6 +207,7 @@ function App() {
     () => localStorage.getItem('monet:sidebar-collapsed') === '1'
   )
   const [focusMode, setFocusMode] = useState(false)
+  const [searchPaletteOpen, setSearchPaletteOpen] = useState(false)
   const [exportSuccess, setExportSuccess] = useState(false)
   const exportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [noteOrder, setNoteOrder] = useState<string[]>(() => loadNoteOrder())
@@ -233,6 +235,10 @@ function App() {
       if (e.ctrlKey && e.key === ' ') {
         e.preventDefault()
         setFocusMode((v) => !v)
+      }
+      if (e.ctrlKey && e.key === 'p') {
+        e.preventDefault()
+        setSearchPaletteOpen((v) => !v)
       }
     }
     document.addEventListener('keydown', handleKeyDown, true)
@@ -753,7 +759,11 @@ function App() {
           activeId={activeNotebookId}
           onSelect={(id) => {
             setActiveNotebookId(id)
-            setActiveId(null)
+            const notebookNotes = applyOrder(
+              notes.filter((n) => n.notebookId === id),
+              noteOrder
+            )
+            setActiveId(notebookNotes[0]?.id ?? null)
           }}
           onCreate={handleCreateNotebook}
           onDelete={handleDeleteNotebook}
@@ -862,6 +872,14 @@ function App() {
           onApiKeyChanged={handleApiKeyChanged}
         />
       )}
+      <SearchPalette
+        open={searchPaletteOpen}
+        onClose={() => setSearchPaletteOpen(false)}
+        onSelectNote={(notebookId, noteId) => {
+          handleNavigateToNote(notebookId, noteId)
+          setSearchPaletteOpen(false)
+        }}
+      />
     </div>
   )
 }
