@@ -11,7 +11,7 @@ interface Props {
 type FormatId =
   | 'h1' | 'h2' | 'h3'
   | 'bold' | 'italic'
-  | 'ul' | 'ol' | 'todo'
+  | 'ul' | 'ol' | 'todo' | 'toggle'
   | 'blockquote' | 'code' | 'codeBlock' | 'link' | 'hr' | 'table' | 'image'
   | 'colBefore' | 'colAfter' | 'delCol'
   | 'rowBefore' | 'rowAfter' | 'delRow'
@@ -33,6 +33,7 @@ const FORMATTING_GROUPS: ButtonDef[][] = [
     { id: 'ul', label: '≡', title: 'List' },
     { id: 'ol', label: '1.', title: 'Numbered List' },
     { id: 'todo', label: '☐', title: 'TODO' },
+    { id: 'toggle', label: '▶', title: 'Toggle block' },
   ],
   [
     { id: 'blockquote', label: '"', title: 'Quote' },
@@ -74,6 +75,7 @@ function isActive(editor: Editor, id: FormatId): boolean {
     case 'blockquote': return editor.isActive('blockquote')
     case 'code': return editor.isActive('code')
     case 'codeBlock': return editor.isActive('codeBlock')
+    case 'toggle': return editor.isActive('toggleBlock')
     case 'link': return editor.isActive('link')
     case 'hr': return false
     case 'table': return editor.isActive('table')
@@ -109,6 +111,23 @@ function runAction(editor: Editor, id: FormatId) {
     case 'ul': chain.toggleBulletList().run(); return
     case 'ol': chain.toggleOrderedList().run(); return
     case 'todo': chain.toggleTaskList().run(); return
+    case 'toggle': {
+      const { from, to } = editor.state.selection
+      const selectedText = editor.state.doc.textBetween(from, to, ' ')
+      const { schema } = editor.state
+      const toggleType = schema.nodes['toggleBlock']
+      const paraType = schema.nodes['paragraph']
+      if (!toggleType || !paraType) return
+      const node = toggleType.create(
+        { title: selectedText, collapsed: false },
+        paraType.create()
+      )
+      editor.chain().focus().command(({ tr, dispatch }) => {
+        if (dispatch) { tr.replaceSelectionWith(node); dispatch(tr) }
+        return true
+      }).run()
+      return
+    }
     case 'blockquote': chain.toggleBlockquote().run(); return
     case 'code': chain.toggleCode().run(); return
     case 'codeBlock': chain.toggleCodeBlock().run(); return
