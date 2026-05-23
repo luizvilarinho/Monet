@@ -1,0 +1,53 @@
+.toggle {
+  margin: 0.5em 0;
+  border-left: 2px solid var(--border, #333340);
+  padding-left: 0;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: transparent;
+  border: none;
+  width: 100%;
+  cursor: default;
+}
+
+.chevron {
+  display: inline-block;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text-muted, #606070);
+  transition: transform 0.15s ease;
+  cursor: pointer;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.chevronOpen {
+  transform: rotate(90deg);
+}
+
+.titleInput {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-primary, #e8e8f0);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 0;
+  caret-color: var(--text-primary, #e8e8f0);
+}
+
+.titleInput::placeholder {
+  color: var(--text-muted, #606070);
+}
+
+.content {
+  padding-left: 20px;
+}

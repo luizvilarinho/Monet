@@ -32,7 +32,9 @@ import {
   getCurrentCommandLine,
 } from './CommandExtension'
 import { EmbedBlock } from './EmbedBlock'
+import { ToggleBlock } from './ToggleBlock'
 import { EditorResponsesProvider } from './EditorResponsesContext'
+import { SearchInNote } from './SearchInNote'
 import { getCommandSuggestions } from './commandParser'
 import type { AiResponse, CommandExecutionRequest } from '../../types'
 
@@ -121,6 +123,7 @@ export function Editor({
   const [draft, setDraft] = useState('')
   const [activeOffset, setActiveOffset] = useState<number | null>(null)
   const [autocomplete, setAutocomplete] = useState<AutocompleteState>(HIDDEN_AUTOCOMPLETE)
+  const [searchVisible, setSearchVisible] = useState(false)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const titleRef = useRef<HTMLInputElement>(null)
 
@@ -172,6 +175,7 @@ export function Editor({
         transformCopiedText: true,
       }),
       EmbedBlock,
+      ToggleBlock,
       CommandExtension.configure({
         getResponses: () => responsesRef.current,
         onRemoveResponse: (id) => {
@@ -267,6 +271,25 @@ export function Editor({
           const $from = selection.$from
           const atEnd = $from.parentOffset === $from.parent.content.size
           if (!atEnd) return false
+
+          // Interceptar /toggle ANTES do dispatch principal
+          if (info?.cmd === '/toggle' && info.status === 'valid') {
+            const title = info.query || ''
+            const { schema } = view.state
+            const { $from: $sel } = view.state.selection
+            const start = $sel.before($sel.depth)
+            const end = $sel.after($sel.depth)
+            const toggleNode = schema.nodes['toggleBlock']?.create(
+              { title, collapsed: false },
+              schema.nodes['paragraph']?.create() ?? []
+            )
+            if (toggleNode) {
+              const insertTr = view.state.tr.replaceWith(start, end, toggleNode)
+              view.dispatch(insertTr)
+              return true
+            }
+          }
+
           if (info.status === 'idle') return false
 
           const pluginState = commandPluginKey.getState(view.state)
@@ -432,6 +455,17 @@ export function Editor({
     return detach
   }, [editor])
 
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.key === 'f') {
+        e.preventDefault()
+        setSearchVisible(v => !v)
+      }
+    }
+    document.addEventListener('keydown', handler, true)
+    return () => document.removeEventListener('keydown', handler, true)
+  }, [])
+
   const headings: Heading[] = parseHeadings(value)
 
   const updateActiveHeading = useCallback(() => {
@@ -568,6 +602,11 @@ export function Editor({
       </div>
       <div className={styles.bodyWrap}>
         <div className={styles.body} ref={scrollRef}>
+          <SearchInNote
+            editor={editor}
+            visible={searchVisible}
+            onClose={() => setSearchVisible(false)}
+          />
           <EditorResponsesProvider value={contextValue}>
             <EditorContent editor={editor} />
           </EditorResponsesProvider>
