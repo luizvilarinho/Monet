@@ -9,12 +9,22 @@
   background: var(--bg-app, #0e0e10);
 }
 
+.notebookLabel {
+  display: block;
+  padding: 20px 32px 0;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted, #606070);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
 .title {
   background: transparent;
   color: var(--text-primary, #e8e8f0);
   border: none;
   outline: none;
-  padding: 24px 32px 8px;
+  padding: 6px 32px 8px;
   font-size: 24px;
   font-weight: 600;
   letter-spacing: -0.01em;
@@ -108,7 +118,7 @@
 .proseEditor {
   outline: none;
   min-height: 100%;
-  padding: 20px 32px 24px;
+  padding: 20px 72px 14px 30px;
   padding-bottom: 50vh;
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   font-size: 14px;

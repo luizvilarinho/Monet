@@ -42,6 +42,7 @@ import { getCommandSuggestions } from './commandParser'
 import type { AiResponse, CommandExecutionRequest, Note } from '../../types'
 
 export interface EditorProps {
+  notebookName?: string
   title: string
   onTitleChange: (value: string) => void
   tags: string[]
@@ -112,6 +113,7 @@ function extractImageFile(items: ArrayLike<DataTransferItem> | null | undefined)
 }
 
 export function Editor({
+  notebookName,
   title,
   onTitleChange,
   tags,
@@ -600,6 +602,9 @@ export function Editor({
 
   return (
     <div className={styles.editor}>
+      {notebookName && (
+        <span className={styles.notebookLabel}>{notebookName}</span>
+      )}
       <input
         ref={titleRef}
         className={styles.title}

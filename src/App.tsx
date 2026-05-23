@@ -822,6 +822,7 @@ function App() {
         />}
         {activeNote ? (
           <Editor
+            notebookName={notebooks.find((nb) => nb.id === activeNote.notebookId)?.name}
             title={activeNote.title}
             onTitleChange={(title) => updateActive({ title })}
             tags={activeNote.tags}
