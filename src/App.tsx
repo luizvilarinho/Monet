@@ -835,6 +835,7 @@ function App() {
               removeResponse(id)
               unlinkResponseFromChat(id)
             }}
+            notebookNotes={notebookNotes.filter((n) => n.id !== activeId)}
             onNavigateToNote={handleNoteLinkNavigation}
             relatedContent={
               <RelatedContent activeNote={activeNote} notes={notes} onSelect={setActiveId} />

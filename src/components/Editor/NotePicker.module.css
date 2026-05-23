@@ -1,0 +1,61 @@
+.dropdown {
+  position: fixed;
+  background: var(--surface-1, #1e1e22);
+  border: 1px solid var(--border, #333340);
+  border-radius: 6px;
+  width: 280px;
+  max-height: 240px;
+  overflow-y: auto;
+  z-index: 200;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+.panel {
+  background: var(--surface-1, #1e1e22);
+  border: 1px solid var(--border, #333340);
+  border-radius: 8px;
+  width: 320px;
+  max-height: 320px;
+  overflow-y: auto;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+.input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  background: var(--surface-2, #26262c);
+  border: none;
+  border-bottom: 1px solid var(--border, #333340);
+  color: var(--text-primary, #e8e8f0);
+  outline: none;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.item {
+  padding: 7px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-primary, #e8e8f0);
+}
+
+.item:hover {
+  background: var(--surface-2, #26262c);
+}
+
+.empty {
+  padding: 8px 12px;
+  color: var(--text-muted, #606070);
+  font-size: 12px;
+}

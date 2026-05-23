@@ -34,9 +34,12 @@ import {
 import { EmbedBlock } from './EmbedBlock'
 import { ToggleBlock } from './ToggleBlock'
 import { EditorResponsesProvider } from './EditorResponsesContext'
+import { EditorNotesProvider } from './EditorNotesContext'
+import { LinkedNoteBlock } from './LinkedNoteBlock'
+import { NotePicker } from './NotePicker'
 import { SearchInNote } from './SearchInNote'
 import { getCommandSuggestions } from './commandParser'
-import type { AiResponse, CommandExecutionRequest } from '../../types'
+import type { AiResponse, CommandExecutionRequest, Note } from '../../types'
 
 export interface EditorProps {
   title: string
@@ -50,6 +53,7 @@ export interface EditorProps {
   responses?: AiResponse[]
   onRemoveResponse?: (id: string) => void
   relatedContent?: ReactNode
+  notebookNotes?: Note[]
   onNavigateToNote?: (noteId: string) => void
 }
 
@@ -119,6 +123,7 @@ export function Editor({
   responses,
   onRemoveResponse,
   relatedContent,
+  notebookNotes = [],
   onNavigateToNote,
 }: EditorProps) {
   const [adding, setAdding] = useState(false)
@@ -126,6 +131,10 @@ export function Editor({
   const [activeOffset, setActiveOffset] = useState<number | null>(null)
   const [autocomplete, setAutocomplete] = useState<AutocompleteState>(HIDDEN_AUTOCOMPLETE)
   const [searchVisible, setSearchVisible] = useState(false)
+  const [notePickerVisible, setNotePickerVisible] = useState(false)
+  const [notePickerPos, setNotePickerPos] = useState<{ top: number; left: number } | undefined>(undefined)
+  const notePickerInsertPosRef = useRef<number>(0)
+  const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const titleRef = useRef<HTMLInputElement>(null)
 
@@ -180,6 +189,7 @@ export function Editor({
       }),
       EmbedBlock,
       ToggleBlock,
+      LinkedNoteBlock,
       CommandExtension.configure({
         getResponses: () => responsesRef.current,
         onRemoveResponse: (id) => {
@@ -265,6 +275,23 @@ export function Editor({
               acceptSuggestionRef.current(selected)
             }
             return true
+          }
+        }
+
+        if (event.key === '[') {
+          const { from } = view.state.selection
+          if (from > 0) {
+            const textBefore = view.state.doc.textBetween(Math.max(0, from - 1), from)
+            if (textBefore === '[') {
+              event.preventDefault()
+              const deleteTr = view.state.tr.delete(from - 1, from)
+              view.dispatch(deleteTr)
+              notePickerInsertPosRef.current = from - 1
+              const coords = view.coordsAtPos(from - 1)
+              setNotePickerPos({ top: coords.bottom + 4, left: coords.left })
+              setNotePickerVisible(true)
+              return true
+            }
           }
         }
 
@@ -470,6 +497,36 @@ export function Editor({
     return () => document.removeEventListener('keydown', handler, true)
   }, [])
 
+  useEffect(() => {
+    if (!editor) return
+    const dom = editor.view.dom
+    const handler = (e: MouseEvent) => {
+      e.preventDefault()
+      setContextMenuPos({ x: e.clientX, y: e.clientY })
+    }
+    dom.addEventListener('contextmenu', handler)
+    return () => dom.removeEventListener('contextmenu', handler)
+  }, [editor])
+
+  useEffect(() => {
+    if (!contextMenuPos) return
+    const handler = () => setContextMenuPos(null)
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [contextMenuPos])
+
+  function handleNotePickerSelect(note: Note) {
+    if (!editor) return
+    const pos = notePickerInsertPosRef.current
+    editor.chain().focus().insertContentAt(pos, {
+      type: 'linkedNoteBlock',
+      attrs: { noteId: note.id, collapsed: false },
+    }).run()
+    setNotePickerVisible(false)
+    setNotePickerPos(undefined)
+    setContextMenuPos(null)
+  }
+
   const headings: Heading[] = parseHeadings(value)
 
   const updateActiveHeading = useCallback(() => {
@@ -611,9 +668,11 @@ export function Editor({
             visible={searchVisible}
             onClose={() => setSearchVisible(false)}
           />
-          <EditorResponsesProvider value={contextValue}>
-            <EditorContent editor={editor} />
-          </EditorResponsesProvider>
+          <EditorNotesProvider value={{ notes: notebookNotes, onNavigateToNote: onNavigateToNote ?? (() => {}) }}>
+            <EditorResponsesProvider value={contextValue}>
+              <EditorContent editor={editor} />
+            </EditorResponsesProvider>
+          </EditorNotesProvider>
         </div>
         <HeadingNavigator
           content={value}
@@ -621,6 +680,58 @@ export function Editor({
           onNavigate={handleNavigateToHeading}
         />
       </div>
+      {notePickerVisible && (
+        <NotePicker
+          notes={notebookNotes}
+          onSelect={handleNotePickerSelect}
+          onClose={() => { setNotePickerVisible(false); setNotePickerPos(undefined) }}
+          position={notePickerPos}
+        />
+      )}
+      {contextMenuPos && (
+        <div
+          style={{
+            position: 'fixed',
+            top: contextMenuPos.y,
+            left: contextMenuPos.x,
+            background: 'var(--surface-1)',
+            border: '1px solid var(--border)',
+            borderRadius: 6,
+            zIndex: 300,
+            minWidth: 140,
+            boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <button
+            style={{
+              display: 'block',
+              width: '100%',
+              padding: '8px 14px',
+              background: 'transparent',
+              border: 'none',
+              color: 'var(--text-primary)',
+              textAlign: 'left',
+              fontSize: 13,
+              cursor: 'pointer',
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface-2)')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+            onMouseDown={() => {
+              if (!editor) return
+              const { from } = editor.state.selection
+              notePickerInsertPosRef.current = from
+              const coords = editor.view.coordsAtPos(from)
+              setNotePickerPos({ top: coords.bottom + 4, left: coords.left })
+              setNotePickerVisible(true)
+              setContextMenuPos(null)
+            }}
+            type="button"
+          >
+            Link note
+          </button>
+        </div>
+      )}
       {relatedContent}
       {editor && <FormattingToolbar editor={editor as TiptapEditor} />}
       <CommandAutocomplete

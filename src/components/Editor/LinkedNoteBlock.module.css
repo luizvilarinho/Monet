@@ -1,0 +1,76 @@
+.block {
+  border-left: 2px solid rgba(124, 106, 245, 0.3);
+  padding-left: 8px;
+  margin: 0.5em 0;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.chevron {
+  display: inline-block;
+  font-size: 14px;
+  line-height: 1;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary, #a0a0b8);
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.15s ease;
+}
+
+.chevronOpen {
+  transform: rotate(90deg);
+}
+
+.title {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary, #a0a0b8);
+}
+
+.btnEdit {
+  display: inline-flex;
+  align-items: center;
+  background: transparent;
+  border: none;
+  color: var(--text-muted, #606070);
+  cursor: pointer;
+  padding: 2px;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.btnEdit:hover {
+  color: var(--accent, #7c6af5);
+}
+
+.btnUnlink {
+  display: inline-flex;
+  align-items: center;
+  background: transparent;
+  border: none;
+  color: var(--text-muted, #606070);
+  cursor: pointer;
+  padding: 2px;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.btnUnlink:hover {
+  color: var(--accent, #7c6af5);
+}
+
+.body {
+  padding: 8px 0 4px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary, #a0a0b8);
+  overflow: hidden;
+}
