@@ -58,6 +58,7 @@ export interface AiModel {
   id: string
   name: string
   description?: string
+  supportsVision?: boolean
 }
 
 export interface CommandDef {

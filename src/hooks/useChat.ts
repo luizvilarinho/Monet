@@ -6,8 +6,10 @@ import {
   onOpenRouterChunk,
   onOpenRouterDone,
   onOpenRouterError,
+  onOpenRouterReasoning,
   startOpenRouterStreamMessages,
   type ChatMessageInput,
+  type ContentBlock,
 } from '../lib/openrouter'
 import { formatSearchResults, hasTavilyKey, webSearch } from '../lib/search'
 
@@ -54,6 +56,7 @@ are confident exist — do not invent authors, titles, or publication details.
 - No emojis or decorative formatting
 - For long responses, use headers to organize
 - Key concepts in bold.
+- When you have a direct URL to an image file (ending in .jpg, .png, .gif, .webp, .svg, or similar), embed it using markdown image syntax: \`![description](url)\`. Only do this for direct image file URLs — not for web page URLs that happen to contain images.
 
 ## Web search and citations
 When using web search, integrate findings naturally into the response
@@ -91,7 +94,11 @@ export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
+  imageDataUrl?: string
   timestamp: string
+  model?: string
+  tokensPerSecond?: number
+  thinking?: string
 }
 
 export interface ChatConversation {
@@ -251,7 +258,15 @@ function loadConversations(): ChatConversation[] {
 
 function saveConversations(list: ChatConversation[]) {
   try {
-    localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify(list))
+    const stripped = list.map((c) => ({
+      ...c,
+      messages: c.messages.map((m) => {
+        if (!m.imageDataUrl) return m
+        const { imageDataUrl: _, ...rest } = m
+        return rest
+      }),
+    }))
+    localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify(stripped))
   } catch (err) {
     console.error('failed to persist chat conversations', err)
   }
@@ -476,8 +491,11 @@ export interface UseChatResult {
   tools: ChatTools
   setTool: (key: keyof ChatTools, value: boolean) => void
   isStreaming: boolean
+  thinkingEnabled: boolean
+  toggleThinking: () => void
   error: string | null
-  send: (text: string) => Promise<void>
+  send: (text: string, imageDataUrl?: string) => Promise<void>
+  cancel: () => void
   selectConversation: (id: string) => void
   newConversation: () => void
   newConversationInFolder: (folderId: string) => void
@@ -535,11 +553,13 @@ export function useChat(): UseChatResult {
   const [hasApiKey, setHasApiKey] = useState<boolean>(false)
   const [apiKeyChecked, setApiKeyChecked] = useState<boolean>(false)
   const [isStreaming, setIsStreaming] = useState<boolean>(false)
+  const [thinkingEnabled, setThinkingEnabled] = useState<boolean>(false)
   const [error, setError] = useState<string | null>(null)
   const activeStreamRef = useRef<{
     requestId: string
     convId: string
     assistantId: string
+    model: string
   } | null>(null)
   const conversationsRef = useRef<ChatConversation[]>(conversations)
   conversationsRef.current = conversations
@@ -946,9 +966,31 @@ export function useChat(): UseChatResult {
           )
         )
       })
-      const done = await onOpenRouterDone(({ requestId }) => {
+      const reasoning = await onOpenRouterReasoning(({ requestId, text }) => {
         const stream = activeStreamRef.current
         if (!stream || stream.requestId !== requestId) return
+        updateMessages(stream.convId, (msgs) =>
+          msgs.map((m) =>
+            m.id === stream.assistantId
+              ? { ...m, thinking: (m.thinking ?? '') + text }
+              : m
+          )
+        )
+      })
+      const done = await onOpenRouterDone(({ requestId, model: doneModel, completionTokens, durationSecs }) => {
+        const stream = activeStreamRef.current
+        if (!stream || stream.requestId !== requestId) return
+        const tps =
+          completionTokens && durationSecs && durationSecs > 0
+            ? Math.round(completionTokens / durationSecs)
+            : undefined
+        updateMessages(stream.convId, (msgs) =>
+          msgs.map((m) =>
+            m.id === stream.assistantId
+              ? { ...m, model: doneModel ?? stream.model, tokensPerSecond: tps }
+              : m
+          )
+        )
         activeStreamRef.current = null
         setIsStreaming(false)
       })
@@ -968,11 +1010,12 @@ export function useChat(): UseChatResult {
       })
       if (cancelled) {
         chunk()
+        reasoning()
         done()
         err()
         return
       }
-      unlisteners.push(chunk, done, err)
+      unlisteners.push(chunk, reasoning, done, err)
     })().catch((e) => console.error('failed to subscribe to openrouter events', e))
     return () => {
       cancelled = true
@@ -981,9 +1024,9 @@ export function useChat(): UseChatResult {
   }, [updateMessages])
 
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, imageDataUrl?: string) => {
       const trimmed = text.trim()
-      if (!trimmed) return
+      if (!trimmed && !imageDataUrl) return
       if (isStreaming) return
       if (!model) {
         setError('Select a model before sending.')
@@ -1008,7 +1051,12 @@ export function useChat(): UseChatResult {
       const historyForApi: ChatMessageInput[] =
         currentConv?.messages.map((m) => ({
           role: m.role,
-          content: m.content,
+          content: m.imageDataUrl
+            ? ([
+                { type: 'image_url', image_url: { url: m.imageDataUrl } },
+                { type: 'text', text: m.content },
+              ] as ContentBlock[])
+            : m.content,
         })) ?? []
 
       // Insere a mensagem do usuario + placeholder do assistant ANTES dos awaits
@@ -1018,6 +1066,7 @@ export function useChat(): UseChatResult {
         id: nanoid(),
         role: 'user',
         content: trimmed,
+        imageDataUrl: imageDataUrl || undefined,
         timestamp: new Date().toISOString(),
       }
       const assistantId = nanoid()
@@ -1127,22 +1176,30 @@ export function useChat(): UseChatResult {
         }
       }
 
+      const userContent: string | ContentBlock[] = imageDataUrl
+        ? [
+            { type: 'image_url', image_url: { url: imageDataUrl } },
+            { type: 'text', text: trimmed },
+          ]
+        : trimmed
+
       const apiMessages: ChatMessageInput[] = [
         ...systemMessages,
         ...(ragSystemMessage ? [ragSystemMessage] : []),
         ...(searchSystemMessage ? [searchSystemMessage] : []),
         ...historyForApi,
-        { role: 'user', content: trimmed },
+        { role: 'user', content: userContent },
       ]
 
       const requestId = assistantId
-      activeStreamRef.current = { requestId, convId: targetId, assistantId }
+      activeStreamRef.current = { requestId, convId: targetId, assistantId, model }
 
       try {
         await startOpenRouterStreamMessages({
           requestId,
           model,
           messages: apiMessages,
+          thinking: thinkingEnabled,
         })
       } catch (err) {
         const message =
@@ -1165,6 +1222,21 @@ export function useChat(): UseChatResult {
     }
   }, [])
 
+  const cancel = useCallback(() => {
+    const stream = activeStreamRef.current
+    if (!stream) return
+    void cancelOpenRouterStream(stream.requestId)
+    updateMessages(stream.convId, (msgs) => {
+      const last = msgs[msgs.length - 1]
+      if (last && last.id === stream.assistantId && last.content === '') {
+        return msgs.slice(0, -1)
+      }
+      return msgs
+    })
+    activeStreamRef.current = null
+    setIsStreaming(false)
+  }, [updateMessages])
+
   const activeConversation =
     conversations.find((c) => c.id === activeId) ?? null
   const messages = activeConversation?.messages ?? []
@@ -1184,8 +1256,11 @@ export function useChat(): UseChatResult {
     tools,
     setTool,
     isStreaming,
+    thinkingEnabled,
+    toggleThinking: () => setThinkingEnabled((v) => !v),
     error,
     send,
+    cancel,
     selectConversation,
     newConversation,
     newConversationInFolder,

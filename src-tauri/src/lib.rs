@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -27,8 +27,18 @@ struct StreamChunkEvent {
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct StreamReasoningEvent {
+    request_id: String,
+    text: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct StreamDoneEvent {
     request_id: String,
+    model: String,
+    completion_tokens: u64,
+    duration_secs: f64,
 }
 
 #[derive(Clone, Serialize)]
@@ -45,6 +55,7 @@ struct ModelInfo {
     id: String,
     name: String,
     description: Option<String>,
+    supports_vision: bool,
 }
 
 #[derive(Deserialize)]
@@ -53,10 +64,16 @@ struct OpenRouterModelsResponse {
 }
 
 #[derive(Deserialize)]
+struct OpenRouterModelArchitecture {
+    input_modalities: Option<Vec<String>>,
+}
+
+#[derive(Deserialize)]
 struct OpenRouterModel {
     id: String,
     name: Option<String>,
     description: Option<String>,
+    architecture: Option<OpenRouterModelArchitecture>,
 }
 
 fn key_file(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
@@ -200,10 +217,19 @@ async fn openrouter_list_models(app: AppHandle) -> Result<Vec<ModelInfo>, String
         .data
         .into_iter()
         .filter(|m| is_valid_model_id(&m.id))
-        .map(|m| ModelInfo {
-            name: m.name.clone().unwrap_or_else(|| m.id.clone()),
-            id: m.id,
-            description: m.description,
+        .map(|m| {
+            let supports_vision = m
+                .architecture
+                .as_ref()
+                .and_then(|a| a.input_modalities.as_ref())
+                .map(|mods| mods.iter().any(|s| s == "image"))
+                .unwrap_or(false);
+            ModelInfo {
+                name: m.name.clone().unwrap_or_else(|| m.id.clone()),
+                id: m.id,
+                description: m.description,
+                supports_vision,
+            }
         })
         .collect();
     Ok(models)
@@ -212,7 +238,7 @@ async fn openrouter_list_models(app: AppHandle) -> Result<Vec<ModelInfo>, String
 #[derive(Deserialize)]
 struct ChatMessageInput {
     role: String,
-    content: String,
+    content: serde_json::Value,
 }
 
 fn spawn_openrouter_stream(
@@ -221,6 +247,7 @@ fn spawn_openrouter_stream(
     request_id: String,
     model: String,
     messages: serde_json::Value,
+    thinking: bool,
 ) -> Result<(), String> {
     if !is_valid_model_id(&model) {
         let _ = app.emit(
@@ -259,12 +286,14 @@ fn spawn_openrouter_stream(
     let request_id_clone = request_id.clone();
 
     tauri::async_runtime::spawn(async move {
+        let start = Instant::now();
         let result = run_openrouter_stream(
             &app_clone,
             &request_id_clone,
             &key,
             &model,
             messages,
+            thinking,
             cancel_rx,
         )
         .await;
@@ -275,11 +304,15 @@ fn spawn_openrouter_stream(
         }
 
         match result {
-            Ok(()) => {
+            Ok((completion_tokens,)) => {
+                let duration_secs = start.elapsed().as_secs_f64();
                 let _ = app_clone.emit(
                     "openrouter://done",
                     StreamDoneEvent {
                         request_id: request_id_clone,
+                        model,
+                        completion_tokens,
+                        duration_secs,
                     },
                 );
             }
@@ -315,7 +348,7 @@ async fn openrouter_stream_chat(
         { "role": "system", "content": system_prompt },
         { "role": "user", "content": user_message }
     ]);
-    spawn_openrouter_stream(app, registry, request_id, model, messages)
+    spawn_openrouter_stream(app, registry, request_id, model, messages, false)
 }
 
 #[tauri::command]
@@ -325,6 +358,7 @@ async fn openrouter_stream_messages(
     request_id: String,
     model: String,
     messages: Vec<ChatMessageInput>,
+    thinking: Option<bool>,
 ) -> Result<(), String> {
     let messages_json: Vec<serde_json::Value> = messages
         .into_iter()
@@ -336,6 +370,7 @@ async fn openrouter_stream_messages(
         request_id,
         model,
         serde_json::Value::Array(messages_json),
+        thinking.unwrap_or(false),
     )
 }
 
@@ -362,13 +397,17 @@ async fn run_openrouter_stream(
     key: &str,
     model: &str,
     messages: serde_json::Value,
+    thinking: bool,
     mut cancel_rx: oneshot::Receiver<()>,
-) -> Result<(), StreamError> {
-    let body = serde_json::json!({
+) -> Result<(u64,), StreamError> {
+    let mut body = serde_json::json!({
         "model": model,
         "stream": true,
         "messages": messages,
     });
+    if thinking {
+        body["reasoning"] = serde_json::json!({ "max_tokens": 8000 });
+    }
 
     let client = reqwest::Client::new();
     let resp = client
@@ -397,6 +436,7 @@ async fn run_openrouter_stream(
 
     let mut stream = resp.bytes_stream();
     let mut buffer = String::new();
+    let mut completion_tokens: u64 = 0;
 
     loop {
         tokio::select! {
@@ -435,7 +475,7 @@ async fn run_openrouter_stream(
                         None => continue,
                     };
                     if data == "[DONE]" {
-                        return Ok(());
+                        return Ok((completion_tokens,));
                     }
                     let value: serde_json::Value = match serde_json::from_str(data) {
                         Ok(v) => v,
@@ -452,10 +492,32 @@ async fn run_openrouter_stream(
                             message,
                         });
                     }
-                    if let Some(content) = value
+                    if let Some(ct) = value
+                        .get("usage")
+                        .and_then(|u| u.get("completion_tokens"))
+                        .and_then(|v| v.as_u64())
+                    {
+                        completion_tokens = ct;
+                    }
+                    let delta = value
                         .get("choices")
                         .and_then(|c| c.get(0))
-                        .and_then(|c| c.get("delta"))
+                        .and_then(|c| c.get("delta"));
+                    if let Some(reasoning) = delta
+                        .and_then(|d| d.get("reasoning").or_else(|| d.get("reasoning_content")))
+                        .and_then(|r| r.as_str())
+                    {
+                        if !reasoning.is_empty() {
+                            let _ = app.emit(
+                                "openrouter://reasoning",
+                                StreamReasoningEvent {
+                                    request_id: request_id.to_string(),
+                                    text: reasoning.to_string(),
+                                },
+                            );
+                        }
+                    }
+                    if let Some(content) = delta
                         .and_then(|d| d.get("content"))
                         .and_then(|c| c.as_str())
                     {
@@ -474,7 +536,7 @@ async fn run_openrouter_stream(
         }
     }
 
-    Ok(())
+    Ok((completion_tokens,))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

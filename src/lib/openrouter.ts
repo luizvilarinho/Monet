@@ -9,8 +9,16 @@ export interface StreamChunkPayload {
   text: string
 }
 
+export interface StreamReasoningPayload {
+  requestId: string
+  text: string
+}
+
 export interface StreamDonePayload {
   requestId: string
+  model?: string
+  completionTokens?: number
+  durationSecs?: number
 }
 
 export interface StreamErrorPayload {
@@ -26,15 +34,28 @@ export interface StartStreamInput {
   userMessage: string
 }
 
+export interface TextContentBlock {
+  type: 'text'
+  text: string
+}
+
+export interface ImageContentBlock {
+  type: 'image_url'
+  image_url: { url: string }
+}
+
+export type ContentBlock = TextContentBlock | ImageContentBlock
+
 export interface ChatMessageInput {
   role: 'system' | 'user' | 'assistant'
-  content: string
+  content: string | ContentBlock[]
 }
 
 export interface StartStreamMessagesInput {
   requestId: string
   model: string
   messages: ChatMessageInput[]
+  thinking?: boolean
 }
 
 export async function hasOpenRouterKey(): Promise<boolean> {
@@ -75,6 +96,12 @@ export function onOpenRouterChunk(
   handler: (p: StreamChunkPayload) => void
 ): Promise<UnlistenFn> {
   return listen<StreamChunkPayload>('openrouter://chunk', (e) => handler(e.payload))
+}
+
+export function onOpenRouterReasoning(
+  handler: (p: StreamReasoningPayload) => void
+): Promise<UnlistenFn> {
+  return listen<StreamReasoningPayload>('openrouter://reasoning', (e) => handler(e.payload))
 }
 
 export function onOpenRouterDone(

@@ -1,4 +1,5 @@
 import { openUrl } from '@tauri-apps/plugin-opener'
+import { Brain, Stop } from '@phosphor-icons/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useChat, type ChatFolder, type ChatMessage } from '../../hooks/useChat'
 import { renderMarkdown } from '../../lib/markdown'
@@ -49,8 +50,11 @@ export function ChatPanel({
     tools,
     setTool,
     isStreaming,
+    thinkingEnabled,
+    toggleThinking,
     error,
     send,
+    cancel,
     selectConversation,
     newConversation,
     newConversationInFolder,
@@ -69,6 +73,7 @@ export function ChatPanel({
   } = useChat()
 
   const [draft, setDraft] = useState('')
+  const [draftImage, setDraftImage] = useState<string | null>(null)
   const [saveTarget, setSaveTarget] = useState<{ messageId: string; content: string } | null>(null)
   const [systemPromptFolderId, setSystemPromptFolderId] = useState<string | null>(
     null,
@@ -76,6 +81,7 @@ export function ChatPanel({
   const [folderDocsFolder, setFolderDocsFolder] = useState<ChatFolder | null>(null)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const historyRef = useRef<HTMLDivElement | null>(null)
+  const [atBottom, setAtBottom] = useState(true)
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const saved = parseInt(localStorage.getItem('monet:chat-sidebar-width') ?? '', 10)
     if (isNaN(saved)) return 240
@@ -109,14 +115,20 @@ export function ChatPanel({
   // Limpa o draft ao trocar de conversa
   useEffect(() => {
     setDraft('')
+    setDraftImage(null)
   }, [activeId])
+
+  const selectedModel = models.find((m) => m.id === model)
+  const modelSupportsVision = selectedModel?.supportsVision ?? false
+  const visionWarning = !!draftImage && !modelSupportsVision
 
   const canSend =
     !isStreaming &&
     hasApiKey &&
-    draft.trim().length > 0 &&
+    (draft.trim().length > 0 || !!draftImage) &&
     !!model &&
-    models.length > 0
+    models.length > 0 &&
+    !visionWarning
 
   // Identifica qual mensagem (se alguma) está atualmente em streaming:
   // sempre a última mensagem do tipo assistant da conversa ativa, quando
@@ -154,17 +166,53 @@ export function ChatPanel({
     if (!sameConv || !userMsgChanged || !lastUserMessageId) return
     const el = historyRef.current
     if (!el) return
-    // requestAnimationFrame garante que o DOM da nova bolha ja foi medido
     requestAnimationFrame(() => {
       el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
     })
   }, [activeId, lastUserMessageId])
 
+  // Durante streaming, acompanha o crescimento da resposta rolando para baixo
+  // somente se o usuario nao tiver scrollado para cima manualmente.
+  useEffect(() => {
+    if (!isStreaming) return
+    const el = historyRef.current
+    if (!el) return
+    const isAtBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 48
+    if (isAtBottom) {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'instant' })
+    }
+  }, [messages, isStreaming])
+
   function handleSend() {
     if (!canSend) return
     const text = draft
+    const img = draftImage
     setDraft('')
-    void send(text)
+    setDraftImage(null)
+    void send(text, img ?? undefined)
+  }
+
+  function handleStop() {
+    cancel()
+  }
+
+  function handlePickImage() {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = 'image/*'
+    input.onchange = () => {
+      const file = input.files?.[0]
+      if (!file) return
+      if (file.size > 5 * 1024 * 1024) {
+        return
+      }
+      const reader = new FileReader()
+      reader.onload = () => {
+        setDraftImage(reader.result as string)
+      }
+      reader.readAsDataURL(file)
+    }
+    input.click()
   }
 
   return (
@@ -227,7 +275,15 @@ export function ChatPanel({
           </div>
         )}
 
-        <div className={styles.history} ref={historyRef}>
+        <div
+          className={styles.history}
+          ref={historyRef}
+          onScroll={() => {
+            const el = historyRef.current
+            if (!el) return
+            setAtBottom(el.scrollTop + el.clientHeight >= el.scrollHeight - 32)
+          }}
+        >
           {messages.length === 0 ? (
             <div className={styles.empty}>
               <p className={styles.emptyTitle}>Hi! I am your assistant.</p>
@@ -249,6 +305,23 @@ export function ChatPanel({
           )}
         </div>
 
+        {!atBottom && (
+          <button
+            type="button"
+            className={styles.scrollBtn}
+            aria-label="Scroll to bottom"
+            onClick={() => {
+              const el = historyRef.current
+              if (!el) return
+              el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+            }}
+          >
+            <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <polyline points="4,6 8,10 12,6" />
+            </svg>
+          </button>
+        )}
+
         {error && messages.length > 0 && (
           <div className={styles.errorRow} role="alert">
             {error}
@@ -257,6 +330,24 @@ export function ChatPanel({
 
         <footer className={styles.composer}>
           <div className={styles.composerInner}>
+            {draftImage && (
+              <div className={styles.imagePreview}>
+                <img src={draftImage} alt="attachment preview" className={styles.imagePreviewThumb} />
+                <button
+                  type="button"
+                  className={styles.imagePreviewRemove}
+                  onClick={() => setDraftImage(null)}
+                  aria-label="Remove image"
+                >
+                  ×
+                </button>
+              </div>
+            )}
+            {visionWarning && (
+              <div className={styles.visionWarning} role="alert">
+                This model does not support images. Switch to a vision-capable model or remove the image.
+              </div>
+            )}
             <textarea
               ref={inputRef}
               className={styles.input}
@@ -278,15 +369,49 @@ export function ChatPanel({
               aria-label="message"
             />
             <div className={styles.composerActions}>
+              <button
+                type="button"
+                className={styles.attachBtn}
+                onClick={handlePickImage}
+                title="Attach image"
+                aria-label="Attach image"
+                disabled={!hasApiKey}
+              >
+                <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="1" y="3" width="14" height="10" rx="1.5" />
+                  <circle cx="5.5" cy="6.5" r="1" />
+                  <polyline points="1,11 5,7 8,10 11,7.5 15,11" />
+                </svg>
+              </button>
               <ChatToolsMenu tools={tools} onToggle={setTool} />
               <button
                 type="button"
-                className={styles.sendBtn}
-                onClick={handleSend}
-                disabled={!canSend}
+                className={thinkingEnabled ? styles.thinkingBtnOn : styles.thinkingBtn}
+                onClick={toggleThinking}
+                title={thinkingEnabled ? 'Thinking enabled — click to disable' : 'Enable thinking'}
+                aria-pressed={thinkingEnabled}
               >
-                {isStreaming ? 'Sending...' : 'Send'}
+                <Brain size={15} weight={thinkingEnabled ? 'fill' : 'regular'} />
               </button>
+              {isStreaming ? (
+                <button
+                  type="button"
+                  className={styles.stopBtn}
+                  onClick={handleStop}
+                >
+                  <Stop size={14} weight="fill" />
+                  Stop
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className={styles.sendBtn}
+                  onClick={handleSend}
+                  disabled={!canSend}
+                >
+                  Send
+                </button>
+              )}
             </div>
           </div>
         </footer>
@@ -335,6 +460,7 @@ function ChatBubble({ message, isStreaming, onSaveToNote }: ChatBubbleProps) {
   const isUser = message.role === 'user'
   const [html, setHtml] = useState('')
   const [copied, setCopied] = useState(false)
+  const assistantBodyRef = useRef<HTMLDivElement>(null)
   const isStreamingPlaceholder = !isUser && message.content.length === 0
   const isErrorMessage =
     !isUser &&
@@ -366,6 +492,42 @@ function ChatBubble({ message, isStreaming, onSaveToNote }: ChatBubbleProps) {
     }
   }, [isUser, message.content, cacheKey])
 
+  useEffect(() => {
+    const container = assistantBodyRef.current
+    if (!container) return
+
+    const imgs = Array.from(container.querySelectorAll<HTMLImageElement>('img'))
+    if (imgs.length === 0) return
+
+    const handlers: Array<{ img: HTMLImageElement; onError: () => void; onLoad: () => void }> = []
+
+    for (const img of imgs) {
+      img.classList.add('chat-img-loading')
+
+      const onError = () => {
+        const span = document.createElement('span')
+        span.textContent = 'Não foi possível carregar a imagem'
+        span.className = 'chat-img-error'
+        img.parentNode?.replaceChild(span, img)
+      }
+
+      const onLoad = () => {
+        img.classList.remove('chat-img-loading')
+      }
+
+      img.addEventListener('error', onError)
+      img.addEventListener('load', onLoad)
+      handlers.push({ img, onError, onLoad })
+    }
+
+    return () => {
+      for (const { img, onError, onLoad } of handlers) {
+        img.removeEventListener('error', onError)
+        img.removeEventListener('load', onLoad)
+      }
+    }
+  }, [html])
+
   function handleCopy() {
     if (isUser) return
     navigator.clipboard.writeText(message.content).then(() => {
@@ -380,7 +542,16 @@ function ChatBubble({ message, isStreaming, onSaveToNote }: ChatBubbleProps) {
       data-role={message.role}
     >
       {isUser ? (
-        <p className={styles.userText}>{message.content}</p>
+        <div>
+          {message.imageDataUrl && (
+            <img
+              src={message.imageDataUrl}
+              alt="attached image"
+              className={styles.userMessageImage}
+            />
+          )}
+          <p className={styles.userText}>{message.content}</p>
+        </div>
       ) : isStreamingPlaceholder ? (
         <span className={styles.streamingDots} aria-hidden="true">
           <span />
@@ -389,7 +560,14 @@ function ChatBubble({ message, isStreaming, onSaveToNote }: ChatBubbleProps) {
         </span>
       ) : (
         <>
+          {message.thinking && (
+            <details className={styles.thinking} open={isStreaming || undefined}>
+              <summary className={styles.thinkingSummary}>Thinking</summary>
+              <div className={styles.thinkingContent}>{message.thinking}</div>
+            </details>
+          )}
           <div
+            ref={assistantBodyRef}
             className={styles.assistantBody}
             dangerouslySetInnerHTML={{ __html: html }}
             onClick={(e) => {
@@ -401,6 +579,14 @@ function ChatBubble({ message, isStreaming, onSaveToNote }: ChatBubbleProps) {
               void openUrl(href)
             }}
           />
+          {!isStreaming && message.model && (
+            <div className={styles.msgMeta}>
+              <span>{message.model}</span>
+              {message.tokensPerSecond !== undefined && (
+                <span>{message.tokensPerSecond} tok/s</span>
+              )}
+            </div>
+          )}
           <div className={styles.assistantActions}>
             {canSaveToNote && (
               <button

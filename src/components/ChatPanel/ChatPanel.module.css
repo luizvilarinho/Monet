@@ -11,6 +11,7 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  position: relative;
 }
 
 .header {
@@ -201,6 +202,99 @@
   font-weight: 600;
 }
 
+/* imagens nas respostas do modelo */
+.assistantBody :global(img) {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+  display: block;
+  margin: 0.5em 0;
+}
+
+.assistantBody :global(img.chat-img-loading) {
+  /* placeholder visual enquanto carrega */
+  min-height: 60px;
+  background: var(--surface-2, #26262c);
+  border: 1px solid var(--border, #333340);
+}
+
+.assistantBody :global(.chat-img-error) {
+  /* mensagem de falha no lugar da imagem */
+  display: inline-block;
+  padding: 6px 10px;
+  background: var(--surface-2, #26262c);
+  border: 1px solid var(--border, #333340);
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--text-muted, #606070);
+  font-style: italic;
+}
+
+.assistantBody :global([data-img-blocked]) {
+  /* URL bloqueada (localhost/rede privada) */
+  display: inline-block;
+  padding: 6px 10px;
+  background: var(--surface-2, #26262c);
+  border: 1px solid var(--border, #333340);
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--text-muted, #606070);
+  font-style: italic;
+}
+
+.thinking {
+  margin: 0 0 10px;
+  border-left: 2px solid var(--border, #333340);
+  padding: 4px 0 4px 10px;
+  font-size: 12px;
+  color: var(--text-secondary, #a0a0b8);
+}
+
+.thinkingSummary {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  font-size: 12px;
+  color: var(--text-muted, #606070);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.thinkingSummary::-webkit-details-marker {
+  display: none;
+}
+
+.thinkingSummary::before {
+  content: '';
+  width: 0;
+  height: 0;
+  border-left: 4px solid currentColor;
+  border-top: 3px solid transparent;
+  border-bottom: 3px solid transparent;
+  transition: transform 0.15s;
+}
+
+.thinking[open] > .thinkingSummary::before {
+  transform: rotate(90deg);
+}
+
+.thinkingSummary:hover {
+  color: var(--text-secondary, #a0a0b8);
+}
+
+.thinkingContent {
+  margin-top: 6px;
+  max-height: 500px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-secondary, #a0a0b8);
+  padding-right: 6px;
+}
+
 .streamingDots {
   display: inline-flex;
   gap: 4px;
@@ -307,6 +401,57 @@
   cursor: not-allowed;
 }
 
+.stopBtn {
+  background: rgba(220, 80, 80, 0.15);
+  color: #e07070;
+  border: 1px solid rgba(220, 80, 80, 0.4);
+  border-radius: 8px;
+  padding: 10px 18px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  flex-shrink: 0;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.stopBtn:hover {
+  background: rgba(220, 80, 80, 0.25);
+}
+
+.thinkingBtn,
+.thinkingBtnOn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  background: transparent;
+  border: 1px solid var(--border, #333340);
+  color: var(--text-muted, #606070);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.thinkingBtn:hover {
+  color: var(--text-secondary, #a0a0b8);
+  border-color: var(--text-secondary, #a0a0b8);
+}
+
+.thinkingBtnOn {
+  color: var(--accent-ai, #5dcaa5);
+  border-color: var(--accent-ai, #5dcaa5);
+  background: rgba(93, 202, 165, 0.08);
+}
+
+.thinkingBtnOn:hover {
+  background: rgba(93, 202, 165, 0.15);
+}
+
 .assistantActions {
   display: flex;
   align-items: center;
@@ -357,4 +502,123 @@
   color: var(--accent-ai, #5dcaa5);
   border-color: var(--accent-ai, #5dcaa5);
   background: rgba(93, 202, 165, 0.08);
+}
+
+.msgMeta {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-muted, #606070);
+  opacity: 0.5;
+  margin-top: 6px;
+  align-self: flex-start;
+}
+
+.scrollBtn {
+  position: absolute;
+  bottom: 80px;
+  right: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(30, 30, 34, 0.85);
+  border: 1px solid var(--border, #333340);
+  color: var(--text-secondary, #a0a0b8);
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  z-index: 10;
+}
+
+.scrollBtn:hover {
+  color: var(--text-primary, #e8e8f0);
+  border-color: var(--accent, #7c6af5);
+}
+
+/* Preview de imagem no composer */
+.imagePreview {
+  position: relative;
+  display: inline-flex;
+  align-items: flex-start;
+  margin-bottom: 4px;
+}
+
+.imagePreviewThumb {
+  max-width: 80px;
+  max-height: 80px;
+  border-radius: 6px;
+  border: 1px solid var(--border, #333340);
+  object-fit: cover;
+}
+
+.imagePreviewRemove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--surface-2, #26262c);
+  border: 1px solid var(--border, #333340);
+  color: var(--text-secondary, #a0a0b8);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.imagePreviewRemove:hover {
+  color: var(--text-primary, #e8e8f0);
+}
+
+/* Aviso de vision incompativel */
+.visionWarning {
+  font-size: 11px;
+  color: var(--accent-warn, #ef9f27);
+  background: rgba(239, 159, 39, 0.08);
+  border: 1px solid rgba(239, 159, 39, 0.3);
+  border-radius: 4px;
+  padding: 5px 8px;
+  margin-bottom: 4px;
+}
+
+/* Botao de attach */
+.attachBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  background: transparent;
+  border: 1px solid var(--border, #333340);
+  color: var(--text-muted, #606070);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.attachBtn:hover:not(:disabled) {
+  color: var(--text-secondary, #a0a0b8);
+  border-color: var(--text-secondary, #a0a0b8);
+}
+
+.attachBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Imagem em mensagem do usuario */
+.userMessageImage {
+  max-width: 100%;
+  max-height: 240px;
+  border-radius: 6px;
+  display: block;
+  margin-bottom: 6px;
+  object-fit: contain;
 }
