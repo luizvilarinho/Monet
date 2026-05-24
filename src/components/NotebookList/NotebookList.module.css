@@ -190,6 +190,19 @@
   background: rgba(93, 202, 165, 0.1);
 }
 
+.rowDocsActive {
+  color: var(--accent-ai, #5dcaa5);
+  opacity: 1;
+}
+
+.rowDocsActive:hover {
+  background: rgba(93, 202, 165, 0.18);
+}
+
+.active .rowDocsActive {
+  opacity: 1;
+}
+
 .active {
   background: var(--surface-2, #26262c) !important;
   color: var(--text-primary, #e8e8f0) !important;

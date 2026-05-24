@@ -12,16 +12,14 @@ export interface ChunkResult {
 
 export interface DocumentStatusEvent {
   documentId: string
-  notebookId: string
   status: DocumentStatus
   errorMessage?: string | null
 }
 
-export async function documentsUpload(
-  notebookId: string,
+export async function documentsUploadGlobal(
   sourcePath: string,
 ): Promise<string> {
-  return invoke<string>('documents_upload', { notebookId, sourcePath })
+  return invoke<string>('documents_upload_global', { sourcePath })
 }
 
 export async function documentsReindex(documentId: string): Promise<void> {
@@ -36,21 +34,43 @@ interface DocumentRaw extends Omit<Document, 'errorMessage'> {
   errorMessage: string | null
 }
 
-export async function documentsList(notebookId: string): Promise<Document[]> {
-  const rows = await invoke<DocumentRaw[]>('documents_list', { notebookId })
+export async function documentsListGlobal(): Promise<Document[]> {
+  const rows = await invoke<DocumentRaw[]>('documents_list_global')
   return rows.map((d) => ({
     ...d,
     errorMessage: d.errorMessage ?? undefined,
   }))
 }
 
-export async function documentsSearch(
+export async function setNotebookDocumentVisibility(
   notebookId: string,
+  documentId: string,
+  visible: boolean,
+): Promise<void> {
+  await invoke('documents_set_notebook_visibility', {
+    notebookId,
+    documentId,
+    visible,
+  })
+}
+
+export async function getNotebookVisibleDocumentIds(
+  notebookId: string,
+): Promise<string[]> {
+  return invoke<string[]>('documents_get_notebook_visible_ids', { notebookId })
+}
+
+export async function getNotebooksWithVisibleDocs(): Promise<string[]> {
+  return invoke<string[]>('documents_get_notebooks_with_visible_docs')
+}
+
+export async function documentsSearchByIds(
+  documentIds: string[],
   queryEmbedding: number[],
   topK: number,
 ): Promise<ChunkResult[]> {
-  return invoke<ChunkResult[]>('documents_search', {
-    notebookId,
+  return invoke<ChunkResult[]>('documents_search_by_ids', {
+    documentIds,
     queryEmbedding,
     topK,
   })

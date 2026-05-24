@@ -14,6 +14,7 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import {
+  Books,
   DotsSixVertical,
   FileText,
   Gear,
@@ -32,6 +33,7 @@ const MAX_WIDTH = 320
 interface SortableNotebookItemProps {
   nb: Notebook
   isActive: boolean
+  hasVisibleDocs: boolean
   editing: { id: string; value: string } | null
   onSelect: (id: string) => void
   onDelete: (id: string) => void
@@ -46,6 +48,7 @@ interface SortableNotebookItemProps {
 function SortableNotebookItem({
   nb,
   isActive,
+  hasVisibleDocs,
   editing,
   onSelect,
   onDelete,
@@ -112,11 +115,11 @@ function SortableNotebookItem({
       {editing?.id !== nb.id && (
         <>
           <button
-            className={styles.rowDocs}
+            className={`${styles.rowDocs} ${hasVisibleDocs ? styles.rowDocsActive : ''}`}
             onClick={(e) => { e.stopPropagation(); onSelect(nb.id); onOpenDocuments(nb.id) }}
             onDoubleClick={(e) => e.stopPropagation()}
             aria-label={`documents for notebook ${nb.name}`}
-            title="notebook documents"
+            title={hasVisibleDocs ? 'notebook documents (active)' : 'notebook documents'}
             type="button"
           >
             <FileText size={13} aria-hidden />
@@ -144,6 +147,8 @@ export interface NotebookListProps {
   onDelete: (id: string) => void
   onRename: (id: string, name: string) => void
   onOpenDocuments: (id: string) => void
+  onOpenKnowledgeBase: () => void
+  notebooksWithDocs: Set<string>
   tags: string[]
   activeTag: string | null
   onSelectTag: (tag: string | null) => void
@@ -163,6 +168,8 @@ export function NotebookList({
   onDelete,
   onRename,
   onOpenDocuments,
+  onOpenKnowledgeBase,
+  notebooksWithDocs,
   tags,
   activeTag,
   onSelectTag,
@@ -299,6 +306,7 @@ export function NotebookList({
                         key={nb.id}
                         nb={nb}
                         isActive={nb.id === activeId}
+                        hasVisibleDocs={notebooksWithDocs.has(nb.id)}
                         editing={editing}
                         onSelect={onSelect}
                         onDelete={(id) => handleDeleteNotebook(id, nb.name)}
@@ -343,14 +351,21 @@ export function NotebookList({
         {!collapsed && <span className={styles.version}>v1.3.3</span>}
         <button
           className={styles.settings}
+          onClick={onOpenKnowledgeBase}
+          aria-label="knowledge base"
+          type="button"
+          title="Knowledge Base"
+        >
+          <Books size={16} aria-hidden />
+        </button>
+        <button
+          className={styles.settings}
           onClick={onOpenSettings}
           aria-label="settings"
           type="button"
         >
           <Gear size={16} aria-hidden />
-          
         </button>
-        
       </div>
     </aside>
   )

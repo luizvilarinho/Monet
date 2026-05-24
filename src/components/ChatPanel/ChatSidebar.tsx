@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { SidebarSimple } from '@phosphor-icons/react'
+import { FileText, SidebarSimple } from '@phosphor-icons/react'
 import {
   DndContext,
   PointerSensor,
@@ -44,6 +44,7 @@ export interface ChatSidebarProps {
   onReorderInFolder: (folderId: string, newOrder: string[]) => void
   onReorderLoose: (newOrder: string[]) => void
   onOpenFolderSystemPrompt: (folder: ChatFolder) => void
+  onOpenFolderDocuments: (folder: ChatFolder) => void
   width: number
   collapsed?: boolean
   onToggleCollapsed?: () => void
@@ -141,6 +142,7 @@ export function ChatSidebar({
   onReorderInFolder,
   onReorderLoose,
   onOpenFolderSystemPrompt,
+  onOpenFolderDocuments,
   width,
   collapsed = false,
   onToggleCollapsed,
@@ -459,6 +461,7 @@ export function ChatSidebar({
                 }
                 onDeleteFolder={() => handleDeleteFolder(folder)}
                 onOpenSystemPrompt={() => onOpenFolderSystemPrompt(folder)}
+                onOpenFolderDocuments={() => onOpenFolderDocuments(folder)}
                 isAnyConvDragging={activeDragKind === 'conv'}
               />
             ))}
@@ -523,6 +526,7 @@ interface SortableFolderProps {
   onToggleExpanded: () => void
   onDeleteFolder: () => void
   onOpenSystemPrompt: () => void
+  onOpenFolderDocuments: () => void
   isAnyConvDragging: boolean
 }
 
@@ -544,6 +548,7 @@ function SortableFolder({
   onToggleExpanded,
   onDeleteFolder,
   onOpenSystemPrompt,
+  onOpenFolderDocuments,
   isAnyConvDragging,
 }: SortableFolderProps) {
   const {
@@ -622,6 +627,27 @@ function SortableFolder({
         )}
         {!editing && (
           <>
+            <button
+              type="button"
+              className={`${styles.folderSysPromptBtn} ${
+                folder.visibleDocumentIds.length > 0
+                  ? styles.folderSysPromptBtnActive
+                  : ''
+              }`}
+              onClick={(e) => {
+                e.stopPropagation()
+                onOpenFolderDocuments()
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+              aria-label={`configure documents for ${folder.name || 'folder'}`}
+              title={
+                folder.visibleDocumentIds.length > 0
+                  ? `${folder.visibleDocumentIds.length} document(s) active (click to edit)`
+                  : 'select knowledge base documents for this folder'
+              }
+            >
+              <FileText size={12} aria-hidden />
+            </button>
             <button
               type="button"
               className={`${styles.folderSysPromptBtn} ${

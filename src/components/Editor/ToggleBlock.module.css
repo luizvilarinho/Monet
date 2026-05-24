@@ -1,6 +1,6 @@
 .toggle {
   margin: 0.5em 0;
-  border-left: 2px solid var(--border, #333340);
+  border-left: 2px solid var(--accent, #333340);
   padding-left: 0;
 }
 
@@ -13,6 +13,7 @@
   border: none;
   width: 100%;
   cursor: default;
+  background-color: var(--surface-2);
 }
 
 .chevron {
@@ -31,7 +32,7 @@
 }
 
 .titleInput {
-  flex: 1;
+  /* flex: 1; */
   min-width: 0;
   background: transparent;
   border: none;
@@ -48,6 +49,13 @@
   color: var(--text-muted, #606070);
 }
 
+.titleInput:empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-muted, #606070);
+  pointer-events: none;
+}
+
 .content {
   padding-left: 20px;
+  background-color: var(--surface-1);
 }

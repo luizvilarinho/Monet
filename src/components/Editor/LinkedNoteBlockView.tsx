@@ -1,7 +1,7 @@
 import { NodeViewWrapper, type NodeViewProps } from '@tiptap/react'
 import { useEffect, useState } from 'react'
 import { ArrowSquareOut, LinkBreak } from '@phosphor-icons/react'
-import { renderMarkdown } from '../../lib/markdown'
+import { renderNoteContent } from '../../lib/markdown'
 import { storage } from '../../storage'
 import type { Note } from '../../types'
 import { useEditorNotes } from './EditorNotesContext'
@@ -27,7 +27,7 @@ export function LinkedNoteBlockView({ node, updateAttributes, deleteNode }: Node
       return
     }
     let cancelled = false
-    renderMarkdown(note.content).then((html) => {
+    renderNoteContent(note.content).then((html) => {
       if (!cancelled) setRenderedHtml(html)
     })
     return () => {

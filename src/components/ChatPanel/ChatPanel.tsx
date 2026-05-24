@@ -7,6 +7,7 @@ import { ModelSelector } from '../AiPanel/ModelSelector'
 import styles from './ChatPanel.module.css'
 import { ChatSidebar } from './ChatSidebar'
 import { ChatToolsMenu } from './ChatToolsMenu'
+import { FolderDocumentSelectorModal } from './FolderDocumentSelectorModal'
 import { FolderSystemPromptModal } from './FolderSystemPromptModal'
 import { SaveToNoteModal } from './SaveToNoteModal'
 
@@ -59,6 +60,7 @@ export function ChatPanel({
     deleteFolder,
     setFolderExpanded,
     setFolderSystemPrompt,
+    setFolderVisibleDocuments,
     moveConversation,
     removeConversationFromFolder,
     reorderFolders,
@@ -71,6 +73,7 @@ export function ChatPanel({
   const [systemPromptFolderId, setSystemPromptFolderId] = useState<string | null>(
     null,
   )
+  const [folderDocsFolder, setFolderDocsFolder] = useState<ChatFolder | null>(null)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const historyRef = useRef<HTMLDivElement | null>(null)
   const [sidebarWidth, setSidebarWidth] = useState(() => {
@@ -187,6 +190,7 @@ export function ChatPanel({
         onOpenFolderSystemPrompt={(folder) =>
           setSystemPromptFolderId(folder.id)
         }
+        onOpenFolderDocuments={(folder) => setFolderDocsFolder(folder)}
         width={sidebarCollapsed ? 48 : sidebarWidth}
         collapsed={sidebarCollapsed}
         onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
@@ -307,6 +311,15 @@ export function ChatPanel({
           setFolderSystemPrompt(folderId, text, mode)
         }
         onClose={() => setSystemPromptFolderId(null)}
+      />
+
+      <FolderDocumentSelectorModal
+        open={folderDocsFolder !== null}
+        folder={folderDocsFolder}
+        onConfirm={(folderId, visibleDocumentIds) =>
+          setFolderVisibleDocuments(folderId, visibleDocumentIds)
+        }
+        onClose={() => setFolderDocsFolder(null)}
       />
     </section>
   )

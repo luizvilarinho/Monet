@@ -108,6 +108,7 @@ export interface ChatFolder {
   id: string
   name: string
   conversationIds: string[]
+  visibleDocumentIds: string[]
   expanded: boolean
   systemPrompt: string
   systemPromptMode: SystemPromptMode
@@ -192,7 +193,10 @@ function normalizeFolder(f: ChatFolder): ChatFolder {
   const sp = typeof raw.systemPrompt === 'string' ? raw.systemPrompt : ''
   const mode: SystemPromptMode =
     raw.systemPromptMode === 'append' ? 'append' : 'replace'
-  return { ...f, systemPrompt: sp, systemPromptMode: mode }
+  const visibleDocumentIds = Array.isArray(raw.visibleDocumentIds)
+    ? (raw.visibleDocumentIds as unknown[]).filter((x) => typeof x === 'string') as string[]
+    : []
+  return { ...f, systemPrompt: sp, systemPromptMode: mode, visibleDocumentIds }
 }
 
 function deriveTitle(messages: ChatMessage[]): string {
@@ -414,6 +418,7 @@ function makeNewFolder(name = 'New folder'): ChatFolder {
     id: nanoid(),
     name,
     conversationIds: [],
+    visibleDocumentIds: [],
     expanded: true,
     systemPrompt: '',
     systemPromptMode: 'replace',
@@ -486,6 +491,7 @@ export interface UseChatResult {
     text: string,
     mode: SystemPromptMode
   ) => void
+  setFolderVisibleDocuments: (folderId: string, visibleDocumentIds: string[]) => void
   moveConversation: (
     convId: string,
     target: { type: 'loose'; index?: number } | { type: 'folder'; folderId: string; index?: number }
@@ -754,6 +760,19 @@ export function useChat(): UseChatResult {
       )
     },
     [setFolders]
+  )
+
+  const setFolderVisibleDocuments = useCallback(
+    (folderId: string, visibleDocumentIds: string[]) => {
+      setFolders((prev) => {
+        const next = prev.map((f) =>
+          f.id === folderId ? { ...f, visibleDocumentIds, updatedAt: new Date().toISOString() } : f
+        )
+        saveFolders(next)
+        return next
+      })
+    },
+    [],
   )
 
   const moveConversation = useCallback(
@@ -1085,8 +1104,32 @@ export function useChat(): UseChatResult {
         systemMessages = [{ role: 'system', content: CHAT_SYSTEM_PROMPT }]
       }
 
+      // RAG context for folder documents
+      let ragSystemMessage: ChatMessageInput | null = null
+      const folderDocIds = containingFolder?.visibleDocumentIds ?? []
+      if (folderDocIds.length > 0 && trimmed.trim()) {
+        try {
+          const { embedText, documentsSearchByIds } = await import('../lib/documents')
+          const embedding = await embedText(trimmed)
+          const topK = 5
+          const chunks = await documentsSearchByIds(folderDocIds, embedding, topK)
+          if (chunks.length > 0) {
+            const formatted = chunks
+              .map((c) => `[${c.documentName}]\n${c.snippet}`)
+              .join('\n\n---\n\n')
+            ragSystemMessage = {
+              role: 'system',
+              content: `The following excerpts from your knowledge base documents are relevant to this conversation:\n\n${formatted}`,
+            }
+          }
+        } catch (err) {
+          console.warn('RAG search in chat failed (continuing without):', err)
+        }
+      }
+
       const apiMessages: ChatMessageInput[] = [
         ...systemMessages,
+        ...(ragSystemMessage ? [ragSystemMessage] : []),
         ...(searchSystemMessage ? [searchSystemMessage] : []),
         ...historyForApi,
         { role: 'user', content: trimmed },
@@ -1152,6 +1195,7 @@ export function useChat(): UseChatResult {
     deleteFolder,
     setFolderExpanded,
     setFolderSystemPrompt,
+    setFolderVisibleDocuments,
     moveConversation,
     removeConversationFromFolder,
     reorderFolders,

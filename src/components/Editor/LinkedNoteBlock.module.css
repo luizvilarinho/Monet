@@ -74,3 +74,18 @@
   color: var(--text-secondary, #a0a0b8);
   overflow: hidden;
 }
+
+.body div[data-type="toggle-block"] {
+  border-left: 2px solid var(--accent, #7c6af5);
+  padding-left: 10px;
+  margin: 4px 0;
+}
+
+.body div[data-type="toggle-block"]::before {
+  content: attr(data-title);
+  display: block;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-primary, #e8e8f0);
+  margin-bottom: 2px;
+}

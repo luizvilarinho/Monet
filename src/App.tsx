@@ -6,6 +6,7 @@ import './App.css'
 import { AiPanel } from './components/AiPanel/AiPanel'
 import { ChatPanel } from './components/ChatPanel/ChatPanel'
 import { DocumentsModal } from './components/DocumentsModal/DocumentsModal'
+import { KnowledgeBaseModal } from './components/KnowledgeBaseModal/KnowledgeBaseModal'
 import { Editor } from './components/Editor/Editor'
 import { EmptyEditor } from './components/Editor/EmptyEditor'
 import { NotebookList } from './components/NotebookList/NotebookList'
@@ -38,9 +39,10 @@ import {
 } from './lib/updater'
 import { getToggleTitle } from './components/Editor/commandParser'
 import {
-  documentsList,
-  documentsSearch,
+  documentsSearchByIds,
   embedText,
+  getNotebookVisibleDocumentIds,
+  getNotebooksWithVisibleDocs,
   type ChunkResult,
 } from './lib/documents'
 import { applyOrder, loadNoteOrder, loadOrder, mergeOrder, saveNoteOrder, saveOrder } from './lib/noteOrder'
@@ -182,7 +184,9 @@ function App() {
   const [aiOpen, setAiOpen] = useState(true)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [documentsModalNotebookId, setDocumentsModalNotebookId] = useState<string | null>(null)
+  const [notebooksWithDocs, setNotebooksWithDocs] = useState<Set<string>>(new Set())
 
+  const [kbOpen, setKbOpen] = useState(false)
   const [hasApiKey, setHasApiKey] = useState<boolean>(false)
   const [apiKeyChecked, setApiKeyChecked] = useState<boolean>(false)
   const [onboardingActive, setOnboardingActive] = useState<boolean>(
@@ -219,6 +223,19 @@ function App() {
   } | null>(null)
 
   const { responses, start, addErrorCard, removeResponse } = useAi(activeId)
+
+  const refreshNotebooksWithDocs = useCallback(async () => {
+    try {
+      const ids = await getNotebooksWithVisibleDocs()
+      setNotebooksWithDocs(new Set(ids))
+    } catch {
+      // non-critical, keep previous state
+    }
+  }, [])
+
+  useEffect(() => {
+    void refreshNotebooksWithDocs()
+  }, [refreshNotebooksWithDocs])
 
   const executedCommandTexts = useMemo(() => {
     const set = new Set<string>()
@@ -481,28 +498,14 @@ function App() {
       const isDocsOnly = cmd === '/docs'
       const notebookId = activeNote?.notebookId ?? null
 
-      let availableDocsCount = 0
+      let visibleDocIds: string[] = []
       let docsListFailed = false
       if (notebookId) {
         try {
-          const docs = await documentsList(notebookId)
-          availableDocsCount = docs.filter((d) => d.status === 'available').length
-
-          if (isDocsOnly && availableDocsCount === 0) {
-            const indexing = docs.some((d) => d.status === 'indexing')
-            addErrorCard(
-              activeId,
-              cmd,
-              query,
-              indexing
-                ? 'No document available yet — wait for indexing to finish.'
-                : 'No document in this notebook. Add one via the documents icon on the notebook.'
-            )
-            return true
-          }
+          visibleDocIds = await getNotebookVisibleDocumentIds(notebookId)
         } catch (err) {
           docsListFailed = true
-          console.warn('documentsList failed:', err)
+          console.warn('getNotebookVisibleDocumentIds failed:', err)
           if (isDocsOnly) {
             addErrorCard(
               activeId,
@@ -523,15 +526,25 @@ function App() {
         return true
       }
 
+      if (isDocsOnly && !docsListFailed && visibleDocIds.length === 0) {
+        addErrorCard(
+          activeId,
+          cmd,
+          query,
+          'No documents visible in this notebook. Open the notebook documents selector to select documents from the Knowledge Base.'
+        )
+        return true
+      }
+
       let ragContext: string | undefined
       let ragSources: AiSource[] | undefined
-      if (notebookId && !docsListFailed && availableDocsCount > 0) {
+      if (visibleDocIds.length > 0 && !docsListFailed) {
         try {
           const queryText = query.trim() || stripCommandLines(noteContent).slice(0, 500)
           if (queryText) {
             const embedding = await embedText(queryText)
             const topK = isDocsOnly ? 8 : 5
-            const chunks = await documentsSearch(notebookId, embedding, topK)
+            const chunks = await documentsSearchByIds(visibleDocIds, embedding, topK)
             if (chunks.length > 0) {
               ragContext = formatRagContext(chunks)
               ragSources = chunks.map((c) => ({
@@ -796,6 +809,8 @@ function App() {
             setActiveNotebookId(id)
             setDocumentsModalNotebookId(id)
           }}
+          onOpenKnowledgeBase={() => setKbOpen(true)}
+          notebooksWithDocs={notebooksWithDocs}
           tags={allTags}
           activeTag={activeTag}
           onSelectTag={setActiveTag}
@@ -892,8 +907,10 @@ function App() {
         notebookName={
           notebooks.find((n) => n.id === documentsModalNotebookId)?.name ?? ''
         }
-        onClose={() => setDocumentsModalNotebookId(null)}
+        onClose={() => { setDocumentsModalNotebookId(null); void refreshNotebooksWithDocs() }}
+        onOpenKnowledgeBase={() => { setDocumentsModalNotebookId(null); setKbOpen(true) }}
       />
+      <KnowledgeBaseModal open={kbOpen} onClose={() => setKbOpen(false)} />
       {onboardingActive && (
         <Onboarding
           onComplete={handleCompleteOnboarding}

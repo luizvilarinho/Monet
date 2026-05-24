@@ -1,14 +1,14 @@
-// monet.db é compartilhado com o frontend via tauri-plugin-sql, mas a tabela
-// `documents` é gerenciada exclusivamente por este módulo (DocDb / rusqlite).
-// O frontend só lê documentos via `documents_list` — não escreve direto na
-// tabela. Manter este invariante evita conflito de locks com o backend e
-// estados inconsistentes entre frontend/backend.
+// monet.db é compartilhado com o frontend via tauri-plugin-sql, mas as tabelas
+// `documents` e `notebook_document_visibility` são gerenciadas exclusivamente
+// por este módulo (DocDb / rusqlite). O frontend só lê documentos via
+// `documents_list_global` — não escreve direto. Manter este invariante evita
+// conflito de locks com o backend e estados inconsistentes entre frontend/backend.
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, params_from_iter, Connection};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::task::spawn_blocking;
@@ -51,7 +51,6 @@ impl DocDb {
 #[serde(rename_all = "camelCase")]
 struct DocumentStatusEvent {
     document_id: String,
-    notebook_id: String,
     status: String,
     error_message: Option<String>,
 }
@@ -60,7 +59,6 @@ struct DocumentStatusEvent {
 #[serde(rename_all = "camelCase")]
 pub struct DocumentInfo {
     id: String,
-    notebook_id: String,
     name: String,
     mime: String,
     size: i64,
@@ -116,8 +114,45 @@ fn open_doc_db(app: &AppHandle) -> Result<Connection, String> {
     let conn = Connection::open(&path).map_err(|e| format!("failed to open monet.db: {}", e))?;
     conn.pragma_update(None, "journal_mode", &"WAL")
         .map_err(|e| format!("failed to configure WAL: {}", e))?;
-    conn.pragma_update(None, "foreign_keys", &true)
-        .map_err(|e| format!("failed to enable foreign_keys: {}", e))?;
+
+    // notebook_document_visibility é gerenciada exclusivamente aqui, sem FK
+    // constraints. A migration v6 do tauri-plugin-sql pode tê-la criado WITH
+    // FOREIGN KEY — detectamos isso via sqlite_master e recriamos limpa.
+    // Não usamos migration externa para evitar race condition com Database.load()
+    // do frontend (migrations do plugin rodam lazily, depois do open_doc_db).
+    let existing_ddl: Option<String> = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='notebook_document_visibility'",
+            [],
+            |r| r.get(0),
+        )
+        .ok();
+
+    let needs_recreate = existing_ddl
+        .as_deref()
+        .map(|ddl| ddl.to_uppercase().contains("FOREIGN KEY"))
+        .unwrap_or(false);
+
+    if needs_recreate {
+        conn.execute_batch(
+            "DROP TABLE notebook_document_visibility;",
+        )
+        .map_err(|e| format!("failed to drop legacy visibility table: {}", e))?;
+    }
+
+    if needs_recreate || existing_ddl.is_none() {
+        conn.execute_batch(
+            "CREATE TABLE notebook_document_visibility (
+                notebook_id TEXT NOT NULL,
+                document_id TEXT NOT NULL,
+                PRIMARY KEY (notebook_id, document_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_ndv_notebook ON notebook_document_visibility(notebook_id);
+            CREATE INDEX IF NOT EXISTS idx_ndv_document ON notebook_document_visibility(document_id);",
+        )
+        .map_err(|e| format!("failed to create visibility table: {}", e))?;
+    }
+
     Ok(conn)
 }
 
@@ -316,7 +351,6 @@ async fn embed_batch(key: &str, texts: &[String]) -> Result<Vec<Vec<f32>>, Strin
 fn store_chunks(
     app: &AppHandle,
     document_id: &str,
-    notebook_id: &str,
     source_name: &str,
     chunks: &[String],
     embeddings: &[Vec<f32>],
@@ -341,9 +375,9 @@ fn store_chunks(
         // last_insert_rowid e usamos como rowid em vec_chunks para
         // garantir o pareamento sem depender de MAX(rowid)+1.
         tx.execute(
-            "INSERT INTO chunks_meta(document_id, notebook_id, source_name, content, chunk_index)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![document_id, notebook_id, source_name, chunk, idx as i64],
+            "INSERT INTO chunks_meta(document_id, source_name, content, chunk_index)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![document_id, source_name, chunk, idx as i64],
         )
         .map_err(|e| format!("failed to insert metadata {}: {}", idx, e))?;
 
@@ -404,7 +438,6 @@ fn update_document_status(
 fn emit_status(
     app: &AppHandle,
     document_id: &str,
-    notebook_id: &str,
     status: &str,
     error_message: Option<&str>,
 ) {
@@ -412,7 +445,6 @@ fn emit_status(
         "documents://status",
         DocumentStatusEvent {
             document_id: document_id.to_string(),
-            notebook_id: notebook_id.to_string(),
             status: status.to_string(),
             error_message: error_message.map(|s| s.to_string()),
         },
@@ -466,19 +498,18 @@ async fn read_document_text(path: PathBuf, mime: String) -> Result<String, Strin
 async fn run_indexing(
     app: AppHandle,
     document_id: String,
-    notebook_id: String,
     source_name: String,
     path: PathBuf,
     mime: String,
 ) {
-    emit_status(&app, &document_id, &notebook_id, "indexing", None);
+    emit_status(&app, &document_id, "indexing", None);
 
     let key = match crate::read_key(&app, "openrouter_key") {
         Some(k) => k,
         None => {
             let msg = "OpenRouter key not configured";
             let _ = update_document_status(&app, &document_id, "error", Some(msg));
-            emit_status(&app, &document_id, &notebook_id, "error", Some(msg));
+            emit_status(&app, &document_id, "error", Some(msg));
             return;
         }
     };
@@ -487,7 +518,7 @@ async fn run_indexing(
         Ok(t) => t,
         Err(e) => {
             let _ = update_document_status(&app, &document_id, "error", Some(&e));
-            emit_status(&app, &document_id, &notebook_id, "error", Some(&e));
+            emit_status(&app, &document_id, "error", Some(&e));
             return;
         }
     };
@@ -496,7 +527,7 @@ async fn run_indexing(
     if chunks.is_empty() {
         let msg = "No indexable content found";
         let _ = update_document_status(&app, &document_id, "error", Some(msg));
-        emit_status(&app, &document_id, &notebook_id, "error", Some(msg));
+        emit_status(&app, &document_id, "error", Some(msg));
         return;
     }
 
@@ -507,7 +538,7 @@ async fn run_indexing(
             Ok(embs) => all_embeddings.extend(embs),
             Err(e) => {
                 let _ = update_document_status(&app, &document_id, "error", Some(&e));
-                emit_status(&app, &document_id, &notebook_id, "error", Some(&e));
+                emit_status(&app, &document_id, "error", Some(&e));
                 return;
             }
         }
@@ -516,28 +547,26 @@ async fn run_indexing(
     if let Err(e) = store_chunks(
         &app,
         &document_id,
-        &notebook_id,
         &source_name,
         &chunks,
         &all_embeddings,
     ) {
         let _ = update_document_status(&app, &document_id, "error", Some(&e));
-        emit_status(&app, &document_id, &notebook_id, "error", Some(&e));
+        emit_status(&app, &document_id, "error", Some(&e));
         return;
     }
 
     if let Err(e) = update_document_status(&app, &document_id, "available", None) {
-        emit_status(&app, &document_id, &notebook_id, "error", Some(&e));
+        emit_status(&app, &document_id, "error", Some(&e));
         return;
     }
-    emit_status(&app, &document_id, &notebook_id, "available", None);
+    emit_status(&app, &document_id, "available", None);
 }
 
 #[tauri::command]
-pub async fn documents_upload(
+pub async fn documents_upload_global(
     app: AppHandle,
     state: State<'_, DocDb>,
-    notebook_id: String,
     source_path: String,
 ) -> Result<String, String> {
     let src = PathBuf::from(&source_path);
@@ -582,9 +611,9 @@ pub async fn documents_upload(
 
     with_doc_db(&app, &state, |conn| {
         conn.execute(
-            "INSERT INTO documents (id, notebook_id, name, original_path, mime, size, status, error_message, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'indexing', NULL, ?7, ?7)",
-            params![id, notebook_id, name, dest_str, mime, size, now],
+            "INSERT INTO documents (id, name, original_path, mime, size, status, error_message, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'indexing', NULL, ?6, ?6)",
+            params![id, name, dest_str, mime, size, now],
         )
         .map_err(|e| format!("failed to insert document: {}", e))?;
         Ok(())
@@ -592,11 +621,10 @@ pub async fn documents_upload(
 
     let app_clone = app.clone();
     let id_clone = id.clone();
-    let nb_clone = notebook_id.clone();
     let name_clone = name.clone();
     let mime_str = mime.to_string();
     tauri::async_runtime::spawn(async move {
-        run_indexing(app_clone, id_clone, nb_clone, name_clone, dest, mime_str).await;
+        run_indexing(app_clone, id_clone, name_clone, dest, mime_str).await;
     });
 
     Ok(id)
@@ -611,21 +639,21 @@ pub async fn documents_reindex(
     // Lê metadados e marca status='indexing' atomicamente. Se já estava
     // 'indexing', retorna sem fazer nada (evita corrupção por duplo-clique
     // em "retentar").
-    let row: Option<(String, String, String, String)> =
+    let row: Option<(String, String, String)> =
         with_doc_db(&app, &state, |conn| {
             let tx = conn
                 .transaction()
                 .map_err(|e| format!("failed to start transaction: {}", e))?;
 
-            let result: Result<(String, String, String, String, String), rusqlite::Error> =
+            let result: Result<(String, String, String, String), rusqlite::Error> =
                 tx.query_row(
-                    "SELECT notebook_id, name, original_path, mime, status
+                    "SELECT name, original_path, mime, status
                      FROM documents WHERE id = ?1",
                     params![document_id],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
                 );
 
-            let (notebook_id, name, original_path, mime, status) = match result {
+            let (name, original_path, mime, status) = match result {
                 Ok(row) => row,
                 Err(e) => {
                     return Err(format!("document not found: {}", e));
@@ -646,10 +674,10 @@ pub async fn documents_reindex(
             tx.commit()
                 .map_err(|e| format!("failed to commit reindex: {}", e))?;
 
-            Ok(Some((notebook_id, name, original_path, mime)))
+            Ok(Some((name, original_path, mime)))
         })?;
 
-    let Some((notebook_id, name, original_path, mime)) = row else {
+    let Some((name, original_path, mime)) = row else {
         return Ok(());
     };
 
@@ -659,7 +687,7 @@ pub async fn documents_reindex(
     let app_clone = app.clone();
     let id_clone = document_id.clone();
     tauri::async_runtime::spawn(async move {
-        run_indexing(app_clone, id_clone, notebook_id, name, path, mime).await;
+        run_indexing(app_clone, id_clone, name, path, mime).await;
     });
 
     Ok(())
@@ -687,6 +715,11 @@ pub async fn documents_delete(
 
     with_doc_db(&app, &state, |conn| {
         conn.execute(
+            "DELETE FROM notebook_document_visibility WHERE document_id = ?1",
+            params![document_id],
+        )
+        .map_err(|e| format!("failed to clear visibility: {}", e))?;
+        conn.execute(
             "DELETE FROM documents WHERE id = ?1",
             params![document_id],
         )
@@ -702,30 +735,28 @@ pub async fn documents_delete(
 }
 
 #[tauri::command]
-pub async fn documents_list(
+pub async fn documents_list_global(
     app: AppHandle,
     state: State<'_, DocDb>,
-    notebook_id: String,
 ) -> Result<Vec<DocumentInfo>, String> {
     with_doc_db(&app, &state, |conn| {
         let mut stmt = conn
             .prepare(
-                "SELECT id, notebook_id, name, mime, size, status, error_message, created_at, updated_at
-                 FROM documents WHERE notebook_id = ?1 ORDER BY created_at DESC",
+                "SELECT id, name, mime, size, status, error_message, created_at, updated_at
+                 FROM documents ORDER BY created_at DESC",
             )
             .map_err(|e| format!("failed to prepare listing: {}", e))?;
         let rows = stmt
-            .query_map(params![notebook_id], |r| {
+            .query_map([], |r| {
                 Ok(DocumentInfo {
                     id: r.get(0)?,
-                    notebook_id: r.get(1)?,
-                    name: r.get(2)?,
-                    mime: r.get(3)?,
-                    size: r.get(4)?,
-                    status: r.get(5)?,
-                    error_message: r.get(6)?,
-                    created_at: r.get(7)?,
-                    updated_at: r.get(8)?,
+                    name: r.get(1)?,
+                    mime: r.get(2)?,
+                    size: r.get(3)?,
+                    status: r.get(4)?,
+                    error_message: r.get(5)?,
+                    created_at: r.get(6)?,
+                    updated_at: r.get(7)?,
                 })
             })
             .map_err(|e| format!("failed to list: {}", e))?;
@@ -738,12 +769,87 @@ pub async fn documents_list(
 }
 
 #[tauri::command]
-pub async fn documents_search(
+pub async fn documents_set_notebook_visibility(
     app: AppHandle,
+    state: State<'_, DocDb>,
     notebook_id: String,
+    document_id: String,
+    visible: bool,
+) -> Result<(), String> {
+    with_doc_db(&app, &state, |conn| {
+        if visible {
+            conn.execute(
+                "INSERT OR IGNORE INTO notebook_document_visibility (notebook_id, document_id)
+                 VALUES (?1, ?2)",
+                params![notebook_id, document_id],
+            )
+            .map_err(|e| format!("failed to set visibility: {}", e))?;
+        } else {
+            conn.execute(
+                "DELETE FROM notebook_document_visibility
+                 WHERE notebook_id = ?1 AND document_id = ?2",
+                params![notebook_id, document_id],
+            )
+            .map_err(|e| format!("failed to clear visibility: {}", e))?;
+        }
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub async fn documents_get_notebook_visible_ids(
+    app: AppHandle,
+    state: State<'_, DocDb>,
+    notebook_id: String,
+) -> Result<Vec<String>, String> {
+    with_doc_db(&app, &state, |conn| {
+        let mut stmt = conn
+            .prepare(
+                "SELECT document_id FROM notebook_document_visibility
+                 WHERE notebook_id = ?1",
+            )
+            .map_err(|e| format!("failed to prepare visibility query: {}", e))?;
+        let rows = stmt
+            .query_map(params![notebook_id], |r| r.get::<_, String>(0))
+            .map_err(|e| format!("failed to query visibility: {}", e))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| format!("invalid visibility row: {}", e))?);
+        }
+        Ok(out)
+    })
+}
+
+#[tauri::command]
+pub async fn documents_get_notebooks_with_visible_docs(
+    app: AppHandle,
+    state: State<'_, DocDb>,
+) -> Result<Vec<String>, String> {
+    with_doc_db(&app, &state, |conn| {
+        let mut stmt = conn
+            .prepare("SELECT DISTINCT notebook_id FROM notebook_document_visibility")
+            .map_err(|e| format!("failed to query: {}", e))?;
+        let rows = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| format!("failed to list: {}", e))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| format!("invalid row: {}", e))?);
+        }
+        Ok(out)
+    })
+}
+
+#[tauri::command]
+pub async fn documents_search_by_ids(
+    app: AppHandle,
+    document_ids: Vec<String>,
     query_embedding: Vec<f32>,
     top_k: usize,
 ) -> Result<Vec<ChunkResult>, String> {
+    if document_ids.is_empty() {
+        return Ok(vec![]);
+    }
     if query_embedding.len() != EMBEDDING_DIM {
         return Err(format!(
             "embedding tem {} dim, esperado {}",
@@ -752,40 +858,54 @@ pub async fn documents_search(
         ));
     }
     let target_k = top_k.max(1);
-    // sqlite-vec aplica o filtro de notebook_id depois do KNN global, então
+    // sqlite-vec aplica o filtro de document_id depois do KNN global, então
     // sobre-amostramos para garantir que sobrem ao menos `target_k` chunks
-    // do caderno alvo após o filtro. Teto de 200 evita varredura excessiva.
+    // dos documentos alvos após o filtro. Teto de 200 evita varredura excessiva.
     let scan_k = target_k.saturating_mul(5).min(200) as i64;
+
+    let placeholders = std::iter::repeat("?")
+        .take(document_ids.len())
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        "SELECT cm.document_id, cm.source_name, cm.content, cm.chunk_index, vc.distance
+         FROM vec_chunks vc
+         JOIN chunks_meta cm ON cm.rowid = vc.rowid
+         WHERE vc.embedding MATCH ?
+           AND vc.k = ?
+           AND vc.rowid IN (SELECT rowid FROM chunks_meta WHERE document_id IN ({}))
+         ORDER BY vc.distance
+         LIMIT ?",
+        placeholders
+    );
 
     let state = app.state::<VecDb>();
     let conn = state.0.lock().map_err(|e| e.to_string())?;
 
     let mut stmt = conn
-        .prepare(
-            "SELECT cm.document_id, cm.source_name, cm.content, cm.chunk_index, vc.distance
-             FROM vec_chunks vc
-             JOIN chunks_meta cm ON cm.rowid = vc.rowid
-             WHERE vc.embedding MATCH ?1
-               AND vc.k = ?2
-               AND vc.rowid IN (SELECT rowid FROM chunks_meta WHERE notebook_id = ?3)
-             ORDER BY vc.distance
-             LIMIT ?4",
-        )
+        .prepare(&sql)
         .map_err(|e| format!("failed to prepare search: {}", e))?;
 
+    // Monta lista de parâmetros: [embedding_bytes, scan_k, doc_ids..., target_k]
+    let embedding_bytes = query_embedding.as_bytes().to_vec();
+    let mut binders: Vec<Box<dyn rusqlite::ToSql>> = Vec::with_capacity(3 + document_ids.len());
+    binders.push(Box::new(embedding_bytes));
+    binders.push(Box::new(scan_k));
+    for id in &document_ids {
+        binders.push(Box::new(id.clone()));
+    }
+    binders.push(Box::new(target_k as i64));
+
     let rows = stmt
-        .query_map(
-            params![query_embedding.as_bytes(), scan_k, notebook_id, target_k as i64],
-            |r| {
-                Ok(ChunkResult {
-                    document_id: r.get(0)?,
-                    document_name: r.get(1)?,
-                    chunk_index: r.get(3)?,
-                    snippet: r.get(2)?,
-                    distance: r.get(4)?,
-                })
-            },
-        )
+        .query_map(params_from_iter(binders.iter().map(|b| b.as_ref())), |r| {
+            Ok(ChunkResult {
+                document_id: r.get(0)?,
+                document_name: r.get(1)?,
+                chunk_index: r.get(3)?,
+                snippet: r.get(2)?,
+                distance: r.get(4)?,
+            })
+        })
         .map_err(|e| format!("search failed: {}", e))?;
 
     let mut out = Vec::new();

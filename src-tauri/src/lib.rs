@@ -569,6 +569,44 @@ pub fn run() {
             sql: "ALTER TABLE ai_responses ADD COLUMN sources TEXT;",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 6,
+            description: "documents_global_knowledge_base",
+            // Base de Conhecimento global: remove vinculo notebook_id da tabela
+            // documents e cria tabela de visibilidade por caderno. Dados antigos
+            // sao descartados (sem usuarios reais).
+            sql: "
+            DELETE FROM documents;
+            CREATE TABLE IF NOT EXISTS notebook_document_visibility (
+                notebook_id TEXT NOT NULL,
+                document_id TEXT NOT NULL,
+                PRIMARY KEY (notebook_id, document_id),
+                FOREIGN KEY (notebook_id) REFERENCES notebooks(id) ON DELETE CASCADE,
+                FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+            );
+            CREATE TABLE documents_new (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                original_path TEXT NOT NULL,
+                mime TEXT NOT NULL,
+                size INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                error_message TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            INSERT INTO documents_new SELECT id, name, original_path, mime, size, status, error_message, created_at, updated_at FROM documents;
+            DROP TABLE documents;
+            ALTER TABLE documents_new RENAME TO documents;
+            ",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 7,
+            description: "move_visibility_table_to_docdb",
+            sql: "DROP TABLE IF EXISTS notebook_document_visibility;",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
@@ -613,11 +651,14 @@ pub fn run() {
             openrouter_cancel,
             export_markdown,
             vec_db::vec_db_smoke_test,
-            documents::documents_upload,
+            documents::documents_upload_global,
             documents::documents_reindex,
             documents::documents_delete,
-            documents::documents_list,
-            documents::documents_search,
+            documents::documents_list_global,
+            documents::documents_set_notebook_visibility,
+            documents::documents_get_notebook_visible_ids,
+            documents::documents_get_notebooks_with_visible_docs,
+            documents::documents_search_by_ids,
             documents::documents_pick_file,
             documents::embed_text
         ])

@@ -31,7 +31,6 @@ interface NoteRow {
 
 interface DocumentRow {
   id: string
-  notebook_id: string
   name: string
   original_path: string
   mime: string
@@ -136,7 +135,6 @@ function normalizeDocStatus(s: string): DocumentStatus {
 function rowToDocument(r: DocumentRow): Document {
   return {
     id: r.id,
-    notebookId: r.notebook_id,
     name: r.name,
     mime: r.mime,
     size: r.size,
@@ -237,18 +235,6 @@ export class TauriStorage implements StorageAdapter {
       [q]
     )
     return rows.map(rowToNote)
-  }
-
-  // Read-only. The `documents` table is managed exclusively by the
-  // Rust backend (src-tauri/src/documents.rs) — frontend writes break
-  // the pairing with vec_chunks/chunks_meta in the vector store.
-  async getDocuments(notebookId: string): Promise<Document[]> {
-    const db = await this.db()
-    const rows = await db.select<DocumentRow[]>(
-      'SELECT * FROM documents WHERE notebook_id = $1 ORDER BY created_at DESC',
-      [notebookId],
-    )
-    return rows.map(rowToDocument)
   }
 
   async updateDocumentStatus(

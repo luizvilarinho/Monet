@@ -36,11 +36,6 @@
   font-weight: 500;
 }
 
-.notebookName {
-  color: var(--accent-ai, #5dcaa5);
-  font-weight: 500;
-}
-
 .close {
   background: transparent;
   border: none;
@@ -187,21 +182,16 @@
 }
 
 .colName {
-  width: 55%;
+  width: 50%;
 }
 
 .colStatus {
-  width: 30%;
+  width: 25%;
 }
 
 .colActions {
-  width: 15%;
+  width: 25%;
   text-align: right;
-}
-
-.colVisible {
-  width: 15%;
-  text-align: center;
 }
 
 .cellName {
@@ -218,21 +208,6 @@
 
 .cellActions > button + button {
   margin-left: 6px;
-}
-
-.cellVisible {
-  text-align: center;
-}
-
-.linkBtn {
-  background: none;
-  border: none;
-  padding: 0;
-  color: var(--accent-ai, #5dcaa5);
-  font-size: inherit;
-  font-family: inherit;
-  cursor: pointer;
-  text-decoration: underline;
 }
 
 .pill {

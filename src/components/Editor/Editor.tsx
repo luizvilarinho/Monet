@@ -415,13 +415,24 @@ export function Editor({
       const selectedIdx = sameSuggestions
         ? Math.min(prev.selectedIdx, suggestions.length - 1)
         : 0
+      const nextTop = coords.bottom + 4
+      const nextLeft = coords.left
+      if (
+        sameSuggestions &&
+        prev.filter === info.text &&
+        prev.selectedIdx === selectedIdx &&
+        prev.top === nextTop &&
+        prev.left === nextLeft
+      ) {
+        return prev
+      }
       return {
         visible: true,
         filter: info.text,
         suggestions,
         selectedIdx,
-        top: coords.bottom + 4,
-        left: coords.left,
+        top: nextTop,
+        left: nextLeft,
       }
     })
   }, [editor])

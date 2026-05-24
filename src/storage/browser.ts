@@ -1,4 +1,4 @@
-import type { AiResponse, Document, DocumentStatus, Note, Notebook } from '../types'
+import type { AiResponse, DocumentStatus, Note, Notebook } from '../types'
 import type { StorageAdapter } from './index'
 
 export class BrowserStorage implements StorageAdapter {
@@ -37,9 +37,6 @@ export class BrowserStorage implements StorageAdapter {
   }
   async deleteResponses(_noteId: string): Promise<void> {
     throw new Error('BrowserStorage.deleteResponses not implemented')
-  }
-  async getDocuments(_notebookId: string): Promise<Document[]> {
-    throw new Error('BrowserStorage.getDocuments not implemented')
   }
   async updateDocumentStatus(
     _id: string,

@@ -55,19 +55,61 @@ pub fn init(app: &AppHandle) -> Result<VecDb, String> {
     )
     .map_err(|e| format!("falha ao criar tabela vec_chunks: {}", e))?;
 
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS chunks_meta (
-            rowid INTEGER PRIMARY KEY,
-            document_id TEXT NOT NULL,
-            notebook_id TEXT NOT NULL,
-            source_name TEXT NOT NULL,
-            content TEXT NOT NULL,
-            chunk_index INTEGER NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_chunks_meta_notebook ON chunks_meta(notebook_id);
-        CREATE INDEX IF NOT EXISTS idx_chunks_meta_document ON chunks_meta(document_id);",
-    )
-    .map_err(|e| format!("falha ao criar chunks_meta: {}", e))?;
+    // Detecta se chunks_meta existe com o schema antigo (coluna notebook_id).
+    // Usa PRAGMA table_info em vez de tabela de versão para evitar ambiguidade
+    // de múltiplas linhas em inicializações consecutivas.
+    let table_exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='chunks_meta'",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap_or(0)
+        > 0;
+
+    let needs_migration = if table_exists {
+        let mut stmt = conn
+            .prepare("PRAGMA table_info(chunks_meta)")
+            .map_err(|e| format!("falha ao inspecionar chunks_meta: {}", e))?;
+        let has_notebook_id = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|e| format!("falha ao ler colunas de chunks_meta: {}", e))?
+            .filter_map(|r| r.ok())
+            .any(|col| col == "notebook_id");
+        has_notebook_id
+    } else {
+        false
+    };
+
+    if needs_migration {
+        // Schema antigo com notebook_id: apaga embeddings órfãos e recria sem a coluna.
+        // Dados descartados — sem usuários reais nesta fase do projeto.
+        conn.execute_batch(
+            "DELETE FROM vec_chunks;\
+             DROP TABLE chunks_meta;\
+             CREATE TABLE chunks_meta (\
+                 rowid INTEGER PRIMARY KEY,\
+                 document_id TEXT NOT NULL,\
+                 source_name TEXT NOT NULL,\
+                 content TEXT NOT NULL,\
+                 chunk_index INTEGER NOT NULL\
+             );\
+             CREATE INDEX IF NOT EXISTS idx_chunks_meta_document ON chunks_meta(document_id);",
+        )
+        .map_err(|e| format!("falha ao migrar chunks_meta: {}", e))?;
+    } else {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS chunks_meta (\
+                 rowid INTEGER PRIMARY KEY,\
+                 document_id TEXT NOT NULL,\
+                 source_name TEXT NOT NULL,\
+                 content TEXT NOT NULL,\
+                 chunk_index INTEGER NOT NULL\
+             );\
+             CREATE INDEX IF NOT EXISTS idx_chunks_meta_document ON chunks_meta(document_id);",
+        )
+        .map_err(|e| format!("falha ao criar chunks_meta: {}", e))?;
+    }
 
     Ok(VecDb(Mutex::new(conn)))
 }

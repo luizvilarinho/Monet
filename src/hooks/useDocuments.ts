@@ -2,50 +2,44 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Document, DocumentStatus } from '../types'
 import {
   documentsDelete,
-  documentsList,
+  documentsListGlobal,
   documentsReindex,
-  documentsUpload,
+  documentsUploadGlobal,
+  getNotebookVisibleDocumentIds,
   onDocumentStatus,
+  setNotebookDocumentVisibility,
 } from '../lib/documents'
 
-export function useDocuments(notebookId: string | null) {
+// ─── useKnowledgeBase ─────────────────────────────────────────────────────────
+// Manages the global knowledge base of documents.
+
+export function useKnowledgeBase() {
   const [documents, setDocuments] = useState<Document[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const notebookIdRef = useRef<string | null>(notebookId)
-
-  useEffect(() => {
-    notebookIdRef.current = notebookId
-  }, [notebookId])
 
   const refresh = useCallback(async () => {
-    if (!notebookId) {
-      setDocuments([])
-      return
-    }
     setLoading(true)
     setError(null)
     try {
-      const list = await documentsList(notebookId)
+      const list = await documentsListGlobal()
       setDocuments(list)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setLoading(false)
     }
-  }, [notebookId])
+  }, [])
 
   useEffect(() => {
     void refresh()
   }, [refresh])
 
+  // Listen to global document status events (no notebookId filter)
   useEffect(() => {
     let unlisten: (() => void) | null = null
     let cancelled = false
-    onDocumentStatus(({ documentId, notebookId: eventNotebookId, status, errorMessage }) => {
-      // Filter events from other notebooks to avoid spurious refresh when
-      // the user switches notebooks while another indexes in background.
-      if (notebookIdRef.current !== eventNotebookId) return
+    onDocumentStatus(({ documentId, status, errorMessage }) => {
       setDocuments((prev) => {
         const idx = prev.findIndex((d) => d.id === documentId)
         if (idx === -1) {
@@ -77,9 +71,7 @@ export function useDocuments(notebookId: string | null) {
 
   const upload = useCallback(
     async (sourcePath: string) => {
-      const targetNotebook = notebookIdRef.current
-      if (!targetNotebook) throw new Error('No notebook selected')
-      const id = await documentsUpload(targetNotebook, sourcePath)
+      const id = await documentsUploadGlobal(sourcePath)
       await refresh()
       return id
     },
@@ -94,13 +86,59 @@ export function useDocuments(notebookId: string | null) {
     [refresh],
   )
 
-  const remove = useCallback(
-    async (documentId: string) => {
-      await documentsDelete(documentId)
-      setDocuments((prev) => prev.filter((d) => d.id !== documentId))
+  const remove = useCallback(async (documentId: string) => {
+    await documentsDelete(documentId)
+    setDocuments((prev) => prev.filter((d) => d.id !== documentId))
+  }, [])
+
+  return { documents, loading, error, refresh, upload, reindex, remove }
+}
+
+// ─── useNotebookVisibility ────────────────────────────────────────────────────
+// Manages which documents are visible (enabled) in a given notebook.
+
+export function useNotebookVisibility(notebookId: string | null) {
+  const [visibleIds, setVisibleIds] = useState<string[]>([])
+  const notebookIdRef = useRef<string | null>(notebookId)
+
+  useEffect(() => {
+    notebookIdRef.current = notebookId
+  }, [notebookId])
+
+  useEffect(() => {
+    if (!notebookId) {
+      setVisibleIds([])
+      return
+    }
+    let cancelled = false
+    getNotebookVisibleDocumentIds(notebookId)
+      .then((ids) => {
+        if (!cancelled) setVisibleIds(ids)
+      })
+      .catch((e) => console.error('getNotebookVisibleDocumentIds failed', e))
+    return () => {
+      cancelled = true
+    }
+  }, [notebookId])
+
+  const toggle = useCallback(
+    async (documentId: string, visible: boolean) => {
+      const nbId = notebookIdRef.current
+      if (!nbId) return
+      await setNotebookDocumentVisibility(nbId, documentId, visible)
+      setVisibleIds((prev) =>
+        visible
+          ? prev.includes(documentId) ? prev : [...prev, documentId]
+          : prev.filter((id) => id !== documentId),
+      )
     },
     [],
   )
 
-  return { documents, loading, error, refresh, upload, reindex, remove }
+  const isVisible = useCallback(
+    (documentId: string) => visibleIds.includes(documentId),
+    [visibleIds],
+  )
+
+  return { visibleIds, toggle, isVisible }
 }

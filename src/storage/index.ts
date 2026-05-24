@@ -1,4 +1,4 @@
-import type { AiResponse, Document, DocumentStatus, Note, Notebook } from '../types'
+import type { AiResponse, DocumentStatus, Note, Notebook } from '../types'
 import { TauriStorage } from './tauri'
 import { BrowserStorage } from './browser'
 
@@ -18,10 +18,6 @@ export interface StorageAdapter {
   deleteResponse(id: string): Promise<void>
   deleteResponses(noteId: string): Promise<void>
 
-  // Documents are lifecycle-managed by the Rust backend (documents_upload /
-  // documents_delete in src-tauri/src/documents.rs). StorageAdapter only
-  // exposes reads and status updates.
-  getDocuments(notebookId: string): Promise<Document[]>
   updateDocumentStatus(
     id: string,
     status: DocumentStatus,

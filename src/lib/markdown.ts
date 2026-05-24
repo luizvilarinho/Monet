@@ -16,3 +16,14 @@ export async function renderMarkdown(md: string): Promise<string> {
   const file = await processor.process(md)
   return String(file)
 }
+
+const embedProcessor = unified()
+  .use(remarkParse)
+  .use(remarkGfm)
+  .use(remarkRehype, { allowDangerousHtml: true })
+  .use(rehypeStringify, { allowDangerousHtml: true })
+
+export async function renderNoteContent(md: string): Promise<string> {
+  const file = await embedProcessor.process(md)
+  return String(file)
+}

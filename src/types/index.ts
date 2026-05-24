@@ -19,7 +19,6 @@ export type DocumentStatus = 'indexing' | 'available' | 'error'
 
 export interface Document {
   id: string
-  notebookId: string
   name: string
   mime: string
   size: number
