@@ -12,6 +12,7 @@ import {
   type ContentBlock,
 } from '../lib/openrouter'
 import { formatSearchResults, hasTavilyKey, webSearch } from '../lib/search'
+import { runDeepResearch, type DeepResearchPhase } from '../lib/deepResearch'
 
 // ─── System prompt do chat ───────────────────────────────────────────────────
 // Edite aqui para ajustar o comportamento do modelo no modo chat.
@@ -125,13 +126,14 @@ export interface ChatFolder {
 
 export interface ChatTools {
   webSearch: boolean
+  deepResearch: boolean
 }
 
 export type ConversationLocation =
   | { type: 'loose'; index: number }
   | { type: 'folder'; folderId: string; index: number }
 
-const DEFAULT_TOOLS: ChatTools = { webSearch: false }
+const DEFAULT_TOOLS: ChatTools = { webSearch: false, deepResearch: false }
 
 function loadTools(): ChatTools {
   try {
@@ -139,7 +141,11 @@ function loadTools(): ChatTools {
     if (raw) {
       const parsed = JSON.parse(raw)
       if (parsed && typeof parsed === 'object') {
-        return { webSearch: !!(parsed as Record<string, unknown>).webSearch }
+        const p = parsed as Record<string, unknown>
+        return {
+          webSearch: !!p.webSearch,
+          deepResearch: !!p.deepResearch,
+        }
       }
     }
   } catch {
@@ -491,6 +497,7 @@ export interface UseChatResult {
   tools: ChatTools
   setTool: (key: keyof ChatTools, value: boolean) => void
   isStreaming: boolean
+  deepResearchPhase: DeepResearchPhase | null
   thinkingEnabled: boolean
   toggleThinking: () => void
   error: string | null
@@ -553,6 +560,7 @@ export function useChat(): UseChatResult {
   const [hasApiKey, setHasApiKey] = useState<boolean>(false)
   const [apiKeyChecked, setApiKeyChecked] = useState<boolean>(false)
   const [isStreaming, setIsStreaming] = useState<boolean>(false)
+  const [deepResearchPhase, setDeepResearchPhase] = useState<DeepResearchPhase | null>(null)
   const [thinkingEnabled, setThinkingEnabled] = useState<boolean>(false)
   const [error, setError] = useState<string | null>(null)
   const activeStreamRef = useRef<{
@@ -993,6 +1001,7 @@ export function useChat(): UseChatResult {
         )
         activeStreamRef.current = null
         setIsStreaming(false)
+        setDeepResearchPhase(null)
       })
       const err = await onOpenRouterError(({ requestId, message }) => {
         const stream = activeStreamRef.current
@@ -1007,6 +1016,7 @@ export function useChat(): UseChatResult {
         setError(message)
         activeStreamRef.current = null
         setIsStreaming(false)
+        setDeepResearchPhase(null)
       })
       if (cancelled) {
         chunk()
@@ -1090,6 +1100,7 @@ export function useChat(): UseChatResult {
         setError(message)
         activeStreamRef.current = null
         setIsStreaming(false)
+        setDeepResearchPhase(null)
       }
 
       const keyPresent = await hasOpenRouterKey()
@@ -1104,9 +1115,39 @@ export function useChat(): UseChatResult {
       setHasApiKey(true)
       setApiKeyChecked(true)
 
-      // Busca web opcional (tool ativada)
+      // Busca web — deep research tem prioridade sobre web search simples
       let searchSystemMessage: ChatMessageInput | null = null
-      if (toolsRef.current.webSearch) {
+      if (toolsRef.current.deepResearch) {
+        const tavilyOk = await hasTavilyKey()
+        if (!tavilyOk) {
+          failOnAssistant(
+            'Deep Research is active but the Tavily key is not configured in Settings > Web Search.'
+          )
+          return
+        }
+        try {
+          const { formattedContext, sources } = await runDeepResearch(
+            trimmed,
+            (phase) => setDeepResearchPhase(phase)
+          )
+          setDeepResearchPhase('synthesizing')
+          const sourceList = sources
+            .map((s, i) => `${i + 1}. [${s.title}](${s.url})`)
+            .join('\n')
+          if (formattedContext) {
+            searchSystemMessage = {
+              role: 'system',
+              content: `You have access to the following deeply researched web sources. Synthesize them into a complete, well-structured answer. At the end of your response add a "Sources" section with these references:\n\n${sourceList}\n\n---\n\nResearch results:\n\n${formattedContext}`,
+            }
+          }
+        } catch (err) {
+          setDeepResearchPhase(null)
+          console.warn('deepResearch failed:', err)
+          setError(
+            `Deep Research failed: ${err instanceof Error ? err.message : 'unknown error'}. Sending without search context.`
+          )
+        }
+      } else if (toolsRef.current.webSearch) {
         const tavilyOk = await hasTavilyKey()
         if (!tavilyOk) {
           failOnAssistant(
@@ -1120,7 +1161,7 @@ export function useChat(): UseChatResult {
           if (formatted) {
             searchSystemMessage = {
               role: 'system',
-              content: `You have access to the following web search results. Use them to support your response and always cite sources with inline links in the format [Title](url), close to the claim each source supports. Do not group sources at the end — distribute citations throughout the text.\n\n${formatted}`,
+              content: `You have access to the following web search results. Use them to support your response and always cite sources with inline links in the format [Title](url), close to the claim each source supports. Do not group sources at the end — distribute citations throughout the text. Some results include an Image URL — only embed it using markdown image syntax \`![description](url)\` if the user explicitly asked to see or show images AND the URL appears verbatim in the search results above. Never invent, guess, or modify image URLs.\n\n${formatted}`,
             }
           }
         } catch (err) {
@@ -1235,6 +1276,7 @@ export function useChat(): UseChatResult {
     })
     activeStreamRef.current = null
     setIsStreaming(false)
+    setDeepResearchPhase(null)
   }, [updateMessages])
 
   const activeConversation =
@@ -1256,6 +1298,7 @@ export function useChat(): UseChatResult {
     tools,
     setTool,
     isStreaming,
+    deepResearchPhase,
     thinkingEnabled,
     toggleThinking: () => setThinkingEnabled((v) => !v),
     error,

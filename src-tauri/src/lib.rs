@@ -125,6 +125,11 @@ fn has_openrouter_key(app: AppHandle) -> Result<bool, String> {
 }
 
 #[tauri::command]
+fn get_openrouter_key(app: AppHandle) -> Result<Option<String>, String> {
+    Ok(read_key(&app, "openrouter_key"))
+}
+
+#[tauri::command]
 fn clear_openrouter_key(app: AppHandle) -> Result<(), String> {
     clear_key(&app, "openrouter_key")
 }
@@ -702,6 +707,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             save_openrouter_key,
             has_openrouter_key,
+            get_openrouter_key,
             clear_openrouter_key,
             save_tavily_key,
             has_tavily_key,

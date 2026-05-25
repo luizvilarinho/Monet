@@ -204,31 +204,13 @@
 
 /* imagens nas respostas do modelo */
 .assistantBody :global(img) {
-  max-width: 100%;
+  max-width: 60%;
   height: auto;
   border-radius: 6px;
   display: block;
   margin: 0.5em 0;
 }
 
-.assistantBody :global(img.chat-img-loading) {
-  /* placeholder visual enquanto carrega */
-  min-height: 60px;
-  background: var(--surface-2, #26262c);
-  border: 1px solid var(--border, #333340);
-}
-
-.assistantBody :global(.chat-img-error) {
-  /* mensagem de falha no lugar da imagem */
-  display: inline-block;
-  padding: 6px 10px;
-  background: var(--surface-2, #26262c);
-  border: 1px solid var(--border, #333340);
-  border-radius: 4px;
-  font-size: 12px;
-  color: var(--text-muted, #606070);
-  font-style: italic;
-}
 
 .assistantBody :global([data-img-blocked]) {
   /* URL bloqueada (localhost/rede privada) */
@@ -574,6 +556,29 @@
 
 .imagePreviewRemove:hover {
   color: var(--text-primary, #e8e8f0);
+}
+
+/* Indicador de progresso do Deep Research */
+.deepResearchProgress {
+  font-size: 11px;
+  color: var(--accent-ai, #5dcaa5);
+  background: rgba(93, 202, 165, 0.07);
+  border: 1px solid rgba(93, 202, 165, 0.25);
+  border-radius: 4px;
+  padding: 5px 10px;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.deepResearchDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-ai, #5dcaa5);
+  animation: chatPulse 1.2s ease-in-out infinite;
+  flex-shrink: 0;
 }
 
 /* Aviso de vision incompativel */

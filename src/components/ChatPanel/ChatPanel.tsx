@@ -50,6 +50,7 @@ export function ChatPanel({
     tools,
     setTool,
     isStreaming,
+    deepResearchPhase,
     thinkingEnabled,
     toggleThinking,
     error,
@@ -343,6 +344,16 @@ export function ChatPanel({
                 </button>
               </div>
             )}
+            {deepResearchPhase && (
+              <div className={styles.deepResearchProgress} role="status" aria-live="polite">
+                <span className={styles.deepResearchDot} aria-hidden="true" />
+                {deepResearchPhase === 'searching' && 'Searching the web...'}
+                {deepResearchPhase === 'expanding' && 'Generating sub-queries...'}
+                {deepResearchPhase === 'broadening' && 'Exploring related topics...'}
+                {deepResearchPhase === 'ranking' && 'Ranking results...'}
+                {deepResearchPhase === 'synthesizing' && 'Preparing synthesis...'}
+              </div>
+            )}
             {visionWarning && (
               <div className={styles.visionWarning} role="alert">
                 This model does not support images. Switch to a vision-capable model or remove the image.
@@ -358,6 +369,18 @@ export function ChatPanel({
                   e.preventDefault()
                   handleSend()
                 }
+              }}
+              onPaste={(e) => {
+                const items = Array.from(e.clipboardData.items)
+                const imageItem = items.find((item) => item.type.startsWith('image/'))
+                if (!imageItem) return
+                e.preventDefault()
+                const file = imageItem.getAsFile()
+                if (!file) return
+                if (file.size > 5 * 1024 * 1024) return
+                const reader = new FileReader()
+                reader.onload = () => setDraftImage(reader.result as string)
+                reader.readAsDataURL(file)
               }}
               placeholder={
                 hasApiKey
@@ -460,7 +483,6 @@ function ChatBubble({ message, isStreaming, onSaveToNote }: ChatBubbleProps) {
   const isUser = message.role === 'user'
   const [html, setHtml] = useState('')
   const [copied, setCopied] = useState(false)
-  const assistantBodyRef = useRef<HTMLDivElement>(null)
   const isStreamingPlaceholder = !isUser && message.content.length === 0
   const isErrorMessage =
     !isUser &&
@@ -492,41 +514,6 @@ function ChatBubble({ message, isStreaming, onSaveToNote }: ChatBubbleProps) {
     }
   }, [isUser, message.content, cacheKey])
 
-  useEffect(() => {
-    const container = assistantBodyRef.current
-    if (!container) return
-
-    const imgs = Array.from(container.querySelectorAll<HTMLImageElement>('img'))
-    if (imgs.length === 0) return
-
-    const handlers: Array<{ img: HTMLImageElement; onError: () => void; onLoad: () => void }> = []
-
-    for (const img of imgs) {
-      img.classList.add('chat-img-loading')
-
-      const onError = () => {
-        const span = document.createElement('span')
-        span.textContent = 'Não foi possível carregar a imagem'
-        span.className = 'chat-img-error'
-        img.parentNode?.replaceChild(span, img)
-      }
-
-      const onLoad = () => {
-        img.classList.remove('chat-img-loading')
-      }
-
-      img.addEventListener('error', onError)
-      img.addEventListener('load', onLoad)
-      handlers.push({ img, onError, onLoad })
-    }
-
-    return () => {
-      for (const { img, onError, onLoad } of handlers) {
-        img.removeEventListener('error', onError)
-        img.removeEventListener('load', onLoad)
-      }
-    }
-  }, [html])
 
   function handleCopy() {
     if (isUser) return
@@ -567,7 +554,6 @@ function ChatBubble({ message, isStreaming, onSaveToNote }: ChatBubbleProps) {
             </details>
           )}
           <div
-            ref={assistantBodyRef}
             className={styles.assistantBody}
             dangerouslySetInnerHTML={{ __html: html }}
             onClick={(e) => {

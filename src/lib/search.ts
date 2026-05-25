@@ -4,6 +4,8 @@ export interface SearchResult {
   title: string
   url: string
   content: string
+  rawContent?: string
+  imageUrl?: string
 }
 
 export async function getTavilyKey(): Promise<string | null> {
@@ -41,7 +43,7 @@ function isSearchResult(value: unknown): value is SearchResult {
   )
 }
 
-export async function webSearch(query: string): Promise<SearchResult[]> {
+export async function webSearch(query: string, maxResults = 5, includeRawContent = false): Promise<SearchResult[]> {
   const key = await getTavilyKey()
   if (!key) throw new Error('Tavily key not configured')
 
@@ -51,8 +53,8 @@ export async function webSearch(query: string): Promise<SearchResult[]> {
     body: JSON.stringify({
       api_key: key,
       query,
-      max_results: 5,
-      include_raw_content: false,
+      max_results: maxResults,
+      include_raw_content: includeRawContent,
     }),
   })
 
@@ -77,6 +79,8 @@ export async function webSearch(query: string): Promise<SearchResult[]> {
       title: typeof r.title === 'string' ? r.title : '',
       url: typeof r.url === 'string' ? r.url : '',
       content: typeof r.content === 'string' ? r.content : '',
+      rawContent: typeof r.raw_content === 'string' && r.raw_content ? r.raw_content : undefined,
+      imageUrl: typeof r.image === 'string' && r.image ? r.image : undefined,
     }
     return isSearchResult(normalized) ? [normalized] : []
   })
@@ -84,8 +88,9 @@ export async function webSearch(query: string): Promise<SearchResult[]> {
 
 export function formatSearchResults(results: SearchResult[]): string {
   if (!results.length) return ''
-  const lines = results.map(
-    (r, i) => `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.content}`
-  )
+  const lines = results.map((r, i) => {
+    const image = r.imageUrl ? `\n   Image: ${r.imageUrl}` : ''
+    return `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.content}${image}`
+  })
   return `Web search results:\n\n${lines.join('\n\n')}`
 }
