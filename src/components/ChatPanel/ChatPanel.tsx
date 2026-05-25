@@ -75,6 +75,7 @@ export function ChatPanel({
 
   const [draft, setDraft] = useState('')
   const [draftImage, setDraftImage] = useState<string | null>(null)
+  const [imageError, setImageError] = useState<string | null>(null)
   const [saveTarget, setSaveTarget] = useState<{ messageId: string; content: string } | null>(null)
   const [systemPromptFolderId, setSystemPromptFolderId] = useState<string | null>(
     null,
@@ -205,8 +206,10 @@ export function ChatPanel({
       const file = input.files?.[0]
       if (!file) return
       if (file.size > 5 * 1024 * 1024) {
+        setImageError('Image exceeds the 5MB limit')
         return
       }
+      setImageError(null)
       const reader = new FileReader()
       reader.onload = () => {
         setDraftImage(reader.result as string)
@@ -357,6 +360,11 @@ export function ChatPanel({
             {visionWarning && (
               <div className={styles.visionWarning} role="alert">
                 This model does not support images. Switch to a vision-capable model or remove the image.
+              </div>
+            )}
+            {imageError && (
+              <div className={styles.visionWarning} role="alert">
+                {imageError}
               </div>
             )}
             <textarea

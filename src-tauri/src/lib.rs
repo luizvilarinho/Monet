@@ -125,11 +125,6 @@ fn has_openrouter_key(app: AppHandle) -> Result<bool, String> {
 }
 
 #[tauri::command]
-fn get_openrouter_key(app: AppHandle) -> Result<Option<String>, String> {
-    Ok(read_key(&app, "openrouter_key"))
-}
-
-#[tauri::command]
 fn clear_openrouter_key(app: AppHandle) -> Result<(), String> {
     clear_key(&app, "openrouter_key")
 }
@@ -238,6 +233,146 @@ async fn openrouter_list_models(app: AppHandle) -> Result<Vec<ModelInfo>, String
         })
         .collect();
     Ok(models)
+}
+
+#[tauri::command]
+async fn deep_research_generate_sub_queries(
+    app: AppHandle,
+    query: String,
+    snippets_summary: String,
+    model: String,
+) -> Result<Vec<String>, String> {
+    let key = read_key(&app, "openrouter_key")
+        .ok_or_else(|| "OPENROUTER_KEY_MISSING".to_string())?;
+
+    let prompt = format!(
+        "You are a research query strategist. Given a user question and initial search results, generate 3 search queries that deliberately explore DIFFERENT angles not yet covered.\n\nUser question: {}\n\nInitial results already cover:\n{}\n\nAnalyze what dimensions are missing from the initial results (e.g. pricing, benchmarks, real-world usage, criticism, historical context, technical details, comparisons, case studies) and generate 3 queries that fill the most important gaps for this specific question.\n\nReturn ONLY a JSON array of 3 strings, nothing else.",
+        query, snippets_summary
+    );
+
+    let body = serde_json::json!({
+        "model": model,
+        "messages": [{ "role": "user", "content": prompt }],
+        "max_tokens": 200,
+    });
+
+    let client = reqwest::Client::new();
+    let resp = match client
+        .post("https://openrouter.ai/api/v1/chat/completions")
+        .bearer_auth(&key)
+        .header("Content-Type", "application/json")
+        .header("HTTP-Referer", "https://monet.local")
+        .header("X-Title", "Monet")
+        .json(&body)
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(_) => return Ok(vec![]),
+    };
+
+    if !resp.status().is_success() {
+        return Ok(vec![]);
+    }
+
+    let data: serde_json::Value = match resp.json().await {
+        Ok(v) => v,
+        Err(_) => return Ok(vec![]),
+    };
+
+    let content = data
+        .get("choices")
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("message"))
+        .and_then(|m| m.get("content"))
+        .and_then(|c| c.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+
+    fn extract_strings(value: &serde_json::Value) -> Option<Vec<String>> {
+        let arr = value.as_array()?;
+        let strings: Vec<String> = arr
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .take(3)
+            .collect();
+        Some(strings)
+    }
+
+    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
+        if let Some(strings) = extract_strings(&parsed) {
+            return Ok(strings);
+        }
+    }
+
+    if let (Some(start), Some(end)) = (content.find('['), content.rfind(']')) {
+        if end > start {
+            let slice = &content[start..=end];
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(slice) {
+                if let Some(strings) = extract_strings(&parsed) {
+                    return Ok(strings);
+                }
+            }
+        }
+    }
+
+    Ok(vec![])
+}
+
+#[tauri::command]
+async fn deep_research_rerank(
+    app: AppHandle,
+    query: String,
+    documents: Vec<String>,
+    model: String,
+    top_n: usize,
+) -> Result<Vec<usize>, String> {
+    let key = read_key(&app, "openrouter_key")
+        .ok_or_else(|| "OPENROUTER_KEY_MISSING".to_string())?;
+
+    let body = serde_json::json!({
+        "model": model,
+        "query": query,
+        "documents": documents,
+        "top_n": top_n,
+    });
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("https://openrouter.ai/api/v1/rerank")
+        .bearer_auth(&key)
+        .header("Content-Type", "application/json")
+        .header("HTTP-Referer", "https://monet.local")
+        .header("X-Title", "Monet")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("network error: {}", e))?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let body_text = resp.text().await.unwrap_or_default();
+        eprintln!("OpenRouter rerank {} body: {}", status, body_text);
+        return Err(format!("OpenRouter responded {}", status));
+    }
+
+    let data: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("invalid response: {}", e))?;
+
+    let results = data
+        .get("results")
+        .and_then(|r| r.as_array())
+        .ok_or_else(|| "missing results".to_string())?;
+
+    let indices: Vec<usize> = results
+        .iter()
+        .filter_map(|r| r.get("index").and_then(|i| i.as_u64()).map(|i| i as usize))
+        .collect();
+
+    Ok(indices)
 }
 
 #[derive(Deserialize)]
@@ -674,6 +809,12 @@ pub fn run() {
             sql: "DROP TABLE IF EXISTS notebook_document_visibility;",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 8,
+            description: "notes_date_field",
+            sql: "ALTER TABLE notes ADD COLUMN date TEXT;",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
@@ -707,7 +848,6 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             save_openrouter_key,
             has_openrouter_key,
-            get_openrouter_key,
             clear_openrouter_key,
             save_tavily_key,
             has_tavily_key,
@@ -717,6 +857,8 @@ pub fn run() {
             openrouter_stream_chat,
             openrouter_stream_messages,
             openrouter_cancel,
+            deep_research_generate_sub_queries,
+            deep_research_rerank,
             export_markdown,
             vec_db::vec_db_smoke_test,
             documents::documents_upload_global,

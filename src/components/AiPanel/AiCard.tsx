@@ -21,7 +21,7 @@ function SourcesSection({ sources }: { sources: AiSource[] }) {
     <details className={styles.sources}>
       <summary className={styles.sourcesSummary}>
         <SourceIcon />
-        Fontes ({sources.length})
+        Sources ({sources.length})
       </summary>
       <ul className={styles.sourcesList}>
         {sources.map((s, i) => {
@@ -37,7 +37,7 @@ function SourcesSection({ sources }: { sources: AiSource[] }) {
               >
                 <SourceIcon />
                 <span className={styles.sourceName}>{s.documentName}</span>
-                <span className={styles.sourceMeta}>· trecho {s.chunkIndex + 1}</span>
+                <span className={styles.sourceMeta}>· excerpt {s.chunkIndex + 1}</span>
               </button>
               {isExpanded && (
                 <p className={styles.sourceSnippet}>{s.snippet}</p>
@@ -187,7 +187,7 @@ export function AiCard({ response, execIndex, forceOpen, globalExpand, onDelete,
       )}
       {showError ? (
         <div className={styles.errorBody}>
-          Falha ao obter resposta: {response.response || 'erro desconhecido'}
+          Failed to get response: {response.response || 'unknown error'}
         </div>
       ) : (
         <div className={`${styles.body} ${response.status !== 'streaming' ? styles.bodyMd : ''} ${!open ? styles.bodyCollapsed : ''}`}>
@@ -203,7 +203,7 @@ export function AiCard({ response, execIndex, forceOpen, globalExpand, onDelete,
       )}
       {response.status === 'interrupted' && open && (
         <div className={styles.interruptedNote}>
-          Resposta interrompida antes de terminar.
+          Response interrupted before finishing.
         </div>
       )}
       {response.status === 'completed' && open && hasBody && (
@@ -212,11 +212,11 @@ export function AiCard({ response, execIndex, forceOpen, globalExpand, onDelete,
             type="button"
             className={`${styles.cardActionBtn} ${copied ? styles.cardActionBtnConfirmed : ''}`}
             onClick={handleCopy}
-            aria-label={copied ? 'resposta copiada' : 'copiar resposta'}
-            title={copied ? 'Copiado!' : 'Copiar resposta'}
+            aria-label={copied ? 'response copied' : 'copy response'}
+            title={copied ? 'Copied!' : 'Copy response'}
           >
             {copied ? <CheckIcon /> : <CopyIcon />}
-            <span>{copied ? 'Copiado' : 'Copiar'}</span>
+            <span>{copied ? 'Copied' : 'Copy'}</span>
           </button>
           <button
             type="button"

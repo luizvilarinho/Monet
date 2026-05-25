@@ -225,6 +225,15 @@
   font-style: normal;
 }
 
+.calendarIcon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent, #7c6af5);
+  padding: 2px;
+}
+
 .renameInput {
   flex: 1;
   min-width: 0;

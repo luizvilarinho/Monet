@@ -98,6 +98,58 @@
   width: 120px;
 }
 
+.dateWrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 2px 4px;
+  cursor: pointer;
+}
+
+.dateWrapper:hover {
+  border-color: var(--border, #333340);
+}
+
+.dateWrapper:focus-within {
+  border-color: var(--accent, #7c6af5);
+}
+
+.dateIcon {
+  color: var(--text-muted, #606070);
+  flex-shrink: 0;
+}
+
+.dateWrapper:hover .dateIcon,
+.dateWrapper:focus-within .dateIcon {
+  color: var(--text-secondary, #a0a0b8);
+}
+
+.dateInput {
+  background: transparent;
+  border: none;
+  color: var(--text-muted, #606070);
+  font-size: 11px;
+  font-family: inherit;
+  padding: 0;
+  outline: none;
+  cursor: pointer;
+  color-scheme: dark;
+  width: 94px;
+}
+
+.dateWrapper:hover .dateInput,
+.dateWrapper:focus-within .dateInput {
+  color: var(--text-secondary, #a0a0b8);
+}
+
+.dateInput::-webkit-calendar-picker-indicator {
+  opacity: 0;
+  width: 0;
+  padding: 0;
+}
+
 .bodyWrap {
   position: relative;
   flex: 1;

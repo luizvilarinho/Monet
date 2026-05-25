@@ -25,6 +25,7 @@ interface NoteRow {
   title: string
   content: string
   tags: string
+  date: string | null
   created_at: number
   updated_at: number
 }
@@ -122,6 +123,7 @@ function rowToNote(r: NoteRow): Note {
     title: r.title,
     content: r.content,
     tags,
+    date: r.date ?? null,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   }
@@ -198,13 +200,14 @@ export class TauriStorage implements StorageAdapter {
   async saveNote(n: Note): Promise<void> {
     const db = await this.db()
     await db.execute(
-      `INSERT INTO notes (id, notebook_id, title, content, tags, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO notes (id, notebook_id, title, content, tags, date, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT(id) DO UPDATE SET
          notebook_id = excluded.notebook_id,
          title = excluded.title,
          content = excluded.content,
          tags = excluded.tags,
+         date = excluded.date,
          updated_at = excluded.updated_at`,
       [
         n.id,
@@ -212,6 +215,7 @@ export class TauriStorage implements StorageAdapter {
         n.title,
         n.content,
         JSON.stringify(n.tags),
+        n.date ?? null,
         n.createdAt,
         n.updatedAt,
       ]

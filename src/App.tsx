@@ -4,6 +4,7 @@ import type { Update } from '@tauri-apps/plugin-updater'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import { AiPanel } from './components/AiPanel/AiPanel'
+import { CalendarView } from './components/CalendarView/CalendarView'
 import { ChatPanel } from './components/ChatPanel/ChatPanel'
 import { DocumentsModal } from './components/DocumentsModal/DocumentsModal'
 import { KnowledgeBaseModal } from './components/KnowledgeBaseModal/KnowledgeBaseModal'
@@ -164,7 +165,7 @@ function buildUserMessage(
 }
 
 function App() {
-  const { notebooks, save: saveNotebook, create: createNotebook, remove: removeNotebook } =
+  const { notebooks, loaded: notebooksLoaded, save: saveNotebook, create: createNotebook, remove: removeNotebook } =
     useNotebooks()
   const {
     notes,
@@ -216,6 +217,10 @@ function App() {
   const exportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [noteOrder, setNoteOrder] = useState<string[]>(() => loadNoteOrder())
   const [notebookOrder, setNotebookOrder] = useState<string[]>(() => loadOrder('monet:notebook-order'))
+  const [calendarNotebookId, setCalendarNotebookId] = useState<string | null>(
+    () => localStorage.getItem('monet:calendar-notebook-id')
+  )
+
   const [updateDialog, setUpdateDialog] = useState<{
     update: Update
     mandatory: boolean
@@ -223,6 +228,21 @@ function App() {
   } | null>(null)
 
   const { responses, start, addErrorCard, removeResponse } = useAi(activeId)
+
+  useEffect(() => {
+    if (!notebooksLoaded) return
+    if (calendarNotebookId && notebooks.some((nb) => nb.id === calendarNotebookId)) return
+    createNotebook('Calendar').then((nb) => {
+      setCalendarNotebookId(nb.id)
+      localStorage.setItem('monet:calendar-notebook-id', nb.id)
+      setNotebookOrder((prev) => {
+        const next = [nb.id, ...prev.filter((x) => x !== nb.id)]
+        saveOrder('monet:notebook-order', next)
+        return next
+      })
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notebooksLoaded])
 
   const refreshNotebooksWithDocs = useCallback(async () => {
     try {
@@ -646,6 +666,33 @@ function App() {
     })
   }
 
+  const handleCalendarDayClick = useCallback(
+    async (date: Date) => {
+      if (!calendarNotebookId) return
+      const d = String(date.getDate()).padStart(2, '0')
+      const m = String(date.getMonth() + 1).padStart(2, '0')
+      const y = date.getFullYear()
+      const title = `${d}/${m}/${y}`
+      const existing = notes.find(
+        (n) => n.notebookId === calendarNotebookId && n.title === title
+      )
+      if (existing) {
+        setActiveId(existing.id)
+      } else {
+        const note = await createNote(calendarNotebookId)
+        const filled: Note = { ...note, title, updatedAt: Date.now() }
+        await saveNote(filled)
+        setActiveId(filled.id)
+        setNoteOrder((prev) => {
+          const next = [filled.id, ...prev]
+          saveNoteOrder(next)
+          return next
+        })
+      }
+    },
+    [calendarNotebookId, notes, createNote, saveNote]
+  )
+
   const handleMergeNotes = useCallback(
     async (sourceId: string, targetId: string) => {
       const source = notes.find((n) => n.id === sourceId)
@@ -796,11 +843,15 @@ function App() {
           activeId={activeNotebookId}
           onSelect={(id) => {
             setActiveNotebookId(id)
-            const notebookNotes = applyOrder(
-              notes.filter((n) => n.notebookId === id),
-              noteOrder
-            )
-            setActiveId(notebookNotes[0]?.id ?? null)
+            if (id === calendarNotebookId) {
+              setActiveId(null)
+            } else {
+              const notebookNotes = applyOrder(
+                notes.filter((n) => n.notebookId === id),
+                noteOrder
+              )
+              setActiveId(notebookNotes[0]?.id ?? null)
+            }
           }}
           onCreate={handleCreateNotebook}
           onDelete={handleDeleteNotebook}
@@ -815,26 +866,45 @@ function App() {
           activeTag={activeTag}
           onSelectTag={setActiveTag}
           onOpenSettings={handleOpenSettings}
+          calendarNotebookId={calendarNotebookId}
           width={effectiveNotebookWidth}
           collapsed={notebookCollapsed}
           onToggleCollapsed={() => setNotebookCollapsed((v) => !v)}
           onWidthChange={setNotebookWidth}
           onReorder={handleNotebookReorder}
         />}
-        {!focusMode && <Sidebar
-          notes={visibleNotes}
-          activeId={activeId}
-          notebookSelected={activeNotebookId !== null}
-          onSelect={setActiveId}
-          onCreate={handleCreateNote}
-          onDelete={handleDeleteNote}
-          onReorder={handleReorder}
-          onMerge={handleMergeNotes}
-          width={effectiveSidebarWidth}
-          collapsed={sidebarCollapsed}
-          onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
-          onWidthChange={setSidebarWidth}
-        />}
+        {!focusMode && (activeNotebookId === calendarNotebookId ? (
+          <CalendarView
+            notes={notes.filter((n) => n.notebookId === calendarNotebookId)}
+            datedNotes={notes.filter((n) => !!n.date)}
+            onDayClick={handleCalendarDayClick}
+            onNoteClick={(noteId) => {
+              const note = notes.find((n) => n.id === noteId)
+              if (!note) return
+              if (note.notebookId) setActiveNotebookId(note.notebookId)
+              setActiveId(noteId)
+            }}
+            width={effectiveSidebarWidth}
+            collapsed={sidebarCollapsed}
+            onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
+            onWidthChange={setSidebarWidth}
+          />
+        ) : (
+          <Sidebar
+            notes={visibleNotes}
+            activeId={activeId}
+            notebookSelected={activeNotebookId !== null}
+            onSelect={setActiveId}
+            onCreate={handleCreateNote}
+            onDelete={handleDeleteNote}
+            onReorder={handleReorder}
+            onMerge={handleMergeNotes}
+            width={effectiveSidebarWidth}
+            collapsed={sidebarCollapsed}
+            onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
+            onWidthChange={setSidebarWidth}
+          />
+        ))}
         {activeNote ? (
           <Editor
             key={activeNote.id}
@@ -843,6 +913,8 @@ function App() {
             onTitleChange={(title) => updateActive({ title })}
             tags={activeNote.tags}
             onTagsChange={(tags) => updateActive({ tags })}
+            date={activeNote.date}
+            onDateChange={(date) => updateActive({ date })}
             value={activeNote.content}
             onChange={(content) => updateActive({ content })}
             onCommand={handleCommand}

@@ -15,6 +15,7 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import {
   Books,
+  CalendarBlank,
   DotsSixVertical,
   FileText,
   Gear,
@@ -153,6 +154,7 @@ export interface NotebookListProps {
   activeTag: string | null
   onSelectTag: (tag: string | null) => void
   onOpenSettings: () => void
+  calendarNotebookId?: string | null
   width?: number
   collapsed?: boolean
   onToggleCollapsed?: () => void
@@ -174,6 +176,7 @@ export function NotebookList({
   activeTag,
   onSelectTag,
   onOpenSettings,
+  calendarNotebookId,
   width = 180,
   collapsed = false,
   onToggleCollapsed,
@@ -296,12 +299,32 @@ export function NotebookList({
                 <span className={`${styles.rowLabel} ${styles.allNotes}`}>all notes</span>
               </li>
 
-              {notebooks.length === 0 ? (
+              {calendarNotebookId && (() => {
+                const calNb = notebooks.find((n) => n.id === calendarNotebookId)
+                if (!calNb) return null
+                return (
+                  <li
+                    className={`${styles.row} ${calNb.id === activeId ? styles.active : ''}`}
+                    onClick={() => onSelect(calNb.id)}
+                  >
+                    <span className={styles.calendarIcon}>
+                      <CalendarBlank size={16} aria-hidden />
+                    </span>
+                    <span className={styles.rowLabel}>{calNb.name}</span>
+                  </li>
+                )
+              })()}
+
+              {notebooks.filter((n) => n.id !== calendarNotebookId).length === 0 &&
+               !calendarNotebookId ? (
                 <li className={styles.empty}>no notebooks</li>
-              ) : (
+              ) : notebooks.filter((n) => n.id !== calendarNotebookId).length === 0 ? null : (
                 <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                  <SortableContext items={notebooks.map((n) => n.id)} strategy={verticalListSortingStrategy}>
-                    {notebooks.map((nb) => (
+                  <SortableContext
+                    items={notebooks.filter((n) => n.id !== calendarNotebookId).map((n) => n.id)}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    {notebooks.filter((n) => n.id !== calendarNotebookId).map((nb) => (
                       <SortableNotebookItem
                         key={nb.id}
                         nb={nb}
@@ -348,7 +371,7 @@ export function NotebookList({
       )}
 
       <div className={`${styles.footer} ${collapsed ? styles.footerCollapsed : ''}`}>
-        {!collapsed && <span className={styles.version}>v1.3.3</span>}
+        {!collapsed && <span className={styles.version}>v1.3.5</span>}
         <button
           className={styles.settings}
           onClick={onOpenKnowledgeBase}

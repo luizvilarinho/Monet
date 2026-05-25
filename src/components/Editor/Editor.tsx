@@ -17,6 +17,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from 'react'
+import { CalendarBlank } from '@phosphor-icons/react'
 import { nanoid } from 'nanoid'
 import type { Editor as TiptapEditor } from '@tiptap/core'
 import { TextSelection } from '@tiptap/pm/state'
@@ -47,6 +48,8 @@ export interface EditorProps {
   onTitleChange: (value: string) => void
   tags: string[]
   onTagsChange: (tags: string[]) => void
+  date?: string | null
+  onDateChange?: (date: string | null) => void
   value: string
   onChange: (value: string) => void
   onCommand?: (request: CommandExecutionRequest) => Promise<boolean> | boolean
@@ -118,6 +121,8 @@ export function Editor({
   onTitleChange,
   tags,
   onTagsChange,
+  date,
+  onDateChange,
   value,
   onChange,
   onCommand,
@@ -139,6 +144,7 @@ export function Editor({
   const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const titleRef = useRef<HTMLInputElement>(null)
+  const dateInputRef = useRef<HTMLInputElement>(null)
 
   const onChangeRef = useRef(onChange)
   onChangeRef.current = onChange
@@ -624,6 +630,20 @@ export function Editor({
         placeholder="note title"
       />
       <div className={styles.tagsRow}>
+        {onDateChange && (
+          <span className={styles.dateWrapper} onClick={() => dateInputRef.current?.showPicker()}>
+            <CalendarBlank size={14} className={styles.dateIcon} aria-hidden />
+            <input
+              ref={dateInputRef}
+              type="date"
+              className={styles.dateInput}
+              value={date ?? ''}
+              onChange={(e) => onDateChange(e.target.value || null)}
+              onClick={(e) => e.stopPropagation()}
+              aria-label="note date"
+            />
+          </span>
+        )}
         <button
           className={styles.tagAdd}
           onClick={() => setAdding(true)}

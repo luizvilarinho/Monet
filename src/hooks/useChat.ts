@@ -1248,7 +1248,7 @@ export function useChat(): UseChatResult {
         failOnAssistant(message)
       }
     },
-    [activeId, isStreaming, model, setLooseOrder, updateMessages]
+    [activeId, isStreaming, model, setLooseOrder, updateMessages, thinkingEnabled]
   )
 
   useEffect(() => {

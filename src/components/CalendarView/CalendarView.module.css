@@ -1,0 +1,260 @@
+.calendar {
+  flex-shrink: 0;
+  background: var(--bg-app, #0e0e10);
+  border-right: 1px solid var(--border, #333340);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
+}
+
+.collapsed {
+  overflow: hidden;
+}
+
+.resizeHandle {
+  position: absolute;
+  right: -3px;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 10;
+}
+
+.resizeHandle:hover {
+  background: var(--accent, #7c6af5);
+  opacity: 0.4;
+}
+
+.collapsedTop {
+  display: flex;
+  justify-content: center;
+  padding-top: 2px;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 10px 12px;
+  gap: 8px;
+  border-bottom: 1px solid var(--border, #333340);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.monthNav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.monthName {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary, #e8e8f0);
+  min-width: 68px;
+  text-align: center;
+}
+
+.navBtn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted, #606070);
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.navBtn:hover {
+  color: var(--accent, #7c6af5);
+  background: var(--surface-1, #1e1e22);
+}
+
+.headerRight {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.headerToggle {
+  background: transparent;
+  border: none;
+  color: var(--text-muted, #606070);
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.headerToggle:hover {
+  color: var(--accent, #7c6af5);
+  background: var(--surface-1, #1e1e22);
+}
+
+.yearInput {
+  width: 52px;
+  background: var(--surface-1, #1e1e22);
+  border: 1px solid var(--border, #333340);
+  border-radius: 4px;
+  color: var(--text-primary, #e8e8f0);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 2px 4px;
+  outline: none;
+  text-align: center;
+  /* hide number input arrows */
+  -moz-appearance: textfield;
+}
+
+.yearInput::-webkit-outer-spin-button,
+.yearInput::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.yearInput:focus {
+  border-color: var(--accent, #7c6af5);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 1px;
+}
+
+.dayLabel {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted, #606070);
+  text-align: center;
+  padding: 1px 0 3px;
+}
+
+.cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 2px 1px;
+  min-height: 22px;
+  gap: 1px;
+}
+
+.cell:hover:not(.adjacent) {
+  background: var(--surface-1, #1e1e22);
+}
+
+.cell:focus-visible {
+  outline: 1px solid var(--accent, #7c6af5);
+  outline-offset: -1px;
+}
+
+.adjacent {
+  cursor: default;
+  pointer-events: none;
+}
+
+.today {
+  background: var(--surface-2, #26262c);
+  outline: 1px solid var(--accent, #7c6af5);
+  outline-offset: -1px;
+}
+
+.today:hover {
+  background: var(--surface-2, #26262c) !important;
+}
+
+.dayNumber {
+  font-size: 11px;
+  color: var(--text-secondary, #a0a0b8);
+  line-height: 1;
+}
+
+.adjacent .dayNumber {
+  color: var(--text-muted, #606070);
+  opacity: 0.4;
+}
+
+.today .dayNumber {
+  color: var(--accent, #7c6af5);
+  font-weight: 600;
+}
+
+.cell:hover:not(.adjacent) .dayNumber {
+  color: var(--text-primary, #e8e8f0);
+}
+
+.dot {
+  display: block;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #e05555;
+  flex-shrink: 0;
+}
+
+.selected {
+  background: var(--surface-3, #2e2e36) !important;
+}
+
+.selected .dayNumber {
+  color: var(--text-primary, #e8e8f0);
+}
+
+.cards {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0 4px;
+  overflow-y: auto;
+  max-height: 200px;
+}
+
+.noteCard {
+  background: var(--surface-1, #1e1e22);
+  border-right: 3px solid var(--accent, #7c6af5);
+  border-radius: 4px;
+  padding: 7px 10px;
+  cursor: pointer;
+  outline: none;
+}
+
+.noteCard:hover {
+  background: var(--surface-2, #26262c);
+}
+
+.noteCard:focus-visible {
+  outline: 1px solid var(--accent, #7c6af5);
+  outline-offset: -1px;
+}
+
+.noteCardTitle {
+  font-size: 12px;
+  color: var(--text-secondary, #a0a0b8);
+  line-height: 1.3;
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.noteCard:hover .noteCardTitle {
+  color: var(--text-primary, #e8e8f0);
+}

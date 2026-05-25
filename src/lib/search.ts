@@ -49,9 +49,11 @@ export async function webSearch(query: string, maxResults = 5, includeRawContent
 
   const res = await fetch('https://api.tavily.com/search', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${key}`,
+    },
     body: JSON.stringify({
-      api_key: key,
       query,
       max_results: maxResults,
       include_raw_content: includeRawContent,

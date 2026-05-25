@@ -11,6 +11,7 @@ export interface Note {
   title: string
   content: string
   tags: string[]
+  date?: string | null
   createdAt: number
   updatedAt: number
 }
