@@ -62,12 +62,11 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 0 21%;
+  padding: 20px max(16px, calc((100% - 860px) / 2)) 28px;
   min-width: 350px;
-  margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 20px;
 }
 
 .empty {
@@ -92,31 +91,28 @@
 
 .bubbleUser,
 .bubbleAssistant {
-  padding: 30px;
-  border-radius: 3px;
   font-size: 1em;
   line-height: 1.55;
   word-break: break-word;
 }
 
 .bubbleUser {
-  max-width: 90%;
+  max-width: 70%;
   align-self: flex-end;
-  margin-right: 3%;
+  padding: 10px 14px;
   background: rgba(124, 106, 245, 0.18);
   border: 1px solid rgba(124, 106, 245, 0.35);
+  border-radius: 12px 12px 3px 12px;
   color: var(--text-primary, #e8e8f0);
 }
 
 .bubbleAssistant {
   max-width: 100%;
-  align-self: flex-end;
+  align-self: flex-start;
   display: flex;
   flex-direction: column;
-  /* background: var(--surface-1, #1e1e22);
-  border: 1px solid var(--border, #333340); */
   color: var(--text-primary, #e8e8f0);
-  text-align: justify;
+  padding: 0;
 }
 
 .userText {
