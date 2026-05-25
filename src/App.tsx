@@ -29,6 +29,7 @@ import {
 } from './hooks/useChat'
 import { useNotebooks } from './hooks/useNotebooks'
 import { useNotes } from './hooks/useNotes'
+import { useSubjects } from './hooks/useSubjects'
 import { findCommand } from './lib/commands'
 import {
   getUpdatePreference,
@@ -179,6 +180,9 @@ function App() {
     return saved === 'chat' ? 'chat' : 'notebook'
   })
   const [activeNotebookId, setActiveNotebookId] = useState<string | null>(null)
+  const [activeSubjectId, setActiveSubjectId] = useState<string | null>(null)
+  const { subjects, save: saveSubject, remove: removeSubject, create: createSubject, reorder: reorderSubjects } =
+    useSubjects(activeNotebookId)
   const [activeId, setActiveId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [activeTag, setActiveTag] = useState<string | null>(null)
@@ -420,6 +424,14 @@ function App() {
     [notes, activeNotebookId]
   )
 
+  const subjectFilteredNotes = useMemo(() => {
+    if (activeNotebookId === null) return notes
+    if (activeSubjectId !== null) {
+      return notes.filter((n) => n.notebookId === activeNotebookId && n.subjectId === activeSubjectId)
+    }
+    return notes.filter((n) => n.notebookId === activeNotebookId)
+  }, [notes, activeNotebookId, activeSubjectId])
+
   const orderedNotebooks = useMemo(
     () => applyOrder(notebooks, notebookOrder),
     [notebooks, notebookOrder]
@@ -427,7 +439,7 @@ function App() {
 
   const visibleNotes = useMemo(() => {
     const q = search.trim().toLowerCase()
-    const filtered = notebookNotes.filter((n) => {
+    const filtered = subjectFilteredNotes.filter((n) => {
       if (activeTag && !n.tags.includes(activeTag)) return false
       if (!q) return true
       return (
@@ -437,7 +449,7 @@ function App() {
       )
     })
     return applyOrder(filtered, noteOrder)
-  }, [notebookNotes, search, activeTag, noteOrder])
+  }, [subjectFilteredNotes, search, activeTag, noteOrder])
 
   const activeNote = useMemo(
     () => notes.find((n) => n.id === activeId) ?? null,
@@ -632,7 +644,7 @@ function App() {
 
   async function handleCreateNote() {
     if (!activeNotebookId) return
-    const note = await createNote(activeNotebookId)
+    const note = await createNote(activeNotebookId, activeSubjectId)
     setActiveId(note.id)
     setNoteOrder((prev) => {
       const next = [note.id, ...prev]
@@ -642,11 +654,12 @@ function App() {
   }
 
   async function handleDeleteNotebook(id: string) {
-    const childNotes = notes.filter((n) => n.notebookId === id)
-    await Promise.all(childNotes.map((n) => removeNote(n.id)))
     await removeNotebook(id)
+    const childNotes = notes.filter((n) => n.notebookId === id)
+    childNotes.forEach((n) => removeNote(n.id))
     if (activeNotebookId === id) {
       setActiveNotebookId(null)
+      setActiveSubjectId(null)
       setActiveId(null)
     }
     setNotebookOrder((prev) => {
@@ -664,6 +677,41 @@ function App() {
       saveNoteOrder(next)
       return next
     })
+  }
+
+  async function handleCreateSubject() {
+    if (!activeNotebookId) return
+    const name = window.prompt('Subject name')
+    if (name === null) return
+    await createSubject(name)
+  }
+
+  function handleSelectSubject(id: string | null) {
+    setActiveSubjectId(id)
+    if (id === null) return
+    const first = applyOrder(
+      notes.filter((n) => n.notebookId === activeNotebookId && n.subjectId === id),
+      noteOrder
+    )[0]
+    setActiveId(first?.id ?? null)
+  }
+
+  async function handleDeleteSubject(id: string) {
+    const childNotes = notes.filter((n) => n.subjectId === id)
+    await removeSubject(id)
+    await Promise.all(childNotes.map((n) => removeNote(n.id)))
+    if (activeSubjectId === id) setActiveSubjectId(null)
+    if (childNotes.some((n) => n.id === activeId)) setActiveId(null)
+  }
+
+  async function handleRenameSubject(id: string, name: string) {
+    const subject = subjects.find((s) => s.id === id)
+    if (!subject) return
+    await saveSubject({ ...subject, name: name.trim() || subject.name, updatedAt: Date.now() })
+  }
+
+  function handleReorderSubjects(newOrder: string[]) {
+    void reorderSubjects(newOrder)
   }
 
   const handleCalendarDayClick = useCallback(
@@ -708,6 +756,15 @@ function App() {
     [notes, saveNote, removeNote, activeId]
   )
 
+  const handleAssignNoteToSubject = useCallback(
+    async (noteId: string, subjectId: string | null) => {
+      const note = notes.find((n) => n.id === noteId)
+      if (!note) return
+      await saveNote({ ...note, subjectId, updatedAt: Date.now() })
+    },
+    [notes, saveNote]
+  )
+
   const handleCreateNotebookFromChat = useCallback(
     async (name: string) => {
       const nb = await createNotebook(name)
@@ -745,6 +802,7 @@ function App() {
     (notebookId: string, noteId: string) => {
       setActiveMode('notebook')
       setActiveNotebookId(notebookId)
+      setActiveSubjectId(null)
       setActiveId(noteId)
       setActiveTag(null)
       setSearch('')
@@ -843,6 +901,7 @@ function App() {
           activeId={activeNotebookId}
           onSelect={(id) => {
             setActiveNotebookId(id)
+            setActiveSubjectId(null)
             if (id === calendarNotebookId) {
               setActiveId(null)
             } else {
@@ -872,6 +931,13 @@ function App() {
           onToggleCollapsed={() => setNotebookCollapsed((v) => !v)}
           onWidthChange={setNotebookWidth}
           onReorder={handleNotebookReorder}
+          subjects={subjects}
+          activeSubjectId={activeSubjectId}
+          onSelectSubject={handleSelectSubject}
+          onCreateSubject={handleCreateSubject}
+          onDeleteSubject={handleDeleteSubject}
+          onRenameSubject={handleRenameSubject}
+          onReorderSubjects={handleReorderSubjects}
         />}
         {!focusMode && (activeNotebookId === calendarNotebookId ? (
           <CalendarView
@@ -903,12 +969,15 @@ function App() {
             collapsed={sidebarCollapsed}
             onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
             onWidthChange={setSidebarWidth}
+            subjects={subjects}
+            onAssignSubject={handleAssignNoteToSubject}
           />
         ))}
         {activeNote ? (
           <Editor
             key={activeNote.id}
             notebookName={notebooks.find((nb) => nb.id === activeNote.notebookId)?.name}
+            subjectName={subjects.find(s => s.id === activeNote.subjectId)?.name}
             title={activeNote.title}
             onTitleChange={(title) => updateActive({ title })}
             tags={activeNote.tags}

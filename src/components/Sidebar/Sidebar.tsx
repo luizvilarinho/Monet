@@ -1,6 +1,7 @@
 import {
   ArrowsMerge,
   DotsSixVertical,
+  FolderSimple,
   PlusCircle,
   SidebarSimple,
   X,
@@ -21,7 +22,7 @@ import {
   arrayMove,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import type { Note } from '../../types'
+import type { Note, Subject } from '../../types'
 import { useConfirm } from '../../hooks/useConfirm'
 import { MergeNoteModal } from './MergeNoteModal'
 import styles from './Sidebar.module.css'
@@ -35,12 +36,28 @@ interface SortableNoteItemProps {
   onSelect: (id: string) => void
   onDelete: (id: string) => void
   onMerge?: (id: string) => void
+  subjects?: Subject[]
+  onAssignSubject?: (noteId: string, subjectId: string | null) => void
+  currentSubjectId?: string | null
 }
 
-function SortableNoteItem({ note, isActive, onSelect, onDelete, onMerge }: SortableNoteItemProps) {
+function SortableNoteItem({ note, isActive, onSelect, onDelete, onMerge, subjects, onAssignSubject, currentSubjectId }: SortableNoteItemProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: note.id,
   })
+  const [dropdownOpen, setDropdownOpen] = useState(false)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!dropdownOpen) return
+    function handleMouseDown(e: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleMouseDown)
+    return () => document.removeEventListener('mousedown', handleMouseDown)
+  }, [dropdownOpen])
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -76,6 +93,31 @@ function SortableNoteItem({ note, isActive, onSelect, onDelete, onMerge }: Sorta
           <ArrowsMerge size={11} aria-hidden />
         </button>
       )}
+      {onAssignSubject && (
+        <div style={{ position: 'relative' }} ref={dropdownRef}>
+          <button
+            className={`${styles.rowAssign} ${currentSubjectId ? styles.rowAssignActive : ''}`}
+            onClick={(e) => { e.stopPropagation(); setDropdownOpen((v) => !v) }}
+            aria-label={`assign subject to note ${note.title || 'untitled'}`}
+            type="button"
+            title="assign to subject"
+          >
+            <FolderSimple size={11} aria-hidden />
+          </button>
+          {dropdownOpen && (
+            <div className={styles.subjectDropdown} onClick={(e) => e.stopPropagation()}>
+              <button onClick={() => { onAssignSubject(note.id, null); setDropdownOpen(false) }}>
+                No subject
+              </button>
+              {subjects?.map(s => (
+                <button key={s.id} onClick={() => { onAssignSubject(note.id, s.id); setDropdownOpen(false) }}>
+                  {s.name}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       <button
         className={styles.rowDelete}
         onClick={(e) => { e.stopPropagation(); onDelete(note.id) }}
@@ -101,6 +143,8 @@ export interface SidebarProps {
   collapsed?: boolean
   onToggleCollapsed?: () => void
   onWidthChange?: (w: number) => void
+  subjects?: Subject[]
+  onAssignSubject?: (noteId: string, subjectId: string | null) => void
 }
 
 export function Sidebar({
@@ -116,6 +160,8 @@ export function Sidebar({
   collapsed = false,
   onToggleCollapsed,
   onWidthChange,
+  subjects,
+  onAssignSubject,
 }: SidebarProps) {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
@@ -250,6 +296,9 @@ export function Sidebar({
                       onSelect={onSelect}
                       onDelete={(id) => handleDeleteNote(id, n.title)}
                       onMerge={onMerge ? setMergeSourceId : undefined}
+                      subjects={subjects}
+                      onAssignSubject={onAssignSubject}
+                      currentSubjectId={n.subjectId}
                     />
                   ))}
                 </SortableContext>

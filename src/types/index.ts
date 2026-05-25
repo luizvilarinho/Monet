@@ -5,9 +5,19 @@ export interface Notebook {
   updatedAt: number
 }
 
+export interface Subject {
+  id: string
+  notebookId: string
+  name: string
+  sortOrder: number
+  createdAt: number
+  updatedAt: number
+}
+
 export interface Note {
   id: string
   notebookId: string | null
+  subjectId?: string | null
   title: string
   content: string
   tags: string[]

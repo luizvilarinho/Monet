@@ -44,6 +44,7 @@ import type { AiResponse, CommandExecutionRequest, Note } from '../../types'
 
 export interface EditorProps {
   notebookName?: string
+  subjectName?: string
   title: string
   onTitleChange: (value: string) => void
   tags: string[]
@@ -117,6 +118,7 @@ function extractImageFile(items: ArrayLike<DataTransferItem> | null | undefined)
 
 export function Editor({
   notebookName,
+  subjectName,
   title,
   onTitleChange,
   tags,
@@ -620,7 +622,9 @@ export function Editor({
   return (
     <div className={styles.editor}>
       {notebookName && (
-        <span className={styles.notebookLabel}>{notebookName}</span>
+        <span className={styles.notebookLabel}>
+          {notebookName}{subjectName ? ` | ${subjectName}` : ''}
+        </span>
       )}
       <input
         ref={titleRef}

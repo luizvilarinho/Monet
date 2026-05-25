@@ -1,4 +1,4 @@
-import type { AiResponse, DocumentStatus, Note, Notebook } from '../types'
+import type { AiResponse, DocumentStatus, Note, Notebook, Subject } from '../types'
 import type { StorageAdapter } from './index'
 
 export class BrowserStorage implements StorageAdapter {
@@ -10,6 +10,18 @@ export class BrowserStorage implements StorageAdapter {
   }
   async deleteNotebook(_id: string): Promise<void> {
     throw new Error('BrowserStorage.deleteNotebook not implemented')
+  }
+  async getSubjects(_notebookId: string): Promise<Subject[]> {
+    throw new Error('BrowserStorage.getSubjects not implemented')
+  }
+  async saveSubject(_subject: Subject): Promise<void> {
+    throw new Error('BrowserStorage.saveSubject not implemented')
+  }
+  async deleteSubject(_id: string): Promise<void> {
+    throw new Error('BrowserStorage.deleteSubject not implemented')
+  }
+  async deleteSubjectsByNotebook(_notebookId: string): Promise<void> {
+    throw new Error('BrowserStorage.deleteSubjectsByNotebook not implemented')
   }
   async getNotes(): Promise<Note[]> {
     throw new Error('BrowserStorage.getNotes not implemented')

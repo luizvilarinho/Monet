@@ -5,7 +5,8 @@ import type {
   AiSource,
   DocumentStatus,
   Note,
-  Notebook
+  Notebook,
+  Subject,
 } from '../types'
 import type { StorageAdapter } from './index'
 
@@ -21,6 +22,7 @@ interface NotebookRow {
 interface NoteRow {
   id: string
   notebook_id: string | null
+  subject_id: string | null
   title: string
   content: string
   tags: string
@@ -29,17 +31,15 @@ interface NoteRow {
   updated_at: number
 }
 
-interface DocumentRow {
+interface SubjectRow {
   id: string
+  notebook_id: string
   name: string
-  original_path: string
-  mime: string
-  size: number
-  status: string
-  error_message: string | null
+  sort_order: number
   created_at: number
   updated_at: number
 }
+
 
 interface AiResponseRow {
   id: string
@@ -119,6 +119,7 @@ function rowToNote(r: NoteRow): Note {
   return {
     id: r.id,
     notebookId: r.notebook_id,
+    subjectId: r.subject_id ?? null,
     title: r.title,
     content: r.content,
     tags,
@@ -128,10 +129,17 @@ function rowToNote(r: NoteRow): Note {
   }
 }
 
-function normalizeDocStatus(s: string): DocumentStatus {
-  if (s === 'indexing' || s === 'available' || s === 'error') return s
-  return 'error'
+function rowToSubject(r: SubjectRow): Subject {
+  return {
+    id: r.id,
+    notebookId: r.notebook_id,
+    name: r.name,
+    sortOrder: r.sort_order,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  }
 }
+
 
 export class TauriStorage implements StorageAdapter {
   private dbPromise?: Promise<Database>
@@ -163,7 +171,64 @@ export class TauriStorage implements StorageAdapter {
 
   async deleteNotebook(id: string): Promise<void> {
     const db = await this.db()
-    await db.execute('DELETE FROM notebooks WHERE id = $1', [id])
+    await db.execute('BEGIN')
+    try {
+      await db.execute(
+        'DELETE FROM ai_responses WHERE note_id IN (SELECT id FROM notes WHERE notebook_id = $1)',
+        [id]
+      )
+      await db.execute('DELETE FROM notes WHERE notebook_id = $1', [id])
+      await db.execute('DELETE FROM subjects WHERE notebook_id = $1', [id])
+      await db.execute('DELETE FROM notebooks WHERE id = $1', [id])
+      await db.execute('COMMIT')
+    } catch (err) {
+      await db.execute('ROLLBACK')
+      throw err
+    }
+  }
+
+  async getSubjects(notebookId: string): Promise<Subject[]> {
+    const db = await this.db()
+    const rows = await db.select<SubjectRow[]>(
+      'SELECT * FROM subjects WHERE notebook_id = $1 ORDER BY sort_order ASC',
+      [notebookId]
+    )
+    return rows.map(rowToSubject)
+  }
+
+  async saveSubject(s: Subject): Promise<void> {
+    const db = await this.db()
+    await db.execute(
+      `INSERT INTO subjects (id, notebook_id, name, sort_order, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT(id) DO UPDATE SET
+         name = excluded.name,
+         sort_order = excluded.sort_order,
+         updated_at = excluded.updated_at`,
+      [s.id, s.notebookId, s.name, s.sortOrder, s.createdAt, s.updatedAt]
+    )
+  }
+
+  async deleteSubject(id: string): Promise<void> {
+    const db = await this.db()
+    await db.execute('BEGIN')
+    try {
+      await db.execute(
+        'DELETE FROM ai_responses WHERE note_id IN (SELECT id FROM notes WHERE subject_id = $1)',
+        [id]
+      )
+      await db.execute('DELETE FROM notes WHERE subject_id = $1', [id])
+      await db.execute('DELETE FROM subjects WHERE id = $1', [id])
+      await db.execute('COMMIT')
+    } catch (err) {
+      await db.execute('ROLLBACK')
+      throw err
+    }
+  }
+
+  async deleteSubjectsByNotebook(notebookId: string): Promise<void> {
+    const db = await this.db()
+    await db.execute('DELETE FROM subjects WHERE notebook_id = $1', [notebookId])
   }
 
   async getNotes(): Promise<Note[]> {
@@ -186,10 +251,11 @@ export class TauriStorage implements StorageAdapter {
   async saveNote(n: Note): Promise<void> {
     const db = await this.db()
     await db.execute(
-      `INSERT INTO notes (id, notebook_id, title, content, tags, date, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO notes (id, notebook_id, subject_id, title, content, tags, date, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        ON CONFLICT(id) DO UPDATE SET
          notebook_id = excluded.notebook_id,
+         subject_id = excluded.subject_id,
          title = excluded.title,
          content = excluded.content,
          tags = excluded.tags,
@@ -198,6 +264,7 @@ export class TauriStorage implements StorageAdapter {
       [
         n.id,
         n.notebookId,
+        n.subjectId ?? null,
         n.title,
         n.content,
         JSON.stringify(n.tags),

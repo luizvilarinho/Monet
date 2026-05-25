@@ -815,6 +815,25 @@ pub fn run() {
             sql: "ALTER TABLE notes ADD COLUMN date TEXT;",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 9,
+            description: "subjects_table_and_note_subject_id",
+            sql: "
+                CREATE TABLE IF NOT EXISTS subjects (
+                    id TEXT PRIMARY KEY,
+                    notebook_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    sort_order INTEGER NOT NULL DEFAULT 0,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    FOREIGN KEY (notebook_id) REFERENCES notebooks(id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_subjects_notebook ON subjects(notebook_id);
+                ALTER TABLE notes ADD COLUMN subject_id TEXT;
+                CREATE INDEX IF NOT EXISTS idx_notes_subject ON notes(subject_id);
+            ",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()

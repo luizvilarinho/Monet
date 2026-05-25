@@ -122,6 +122,11 @@
   gap: 6px;
 }
 
+.list .row {
+  overflow: visible;
+  position: relative;
+}
+
 .dragHandle {
   flex-shrink: 0;
   display: inline-flex;
@@ -209,4 +214,69 @@
 .active {
   background: var(--surface-2, #26262c) !important;
   color: var(--text-primary, #e8e8f0) !important;
+}
+
+.rowAssign {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text-muted, #606070);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0;
+  padding: 0;
+}
+
+.row:hover .rowAssign,
+.rowAssign:focus-visible {
+  opacity: 1;
+}
+
+.rowAssignActive {
+  opacity: 1;
+  color: var(--accent, #7c6af5);
+}
+
+.rowAssign:hover {
+  color: var(--accent, #7c6af5);
+  background: rgba(124, 106, 245, 0.1);
+}
+
+.subjectDropdown {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  background: var(--surface-2, #26262c);
+  border: 1px solid var(--border, #333340);
+  border-radius: 6px;
+  z-index: 100;
+  min-width: 140px;
+  overflow: hidden;
+}
+
+.subjectDropdown button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary, #a0a0b8);
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.subjectDropdown button:hover {
+  background: var(--surface-1, #1e1e22);
+  color: var(--text-primary, #e8e8f0);
 }

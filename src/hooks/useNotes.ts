@@ -42,11 +42,12 @@ export function useNotes() {
   }, [])
 
   const create = useCallback(
-    async (notebookId: string | null) => {
+    async (notebookId: string | null, subjectId?: string | null) => {
       const now = Date.now()
       const note: Note = {
         id: nanoid(),
         notebookId,
+        subjectId: subjectId ?? null,
         title: '',
         content: '',
         tags: [],
