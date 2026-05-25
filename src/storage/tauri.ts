@@ -3,10 +3,9 @@ import type {
   AiResponse,
   AiResponseStatus,
   AiSource,
-  Document,
   DocumentStatus,
   Note,
-  Notebook,
+  Notebook
 } from '../types'
 import type { StorageAdapter } from './index'
 
@@ -132,19 +131,6 @@ function rowToNote(r: NoteRow): Note {
 function normalizeDocStatus(s: string): DocumentStatus {
   if (s === 'indexing' || s === 'available' || s === 'error') return s
   return 'error'
-}
-
-function rowToDocument(r: DocumentRow): Document {
-  return {
-    id: r.id,
-    name: r.name,
-    mime: r.mime,
-    size: r.size,
-    status: normalizeDocStatus(r.status),
-    errorMessage: r.error_message ?? undefined,
-    createdAt: r.created_at,
-    updatedAt: r.updated_at,
-  }
 }
 
 export class TauriStorage implements StorageAdapter {
