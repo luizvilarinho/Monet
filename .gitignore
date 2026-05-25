@@ -31,3 +31,5 @@ dist-ssr
 /worktree
 .claude
 worktree
+/latest.json
+latest.json
