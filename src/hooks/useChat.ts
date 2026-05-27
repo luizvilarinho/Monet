@@ -1117,6 +1117,7 @@ export function useChat(): UseChatResult {
       setApiKeyChecked(true)
 
       // Busca web — deep research tem prioridade sobre web search simples
+      const currentDate = new Date().toISOString().slice(0, 10)
       let searchSystemMessage: ChatMessageInput | null = null
       if (toolsRef.current.deepResearch) {
         const tavilyOk = await hasTavilyKey()
@@ -1127,9 +1128,16 @@ export function useChat(): UseChatResult {
           return
         }
         try {
+          const route = await invoke<{ needsSearch: boolean; intent: string | null; queries: string[] }>(
+            'web_search_route',
+            { history: historyForApi, lastMessage: trimmed, currentDate }
+          ).catch(() => ({ needsSearch: true, intent: null, queries: [trimmed.slice(0, 380)] }))
+          const optimizedQuery = route.queries[0] ?? trimmed.slice(0, 380)
+
           const { formattedContext, sources } = await runDeepResearch(
-            trimmed,
-            (phase) => setDeepResearchPhase(phase)
+            optimizedQuery,
+            (phase) => setDeepResearchPhase(phase),
+            currentDate
           )
           setDeepResearchPhase('synthesizing')
           const sourceList = sources
@@ -1157,7 +1165,6 @@ export function useChat(): UseChatResult {
           return
         }
         try {
-          const currentDate = new Date().toISOString().slice(0, 10)
           const route = await invoke<{ needsSearch: boolean; intent: string | null; queries: string[] }>(
             'web_search_route',
             { history: historyForApi, lastMessage: trimmed, currentDate }

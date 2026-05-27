@@ -241,13 +241,15 @@ async fn deep_research_generate_sub_queries(
     query: String,
     snippets_summary: String,
     model: String,
+    current_date: String,
 ) -> Result<Vec<String>, String> {
     let key = read_key(&app, "openrouter_key")
         .ok_or_else(|| "OPENROUTER_KEY_MISSING".to_string())?;
 
+    let year = current_date.get(..4).unwrap_or("2025");
+
     let prompt = format!(
-        "You are a research query strategist. Given a user question and initial search results, generate 3 search queries that deliberately explore DIFFERENT angles not yet covered.\n\nUser question: {}\n\nInitial results already cover:\n{}\n\nAnalyze what dimensions are missing from the initial results (e.g. pricing, benchmarks, real-world usage, criticism, historical context, technical details, comparisons, case studies) and generate 3 queries that fill the most important gaps for this specific question.\n\nReturn a JSON object with a \"queries\" field containing an array of 3 strings, nothing else.",
-        query, snippets_summary
+        "Current date: {current_date}\n\nYou are a research query strategist. Given a user question and the titles of initial search results, generate 3 search queries that fill the most important gaps not yet covered.\n\nUser question: {query}\n\nInitial results already cover:\n{snippets_summary}\n\nRules:\n1. Write queries as a search engine would receive them: short noun phrases with canonical terms. No filler words, no pronouns, no question syntax.\n2. Each query must target a meaningfully different angle — no overlapping with existing results or with each other.\n3. If the topic involves a named study, paper, or report — even if not explicitly asked — dedicate at least one query to finding the primary source (include author, institution, year, or terms like \"arxiv\", \"pdf\", \"paper\", \"doi\", \"journal\").\n4. Use the current year ({year}) or \"latest\" as a temporal signal when recency matters.\n5. Language: use English for global/technical topics; use the question's language for region-specific topics (local news, government, culture).\n\nCommon gap dimensions to consider: primary sources, criticism/limitations, alternative viewpoints, technical details, real-world applications, comparisons, historical context, recent developments.\n\nReturn a JSON object with a \"queries\" field containing an array of 3 strings, nothing else."
     );
 
     let body = serde_json::json!({

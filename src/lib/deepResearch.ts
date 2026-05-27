@@ -19,7 +19,8 @@ export interface DeepResearchResult {
 
 async function generateSubQueries(
   query: string,
-  results: SearchResult[]
+  results: SearchResult[],
+  currentDate: string
 ): Promise<string[]> {
   const snippetsSummary = results
     .slice(0, 6)
@@ -31,6 +32,7 @@ async function generateSubQueries(
       query,
       snippetsSummary,
       model: INTERMEDIATE_MODEL,
+      currentDate,
     })
     return Array.isArray(subQueries) ? subQueries.slice(0, 3) : []
   } catch {
@@ -59,15 +61,16 @@ async function rerankResults(
 
 export async function runDeepResearch(
   query: string,
-  onPhase: (phase: DeepResearchPhase) => void
+  onPhase: (phase: DeepResearchPhase) => void,
+  currentDate: string
 ): Promise<DeepResearchResult> {
   // Stage 1: initial search
   onPhase('searching')
   const initialResults = await webSearch(query, 7, true)
 
-  // Stage 2: generate sub-queries via haiku
+  // Stage 2: generate sub-queries
   onPhase('expanding')
-  const subQueries = await generateSubQueries(query, initialResults).catch(() => [] as string[])
+  const subQueries = await generateSubQueries(query, initialResults, currentDate).catch(() => [] as string[])
 
   // Stage 3: parallel searches
   onPhase('broadening')
