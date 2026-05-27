@@ -246,14 +246,29 @@ async fn deep_research_generate_sub_queries(
         .ok_or_else(|| "OPENROUTER_KEY_MISSING".to_string())?;
 
     let prompt = format!(
-        "You are a research query strategist. Given a user question and initial search results, generate 3 search queries that deliberately explore DIFFERENT angles not yet covered.\n\nUser question: {}\n\nInitial results already cover:\n{}\n\nAnalyze what dimensions are missing from the initial results (e.g. pricing, benchmarks, real-world usage, criticism, historical context, technical details, comparisons, case studies) and generate 3 queries that fill the most important gaps for this specific question.\n\nReturn ONLY a JSON array of 3 strings, nothing else.",
+        "You are a research query strategist. Given a user question and initial search results, generate 3 search queries that deliberately explore DIFFERENT angles not yet covered.\n\nUser question: {}\n\nInitial results already cover:\n{}\n\nAnalyze what dimensions are missing from the initial results (e.g. pricing, benchmarks, real-world usage, criticism, historical context, technical details, comparisons, case studies) and generate 3 queries that fill the most important gaps for this specific question.\n\nReturn a JSON object with a \"queries\" field containing an array of 3 strings, nothing else.",
         query, snippets_summary
     );
 
     let body = serde_json::json!({
         "model": model,
         "messages": [{ "role": "user", "content": prompt }],
-        "max_tokens": 200,
+        "max_tokens": 400,
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "sub_queries",
+                "strict": true,
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "queries": { "type": "array", "items": { "type": "string" } }
+                    },
+                    "required": ["queries"],
+                    "additionalProperties": false
+                }
+            }
+        },
     });
 
     let client = reqwest::Client::new();
@@ -291,7 +306,10 @@ async fn deep_research_generate_sub_queries(
         .to_string();
 
     fn extract_strings(value: &serde_json::Value) -> Option<Vec<String>> {
-        let arr = value.as_array()?;
+        let arr = value
+            .get("queries")
+            .and_then(|q| q.as_array())
+            .or_else(|| value.as_array())?;
         let strings: Vec<String> = arr
             .iter()
             .filter_map(|v| v.as_str().map(|s| s.to_string()))

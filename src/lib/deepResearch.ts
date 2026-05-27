@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { webSearch, type SearchResult } from './search'
 
-const INTERMEDIATE_MODEL = 'openai/gpt-5.4-mini'
+const INTERMEDIATE_MODEL = 'openai/gpt-4.1-mini'
 const RERANK_MODEL = 'cohere/rerank-4-fast'
 
 export type DeepResearchPhase =

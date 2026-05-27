@@ -35,7 +35,7 @@ use crate::vec_db::{VecDb, EMBEDDING_DIM};
 const EMBED_BATCH_SIZE: usize = 32;
 const CHUNK_TARGET_CHARS: usize = 4000;
 const CHUNK_OVERLAP_CHARS: usize = 400;
-const EMBED_MODEL: &str = "google/gemini-embedding-2-preview";
+const EMBED_MODEL: &str = "openai/text-embedding-3-small";
 const EMBED_URL: &str = "https://openrouter.ai/api/v1/embeddings";
 const MAX_FILE_BYTES: u64 = 50 * 1024 * 1024;
 
