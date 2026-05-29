@@ -139,6 +139,11 @@
   text-align: center;
 }
 
+.emptyActions {
+  display: flex;
+  gap: 8px;
+}
+
 .emptyTitle {
   margin: 0;
   font-size: 14px;
@@ -182,15 +187,20 @@
 }
 
 .colName {
-  width: 50%;
+  width: 44%;
 }
 
 .colStatus {
-  width: 25%;
+  width: 22%;
+}
+
+.colCount {
+  width: 10%;
+  text-align: center;
 }
 
 .colActions {
-  width: 25%;
+  width: 24%;
   text-align: right;
 }
 
@@ -208,6 +218,16 @@
 
 .cellActions > button + button {
   margin-left: 6px;
+}
+
+.cellCount {
+  text-align: center;
+  color: var(--text-muted, #606070);
+  font-size: 12px;
+}
+
+.folderRow td {
+  background: rgba(93, 202, 165, 0.04);
 }
 
 .pill {
@@ -269,6 +289,11 @@
   background: var(--bg-app, #0e0e10);
 }
 
+.footerActions {
+  display: flex;
+  gap: 8px;
+}
+
 .footerHint {
   margin: 0;
   font-size: 11px;
@@ -307,9 +332,14 @@
   color: var(--text-secondary, #a0a0b8);
 }
 
-.secondary:hover {
+.secondary:hover:not(:disabled) {
   color: var(--accent-warn, #ef9f27);
   border-color: var(--accent-warn, #ef9f27);
+}
+
+.secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .danger {

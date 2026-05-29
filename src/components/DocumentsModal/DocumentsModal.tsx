@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import type { Document } from '../../types'
 import { useKnowledgeBase, useNotebookVisibility } from '../../hooks/useDocuments'
@@ -35,6 +35,47 @@ function StatusPill({ doc }: { doc: Document }) {
   )
 }
 
+interface FolderRowProps {
+  folder: Document
+  checked: boolean
+  indeterminate: boolean
+  disabled: boolean
+  onToggle: () => void
+}
+
+function FolderRow({ folder, checked, indeterminate, disabled, onToggle }: FolderRowProps) {
+  const checkboxRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (checkboxRef.current) {
+      checkboxRef.current.indeterminate = indeterminate
+    }
+  }, [indeterminate])
+
+  return (
+    <tr>
+      <td className={styles.cellName} title={folder.originalPath ?? folder.name}>
+        {folder.name}
+      </td>
+      <td>📁 Folder</td>
+      <td>
+        <StatusPill doc={folder} />
+      </td>
+      <td className={styles.cellVisible}>
+        <input
+          ref={checkboxRef}
+          type="checkbox"
+          checked={checked}
+          disabled={disabled}
+          onChange={onToggle}
+          aria-label={`toggle visibility for folder ${folder.name}`}
+          title={disabled ? 'No available files in this folder' : undefined}
+        />
+      </td>
+    </tr>
+  )
+}
+
 export function DocumentsModal({
   open,
   notebookId,
@@ -56,13 +97,30 @@ export function DocumentsModal({
 
   if (!open || !notebookId) return null
 
-  async function handleToggle(doc: Document) {
+  const folders = documents.filter((d) => d.docType === 'folder')
+  const standaloneFiles = documents.filter((d) => d.docType === 'file' && !d.parentFolderId)
+
+  async function handleToggleFile(doc: Document) {
     if (doc.status !== 'available') return
     const next = !isVisible(doc.id)
     try {
       await toggle(doc.id, next)
     } catch (e) {
       console.error('failed to toggle document visibility', e)
+    }
+  }
+
+  async function handleToggleFolder(folder: Document) {
+    const children = documents.filter(
+      (d) => d.parentFolderId === folder.id && d.docType === 'file' && d.status === 'available',
+    )
+    if (children.length === 0) return
+    const allVisible = children.every((c) => isVisible(c.id))
+    const next = !allVisible
+    try {
+      await Promise.all(children.map((c) => toggle(c.id, next)))
+    } catch (e) {
+      console.error('failed to toggle folder visibility', e)
     }
   }
 
@@ -123,19 +181,39 @@ export function DocumentsModal({
               <thead>
                 <tr>
                   <th className={styles.colName}>name</th>
+                  <th className={styles.colType}>type</th>
                   <th className={styles.colStatus}>status</th>
                   <th className={styles.colVisible}>visible</th>
                 </tr>
               </thead>
               <tbody>
-                {documents.map((doc) => {
+                {folders.map((folder) => {
+                  const children = documents.filter(
+                    (d) => d.parentFolderId === folder.id && d.docType === 'file' && d.status === 'available',
+                  )
+                  const allVisible = children.length > 0 && children.every((c) => isVisible(c.id))
+                  const someVisible = children.some((c) => isVisible(c.id))
+                  const indeterminate = someVisible && !allVisible
+                  return (
+                    <FolderRow
+                      key={folder.id}
+                      folder={folder}
+                      checked={allVisible}
+                      indeterminate={indeterminate}
+                      disabled={children.length === 0}
+                      onToggle={() => handleToggleFolder(folder)}
+                    />
+                  )
+                })}
+                {standaloneFiles.map((doc) => {
                   const canToggle = doc.status === 'available'
                   const visible = isVisible(doc.id)
                   return (
                     <tr key={doc.id}>
-                      <td className={styles.cellName} title={doc.name}>
+                      <td className={styles.cellName} title={doc.originalPath ?? doc.name}>
                         {doc.name}
                       </td>
+                      <td>📄 File</td>
                       <td>
                         <StatusPill doc={doc} />
                       </td>
@@ -144,7 +222,7 @@ export function DocumentsModal({
                           type="checkbox"
                           checked={visible}
                           disabled={!canToggle}
-                          onChange={() => handleToggle(doc)}
+                          onChange={() => handleToggleFile(doc)}
                           aria-label={`toggle visibility for ${doc.name}`}
                           title={!canToggle ? `Document is ${doc.status} — not toggleable` : undefined}
                         />

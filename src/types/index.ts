@@ -31,12 +31,17 @@ export type DocumentStatus = 'indexing' | 'available' | 'error'
 export interface Document {
   id: string
   name: string
+  originalPath?: string
   mime: string
   size: number
   status: DocumentStatus
   errorMessage?: string
   createdAt: number
   updatedAt: number
+  docType: 'file' | 'folder'
+  parentFolderId?: string
+  lastModifiedMs?: number
+  isExternal: boolean
 }
 
 export type AiResponseStatus =

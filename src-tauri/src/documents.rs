@@ -30,6 +30,15 @@ pub async fn documents_pick_file() -> Result<Option<String>, String> {
     Ok(result.map(|p| p.to_string_lossy().to_string()))
 }
 
+#[tauri::command]
+pub async fn documents_pick_folder() -> Result<Option<String>, String> {
+    let result = spawn_blocking(|| rfd::FileDialog::new().pick_folder())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(result.map(|p| p.to_string_lossy().to_string()))
+}
+
 use crate::vec_db::{VecDb, EMBEDDING_DIM};
 
 const EMBED_BATCH_SIZE: usize = 32;
@@ -60,12 +69,17 @@ struct DocumentStatusEvent {
 pub struct DocumentInfo {
     id: String,
     name: String,
+    original_path: Option<String>,
     mime: String,
     size: i64,
     status: String,
     error_message: Option<String>,
     created_at: i64,
     updated_at: i64,
+    doc_type: String,
+    parent_folder_id: Option<String>,
+    last_modified_ms: Option<i64>,
+    is_external: bool,
 }
 
 #[derive(Serialize)]
@@ -699,14 +713,14 @@ pub async fn documents_delete(
     state: State<'_, DocDb>,
     document_id: String,
 ) -> Result<(), String> {
-    let original_path: Option<String> = with_doc_db(&app, &state, |conn| {
+    let (original_path, is_external): (Option<String>, bool) = with_doc_db(&app, &state, |conn| {
         match conn.query_row(
-            "SELECT original_path FROM documents WHERE id = ?1",
+            "SELECT original_path, is_external FROM documents WHERE id = ?1",
             params![document_id],
-            |r| r.get::<_, String>(0),
+            |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, i64>(1).map(|v| v != 0).unwrap_or(false))),
         ) {
-            Ok(p) => Ok(Some(p)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Ok(v) => Ok(v),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok((None, false)),
             Err(e) => Err(format!("failed to query document: {}", e)),
         }
     })?;
@@ -728,7 +742,9 @@ pub async fn documents_delete(
     })?;
 
     if let Some(path) = original_path {
-        let _ = fs::remove_file(PathBuf::from(path));
+        if !is_external {
+            let _ = fs::remove_file(PathBuf::from(path));
+        }
     }
 
     Ok(())
@@ -742,7 +758,8 @@ pub async fn documents_list_global(
     with_doc_db(&app, &state, |conn| {
         let mut stmt = conn
             .prepare(
-                "SELECT id, name, mime, size, status, error_message, created_at, updated_at
+                "SELECT id, name, original_path, mime, size, status, error_message, created_at, updated_at,
+                        type, parent_folder_id, last_modified_ms, is_external
                  FROM documents ORDER BY created_at DESC",
             )
             .map_err(|e| format!("failed to prepare listing: {}", e))?;
@@ -751,12 +768,17 @@ pub async fn documents_list_global(
                 Ok(DocumentInfo {
                     id: r.get(0)?,
                     name: r.get(1)?,
-                    mime: r.get(2)?,
-                    size: r.get(3)?,
-                    status: r.get(4)?,
-                    error_message: r.get(5)?,
-                    created_at: r.get(6)?,
-                    updated_at: r.get(7)?,
+                    original_path: r.get(2)?,
+                    mime: r.get(3)?,
+                    size: r.get(4)?,
+                    status: r.get(5)?,
+                    error_message: r.get(6)?,
+                    created_at: r.get(7)?,
+                    updated_at: r.get(8)?,
+                    doc_type: r.get::<_, Option<String>>(9)?.unwrap_or_else(|| "file".to_string()),
+                    parent_folder_id: r.get(10)?,
+                    last_modified_ms: r.get(11)?,
+                    is_external: r.get::<_, i64>(12).map(|v| v != 0).unwrap_or(false),
                 })
             })
             .map_err(|e| format!("failed to list: {}", e))?;
@@ -926,6 +948,393 @@ pub async fn embed_text(app: AppHandle, text: String) -> Result<Vec<f32>, String
     let batch = vec![trimmed.to_string()];
     let mut embs = embed_batch(&key, &batch).await?;
     embs.pop().ok_or_else(|| "API returned no embedding".into())
+}
+
+#[tauri::command]
+pub async fn documents_add_watched_folder(
+    app: AppHandle,
+    state: State<'_, DocDb>,
+    folder_path: String,
+) -> Result<String, String> {
+    let meta = fs::metadata(&folder_path)
+        .map_err(|e| format!("cannot access folder: {}", e))?;
+    if !meta.is_dir() {
+        return Err("Path does not point to a directory".into());
+    }
+
+    let id = Uuid::new_v4().to_string();
+    let name = Path::new(&folder_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| folder_path.clone());
+    let now = now_ms();
+
+    with_doc_db(&app, &state, |conn| {
+        conn.execute(
+            "INSERT INTO documents (id, name, original_path, mime, size, status, error_message,
+                                    created_at, updated_at, type, parent_folder_id,
+                                    last_modified_ms, is_external)
+             VALUES (?1, ?2, ?3, 'inode/directory', 0, 'indexing', NULL,
+                     ?4, ?4, 'folder', NULL, NULL, 1)",
+            params![id, name, folder_path, now],
+        )
+        .map_err(|e| format!("failed to insert folder: {}", e))?;
+        Ok(())
+    })?;
+
+    let app_clone = app.clone();
+    let id_clone = id.clone();
+    tauri::async_runtime::spawn(async move {
+        scan_watched_folder_async(app_clone, id_clone).await;
+    });
+
+    Ok(id)
+}
+
+fn delete_folder_child(app: &AppHandle, doc_id: &str) -> Result<(), String> {
+    delete_chunks_for_document(app, doc_id)?;
+    let state = app.state::<DocDb>();
+    with_doc_db(app, &state, |conn| {
+        conn.execute(
+            "DELETE FROM notebook_document_visibility WHERE document_id = ?1",
+            params![doc_id],
+        )
+        .map_err(|e| format!("failed to clear visibility: {}", e))?;
+        conn.execute(
+            "DELETE FROM documents WHERE id = ?1",
+            params![doc_id],
+        )
+        .map_err(|e| format!("failed to delete document: {}", e))?;
+        Ok(())
+    })
+}
+
+fn collect_files_recursive(dir: &Path) -> Vec<(PathBuf, i64)> {
+    let mut result = Vec::new();
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("scan_watched_folder: cannot read dir {:?}: {}", dir, e);
+            return result;
+        }
+    };
+    for entry in entries {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("scan_watched_folder: entry error: {}", e);
+                continue;
+            }
+        };
+        let path = entry.path();
+        let meta = match std::fs::metadata(&path) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("scan_watched_folder: cannot stat {:?}: {}", path, e);
+                continue;
+            }
+        };
+        if meta.file_type().is_symlink() {
+            continue;
+        }
+        if meta.is_dir() {
+            result.extend(collect_files_recursive(&path));
+        } else if meta.is_file() {
+            if detect_mime(&path).is_none() {
+                continue;
+            }
+            let last_modified_ms = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+            result.push((path, last_modified_ms));
+        }
+    }
+    result
+}
+
+async fn scan_watched_folder_async(app: AppHandle, folder_id: String) {
+    // 7a. Read folder from DB
+    let state = app.state::<DocDb>();
+    let folder_path: Option<String> = match with_doc_db(&app, &state, |conn| {
+        match conn.query_row(
+            "SELECT original_path FROM documents WHERE id = ?1 AND type = 'folder'",
+            params![folder_id],
+            |r| r.get::<_, String>(0),
+        ) {
+            Ok(p) => Ok(Some(p)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(format!("db error: {}", e)),
+        }
+    }) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("scan_watched_folder_async: {}", e);
+            return;
+        }
+    };
+
+    let folder_path = match folder_path {
+        Some(p) => p,
+        None => return,
+    };
+
+    // 7a-2. Emit indexing status so the frontend can show scanning feedback
+    let _ = update_document_status(&app, &folder_id, "indexing", None);
+    emit_status(&app, &folder_id, "indexing", None);
+
+    // 7b. Verify folder exists on disk
+    let folder_meta = fs::metadata(&folder_path);
+    let folder_ok = folder_meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+    if !folder_ok {
+        let msg = "Folder not found on disk";
+        let _ = update_document_status(&app, &folder_id, "error", Some(msg));
+        emit_status(&app, &folder_id, "error", Some(msg));
+        return;
+    }
+
+    // 7c. Collect files on disk (recursive, blocking)
+    let folder_path_clone = folder_path.clone();
+    let files_on_disk = spawn_blocking(move || {
+        collect_files_recursive(Path::new(&folder_path_clone))
+    })
+    .await
+    .unwrap_or_default();
+
+    // 7d. Fetch already-indexed children from DB
+    let existing: Vec<(String, String, Option<i64>)> = match with_doc_db(&app, &state, |conn| {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, original_path, last_modified_ms FROM documents
+                 WHERE parent_folder_id = ?1 AND type = 'file'",
+            )
+            .map_err(|e| format!("prepare failed: {}", e))?;
+        let rows = stmt
+            .query_map(params![folder_id], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Option<i64>>(2)?,
+                ))
+            })
+            .map_err(|e| format!("query failed: {}", e))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| format!("row error: {}", e))?);
+        }
+        Ok(out)
+    }) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("scan_watched_folder_async fetch existing: {}", e);
+            return;
+        }
+    };
+
+    // Map: original_path -> (id, last_modified_ms)
+    let mut indexed_map: std::collections::HashMap<String, (String, Option<i64>)> =
+        existing.into_iter().map(|(id, path, ms)| (path, (id, ms))).collect();
+
+    let now = now_ms();
+
+    // 7e. Detect changes and act
+    for (file_path, disk_ms) in &files_on_disk {
+        let path_str = file_path.to_string_lossy().to_string();
+        let mime = match detect_mime(file_path) {
+            Some(m) => m,
+            None => continue,
+        };
+
+        if let Some((existing_id, existing_ms)) = indexed_map.remove(&path_str) {
+            // File already indexed
+            let changed = existing_ms.map(|m| m != *disk_ms).unwrap_or(true);
+            if changed {
+                // Modified — update last_modified_ms and reindex
+                let err_update = with_doc_db(&app, &state, |conn| {
+                    conn.execute(
+                        "UPDATE documents SET last_modified_ms = ?1, status = 'indexing',
+                                              updated_at = ?2 WHERE id = ?3",
+                        params![disk_ms, now, existing_id],
+                    )
+                    .map_err(|e| format!("update failed: {}", e))?;
+                    Ok(())
+                });
+                if let Err(e) = err_update {
+                    eprintln!("scan_watched_folder_async update: {}", e);
+                }
+                if let Err(e) = delete_chunks_for_document(&app, &existing_id) {
+                    eprintln!("scan_watched_folder_async delete_chunks: {}", e);
+                }
+                let name = file_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| path_str.clone());
+                let app_clone = app.clone();
+                let id_clone = existing_id.clone();
+                let path_clone = file_path.clone();
+                let mime_str = mime.to_string();
+                tauri::async_runtime::spawn(async move {
+                    run_indexing(app_clone, id_clone, name, path_clone, mime_str).await;
+                });
+            }
+            // else: unchanged — skip
+        } else {
+            // New file — insert and index
+            let new_id = Uuid::new_v4().to_string();
+            let name = file_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| path_str.clone());
+            let size = fs::metadata(file_path).map(|m| m.len() as i64).unwrap_or(0);
+
+            let folder_id_clone = folder_id.clone();
+            let new_id_clone = new_id.clone();
+            let insert_result = with_doc_db(&app, &state, |conn| {
+                conn.execute(
+                    "INSERT INTO documents (id, name, original_path, mime, size, status,
+                                            error_message, created_at, updated_at, type,
+                                            parent_folder_id, last_modified_ms, is_external)
+                     VALUES (?1, ?2, ?3, ?4, ?5, 'indexing', NULL,
+                             ?6, ?6, 'file', ?7, ?8, 1)",
+                    params![new_id_clone, name, path_str, mime, size, now, folder_id_clone, disk_ms],
+                )
+                .map_err(|e| format!("insert failed: {}", e))?;
+                // Propagate visibility: for each notebook that has any sibling file of
+                // this folder visible, also mark this new child file as visible.
+                // (Visibility is stored per-file, not per-folder, so we look at siblings.)
+                conn.execute(
+                    "INSERT OR IGNORE INTO notebook_document_visibility (notebook_id, document_id)
+                     SELECT DISTINCT notebook_id, ?2
+                     FROM notebook_document_visibility
+                     WHERE document_id IN (
+                         SELECT id FROM documents WHERE parent_folder_id = ?1 AND type = 'file'
+                     )",
+                    params![folder_id_clone, new_id_clone],
+                )
+                .map_err(|e| format!("failed to propagate visibility: {}", e))?;
+                Ok(())
+            });
+            if let Err(e) = insert_result {
+                eprintln!("scan_watched_folder_async insert: {}", e);
+                continue;
+            }
+            let app_clone = app.clone();
+            let id_clone = new_id.clone();
+            let path_clone = file_path.clone();
+            let mime_str = mime.to_string();
+            tauri::async_runtime::spawn(async move {
+                run_indexing(app_clone, id_clone, name, path_clone, mime_str).await;
+            });
+        }
+    }
+
+    // 7f. Delete files removed from disk (remaining entries in indexed_map)
+    for (_, (orphan_id, _)) in &indexed_map {
+        if let Err(e) = delete_folder_child(&app, orphan_id) {
+            eprintln!("scan_watched_folder_async delete orphan {}: {}", orphan_id, e);
+        }
+    }
+
+    // 7g. Update folder status to available
+    let _ = update_document_status(&app, &folder_id, "available", None);
+    emit_status(&app, &folder_id, "available", None);
+}
+
+#[tauri::command]
+pub async fn documents_scan_watched_folder(
+    app: AppHandle,
+    _state: State<'_, DocDb>,
+    folder_id: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn(async move {
+        scan_watched_folder_async(app, folder_id).await;
+    });
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn documents_delete_watched_folder(
+    app: AppHandle,
+    state: State<'_, DocDb>,
+    folder_id: String,
+) -> Result<(), String> {
+    // Fetch all children
+    let children: Vec<String> = with_doc_db(&app, &state, |conn| {
+        let mut stmt = conn
+            .prepare("SELECT id FROM documents WHERE parent_folder_id = ?1")
+            .map_err(|e| format!("prepare failed: {}", e))?;
+        let rows = stmt
+            .query_map(params![folder_id], |r| r.get::<_, String>(0))
+            .map_err(|e| format!("query failed: {}", e))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| format!("row error: {}", e))?);
+        }
+        Ok(out)
+    })?;
+
+    for child_id in &children {
+        if let Err(e) = delete_folder_child(&app, child_id) {
+            eprintln!("documents_delete_watched_folder child {}: {}", child_id, e);
+        }
+    }
+
+    with_doc_db(&app, &state, |conn| {
+        conn.execute(
+            "DELETE FROM notebook_document_visibility WHERE document_id = ?1",
+            params![folder_id],
+        )
+        .map_err(|e| format!("failed to clear visibility: {}", e))?;
+        conn.execute(
+            "DELETE FROM documents WHERE id = ?1",
+            params![folder_id],
+        )
+        .map_err(|e| format!("failed to delete folder: {}", e))?;
+        Ok(())
+    })
+}
+
+pub async fn scan_all_watched_folders_on_startup(app: AppHandle) {
+    // Wait for DB file to exist (mirrors cleanup_stuck_indexing pattern)
+    for _ in 0..30 {
+        if doc_db_path(&app).map(|p| p.exists()).unwrap_or(false) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+
+    let state = app.state::<DocDb>();
+    let folder_ids: Vec<String> = match with_doc_db(&app, &state, |conn| {
+        let mut stmt = conn
+            .prepare("SELECT id FROM documents WHERE type = 'folder'")
+            .map_err(|e| format!("prepare failed: {}", e))?;
+        let rows = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| format!("query failed: {}", e))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| format!("row error: {}", e))?);
+        }
+        Ok(out)
+    }) {
+        Ok(ids) => ids,
+        Err(e) => {
+            eprintln!("scan_all_watched_folders_on_startup: {}", e);
+            return;
+        }
+    };
+
+    for folder_id in folder_ids {
+        let app_clone = app.clone();
+        tauri::async_runtime::spawn(async move {
+            scan_watched_folder_async(app_clone, folder_id).await;
+        });
+    }
 }
 
 pub async fn cleanup_stuck_indexing(app: AppHandle) {
