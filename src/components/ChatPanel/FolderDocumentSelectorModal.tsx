@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import type { Document } from '../../types'
 import type { ChatFolder } from '../../hooks/useChat'
 import { useKnowledgeBase } from '../../hooks/useDocuments'
 import styles from './FolderSystemPromptModal.module.css'
@@ -10,6 +11,57 @@ export interface FolderDocumentSelectorModalProps {
   folder: ChatFolder | null
   onConfirm: (folderId: string, visibleDocumentIds: string[]) => void
   onClose: () => void
+}
+
+interface FolderItemProps {
+  folder: Document
+  checked: boolean
+  indeterminate: boolean
+  disabled: boolean
+  onToggle: () => void
+}
+
+function FolderItem({ folder, checked, indeterminate, disabled, onToggle }: FolderItemProps) {
+  const checkboxRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (checkboxRef.current) {
+      checkboxRef.current.indeterminate = indeterminate
+    }
+  }, [indeterminate])
+
+  return (
+    <li
+      className={`${docStyles.item} ${docStyles.itemFolder} ${disabled ? docStyles.itemDisabled : ''}`}
+      onClick={disabled ? undefined : onToggle}
+    >
+      <input
+        ref={checkboxRef}
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={onToggle}
+        onClick={(e) => e.stopPropagation()}
+        aria-label={`toggle folder ${folder.name}`}
+        title={disabled ? 'No available files in this folder' : undefined}
+      />
+      <span className={docStyles.docName} title={folder.originalPath ?? folder.name}>
+        {folder.name}
+      </span>
+      <span className={docStyles.colType}>📁 Folder</span>
+      <span
+        className={`${docStyles.pill} ${
+          folder.status === 'available'
+            ? docStyles.pillOk
+            : folder.status === 'indexing'
+              ? docStyles.pillIndexing
+              : docStyles.pillError
+        }`}
+      >
+        {folder.status}
+      </span>
+    </li>
+  )
 }
 
 export function FolderDocumentSelectorModal({
@@ -40,6 +92,9 @@ export function FolderDocumentSelectorModal({
   if (!open || !folder) return null
   const folderId = folder.id
 
+  const kbFolders = documents.filter((d) => d.docType === 'folder')
+  const standaloneFiles = documents.filter((d) => d.docType === 'file' && !d.parentFolderId)
+
   function toggleDoc(docId: string, available: boolean) {
     if (!available) return
     setSelectedIds((prev) => {
@@ -47,6 +102,23 @@ export function FolderDocumentSelectorModal({
       if (next.has(docId)) next.delete(docId)
       else next.add(docId)
       return next
+    })
+  }
+
+  function toggleKbFolder(kbFolder: Document) {
+    const children = documents.filter(
+      (d) => d.parentFolderId === kbFolder.id && d.docType === 'file' && d.status === 'available',
+    )
+    if (children.length === 0) return
+    const allSelected = children.every((c) => selectedIds.has(c.id))
+    const next = !allSelected
+    setSelectedIds((prev) => {
+      const updated = new Set(prev)
+      for (const c of children) {
+        if (next) updated.add(c.id)
+        else updated.delete(c.id)
+      }
+      return updated
     })
   }
 
@@ -94,7 +166,25 @@ export function FolderDocumentSelectorModal({
             </p>
           ) : (
             <ul className={docStyles.list}>
-              {documents.map((doc) => {
+              {kbFolders.map((kbFolder) => {
+                const children = documents.filter(
+                  (d) => d.parentFolderId === kbFolder.id && d.docType === 'file' && d.status === 'available',
+                )
+                const allSelected = children.length > 0 && children.every((c) => selectedIds.has(c.id))
+                const someSelected = children.some((c) => selectedIds.has(c.id))
+                const indeterminate = someSelected && !allSelected
+                return (
+                  <FolderItem
+                    key={kbFolder.id}
+                    folder={kbFolder}
+                    checked={allSelected}
+                    indeterminate={indeterminate}
+                    disabled={children.length === 0}
+                    onToggle={() => toggleKbFolder(kbFolder)}
+                  />
+                )
+              })}
+              {standaloneFiles.map((doc) => {
                 const available = doc.status === 'available'
                 const checked = selectedIds.has(doc.id)
                 return (
@@ -111,9 +201,10 @@ export function FolderDocumentSelectorModal({
                       onClick={(e) => e.stopPropagation()}
                       aria-label={doc.name}
                     />
-                    <span className={docStyles.docName} title={doc.name}>
+                    <span className={docStyles.docName} title={doc.originalPath ?? doc.name}>
                       {doc.name}
                     </span>
+                    <span className={docStyles.colType}>📄 File</span>
                     <span
                       className={`${docStyles.pill} ${
                         doc.status === 'available'

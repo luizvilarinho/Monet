@@ -30,7 +30,8 @@ export async function documentsDelete(documentId: string): Promise<void> {
   await invoke('documents_delete', { documentId })
 }
 
-interface DocumentRaw extends Omit<Document, 'errorMessage' | 'parentFolderId' | 'lastModifiedMs'> {
+interface DocumentRaw extends Omit<Document, 'errorMessage' | 'parentFolderId' | 'lastModifiedMs' | 'originalPath'> {
+  originalPath: string | null
   errorMessage: string | null
   parentFolderId: string | null
   lastModifiedMs: number | null
@@ -40,6 +41,7 @@ export async function documentsListGlobal(): Promise<Document[]> {
   const rows = await invoke<DocumentRaw[]>('documents_list_global')
   return rows.map((d) => ({
     ...d,
+    originalPath: d.originalPath ?? undefined,
     errorMessage: d.errorMessage ?? undefined,
     parentFolderId: d.parentFolderId ?? undefined,
     lastModifiedMs: d.lastModifiedMs ?? undefined,

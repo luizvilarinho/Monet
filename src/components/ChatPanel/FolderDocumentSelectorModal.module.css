@@ -36,6 +36,11 @@
   opacity: 0.5;
 }
 
+.itemFolder {
+  background: rgba(93, 202, 165, 0.04);
+  border-color: rgba(93, 202, 165, 0.12);
+}
+
 .docName {
   flex: 1;
   min-width: 0;
@@ -44,6 +49,13 @@
   white-space: nowrap;
   font-size: 13px;
   color: var(--text-primary, #e8e8f0);
+}
+
+.colType {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted, #606070);
+  white-space: nowrap;
 }
 
 .pill {

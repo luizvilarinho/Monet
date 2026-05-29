@@ -54,9 +54,10 @@ function FolderRow({ folder, checked, indeterminate, disabled, onToggle }: Folde
 
   return (
     <tr>
-      <td className={styles.cellName} title={folder.name}>
+      <td className={styles.cellName} title={folder.originalPath ?? folder.name}>
         {folder.name}
       </td>
+      <td>📁 Folder</td>
       <td>
         <StatusPill doc={folder} />
       </td>
@@ -180,6 +181,7 @@ export function DocumentsModal({
               <thead>
                 <tr>
                   <th className={styles.colName}>name</th>
+                  <th className={styles.colType}>type</th>
                   <th className={styles.colStatus}>status</th>
                   <th className={styles.colVisible}>visible</th>
                 </tr>
@@ -208,9 +210,10 @@ export function DocumentsModal({
                   const visible = isVisible(doc.id)
                   return (
                     <tr key={doc.id}>
-                      <td className={styles.cellName} title={doc.name}>
+                      <td className={styles.cellName} title={doc.originalPath ?? doc.name}>
                         {doc.name}
                       </td>
+                      <td>📄 File</td>
                       <td>
                         <StatusPill doc={doc} />
                       </td>

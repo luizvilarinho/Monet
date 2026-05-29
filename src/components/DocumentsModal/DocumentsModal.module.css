@@ -187,11 +187,15 @@
 }
 
 .colName {
-  width: 55%;
+  width: 45%;
+}
+
+.colType {
+  width: 15%;
 }
 
 .colStatus {
-  width: 30%;
+  width: 25%;
 }
 
 .colActions {

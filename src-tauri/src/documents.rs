@@ -69,6 +69,7 @@ struct DocumentStatusEvent {
 pub struct DocumentInfo {
     id: String,
     name: String,
+    original_path: Option<String>,
     mime: String,
     size: i64,
     status: String,
@@ -757,7 +758,7 @@ pub async fn documents_list_global(
     with_doc_db(&app, &state, |conn| {
         let mut stmt = conn
             .prepare(
-                "SELECT id, name, mime, size, status, error_message, created_at, updated_at,
+                "SELECT id, name, original_path, mime, size, status, error_message, created_at, updated_at,
                         type, parent_folder_id, last_modified_ms, is_external
                  FROM documents ORDER BY created_at DESC",
             )
@@ -767,16 +768,17 @@ pub async fn documents_list_global(
                 Ok(DocumentInfo {
                     id: r.get(0)?,
                     name: r.get(1)?,
-                    mime: r.get(2)?,
-                    size: r.get(3)?,
-                    status: r.get(4)?,
-                    error_message: r.get(5)?,
-                    created_at: r.get(6)?,
-                    updated_at: r.get(7)?,
-                    doc_type: r.get::<_, Option<String>>(8)?.unwrap_or_else(|| "file".to_string()),
-                    parent_folder_id: r.get(9)?,
-                    last_modified_ms: r.get(10)?,
-                    is_external: r.get::<_, i64>(11).map(|v| v != 0).unwrap_or(false),
+                    original_path: r.get(2)?,
+                    mime: r.get(3)?,
+                    size: r.get(4)?,
+                    status: r.get(5)?,
+                    error_message: r.get(6)?,
+                    created_at: r.get(7)?,
+                    updated_at: r.get(8)?,
+                    doc_type: r.get::<_, Option<String>>(9)?.unwrap_or_else(|| "file".to_string()),
+                    parent_folder_id: r.get(10)?,
+                    last_modified_ms: r.get(11)?,
+                    is_external: r.get::<_, i64>(12).map(|v| v != 0).unwrap_or(false),
                 })
             })
             .map_err(|e| format!("failed to list: {}", e))?;
@@ -1080,6 +1082,10 @@ async fn scan_watched_folder_async(app: AppHandle, folder_id: String) {
         None => return,
     };
 
+    // 7a-2. Emit indexing status so the frontend can show scanning feedback
+    let _ = update_document_status(&app, &folder_id, "indexing", None);
+    emit_status(&app, &folder_id, "indexing", None);
+
     // 7b. Verify folder exists on disk
     let folder_meta = fs::metadata(&folder_path);
     let folder_ok = folder_meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
@@ -1187,6 +1193,7 @@ async fn scan_watched_folder_async(app: AppHandle, folder_id: String) {
             let size = fs::metadata(file_path).map(|m| m.len() as i64).unwrap_or(0);
 
             let folder_id_clone = folder_id.clone();
+            let new_id_clone = new_id.clone();
             let insert_result = with_doc_db(&app, &state, |conn| {
                 conn.execute(
                     "INSERT INTO documents (id, name, original_path, mime, size, status,
@@ -1194,9 +1201,22 @@ async fn scan_watched_folder_async(app: AppHandle, folder_id: String) {
                                             parent_folder_id, last_modified_ms, is_external)
                      VALUES (?1, ?2, ?3, ?4, ?5, 'indexing', NULL,
                              ?6, ?6, 'file', ?7, ?8, 1)",
-                    params![new_id, name, path_str, mime, size, now, folder_id_clone, disk_ms],
+                    params![new_id_clone, name, path_str, mime, size, now, folder_id_clone, disk_ms],
                 )
                 .map_err(|e| format!("insert failed: {}", e))?;
+                // Propagate visibility: for each notebook that has any sibling file of
+                // this folder visible, also mark this new child file as visible.
+                // (Visibility is stored per-file, not per-folder, so we look at siblings.)
+                conn.execute(
+                    "INSERT OR IGNORE INTO notebook_document_visibility (notebook_id, document_id)
+                     SELECT DISTINCT notebook_id, ?2
+                     FROM notebook_document_visibility
+                     WHERE document_id IN (
+                         SELECT id FROM documents WHERE parent_folder_id = ?1 AND type = 'file'
+                     )",
+                    params![folder_id_clone, new_id_clone],
+                )
+                .map_err(|e| format!("failed to propagate visibility: {}", e))?;
                 Ok(())
             });
             if let Err(e) = insert_result {

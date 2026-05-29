@@ -51,6 +51,13 @@ export function useKnowledgeBase() {
           }
           return prev
         }
+        // If a folder transitions to available, refresh the full list so child
+        // counts and newly added/removed files are reflected in the UI
+        const doc = prev[idx]
+        if (doc.docType === 'folder' && status === 'available') {
+          void refresh()
+          return prev
+        }
         const next = prev.slice()
         next[idx] = {
           ...next[idx],

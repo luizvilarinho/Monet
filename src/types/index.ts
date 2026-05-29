@@ -31,6 +31,7 @@ export type DocumentStatus = 'indexing' | 'available' | 'error'
 export interface Document {
   id: string
   name: string
+  originalPath?: string
   mime: string
   size: number
   status: DocumentStatus

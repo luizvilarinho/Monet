@@ -332,9 +332,14 @@
   color: var(--text-secondary, #a0a0b8);
 }
 
-.secondary:hover {
+.secondary:hover:not(:disabled) {
   color: var(--accent-warn, #ef9f27);
   border-color: var(--accent-warn, #ef9f27);
+}
+
+.secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .danger {

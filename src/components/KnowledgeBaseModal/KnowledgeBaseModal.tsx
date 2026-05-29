@@ -120,6 +120,7 @@ export function KnowledgeBaseModal({ open, onClose }: KnowledgeBaseModalProps) {
   }
 
   async function handleRescanFolder(folder: Document) {
+    setUploadError(null)
     try {
       await rescanFolder(folder.id)
     } catch (e) {
@@ -221,7 +222,7 @@ export function KnowledgeBaseModal({ open, onClose }: KnowledgeBaseModalProps) {
                     const childCount = documents.filter((d) => d.parentFolderId === folder.id).length
                     return (
                       <tr key={folder.id} className={styles.folderRow}>
-                        <td className={styles.cellName} title={folder.name}>
+                        <td className={styles.cellName} title={folder.originalPath ?? folder.name}>
                           {folder.name}
                         </td>
                         <td>
@@ -236,8 +237,9 @@ export function KnowledgeBaseModal({ open, onClose }: KnowledgeBaseModalProps) {
                             className={styles.secondary}
                             type="button"
                             onClick={() => handleRescanFolder(folder)}
+                            disabled={folder.status === 'indexing'}
                           >
-                            rescan
+                            {folder.status === 'indexing' ? 'scanning…' : 'rescan'}
                           </button>
                           <button
                             className={styles.danger}
