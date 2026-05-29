@@ -241,19 +241,36 @@ async fn deep_research_generate_sub_queries(
     query: String,
     snippets_summary: String,
     model: String,
+    current_date: String,
 ) -> Result<Vec<String>, String> {
     let key = read_key(&app, "openrouter_key")
         .ok_or_else(|| "OPENROUTER_KEY_MISSING".to_string())?;
 
+    let year = current_date.get(..4).unwrap_or("2025");
+
     let prompt = format!(
-        "You are a research query strategist. Given a user question and initial search results, generate 3 search queries that deliberately explore DIFFERENT angles not yet covered.\n\nUser question: {}\n\nInitial results already cover:\n{}\n\nAnalyze what dimensions are missing from the initial results (e.g. pricing, benchmarks, real-world usage, criticism, historical context, technical details, comparisons, case studies) and generate 3 queries that fill the most important gaps for this specific question.\n\nReturn ONLY a JSON array of 3 strings, nothing else.",
-        query, snippets_summary
+        "Current date: {current_date}\n\nYou are a research query strategist. Given a user question and the titles of initial search results, generate 3 search queries that fill the most important gaps not yet covered.\n\nUser question: {query}\n\nInitial results already cover:\n{snippets_summary}\n\nRules:\n1. Write queries as a search engine would receive them: short noun phrases with canonical terms. No filler words, no pronouns, no question syntax.\n2. Each query must target a meaningfully different angle — no overlapping with existing results or with each other.\n3. If the topic involves a named study, paper, or report — even if not explicitly asked — dedicate at least one query to finding the primary source (include author, institution, year, or terms like \"arxiv\", \"pdf\", \"paper\", \"doi\", \"journal\").\n4. Use the current year ({year}) or \"latest\" as a temporal signal when recency matters.\n5. Language: use English for global/technical topics; use the question's language for region-specific topics (local news, government, culture).\n\nCommon gap dimensions to consider: primary sources, criticism/limitations, alternative viewpoints, technical details, real-world applications, comparisons, historical context, recent developments.\n\nReturn a JSON object with a \"queries\" field containing an array of 3 strings, nothing else."
     );
 
     let body = serde_json::json!({
         "model": model,
         "messages": [{ "role": "user", "content": prompt }],
-        "max_tokens": 200,
+        "max_tokens": 400,
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "sub_queries",
+                "strict": true,
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "queries": { "type": "array", "items": { "type": "string" } }
+                    },
+                    "required": ["queries"],
+                    "additionalProperties": false
+                }
+            }
+        },
     });
 
     let client = reqwest::Client::new();
@@ -291,7 +308,10 @@ async fn deep_research_generate_sub_queries(
         .to_string();
 
     fn extract_strings(value: &serde_json::Value) -> Option<Vec<String>> {
-        let arr = value.as_array()?;
+        let arr = value
+            .get("queries")
+            .and_then(|q| q.as_array())
+            .or_else(|| value.as_array())?;
         let strings: Vec<String> = arr
             .iter()
             .filter_map(|v| v.as_str().map(|s| s.to_string()))
@@ -373,6 +393,143 @@ async fn deep_research_rerank(
         .collect();
 
     Ok(indices)
+}
+
+#[tauri::command]
+async fn web_search_route(
+    app: AppHandle,
+    history: Vec<serde_json::Value>,
+    last_message: String,
+    current_date: String,
+) -> Result<serde_json::Value, String> {
+    let key = read_key(&app, "openrouter_key")
+        .ok_or_else(|| "OPENROUTER_KEY_MISSING".to_string())?;
+
+    // Truncate fallback query to Tavily's ~400-char limit
+    let fallback_query: String = last_message.chars().take(380).collect();
+    let year = current_date.get(..4).unwrap_or("2025");
+
+    let system_prompt = format!("Current date: {current_date}\n\nYou are a search routing assistant. Your job is to analyze the conversation and the latest user message to decide whether a web search is needed, and if so, to generate optimal search queries.\n\n---\n\n## STEP 1 — Decide if search is needed\n\nSet \"needsSearch\": true if ANY of the following apply:\n- The question involves current events, recent news, live prices, or real-time data\n- The question implies recency (\"latest\", \"current\", \"now\", \"today\", \"this year\", \"recently\", \"just released\")\n- The question is about a specific person, company, product, library, framework, model, or technology that may have changed or evolved since training\n- The question requires verifying a specific fact, statistic, or claim\n- The question asks for documentation, changelogs, release notes, or API specs\n- The user shares or pastes external content (article, post, tweet, summary) that references a study, report, paper, or research finding — the implicit need is to locate and verify the original primary source\n- The answer cannot be reliably derived from the conversation context alone\n\nSet \"needsSearch\": false ONLY if the question is:\n- About programming language fundamentals (loops, data structures, algorithms, design patterns that haven't changed in years)\n- Purely mathematical or logical reasoning\n- Creative writing or brainstorming with no factual dependency\n- Already fully answerable from the conversation history\n\nWhen uncertain, prefer true — an unnecessary search is cheaper than a wrong answer.\n\n---\n\n## STEP 2 — Classify search intent\n\nClassify the question into one of these categories. This classification determines both query strategy and query count.\n\n| Intent       | Description                                      | Queries |\n|--------------|--------------------------------------------------|---------|\n| FACTUAL      | A specific fact, stat, definition, or claim       | 1-2     |\n| TECHNICAL    | Docs, APIs, configs, libraries, changelogs        | 2       |\n| COMPARATIVE  | Comparing tools, approaches, or options           | 2-3     |\n| NEWS         | Recent events, announcements, releases            | 2-3     |\n| EXPLORATORY  | Broad research, open-ended investigation          | 3-4     |\n| SOURCE_TRACE | Content shared by user references a study or      | 2-3     |\n|              | paper — goal is finding the original source       |         |\n\n---\n\n## STEP 3 — Generate queries\n\nRules:\n1. Write queries as a search engine would receive them: short noun phrases with canonical terms. No filler words, no pronouns, no question syntax.\n2. Each query must target a meaningfully different angle — no overlapping result sets.\n3. If the topic involves a named study, paper, or report — whether the user asks about it directly OR shares content that references it — dedicate at least one query to finding the primary source. Extract identifying details from the content (university, author names, institution, journal, year, sample size, key finding) and use them as query terms. Combine with source signals like \"arxiv\", \"pdf\", \"paper\", \"doi\", \"journal\", \"pubmed\", or the institution name.\n4. If the conversation has an established topic context, inherit it into the queries instead of generating generic ones.\n5. For follow-up questions, incorporate the established topic but generate fresh queries — do not repeat previous searches.\n6. Use the current year ({year}) or \"latest\" as a temporal signal when recency matters.\n7. Language: use English for global/technical topics; use the user's language for region-specific topics (local news, government, culture).\n\n### Query rewriting examples\n\nBAD:  \"does DeepSeek V3 support function calling?\"\nGOOD: \"DeepSeek V3 function calling support\"\n\nBAD:  \"what is the latest version of Angular?\"\nGOOD: \"Angular latest version {year} release\"\n\nBAD:  \"how to fix memory leaks in Angular\"\nGOOD: \"Angular memory leak fix takeUntilDestroyed\"\n\nBAD:  \"who is the current CEO of OpenAI?\"\nGOOD: \"OpenAI CEO {year}\"\n\n### Source tracing examples\n\nUser shares a post saying \"MIT researchers found that LLM agents fail 43% of multi-step tasks\":\n→ \"MIT LLM agents multi-step task failure rate paper {year}\"\n→ \"LLM agent reliability benchmark study arxiv\"\n\nUser shares an article mentioning \"a Stanford study showed 80% of developers using Copilot introduced more security vulnerabilities\":\n→ \"Stanford Copilot security vulnerabilities developer study\"\n→ \"AI code assistant security risk research paper pdf\"\n→ \"GitHub Copilot code quality security academic study\"\n\n---\n\n## OUTPUT\n\nReturn only valid JSON, no markdown, no explanation, no preamble.\n\n{{\"needsSearch\": true, \"intent\": \"FACTUAL\", \"queries\": [\"query1\", \"query2\"]}}\n\nIf needsSearch is false, set intent to null and queries to [].");
+
+    // Flatten history to text-only to avoid sending image base64 data to the routing model
+    let history_slice = if history.len() > 10 {
+        &history[history.len() - 10..]
+    } else {
+        &history[..]
+    };
+
+    fn extract_text_content(content: &serde_json::Value) -> String {
+        match content {
+            serde_json::Value::String(s) => s.clone(),
+            serde_json::Value::Array(blocks) => blocks
+                .iter()
+                .filter_map(|b| {
+                    if b.get("type").and_then(|t| t.as_str()) == Some("text") {
+                        b.get("text").and_then(|t| t.as_str()).map(|s| s.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" "),
+            _ => String::new(),
+        }
+    }
+
+    let text_history: Vec<serde_json::Value> = history_slice
+        .iter()
+        .filter_map(|msg| {
+            let role = msg.get("role")?.as_str()?;
+            let content = msg.get("content")?;
+            let text = extract_text_content(content);
+            if text.is_empty() {
+                return None;
+            }
+            Some(serde_json::json!({ "role": role, "content": text }))
+        })
+        .collect();
+
+    let mut messages = vec![serde_json::json!({ "role": "system", "content": &system_prompt })];
+    messages.extend(text_history);
+    messages.push(serde_json::json!({ "role": "user", "content": &last_message }));
+
+    let body = serde_json::json!({
+        "model": "openai/gpt-4.1-mini",
+        "messages": messages,
+        "max_tokens": 350,
+    });
+
+    let client = reqwest::Client::new();
+    let resp = match client
+        .post("https://openrouter.ai/api/v1/chat/completions")
+        .bearer_auth(&key)
+        .header("Content-Type", "application/json")
+        .header("HTTP-Referer", "https://monet.local")
+        .header("X-Title", "Monet")
+        .json(&body)
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(_) => return Ok(serde_json::json!({ "needsSearch": true, "queries": [fallback_query] })),
+    };
+
+    if !resp.status().is_success() {
+        return Ok(serde_json::json!({ "needsSearch": true, "queries": [fallback_query] }));
+    }
+
+    let data: serde_json::Value = match resp.json().await {
+        Ok(v) => v,
+        Err(_) => return Ok(serde_json::json!({ "needsSearch": true, "queries": [fallback_query] })),
+    };
+
+    let content = data
+        .get("choices")
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("message"))
+        .and_then(|m| m.get("content"))
+        .and_then(|c| c.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+
+    fn parse_route_json(s: &str) -> Option<serde_json::Value> {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(s) {
+            return Some(v);
+        }
+        // Fallback: extract first {...} substring for cases where the model wraps in markdown
+        if let (Some(start), Some(end)) = (s.find('{'), s.rfind('}')) {
+            if end > start {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s[start..=end]) {
+                    return Some(v);
+                }
+            }
+        }
+        None
+    }
+
+    if let Some(parsed) = parse_route_json(&content) {
+        let needs_search = parsed
+            .get("needsSearch")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let queries: Vec<String> = parsed
+            .get("queries")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(|s| s.chars().take(380).collect::<String>())
+                    .filter(|s| !s.is_empty())
+                    .take(3)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let queries = if queries.is_empty() { vec![fallback_query.clone()] } else { queries };
+        return Ok(serde_json::json!({ "needsSearch": needs_search, "queries": queries }));
+    }
+
+    Ok(serde_json::json!({ "needsSearch": true, "queries": [fallback_query] }))
 }
 
 #[derive(Deserialize)]
@@ -895,6 +1052,7 @@ pub fn run() {
             openrouter_cancel,
             deep_research_generate_sub_queries,
             deep_research_rerank,
+            web_search_route,
             export_markdown,
             vec_db::vec_db_smoke_test,
             documents::documents_upload_global,

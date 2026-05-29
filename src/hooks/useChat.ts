@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core'
 import { nanoid } from 'nanoid'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
@@ -1116,6 +1117,7 @@ export function useChat(): UseChatResult {
       setApiKeyChecked(true)
 
       // Busca web — deep research tem prioridade sobre web search simples
+      const currentDate = new Date().toISOString().slice(0, 10)
       let searchSystemMessage: ChatMessageInput | null = null
       if (toolsRef.current.deepResearch) {
         const tavilyOk = await hasTavilyKey()
@@ -1126,9 +1128,16 @@ export function useChat(): UseChatResult {
           return
         }
         try {
+          const route = await invoke<{ needsSearch: boolean; intent: string | null; queries: string[] }>(
+            'web_search_route',
+            { history: historyForApi, lastMessage: trimmed, currentDate }
+          ).catch(() => ({ needsSearch: true, intent: null, queries: [trimmed.slice(0, 380)] }))
+          const optimizedQuery = route.queries[0] ?? trimmed.slice(0, 380)
+
           const { formattedContext, sources } = await runDeepResearch(
-            trimmed,
-            (phase) => setDeepResearchPhase(phase)
+            optimizedQuery,
+            (phase) => setDeepResearchPhase(phase),
+            currentDate
           )
           setDeepResearchPhase('synthesizing')
           const sourceList = sources
@@ -1156,12 +1165,27 @@ export function useChat(): UseChatResult {
           return
         }
         try {
-          const results = await webSearch(trimmed)
-          const formatted = formatSearchResults(results)
-          if (formatted) {
-            searchSystemMessage = {
-              role: 'system',
-              content: `You have access to the following web search results. Use them to support your response and always cite sources with inline links in the format [Title](url), close to the claim each source supports. Do not group sources at the end — distribute citations throughout the text. Some results include an Image URL — only embed it using markdown image syntax \`![description](url)\` if the user explicitly asked to see or show images AND the URL appears verbatim in the search results above. Never invent, guess, or modify image URLs.\n\n${formatted}`,
+          const route = await invoke<{ needsSearch: boolean; intent: string | null; queries: string[] }>(
+            'web_search_route',
+            { history: historyForApi, lastMessage: trimmed, currentDate }
+          ).catch(() => ({ needsSearch: true, intent: null, queries: [trimmed.slice(0, 380)] }))
+
+          if (route.needsSearch && route.queries.length > 0) {
+            const allResults = await Promise.all(
+              route.queries.map((q) => webSearch(q, 3).catch(() => []))
+            )
+            const seen = new Set<string>()
+            const deduplicated = allResults.flat().filter((r) => {
+              if (seen.has(r.url)) return false
+              seen.add(r.url)
+              return true
+            })
+            const formatted = formatSearchResults(deduplicated)
+            if (formatted) {
+              searchSystemMessage = {
+                role: 'system',
+                content: `You have access to the following web search results. Use them to support your response and always cite sources with inline links in the format [Title](url), close to the claim each source supports. Do not group sources at the end — distribute citations throughout the text. Some results include an Image URL — only embed it using markdown image syntax \`![description](url)\` if the user explicitly asked to see or show images AND the URL appears verbatim in the search results above. Never invent, guess, or modify image URLs.\n\n${formatted}`,
+              }
             }
           }
         } catch (err) {
