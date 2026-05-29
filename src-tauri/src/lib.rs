@@ -834,6 +834,18 @@ pub fn run() {
             ",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 10,
+            description: "watched_folders_support",
+            sql: "
+                ALTER TABLE documents ADD COLUMN type TEXT NOT NULL DEFAULT 'file';
+                ALTER TABLE documents ADD COLUMN parent_folder_id TEXT;
+                ALTER TABLE documents ADD COLUMN last_modified_ms INTEGER;
+                ALTER TABLE documents ADD COLUMN is_external INTEGER NOT NULL DEFAULT 0;
+                CREATE INDEX IF NOT EXISTS idx_documents_type_folder ON documents(type, parent_folder_id);
+            ",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
@@ -852,6 +864,11 @@ pub fn run() {
             let cleanup_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 documents::cleanup_stuck_indexing(cleanup_handle).await;
+            });
+
+            let scan_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                documents::scan_all_watched_folders_on_startup(scan_handle).await;
             });
 
             Ok(())
@@ -889,6 +906,10 @@ pub fn run() {
             documents::documents_get_notebooks_with_visible_docs,
             documents::documents_search_by_ids,
             documents::documents_pick_file,
+            documents::documents_pick_folder,
+            documents::documents_add_watched_folder,
+            documents::documents_scan_watched_folder,
+            documents::documents_delete_watched_folder,
             documents::embed_text
         ])
         .run(tauri::generate_context!())

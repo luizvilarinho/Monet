@@ -37,6 +37,10 @@ export interface Document {
   errorMessage?: string
   createdAt: number
   updatedAt: number
+  docType: 'file' | 'folder'
+  parentFolderId?: string
+  lastModifiedMs?: number
+  isExternal: boolean
 }
 
 export type AiResponseStatus =

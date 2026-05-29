@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Document, DocumentStatus } from '../types'
 import {
+  documentsAddWatchedFolder,
   documentsDelete,
+  documentsDeleteWatchedFolder,
   documentsListGlobal,
   documentsReindex,
+  documentsScanWatchedFolder,
   documentsUploadGlobal,
   getNotebookVisibleDocumentIds,
   onDocumentStatus,
@@ -91,7 +94,28 @@ export function useKnowledgeBase() {
     setDocuments((prev) => prev.filter((d) => d.id !== documentId))
   }, [])
 
-  return { documents, loading, error, refresh, upload, reindex, remove }
+  const addFolder = useCallback(
+    async (folderPath: string) => {
+      const id = await documentsAddWatchedFolder(folderPath)
+      await refresh()
+      return id
+    },
+    [refresh],
+  )
+
+  const rescanFolder = useCallback(async (folderId: string) => {
+    await documentsScanWatchedFolder(folderId)
+  }, [])
+
+  const removeFolder = useCallback(
+    async (folderId: string) => {
+      await documentsDeleteWatchedFolder(folderId)
+      await refresh()
+    },
+    [refresh],
+  )
+
+  return { documents, loading, error, refresh, upload, reindex, remove, addFolder, rescanFolder, removeFolder }
 }
 
 // ─── useNotebookVisibility ────────────────────────────────────────────────────

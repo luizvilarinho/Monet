@@ -30,8 +30,10 @@ export async function documentsDelete(documentId: string): Promise<void> {
   await invoke('documents_delete', { documentId })
 }
 
-interface DocumentRaw extends Omit<Document, 'errorMessage'> {
+interface DocumentRaw extends Omit<Document, 'errorMessage' | 'parentFolderId' | 'lastModifiedMs'> {
   errorMessage: string | null
+  parentFolderId: string | null
+  lastModifiedMs: number | null
 }
 
 export async function documentsListGlobal(): Promise<Document[]> {
@@ -39,6 +41,8 @@ export async function documentsListGlobal(): Promise<Document[]> {
   return rows.map((d) => ({
     ...d,
     errorMessage: d.errorMessage ?? undefined,
+    parentFolderId: d.parentFolderId ?? undefined,
+    lastModifiedMs: d.lastModifiedMs ?? undefined,
   }))
 }
 
@@ -83,6 +87,23 @@ export async function embedText(text: string): Promise<number[]> {
 export async function pickDocumentFile(): Promise<string | null> {
   const result = await invoke<string | null>('documents_pick_file')
   return result ?? null
+}
+
+export async function pickDocumentFolder(): Promise<string | null> {
+  const result = await invoke<string | null>('documents_pick_folder')
+  return result ?? null
+}
+
+export async function documentsAddWatchedFolder(folderPath: string): Promise<string> {
+  return invoke<string>('documents_add_watched_folder', { folderPath })
+}
+
+export async function documentsScanWatchedFolder(folderId: string): Promise<void> {
+  await invoke('documents_scan_watched_folder', { folderId })
+}
+
+export async function documentsDeleteWatchedFolder(folderId: string): Promise<void> {
+  await invoke('documents_delete_watched_folder', { folderId })
 }
 
 export function onDocumentStatus(

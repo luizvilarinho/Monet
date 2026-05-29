@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import type { Document } from '../../types'
 import { useConfirm } from '../../hooks/useConfirm'
 import { useKnowledgeBase } from '../../hooks/useDocuments'
-import { pickDocumentFile } from '../../lib/documents'
+import { pickDocumentFile, pickDocumentFolder } from '../../lib/documents'
 import styles from './KnowledgeBaseModal.module.css'
 
 export interface KnowledgeBaseModalProps {
@@ -35,7 +35,7 @@ function StatusPill({ doc }: { doc: Document }) {
 }
 
 export function KnowledgeBaseModal({ open, onClose }: KnowledgeBaseModalProps) {
-  const { documents, loading, error, upload, reindex, remove } = useKnowledgeBase()
+  const { documents, loading, error, upload, reindex, remove, addFolder, rescanFolder, removeFolder } = useKnowledgeBase()
   const { confirm, modal: confirmModal } = useConfirm()
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
@@ -99,6 +99,50 @@ export function KnowledgeBaseModal({ open, onClose }: KnowledgeBaseModalProps) {
     }
   }
 
+  async function handleAddFolder() {
+    setUploadError(null)
+    let pickedPath: string | null = null
+    try {
+      pickedPath = await pickDocumentFolder()
+    } catch (e) {
+      setUploadError(e instanceof Error ? e.message : String(e))
+      return
+    }
+    if (!pickedPath) return
+    setUploading(true)
+    try {
+      await addFolder(pickedPath)
+    } catch (e) {
+      setUploadError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  async function handleRescanFolder(folder: Document) {
+    try {
+      await rescanFolder(folder.id)
+    } catch (e) {
+      setUploadError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  async function handleRemoveFolder(folder: Document) {
+    const ok = await confirm(
+      `Remove folder "${folder.name}"? All indexed files from this folder will be removed from all notebooks.`,
+      { title: 'Remove folder' },
+    )
+    if (!ok) return
+    try {
+      await removeFolder(folder.id)
+    } catch (e) {
+      setUploadError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  const folders = documents.filter((d) => d.docType === 'folder')
+  const standaloneFiles = documents.filter((d) => d.docType === 'file' && !d.parentFolderId)
+
   return createPortal(
     <>
       {confirmModal}
@@ -143,14 +187,24 @@ export function KnowledgeBaseModal({ open, onClose }: KnowledgeBaseModalProps) {
                 <p className={styles.emptyHelp}>
                   Add documents to use them as AI context in notebooks and chat folders.
                 </p>
-                <button
-                  className={styles.primary}
-                  type="button"
-                  onClick={handleUpload}
-                  disabled={uploading}
-                >
-                  {uploading ? 'uploading…' : '+ add document'}
-                </button>
+                <div className={styles.emptyActions}>
+                  <button
+                    className={styles.primary}
+                    type="button"
+                    onClick={handleUpload}
+                    disabled={uploading}
+                  >
+                    {uploading ? 'uploading…' : '+ add document'}
+                  </button>
+                  <button
+                    className={styles.primary}
+                    type="button"
+                    onClick={handleAddFolder}
+                    disabled={uploading}
+                  >
+                    + add folder
+                  </button>
+                </div>
               </div>
             ) : (
               <table className={styles.table}>
@@ -158,11 +212,46 @@ export function KnowledgeBaseModal({ open, onClose }: KnowledgeBaseModalProps) {
                   <tr>
                     <th className={styles.colName}>name</th>
                     <th className={styles.colStatus}>status</th>
+                    <th className={styles.colCount}>files</th>
                     <th className={styles.colActions}>actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {documents.map((doc) => (
+                  {folders.map((folder) => {
+                    const childCount = documents.filter((d) => d.parentFolderId === folder.id).length
+                    return (
+                      <tr key={folder.id} className={styles.folderRow}>
+                        <td className={styles.cellName} title={folder.name}>
+                          {folder.name}
+                        </td>
+                        <td>
+                          <StatusPill doc={folder} />
+                          {folder.status === 'error' && folder.errorMessage && (
+                            <span className={styles.errorMsg}>{folder.errorMessage}</span>
+                          )}
+                        </td>
+                        <td className={styles.cellCount}>{childCount}</td>
+                        <td className={styles.cellActions}>
+                          <button
+                            className={styles.secondary}
+                            type="button"
+                            onClick={() => handleRescanFolder(folder)}
+                          >
+                            rescan
+                          </button>
+                          <button
+                            className={styles.danger}
+                            type="button"
+                            onClick={() => handleRemoveFolder(folder)}
+                            aria-label={`remove folder ${folder.name}`}
+                          >
+                            remove
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                  {standaloneFiles.map((doc) => (
                     <tr key={doc.id}>
                       <td className={styles.cellName} title={doc.name}>
                         {doc.name}
@@ -173,6 +262,7 @@ export function KnowledgeBaseModal({ open, onClose }: KnowledgeBaseModalProps) {
                           <span className={styles.errorMsg}>{doc.errorMessage}</span>
                         )}
                       </td>
+                      <td className={styles.cellCount}>—</td>
                       <td className={styles.cellActions}>
                         {doc.status === 'error' && (
                           <button
@@ -206,14 +296,24 @@ export function KnowledgeBaseModal({ open, onClose }: KnowledgeBaseModalProps) {
               Indexing requires an internet connection.
             </p>
             {documents.length > 0 && (
-              <button
-                className={styles.primary}
-                type="button"
-                onClick={handleUpload}
-                disabled={uploading}
-              >
-                {uploading ? 'uploading…' : '+ add document'}
-              </button>
+              <div className={styles.footerActions}>
+                <button
+                  className={styles.primary}
+                  type="button"
+                  onClick={handleUpload}
+                  disabled={uploading}
+                >
+                  {uploading ? 'uploading…' : '+ add document'}
+                </button>
+                <button
+                  className={styles.primary}
+                  type="button"
+                  onClick={handleAddFolder}
+                  disabled={uploading}
+                >
+                  + add folder
+                </button>
+              </div>
             )}
           </footer>
         </div>
