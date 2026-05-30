@@ -51,11 +51,18 @@ export interface ChatMessageInput {
   content: string | ContentBlock[]
 }
 
+export interface StreamToolCallPayload {
+  requestId: string
+  toolName: string
+  argumentsJson: string
+}
+
 export interface StartStreamMessagesInput {
   requestId: string
   model: string
   messages: ChatMessageInput[]
   thinking?: boolean
+  tools?: object[]
 }
 
 export async function hasOpenRouterKey(): Promise<boolean> {
@@ -114,4 +121,10 @@ export function onOpenRouterError(
   handler: (p: StreamErrorPayload) => void
 ): Promise<UnlistenFn> {
   return listen<StreamErrorPayload>('openrouter://error', (e) => handler(e.payload))
+}
+
+export function onOpenRouterToolCall(
+  handler: (p: StreamToolCallPayload) => void
+): Promise<UnlistenFn> {
+  return listen<StreamToolCallPayload>('openrouter://tool_call', (e) => handler(e.payload))
 }

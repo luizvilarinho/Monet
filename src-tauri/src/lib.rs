@@ -49,6 +49,14 @@ struct StreamErrorEvent {
     message: String,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StreamToolCallEvent {
+    request_id: String,
+    tool_name: String,
+    arguments_json: String,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ModelInfo {
@@ -56,6 +64,7 @@ struct ModelInfo {
     name: String,
     description: Option<String>,
     supports_vision: bool,
+    supports_tools: bool,
 }
 
 #[derive(Deserialize)]
@@ -74,6 +83,7 @@ struct OpenRouterModel {
     name: Option<String>,
     description: Option<String>,
     architecture: Option<OpenRouterModelArchitecture>,
+    supported_parameters: Option<Vec<String>>,
 }
 
 fn key_file(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
@@ -224,11 +234,17 @@ async fn openrouter_list_models(app: AppHandle) -> Result<Vec<ModelInfo>, String
                 .and_then(|a| a.input_modalities.as_ref())
                 .map(|mods| mods.iter().any(|s| s == "image"))
                 .unwrap_or(false);
+            let supports_tools = m
+                .supported_parameters
+                .as_ref()
+                .map(|params| params.iter().any(|s| s == "tools"))
+                .unwrap_or(false);
             ModelInfo {
                 name: m.name.clone().unwrap_or_else(|| m.id.clone()),
                 id: m.id,
                 description: m.description,
                 supports_vision,
+                supports_tools,
             }
         })
         .collect();
@@ -545,6 +561,7 @@ fn spawn_openrouter_stream(
     model: String,
     messages: serde_json::Value,
     thinking: bool,
+    tools: Option<serde_json::Value>,
 ) -> Result<(), String> {
     if !is_valid_model_id(&model) {
         let _ = app.emit(
@@ -591,6 +608,7 @@ fn spawn_openrouter_stream(
             &model,
             messages,
             thinking,
+            tools,
             cancel_rx,
         )
         .await;
@@ -615,6 +633,9 @@ fn spawn_openrouter_stream(
             }
             Err(StreamError::Cancelled) => {
                 // nothing to emit: cancellation comes from the frontend
+            }
+            Err(StreamError::ToolCall) => {
+                // nothing to emit: frontend handles tool execution via openrouter://tool_call event
             }
             Err(StreamError::Failed { code, message }) => {
                 let _ = app_clone.emit(
@@ -645,7 +666,7 @@ async fn openrouter_stream_chat(
         { "role": "system", "content": system_prompt },
         { "role": "user", "content": user_message }
     ]);
-    spawn_openrouter_stream(app, registry, request_id, model, messages, false)
+    spawn_openrouter_stream(app, registry, request_id, model, messages, false, None)
 }
 
 #[tauri::command]
@@ -656,6 +677,7 @@ async fn openrouter_stream_messages(
     model: String,
     messages: Vec<ChatMessageInput>,
     thinking: Option<bool>,
+    tools: Option<serde_json::Value>,
 ) -> Result<(), String> {
     let messages_json: Vec<serde_json::Value> = messages
         .into_iter()
@@ -668,6 +690,7 @@ async fn openrouter_stream_messages(
         model,
         serde_json::Value::Array(messages_json),
         thinking.unwrap_or(false),
+        tools,
     )
 }
 
@@ -685,6 +708,7 @@ fn openrouter_cancel(
 
 enum StreamError {
     Cancelled,
+    ToolCall,
     Failed { code: String, message: String },
 }
 
@@ -695,6 +719,7 @@ async fn run_openrouter_stream(
     model: &str,
     messages: serde_json::Value,
     thinking: bool,
+    tools: Option<serde_json::Value>,
     mut cancel_rx: oneshot::Receiver<()>,
 ) -> Result<(u64,), StreamError> {
     let mut body = serde_json::json!({
@@ -704,6 +729,10 @@ async fn run_openrouter_stream(
     });
     if thinking {
         body["reasoning"] = serde_json::json!({ "max_tokens": 8000 });
+    }
+    if let Some(t) = tools {
+        body["tools"] = t;
+        body["tool_choice"] = serde_json::json!("auto");
     }
 
     let client = reqwest::Client::new();
@@ -734,6 +763,8 @@ async fn run_openrouter_stream(
     let mut stream = resp.bytes_stream();
     let mut buffer = String::new();
     let mut completion_tokens: u64 = 0;
+    let mut tool_call_name = String::new();
+    let mut tool_call_args = String::new();
 
     loop {
         tokio::select! {
@@ -827,6 +858,48 @@ async fn run_openrouter_stream(
                                 },
                             );
                         }
+                    }
+                    let finish_reason = value
+                        .get("choices")
+                        .and_then(|c| c.get(0))
+                        .and_then(|c| c.get("finish_reason"))
+                        .and_then(|f| f.as_str());
+                    if let Some(tool_call) = delta
+                        .and_then(|d| d.get("tool_calls"))
+                        .and_then(|tc| tc.get(0))
+                    {
+                        if let Some(name) = tool_call
+                            .get("function")
+                            .and_then(|f| f.get("name"))
+                            .and_then(|n| n.as_str())
+                        {
+                            if !name.is_empty() {
+                                tool_call_name = name.to_string();
+                            }
+                        }
+                        if let Some(args_chunk) = tool_call
+                            .get("function")
+                            .and_then(|f| f.get("arguments"))
+                            .and_then(|a| a.as_str())
+                        {
+                            tool_call_args.push_str(args_chunk);
+                        }
+                    }
+                    if finish_reason == Some("tool_calls") && !tool_call_name.is_empty() {
+                        let arguments_json = if tool_call_args.is_empty() {
+                            "{}".to_string()
+                        } else {
+                            tool_call_args.clone()
+                        };
+                        let _ = app.emit(
+                            "openrouter://tool_call",
+                            StreamToolCallEvent {
+                                request_id: request_id.to_string(),
+                                tool_name: tool_call_name.clone(),
+                                arguments_json,
+                            },
+                        );
+                        return Err(StreamError::ToolCall);
                     }
                 }
             }

@@ -577,6 +577,29 @@
   flex-shrink: 0;
 }
 
+/* Indicador de web search via tool use */
+.webSearchProgress {
+  font-size: 11px;
+  color: var(--accent-ai, #5dcaa5);
+  background: rgba(93, 202, 165, 0.07);
+  border: 1px solid rgba(93, 202, 165, 0.25);
+  border-radius: 4px;
+  padding: 5px 10px;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.webSearchDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-ai, #5dcaa5);
+  animation: chatPulse 1.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
 /* Aviso de vision incompativel */
 .visionWarning {
   font-size: 11px;

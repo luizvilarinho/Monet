@@ -51,6 +51,7 @@ export function ChatPanel({
     setTool,
     isStreaming,
     deepResearchPhase,
+    webSearchActive,
     thinkingEnabled,
     toggleThinking,
     error,
@@ -71,7 +72,7 @@ export function ChatPanel({
     reorderFolders,
     reorderInFolder,
     reorderLoose,
-  } = useChat()
+  } = useChat(models)
 
   const [draft, setDraft] = useState('')
   const [draftImage, setDraftImage] = useState<string | null>(null)
@@ -355,6 +356,12 @@ export function ChatPanel({
                 {deepResearchPhase === 'broadening' && 'Exploring related topics...'}
                 {deepResearchPhase === 'ranking' && 'Ranking results...'}
                 {deepResearchPhase === 'synthesizing' && 'Preparing synthesis...'}
+              </div>
+            )}
+            {webSearchActive && (
+              <div className={styles.webSearchProgress} role="status" aria-live="polite">
+                <span className={styles.webSearchDot} aria-hidden="true" />
+                Searching the web...
               </div>
             )}
             {visionWarning && (

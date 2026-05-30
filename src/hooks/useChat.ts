@@ -8,10 +8,13 @@ import {
   onOpenRouterDone,
   onOpenRouterError,
   onOpenRouterReasoning,
+  onOpenRouterToolCall,
   startOpenRouterStreamMessages,
   type ChatMessageInput,
   type ContentBlock,
+  type StreamToolCallPayload,
 } from '../lib/openrouter'
+import type { AiModel } from '../types'
 import { formatSearchResults, hasTavilyKey, webSearch } from '../lib/search'
 import { runDeepResearch, type DeepResearchPhase } from '../lib/deepResearch'
 
@@ -499,6 +502,7 @@ export interface UseChatResult {
   setTool: (key: keyof ChatTools, value: boolean) => void
   isStreaming: boolean
   deepResearchPhase: DeepResearchPhase | null
+  webSearchActive: boolean
   thinkingEnabled: boolean
   toggleThinking: () => void
   error: string | null
@@ -528,7 +532,7 @@ export interface UseChatResult {
   reorderLoose: (newOrder: string[]) => void
 }
 
-export function useChat(): UseChatResult {
+export function useChat(models: AiModel[] = []): UseChatResult {
   // Estado inicial reconciliado entre conversas + folders + looseOrder
   const [conversations, setConversations] = useState<ChatConversation[]>(() =>
     loadConversations()
@@ -562,6 +566,9 @@ export function useChat(): UseChatResult {
   const [apiKeyChecked, setApiKeyChecked] = useState<boolean>(false)
   const [isStreaming, setIsStreaming] = useState<boolean>(false)
   const [deepResearchPhase, setDeepResearchPhase] = useState<DeepResearchPhase | null>(null)
+  const [webSearchActive, setWebSearchActive] = useState<boolean>(false)
+  const toolCallHandlerRef = useRef<((p: StreamToolCallPayload) => void) | null>(null)
+  const toolCancelledRef = useRef<boolean>(false)
   const [thinkingEnabled, setThinkingEnabled] = useState<boolean>(false)
   const [error, setError] = useState<string | null>(null)
   const activeStreamRef = useRef<{
@@ -1000,9 +1007,11 @@ export function useChat(): UseChatResult {
               : m
           )
         )
+        toolCallHandlerRef.current = null
         activeStreamRef.current = null
         setIsStreaming(false)
         setDeepResearchPhase(null)
+        setWebSearchActive(false)
       })
       const err = await onOpenRouterError(({ requestId, message }) => {
         const stream = activeStreamRef.current
@@ -1015,18 +1024,22 @@ export function useChat(): UseChatResult {
           )
         )
         setError(message)
+        toolCallHandlerRef.current = null
         activeStreamRef.current = null
         setIsStreaming(false)
         setDeepResearchPhase(null)
+        setWebSearchActive(false)
       })
+      const toolCall = await onOpenRouterToolCall((p) => toolCallHandlerRef.current?.(p))
       if (cancelled) {
         chunk()
         reasoning()
         done()
         err()
+        toolCall()
         return
       }
-      unlisteners.push(chunk, reasoning, done, err)
+      unlisteners.push(chunk, reasoning, done, err, toolCall)
     })().catch((e) => console.error('failed to subscribe to openrouter events', e))
     return () => {
       cancelled = true
@@ -1044,6 +1057,7 @@ export function useChat(): UseChatResult {
         return
       }
       setError(null)
+      toolCancelledRef.current = false
 
       // Garante uma conversa ativa
       let convId = activeId
@@ -1102,6 +1116,7 @@ export function useChat(): UseChatResult {
         activeStreamRef.current = null
         setIsStreaming(false)
         setDeepResearchPhase(null)
+        setWebSearchActive(false)
       }
 
       const keyPresent = await hasOpenRouterKey()
@@ -1118,6 +1133,8 @@ export function useChat(): UseChatResult {
 
       // Busca web — deep research tem prioridade sobre web search simples
       const currentDate = new Date().toISOString().slice(0, 10)
+      const selectedModelInfo = models.find((m) => m.id === model)
+      const supportsTools = selectedModelInfo?.supportsTools ?? false
       let searchSystemMessage: ChatMessageInput | null = null
       if (toolsRef.current.deepResearch) {
         const tavilyOk = await hasTavilyKey()
@@ -1127,34 +1144,36 @@ export function useChat(): UseChatResult {
           )
           return
         }
-        try {
-          const route = await invoke<{ needsSearch: boolean; intent: string | null; queries: string[] }>(
-            'web_search_route',
-            { history: historyForApi, lastMessage: trimmed, currentDate }
-          ).catch(() => ({ needsSearch: true, intent: null, queries: [trimmed.slice(0, 380)] }))
-          const optimizedQuery = route.queries[0] ?? trimmed.slice(0, 380)
+        if (!supportsTools) {
+          try {
+            const route = await invoke<{ needsSearch: boolean; intent: string | null; queries: string[] }>(
+              'web_search_route',
+              { history: historyForApi, lastMessage: trimmed, currentDate }
+            ).catch(() => ({ needsSearch: true, intent: null, queries: [trimmed.slice(0, 380)] }))
+            const optimizedQuery = route.queries[0] ?? trimmed.slice(0, 380)
 
-          const { formattedContext, sources } = await runDeepResearch(
-            optimizedQuery,
-            (phase) => setDeepResearchPhase(phase),
-            currentDate
-          )
-          setDeepResearchPhase('synthesizing')
-          const sourceList = sources
-            .map((s, i) => `${i + 1}. [${s.title}](${s.url})`)
-            .join('\n')
-          if (formattedContext) {
-            searchSystemMessage = {
-              role: 'system',
-              content: `You have access to the following deeply researched web sources. Synthesize them into a complete, well-structured answer. At the end of your response add a "Sources" section with these references:\n\n${sourceList}\n\n---\n\nResearch results:\n\n${formattedContext}`,
+            const { formattedContext, sources } = await runDeepResearch(
+              optimizedQuery,
+              (phase) => setDeepResearchPhase(phase),
+              currentDate
+            )
+            setDeepResearchPhase('synthesizing')
+            const sourceList = sources
+              .map((s, i) => `${i + 1}. [${s.title}](${s.url})`)
+              .join('\n')
+            if (formattedContext) {
+              searchSystemMessage = {
+                role: 'system',
+                content: `You have access to the following deeply researched web sources. Synthesize them into a complete, well-structured answer. At the end of your response add a "Sources" section with these references:\n\n${sourceList}\n\n---\n\nResearch results:\n\n${formattedContext}`,
+              }
             }
+          } catch (err) {
+            setDeepResearchPhase(null)
+            console.warn('deepResearch failed:', err)
+            setError(
+              `Deep Research failed: ${err instanceof Error ? err.message : 'unknown error'}. Sending without search context.`
+            )
           }
-        } catch (err) {
-          setDeepResearchPhase(null)
-          console.warn('deepResearch failed:', err)
-          setError(
-            `Deep Research failed: ${err instanceof Error ? err.message : 'unknown error'}. Sending without search context.`
-          )
         }
       } else if (toolsRef.current.webSearch) {
         const tavilyOk = await hasTavilyKey()
@@ -1164,35 +1183,37 @@ export function useChat(): UseChatResult {
           )
           return
         }
-        try {
-          const route = await invoke<{ needsSearch: boolean; intent: string | null; queries: string[] }>(
-            'web_search_route',
-            { history: historyForApi, lastMessage: trimmed, currentDate }
-          ).catch(() => ({ needsSearch: true, intent: null, queries: [trimmed.slice(0, 380)] }))
+        if (!supportsTools) {
+          try {
+            const route = await invoke<{ needsSearch: boolean; intent: string | null; queries: string[] }>(
+              'web_search_route',
+              { history: historyForApi, lastMessage: trimmed, currentDate }
+            ).catch(() => ({ needsSearch: true, intent: null, queries: [trimmed.slice(0, 380)] }))
 
-          if (route.needsSearch && route.queries.length > 0) {
-            const allResults = await Promise.all(
-              route.queries.map((q) => webSearch(q, 3).catch(() => []))
-            )
-            const seen = new Set<string>()
-            const deduplicated = allResults.flat().filter((r) => {
-              if (seen.has(r.url)) return false
-              seen.add(r.url)
-              return true
-            })
-            const formatted = formatSearchResults(deduplicated)
-            if (formatted) {
-              searchSystemMessage = {
-                role: 'system',
-                content: `You have access to the following web search results. Use them to support your response and always cite sources with inline links in the format [Title](url), close to the claim each source supports. Do not group sources at the end — distribute citations throughout the text. Some results include an Image URL — only embed it using markdown image syntax \`![description](url)\` if the user explicitly asked to see or show images AND the URL appears verbatim in the search results above. Never invent, guess, or modify image URLs.\n\n${formatted}`,
+            if (route.needsSearch && route.queries.length > 0) {
+              const allResults = await Promise.all(
+                route.queries.map((q) => webSearch(q, 3).catch(() => []))
+              )
+              const seen = new Set<string>()
+              const deduplicated = allResults.flat().filter((r) => {
+                if (seen.has(r.url)) return false
+                seen.add(r.url)
+                return true
+              })
+              const formatted = formatSearchResults(deduplicated)
+              if (formatted) {
+                searchSystemMessage = {
+                  role: 'system',
+                  content: `You have access to the following web search results. Use them to support your response and always cite sources with inline links in the format [Title](url), close to the claim each source supports. Do not group sources at the end — distribute citations throughout the text. Some results include an Image URL — only embed it using markdown image syntax \`![description](url)\` if the user explicitly asked to see or show images AND the URL appears verbatim in the search results above. Never invent, guess, or modify image URLs.\n\n${formatted}`,
+                }
               }
             }
+          } catch (err) {
+            console.warn('webSearch failed:', err)
+            setError(
+              `Web search failed: ${err instanceof Error ? err.message : 'unknown error'}. Sending without search context.`
+            )
           }
-        } catch (err) {
-          console.warn('webSearch failed:', err)
-          setError(
-            `Web search failed: ${err instanceof Error ? err.message : 'unknown error'}. Sending without search context.`
-          )
         }
       }
 
@@ -1217,6 +1238,7 @@ export function useChat(): UseChatResult {
       } else {
         systemMessages = [{ role: 'system', content: CHAT_SYSTEM_PROMPT }]
       }
+      systemMessages.push({ role: 'system', content: `Current date: ${currentDate}` })
 
       // RAG context for folder documents
       let ragSystemMessage: ChatMessageInput | null = null
@@ -1259,12 +1281,166 @@ export function useChat(): UseChatResult {
       const requestId = assistantId
       activeStreamRef.current = { requestId, convId: targetId, assistantId, model }
 
+      // Build tool definitions for models that support tool use
+      const deepResearchToolParameters = {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'A keyword search query rewritten for a search engine. Use canonical noun phrases only — no filler words, no pronouns, no verbs, no question syntax, no conversational language. Extract the core topic and rewrite it as 3–8 keywords. Examples: user says "busque as últimas edições de Lord Jim em português" → "Lord Jim Conrad edição portuguesa 2026"; user says "how to fix memory leaks in Angular" → "Angular memory leak fix takeUntilDestroyed"; user says "who is the CEO of OpenAI now?" → "OpenAI CEO 2026".',
+            maxLength: 80,
+          },
+        },
+        required: ['query'],
+      }
+      const webSearchToolParameters = {
+        type: 'object',
+        properties: {
+          queries: {
+            type: 'array',
+            description: 'A list of 1 to 3 keyword search queries covering different angles of the topic. Each query must use canonical noun phrases only — no filler words, no pronouns, no verbs, no question syntax, no conversational language. Extract the core topic and rewrite it as 3–8 keywords per query. Use multiple queries when the topic has distinct facets worth searching separately; use a single query for straightforward lookups. Examples: user says "busque as últimas edições de Lord Jim em português" → ["Lord Jim Conrad edição portuguesa 2026"]; user says "compare React Server Components and Next.js App Router" → ["React Server Components 2026", "Next.js App Router architecture", "RSC vs App Router differences"].',
+            items: { type: 'string', maxLength: 80 },
+            minItems: 1,
+            maxItems: 3,
+          },
+        },
+        required: ['queries'],
+      }
+      let toolsPayload: object[] | undefined
+      if (supportsTools && (toolsRef.current.deepResearch || toolsRef.current.webSearch)) {
+        const tavilyOk = await hasTavilyKey()
+        if (tavilyOk) {
+          if (toolsRef.current.deepResearch) {
+            toolsPayload = [
+              {
+                type: 'function',
+                function: {
+                  name: 'deep_research',
+                  description: 'Perform deep multi-source web research. IMPORTANT: the query argument must be a short keyword search string (3–8 words), NOT the user\'s message verbatim. Rewrite the topic as a search engine query: canonical noun phrases only, no filler words, no pronouns, no verbs, no question syntax.',
+                  parameters: deepResearchToolParameters,
+                },
+              },
+            ]
+          } else if (toolsRef.current.webSearch) {
+            toolsPayload = [
+              {
+                type: 'function',
+                function: {
+                  name: 'web_search',
+                  description: 'Search the web for current information. IMPORTANT: pass 1 to 3 short keyword search queries (3–8 words each), NOT the user\'s message verbatim. Rewrite the topic as search engine queries: canonical noun phrases only, no filler words, no pronouns, no verbs, no question syntax. Use multiple queries when the topic has distinct facets worth searching separately.',
+                  parameters: webSearchToolParameters,
+                },
+              },
+            ]
+          }
+        }
+      }
+
+      // Register tool call handler for this turn
+      if (toolsPayload) {
+        toolCallHandlerRef.current = async (p: StreamToolCallPayload) => {
+          if (p.requestId !== requestId) return
+          if (!activeStreamRef.current) return
+
+          let parsedArgs: { query?: string; queries?: unknown } = {}
+          try {
+            parsedArgs = JSON.parse(p.argumentsJson) as { query?: string; queries?: unknown }
+          } catch {
+            /* fallback handled per-tool below */
+          }
+
+          // Clear streaming state while tool executes
+          activeStreamRef.current = null
+          setIsStreaming(false)
+
+          try {
+            let toolSearchMessage: ChatMessageInput | null = null
+            if (p.toolName === 'deep_research') {
+              const query = parsedArgs.query?.trim() || trimmed.slice(0, 380)
+              setDeepResearchPhase('searching')
+              const { formattedContext, sources } = await runDeepResearch(
+                query,
+                (phase) => setDeepResearchPhase(phase),
+                currentDate
+              )
+              setDeepResearchPhase('synthesizing')
+              const sourceList = sources
+                .map((s, i) => `${i + 1}. [${s.title}](${s.url})`)
+                .join('\n')
+              if (formattedContext) {
+                toolSearchMessage = {
+                  role: 'system',
+                  content: `You have access to the following deeply researched web sources. Synthesize them into a complete, well-structured answer. At the end of your response add a "Sources" section with these references:\n\n${sourceList}\n\n---\n\nResearch results:\n\n${formattedContext}`,
+                }
+              }
+              setDeepResearchPhase(null)
+            } else if (p.toolName === 'web_search') {
+              const rawQueries = Array.isArray(parsedArgs.queries)
+                ? (parsedArgs.queries as unknown[]).filter(
+                    (q): q is string => typeof q === 'string' && q.trim().length > 0
+                  ).map((q) => q.trim()).slice(0, 3)
+                : []
+              const queries = rawQueries.length > 0 ? rawQueries : [trimmed.slice(0, 380)]
+              setWebSearchActive(true)
+              const allResults = await Promise.all(
+                queries.map((q) => webSearch(q, 3).catch(() => []))
+              )
+              const seen = new Set<string>()
+              const deduplicated = allResults.flat().filter((r) => {
+                if (seen.has(r.url)) return false
+                seen.add(r.url)
+                return true
+              })
+              const formatted = formatSearchResults(deduplicated)
+              if (formatted) {
+                toolSearchMessage = {
+                  role: 'system',
+                  content: `You have access to the following web search results. Use them to support your response and always cite sources with inline links in the format [Title](url), close to the claim each source supports. Do not group sources at the end — distribute citations throughout the text. Some results include an Image URL — only embed it using markdown image syntax \`![description](url)\` if the user explicitly asked to see or show images AND the URL appears verbatim in the search results above. Never invent, guess, or modify image URLs.\n\n${formatted}`,
+                }
+              }
+              setWebSearchActive(false)
+            }
+
+            if (toolCancelledRef.current) {
+              toolCallHandlerRef.current = null
+              return
+            }
+
+            const toolApiMessages: ChatMessageInput[] = [
+              ...systemMessages,
+              ...(ragSystemMessage ? [ragSystemMessage] : []),
+              ...(toolSearchMessage ? [toolSearchMessage] : []),
+              ...historyForApi,
+              { role: 'user', content: userContent },
+            ]
+
+            const requestId2 = crypto.randomUUID()
+            activeStreamRef.current = { requestId: requestId2, convId: targetId, assistantId, model }
+            setIsStreaming(true)
+            toolCallHandlerRef.current = null
+
+            await startOpenRouterStreamMessages({
+              requestId: requestId2,
+              model,
+              messages: toolApiMessages,
+              thinking: thinkingEnabled,
+            })
+          } catch (toolErr) {
+            toolCallHandlerRef.current = null
+            const message =
+              toolErr instanceof Error ? toolErr.message : String(toolErr ?? 'unknown error')
+            failOnAssistant(message)
+          }
+        }
+      }
+
       try {
         await startOpenRouterStreamMessages({
           requestId,
           model,
           messages: apiMessages,
           thinking: thinkingEnabled,
+          tools: toolsPayload,
         })
       } catch (err) {
         const message =
@@ -1272,7 +1448,7 @@ export function useChat(): UseChatResult {
         failOnAssistant(message)
       }
     },
-    [activeId, isStreaming, model, setLooseOrder, updateMessages, thinkingEnabled]
+    [activeId, isStreaming, model, models, setLooseOrder, updateMessages, thinkingEnabled]
   )
 
   useEffect(() => {
@@ -1288,6 +1464,12 @@ export function useChat(): UseChatResult {
   }, [])
 
   const cancel = useCallback(() => {
+    // Signal tool handler to abort even if activeStreamRef is null (tool executing)
+    toolCancelledRef.current = true
+    toolCallHandlerRef.current = null
+    setDeepResearchPhase(null)
+    setWebSearchActive(false)
+
     const stream = activeStreamRef.current
     if (!stream) return
     void cancelOpenRouterStream(stream.requestId)
@@ -1300,7 +1482,6 @@ export function useChat(): UseChatResult {
     })
     activeStreamRef.current = null
     setIsStreaming(false)
-    setDeepResearchPhase(null)
   }, [updateMessages])
 
   const activeConversation =
@@ -1323,6 +1504,7 @@ export function useChat(): UseChatResult {
     setTool,
     isStreaming,
     deepResearchPhase,
+    webSearchActive,
     thinkingEnabled,
     toggleThinking: () => setThinkingEnabled((v) => !v),
     error,
