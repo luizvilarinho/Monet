@@ -31,6 +31,7 @@ Se o `codeAgent` receber um relatório do `codereviewAgent`, ele deve ler o rela
 - Faça os ajustes que julgar necessários com base no relatório e no contexto da tarefa
 - Não aplique automaticamente toda observação do review sem avaliar se ela é válida para o escopo
 - Se concluir que um ponto do review não deve ser implementado, informe isso objetivamente ao Orquestrador no resumo final
+- Dead code pode ser removido afim de deixar o código limpo e fácil de manter
 - Ao concluir essa passada final, informe também o que ficou para trás após a análise do review
 - Essa é a etapa final de ajuste. Não inicie nova rodada de revisão por conta própria
 

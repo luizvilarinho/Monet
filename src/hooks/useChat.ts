@@ -100,6 +100,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   imageDataUrl?: string
+  attachedDocs?: Array<{ name: string; path: string }>
   timestamp: string
   model?: string
   tokensPerSecond?: number
@@ -272,7 +273,7 @@ function saveConversations(list: ChatConversation[]) {
       ...c,
       messages: c.messages.map((m) => {
         if (!m.imageDataUrl) return m
-        const { imageDataUrl: _, ...rest } = m
+        const { imageDataUrl: _img, ...rest } = m
         return rest
       }),
     }))
@@ -506,7 +507,7 @@ export interface UseChatResult {
   thinkingEnabled: boolean
   toggleThinking: () => void
   error: string | null
-  send: (text: string, imageDataUrl?: string) => Promise<void>
+  send: (text: string, imageDataUrl?: string, documents?: Array<{ name: string; type: string; data: string }>) => Promise<void>
   cancel: () => void
   selectConversation: (id: string) => void
   newConversation: () => void
@@ -708,6 +709,17 @@ export function useChat(models: AiModel[] = []): UseChatResult {
 
   const deleteConversation = useCallback(
     (id: string) => {
+      // Limpa arquivos de documentos anexados antes de remover do estado
+      const conv = conversationsRef.current.find((c) => c.id === id)
+      if (conv) {
+        for (const msg of conv.messages) {
+          for (const doc of msg.attachedDocs ?? []) {
+            void invoke('delete_chat_doc', { path: doc.path }).catch(() => {
+              /* ignorar erros */
+            })
+          }
+        }
+      }
       setConversations((prev) => prev.filter((c) => c.id !== id))
       setFolders((prev) =>
         prev.map((f) =>
@@ -755,6 +767,17 @@ export function useChat(models: AiModel[] = []): UseChatResult {
       const folder = foldersRef.current.find((f) => f.id === id)
       if (!folder) return
       const convIdsToDelete = new Set(folder.conversationIds)
+      // Limpa arquivos de documentos anexados das conversas que serao apagadas
+      for (const conv of conversationsRef.current) {
+        if (!convIdsToDelete.has(conv.id)) continue
+        for (const msg of conv.messages) {
+          for (const doc of msg.attachedDocs ?? []) {
+            void invoke('delete_chat_doc', { path: doc.path }).catch(() => {
+              /* ignorar erros */
+            })
+          }
+        }
+      }
       setConversations((prev) =>
         prev.filter((c) => !convIdsToDelete.has(c.id))
       )
@@ -1048,9 +1071,9 @@ export function useChat(models: AiModel[] = []): UseChatResult {
   }, [updateMessages])
 
   const send = useCallback(
-    async (text: string, imageDataUrl?: string) => {
+    async (text: string, imageDataUrl?: string, documents?: Array<{ name: string; type: string; data: string }>) => {
       const trimmed = text.trim()
-      if (!trimmed && !imageDataUrl) return
+      if (!trimmed && !imageDataUrl && (!documents || documents.length === 0)) return
       if (isStreaming) return
       if (!model) {
         setError('Select a model before sending.')
@@ -1072,26 +1095,68 @@ export function useChat(models: AiModel[] = []): UseChatResult {
 
       // Captura o historico ANTES de inserir a nova mensagem do usuario,
       // senao ela apareceria duplicada no payload (no historico + na ultima msg).
+      // Documentos anexados sao armazenados como paths no filesystem; ler conteudo
+      // a partir do disco para mensagens antigas (paralelo via Promise.all).
       const currentConv = conversationsRef.current.find((c) => c.id === targetId)
-      const historyForApi: ChatMessageInput[] =
-        currentConv?.messages.map((m) => ({
-          role: m.role,
-          content: m.imageDataUrl
-            ? ([
-                { type: 'image_url', image_url: { url: m.imageDataUrl } },
-                { type: 'text', text: m.content },
-              ] as ContentBlock[])
-            : m.content,
-        })) ?? []
+      const historyForApi: ChatMessageInput[] = await Promise.all(
+        (currentConv?.messages ?? []).map(async (m) => {
+          const docBlocks: ContentBlock[] = m.attachedDocs && m.attachedDocs.length > 0
+            ? await Promise.all(
+                m.attachedDocs.map(async (d) => {
+                  const content = await invoke<string>('read_chat_doc', { path: d.path }).catch(() => '[content unavailable]')
+                  return { type: 'text' as const, text: `[Attached file: ${d.name}]\n${content}` }
+                })
+              )
+            : []
+          const hasExtras = docBlocks.length > 0 || !!m.imageDataUrl
+          return {
+            role: m.role,
+            content: hasExtras
+              ? ([
+                  ...docBlocks,
+                  ...(m.imageDataUrl ? [{ type: 'image_url' as const, image_url: { url: m.imageDataUrl } }] : []),
+                  { type: 'text' as const, text: m.content },
+                ] as ContentBlock[])
+              : m.content,
+          }
+        })
+      )
+
+      // Verifica chave antes de persistir arquivos: evita leak de docs no disco
+      // quando a chave nao esta configurada.
+      const keyPresent = await hasOpenRouterKey()
+      if (!keyPresent) {
+        setHasApiKey(false)
+        setApiKeyChecked(true)
+        setError('API key not configured. Add your OpenRouter key in Settings.')
+        return
+      }
+      setHasApiKey(true)
+      setApiKeyChecked(true)
+
+      // Persiste os documentos anexados no filesystem para sobreviver ao reload da
+      // app. Apenas o path eh armazenado no ChatMessage.
+      const persistedDocs: Array<{ name: string; path: string }> = documents && documents.length > 0
+        ? await Promise.all(
+            documents.map(async (d) => {
+              const path = await invoke<string>('save_chat_doc', {
+                filename: `${nanoid()}.txt`,
+                content: d.data,
+              })
+              return { name: d.name, path }
+            })
+          )
+        : []
 
       // Insere a mensagem do usuario + placeholder do assistant ANTES dos awaits
-      // (chave de API, web search) para a UI responder imediatamente. Erros sao
-      // refletidos no proprio placeholder do assistant.
+      // (web search) para a UI responder imediatamente. Erros sao refletidos no
+      // proprio placeholder do assistant.
       const userMsg: ChatMessage = {
         id: nanoid(),
         role: 'user',
         content: trimmed,
         imageDataUrl: imageDataUrl || undefined,
+        attachedDocs: persistedDocs.length > 0 ? persistedDocs : undefined,
         timestamp: new Date().toISOString(),
       }
       const assistantId = nanoid()
@@ -1118,18 +1183,6 @@ export function useChat(models: AiModel[] = []): UseChatResult {
         setDeepResearchPhase(null)
         setWebSearchActive(false)
       }
-
-      const keyPresent = await hasOpenRouterKey()
-      if (!keyPresent) {
-        setHasApiKey(false)
-        setApiKeyChecked(true)
-        failOnAssistant(
-          'API key not configured. Add your OpenRouter key in Settings.'
-        )
-        return
-      }
-      setHasApiKey(true)
-      setApiKeyChecked(true)
 
       // Busca web — deep research tem prioridade sobre web search simples
       const currentDate = new Date().toISOString().slice(0, 10)
@@ -1263,12 +1316,21 @@ export function useChat(models: AiModel[] = []): UseChatResult {
         }
       }
 
-      const userContent: string | ContentBlock[] = imageDataUrl
-        ? [
-            { type: 'image_url', image_url: { url: imageDataUrl } },
-            { type: 'text', text: trimmed },
-          ]
-        : trimmed
+      // Documents arrive here already converted to plain text by ChatPanel
+      // (PDFs have their text extracted in the backend before reaching send).
+      // They are sent inline so any model can process them.
+      const docBlocks: ContentBlock[] = (documents ?? []).map((doc) => ({
+        type: 'text' as const,
+        text: `[Attached file: ${doc.name}]\n${doc.data}`,
+      }))
+      const userContent: string | ContentBlock[] =
+        imageDataUrl || docBlocks.length > 0
+          ? [
+              ...docBlocks,
+              ...(imageDataUrl ? [{ type: 'image_url' as const, image_url: { url: imageDataUrl } }] : []),
+              { type: 'text' as const, text: trimmed },
+            ]
+          : trimmed
 
       const apiMessages: ChatMessageInput[] = [
         ...systemMessages,

@@ -160,6 +160,74 @@ fn get_tavily_key(app: AppHandle) -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
+async fn extract_pdf_text(bytes: Vec<u8>) -> Result<String, String> {
+    let join = tokio::task::spawn_blocking(move || pdf_extract::extract_text_from_mem(&bytes)).await;
+    let text = match join {
+        Err(e) if e.is_panic() => {
+            return Err("Corrupted PDF or unsupported format".into());
+        }
+        Err(e) => {
+            eprintln!("pdf_extract join error: {}", e);
+            return Err("Failed to process PDF".into());
+        }
+        Ok(Err(e)) => {
+            eprintln!("pdf_extract error: {}", e);
+            return Err("Corrupted PDF or unsupported format".into());
+        }
+        Ok(Ok(t)) => t,
+    };
+    if text.trim().is_empty() {
+        return Err("PDF has no extractable text (may be scanned)".into());
+    }
+    Ok(text)
+}
+
+#[tauri::command]
+async fn save_chat_doc(app: AppHandle, filename: String, content: String) -> Result<String, String> {
+    let data_dir = app.path().app_local_data_dir().map_err(|e| e.to_string())?;
+    let docs_dir = data_dir.join("chat-docs");
+    std::fs::create_dir_all(&docs_dir).map_err(|e| e.to_string())?;
+    let file_path = docs_dir.join(&filename);
+    std::fs::write(&file_path, &content).map_err(|e| e.to_string())?;
+    Ok(file_path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+async fn read_chat_doc(app: AppHandle, path: String) -> Result<String, String> {
+    let data_dir = app.path().app_local_data_dir().map_err(|e| e.to_string())?;
+    let docs_dir = data_dir.join("chat-docs");
+    let canonical_path = std::path::Path::new(&path)
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    let canonical_docs = docs_dir
+        .canonicalize()
+        .unwrap_or_else(|_| docs_dir.clone());
+    if !canonical_path.starts_with(&canonical_docs) {
+        return Err("Access denied: path is outside chat-docs directory".into());
+    }
+    std::fs::read_to_string(&canonical_path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn delete_chat_doc(app: AppHandle, path: String) -> Result<(), String> {
+    let data_dir = app.path().app_local_data_dir().map_err(|e| e.to_string())?;
+    let docs_dir = data_dir.join("chat-docs");
+    let p = std::path::Path::new(&path);
+    if !p.exists() {
+        return Ok(());
+    }
+    let canonical_path = p.canonicalize().map_err(|e| e.to_string())?;
+    let canonical_docs = docs_dir
+        .canonicalize()
+        .unwrap_or_else(|_| docs_dir.clone());
+    if !canonical_path.starts_with(&canonical_docs) {
+        return Err("Access denied: path is outside chat-docs directory".into());
+    }
+    std::fs::remove_file(&canonical_path).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 async fn export_markdown(default_name: String, content: String) -> Result<bool, String> {
     let result = tokio::task::spawn_blocking(move || {
         rfd::FileDialog::new()
@@ -1126,6 +1194,10 @@ pub fn run() {
             deep_research_generate_sub_queries,
             deep_research_rerank,
             web_search_route,
+            extract_pdf_text,
+            save_chat_doc,
+            read_chat_doc,
+            delete_chat_doc,
             export_markdown,
             vec_db::vec_db_smoke_test,
             documents::documents_upload_global,

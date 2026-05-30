@@ -430,6 +430,46 @@
   background: rgba(93, 202, 165, 0.15);
 }
 
+.deepResearchIcon {
+  width: 25px;
+  height: 15px;
+  flex-shrink: 0;
+}
+
+.deepResearchBtn,
+.deepResearchBtnOn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: auto;
+  padding: 0 10px;
+  height: 32px;
+  border-radius: 6px;
+  background: transparent;
+  border: 1px solid var(--border, #333340);
+  color: var(--text-muted, #606070);
+  font-size: 12px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.deepResearchBtn:hover {
+  color: var(--text-secondary, #a0a0b8);
+  border-color: var(--text-secondary, #a0a0b8);
+}
+
+.deepResearchBtnOn {
+  color: var(--accent-ai, #5dcaa5);
+  border-color: var(--accent-ai, #5dcaa5);
+  background: rgba(93, 202, 165, 0.08);
+}
+
+.deepResearchBtnOn:hover {
+  background: rgba(93, 202, 165, 0.15);
+}
+
 .assistantActions {
   display: flex;
   align-items: center;
@@ -513,6 +553,50 @@
 .scrollBtn:hover {
   color: var(--text-primary, #e8e8f0);
   border-color: var(--accent, #7c6af5);
+}
+
+/* Container de previews de anexos */
+.attachmentPreviews {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 4px;
+  align-items: flex-start;
+}
+
+/* Pill de documento anexado */
+.docPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface-2, #26262c);
+  border: 1px solid var(--border, #333340);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--text-secondary, #a0a0b8);
+  max-width: 200px;
+}
+
+.docPillName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.docPillRemove {
+  background: transparent;
+  border: none;
+  color: var(--text-muted, #606070);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.docPillRemove:hover {
+  color: var(--text-primary, #e8e8f0);
 }
 
 /* Preview de imagem no composer */
@@ -635,6 +719,46 @@
 .attachBtn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+/* Wrapper para mensagem do usuario com docs anexados */
+.bubbleUserWrapper {
+  max-width: 70%;
+  align-self: flex-end;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+/* Label de documentos anexados acima da bolha do usuario */
+.msgDocLabel {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.msgDocChip {
+  background: var(--surface-2, #26262c);
+  border: 1px solid var(--border, #333340);
+  border-radius: 4px;
+  color: var(--text-muted, #606070);
+  font-size: 11px;
+  padding: 2px 7px;
+}
+
+/* Indicador de processamento de PDF */
+.pdfProcessing {
+  font-size: 11px;
+  color: var(--text-muted, #606070);
+  padding: 4px 0;
+  animation: pdfPulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pdfPulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
 }
 
 /* Imagem em mensagem do usuario */

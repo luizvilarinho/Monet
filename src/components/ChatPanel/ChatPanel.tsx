@@ -1,5 +1,8 @@
 import { openUrl } from '@tauri-apps/plugin-opener'
-import { Brain, Stop } from '@phosphor-icons/react'
+import { invoke } from '@tauri-apps/api/core'
+import { Brain, Paperclip, Stop } from '@phosphor-icons/react'
+import deepGrayIcon from '../../assets/icons/deep-gray.svg'
+import deepGreenIcon from '../../assets/icons/deep-green.svg'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useChat, type ChatFolder, type ChatMessage } from '../../hooks/useChat'
 import { renderMarkdown } from '../../lib/markdown'
@@ -11,6 +14,7 @@ import { ChatToolsMenu } from './ChatToolsMenu'
 import { FolderDocumentSelectorModal } from './FolderDocumentSelectorModal'
 import { FolderSystemPromptModal } from './FolderSystemPromptModal'
 import { SaveToNoteModal } from './SaveToNoteModal'
+
 
 export interface ChatPanelProps {
   models: AiModel[]
@@ -77,6 +81,9 @@ export function ChatPanel({
   const [draft, setDraft] = useState('')
   const [draftImage, setDraftImage] = useState<string | null>(null)
   const [imageError, setImageError] = useState<string | null>(null)
+  const [draftDocs, setDraftDocs] = useState<Array<{ name: string; type: string; data: string }>>([])
+  const [docError, setDocError] = useState<string | null>(null)
+  const [isPdfProcessing, setIsPdfProcessing] = useState(false)
   const [saveTarget, setSaveTarget] = useState<{ messageId: string; content: string } | null>(null)
   const [systemPromptFolderId, setSystemPromptFolderId] = useState<string | null>(
     null,
@@ -119,6 +126,7 @@ export function ChatPanel({
   useEffect(() => {
     setDraft('')
     setDraftImage(null)
+    setDraftDocs([])
   }, [activeId])
 
   const selectedModel = models.find((m) => m.id === model)
@@ -127,8 +135,9 @@ export function ChatPanel({
 
   const canSend =
     !isStreaming &&
+    !isPdfProcessing &&
     hasApiKey &&
-    (draft.trim().length > 0 || !!draftImage) &&
+    (draft.trim().length > 0 || !!draftImage || draftDocs.length > 0) &&
     !!model &&
     models.length > 0 &&
     !visionWarning
@@ -190,32 +199,91 @@ export function ChatPanel({
     if (!canSend) return
     const text = draft
     const img = draftImage
+    const docs = draftDocs
     setDraft('')
     setDraftImage(null)
-    void send(text, img ?? undefined)
+    setDraftDocs([])
+    void send(text, img ?? undefined, docs.length > 0 ? docs : undefined)
   }
 
   function handleStop() {
     cancel()
   }
 
-  function handlePickImage() {
+  function resolveFileType(file: File): string {
+    if (file.type) return file.type
+    if (file.name.endsWith('.md')) return 'text/markdown'
+    if (file.name.endsWith('.docx')) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    if (file.name.endsWith('.pdf')) return 'application/pdf'
+    return 'text/plain'
+  }
+
+  function handlePickFile() {
     const input = document.createElement('input')
     input.type = 'file'
-    input.accept = 'image/*'
+    input.accept = 'image/*,text/plain,text/markdown,.md,.pdf'
+    input.multiple = true
     input.onchange = () => {
-      const file = input.files?.[0]
-      if (!file) return
-      if (file.size > 5 * 1024 * 1024) {
-        setImageError('Image exceeds the 5MB limit')
-        return
-      }
+      const files = Array.from(input.files ?? [])
+      if (files.length === 0) return
+      setDocError(null)
       setImageError(null)
-      const reader = new FileReader()
-      reader.onload = () => {
-        setDraftImage(reader.result as string)
+      const errors: string[] = []
+      for (const file of files) {
+        const mime = resolveFileType(file)
+        const isImage = mime.startsWith('image/')
+        const isText = mime.startsWith('text/')
+        const isPdf = mime === 'application/pdf'
+        const isDocx = mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        if (isDocx) {
+          errors.push('DOCX files are not supported yet. Please convert to PDF, TXT or Markdown.')
+          continue
+        }
+        if (!isImage && !isText && !isPdf) {
+          errors.push(`File type not supported: ${file.name}`)
+          continue
+        }
+        if (file.size > 5 * 1024 * 1024) {
+          errors.push(`File exceeds the 5 MB limit: ${file.name}`)
+          continue
+        }
+        if (isImage) {
+          const reader = new FileReader()
+          reader.onload = () => setDraftImage(reader.result as string)
+          reader.readAsDataURL(file)
+        } else if (isText) {
+          // Text files are sent inline as message text — works with all models
+          const reader = new FileReader()
+          reader.onload = () =>
+            setDraftDocs((prev) => [...prev, { name: file.name, type: mime, data: reader.result as string }])
+          reader.readAsText(file)
+        } else {
+          // PDF — extract text in the backend and send inline as plain text.
+          // This works with any model and avoids provider-specific document formats.
+          const reader = new FileReader()
+          reader.onload = async () => {
+            const buffer = reader.result as ArrayBuffer
+            const bytes = Array.from(new Uint8Array(buffer))
+            setIsPdfProcessing(true)
+            try {
+              const extracted = await invoke<string>('extract_pdf_text', { bytes })
+              setDraftDocs((prev) => [
+                ...prev,
+                { name: file.name, type: 'text/plain', data: extracted },
+              ])
+            } catch (err) {
+              const message = typeof err === 'string' ? err : 'Failed to read PDF'
+              setDocError(`${file.name}: ${message}`)
+            } finally {
+              setIsPdfProcessing(false)
+            }
+          }
+          reader.readAsArrayBuffer(file)
+        }
       }
-      reader.readAsDataURL(file)
+      if (errors.length > 0) {
+        setDocError(errors.join(' '))
+      }
     }
     input.click()
   }
@@ -335,17 +403,39 @@ export function ChatPanel({
 
         <footer className={styles.composer}>
           <div className={styles.composerInner}>
-            {draftImage && (
-              <div className={styles.imagePreview}>
-                <img src={draftImage} alt="attachment preview" className={styles.imagePreviewThumb} />
-                <button
-                  type="button"
-                  className={styles.imagePreviewRemove}
-                  onClick={() => setDraftImage(null)}
-                  aria-label="Remove image"
-                >
-                  ×
-                </button>
+            {(draftImage || draftDocs.length > 0) && (
+              <div className={styles.attachmentPreviews}>
+                {draftImage && (
+                  <div className={styles.imagePreview}>
+                    <img src={draftImage} alt="attachment preview" className={styles.imagePreviewThumb} />
+                    <button
+                      type="button"
+                      className={styles.imagePreviewRemove}
+                      onClick={() => setDraftImage(null)}
+                      aria-label="Remove image"
+                    >
+                      ×
+                    </button>
+                  </div>
+                )}
+                {draftDocs.map((doc, i) => (
+                  <div key={i} className={styles.docPill}>
+                    <span className={styles.docPillName}>{doc.name}</span>
+                    <button
+                      type="button"
+                      className={styles.docPillRemove}
+                      onClick={() => setDraftDocs((prev) => prev.filter((_, idx) => idx !== i))}
+                      aria-label={`Remove ${doc.name}`}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {isPdfProcessing && (
+              <div className={styles.pdfProcessing} role="status" aria-live="polite">
+                Processing document...
               </div>
             )}
             {deepResearchPhase && (
@@ -372,6 +462,11 @@ export function ChatPanel({
             {imageError && (
               <div className={styles.visionWarning} role="alert">
                 {imageError}
+              </div>
+            )}
+            {docError && (
+              <div className={styles.visionWarning} role="alert">
+                {docError}
               </div>
             )}
             <textarea
@@ -409,19 +504,14 @@ export function ChatPanel({
             <div className={styles.composerActions}>
               <button
                 type="button"
-                className={styles.attachBtn}
-                onClick={handlePickImage}
-                title="Attach image"
-                aria-label="Attach image"
-                disabled={!hasApiKey}
+                className={tools.deepResearch ? styles.deepResearchBtnOn : styles.deepResearchBtn}
+                onClick={() => setTool('deepResearch', !tools.deepResearch)}
+                title={tools.deepResearch ? 'Deep Research enabled — click to disable' : 'Enable Deep Research'}
+                aria-pressed={tools.deepResearch}
               >
-                <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="1" y="3" width="14" height="10" rx="1.5" />
-                  <circle cx="5.5" cy="6.5" r="1" />
-                  <polyline points="1,11 5,7 8,10 11,7.5 15,11" />
-                </svg>
+                <img src={tools.deepResearch ? deepGreenIcon : deepGrayIcon} alt="" aria-hidden="true" className={styles.deepResearchIcon} />
+                Deep Research
               </button>
-              <ChatToolsMenu tools={tools} onToggle={setTool} />
               <button
                 type="button"
                 className={thinkingEnabled ? styles.thinkingBtnOn : styles.thinkingBtn}
@@ -431,6 +521,17 @@ export function ChatPanel({
               >
                 <Brain size={15} weight={thinkingEnabled ? 'fill' : 'regular'} />
               </button>
+              <button
+                type="button"
+                className={styles.attachBtn}
+                onClick={handlePickFile}
+                title="Attach file"
+                aria-label="Attach file"
+                disabled={!hasApiKey}
+              >
+                <Paperclip size={15} />
+              </button>
+              <ChatToolsMenu tools={tools} onToggle={setTool} />
               {isStreaming ? (
                 <button
                   type="button"
@@ -538,22 +639,33 @@ function ChatBubble({ message, isStreaming, onSaveToNote }: ChatBubbleProps) {
     })
   }
 
+  const hasAttachedDocs = isUser && message.attachedDocs && message.attachedDocs.length > 0
+
   return (
     <div
-      className={isUser ? styles.bubbleUser : styles.bubbleAssistant}
+      className={isUser ? (hasAttachedDocs ? styles.bubbleUserWrapper : styles.bubbleUser) : styles.bubbleAssistant}
       data-role={message.role}
     >
       {isUser ? (
-        <div>
-          {message.imageDataUrl && (
-            <img
-              src={message.imageDataUrl}
-              alt="attached image"
-              className={styles.userMessageImage}
-            />
+        <>
+          {hasAttachedDocs && (
+            <div className={styles.msgDocLabel}>
+              {message.attachedDocs!.map((d) => (
+                <span key={d.name} className={styles.msgDocChip}>{d.name}</span>
+              ))}
+            </div>
           )}
-          <p className={styles.userText}>{message.content}</p>
-        </div>
+          <div className={hasAttachedDocs ? styles.bubbleUser : undefined}>
+            {message.imageDataUrl && (
+              <img
+                src={message.imageDataUrl}
+                alt="attached image"
+                className={styles.userMessageImage}
+              />
+            )}
+            <p className={styles.userText}>{message.content}</p>
+          </div>
+        </>
       ) : isStreamingPlaceholder ? (
         <span className={styles.streamingDots} aria-hidden="true">
           <span />
