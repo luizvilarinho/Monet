@@ -522,6 +522,13 @@ export function Editor({
     if (!editor) return
     const dom = editor.view.dom
     const handler = (e: MouseEvent) => {
+      const selection = window.getSelection()
+      const hasSelection = selection && selection.toString().length > 0
+      if (hasSelection) {
+        // Let the native context menu appear for spell-check; clear any stale custom menu
+        setContextMenuPos(null)
+        return
+      }
       e.preventDefault()
       setContextMenuPos({ x: e.clientX, y: e.clientY })
     }

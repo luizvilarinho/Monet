@@ -13,6 +13,7 @@ export const COMMANDS: CommandDef[] = [
   { name: '/mindmap', description: 'Generates a hierarchical mindmap of the current note in markdown', example: '/mindmap', takesQuery: false },
   { name: '/ask', description: 'Ask a free-form question to the AI model', example: '/ask what is the difference between HTTP/1.1 and HTTP/2?', takesQuery: true, usesSearch: true },
   { name: '/docs', description: 'Answer using only the notebook documents', example: '/docs which companies did the person work for?', takesQuery: true },
+  { name: '/action', description: 'Perform an action on the current note text (edit, rewrite, organize, transform)', example: '/action rewrite this section more concisely', takesQuery: true },
 ]
 
 export function findCommand(name: string): CommandDef | undefined {

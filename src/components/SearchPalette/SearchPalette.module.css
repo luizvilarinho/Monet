@@ -54,6 +54,12 @@
   background: var(--surface-2);
 }
 
+.itemNotebook {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+
 .itemTitle {
   font-weight: 600;
   color: var(--text-primary);

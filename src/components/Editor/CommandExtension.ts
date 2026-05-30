@@ -293,6 +293,48 @@ function computeDropTarget(view: EditorView, clientX: number, clientY: number): 
   return blockStart
 }
 
+/**
+ * Computes a drop target position within a taskList for task item reordering.
+ * Returns a position between taskItem nodes (before or after a taskItem),
+ * clamped within [listPos+1, listEnd-1].
+ */
+function computeTaskDropTarget(
+  view: EditorView,
+  clientX: number,
+  clientY: number,
+  listPos: number,
+  listEnd: number
+): number | null {
+  const dropResult = view.posAtCoords({ left: clientX, top: clientY })
+  if (!dropResult) return null
+
+  const doc = view.state.doc
+  const $drop = doc.resolve(dropResult.pos)
+
+  // Walk up to find a taskItem ancestor or direct child of the taskList
+  for (let d = $drop.depth; d >= 1; d--) {
+    if ($drop.node(d).type.name === 'taskItem') {
+      const itemPos = $drop.before(d)
+      const itemNode = $drop.node(d)
+      // Only accept taskItems that belong to our taskList
+      if (itemPos < listPos || itemPos >= listEnd) break
+      const itemDom = view.nodeDOM(itemPos)
+      if (itemDom instanceof HTMLElement) {
+        const rect = itemDom.getBoundingClientRect()
+        // Drop before or after this taskItem based on cursor vertical position
+        return clientY < rect.top + rect.height / 2
+          ? itemPos
+          : itemPos + itemNode.nodeSize
+      }
+      return itemPos
+    }
+  }
+
+  // Fallback: clamp raw position to inside the list
+  const clamped = Math.max(listPos + 1, Math.min(dropResult.pos, listEnd - 1))
+  return clamped
+}
+
 function findCommandRange(
   view: EditorView,
   entry: ParagraphCommandInfo,
@@ -497,6 +539,125 @@ function makeButtonsWidget(
   return wrap
 }
 
+function makeTaskDragHandle(view: EditorView, taskItemPos: number, taskItemNode: PMNode): HTMLElement {
+  const handle = document.createElement('span')
+  handle.className = 'monetTaskDragHandle'
+  handle.contentEditable = 'false'
+  handle.setAttribute('aria-label', 'drag to reorder')
+  handle.title = 'drag to reorder'
+  handle.textContent = '⋮⋮'
+
+  handle.addEventListener('mousedown', (mouseDownEvent) => {
+    if (mouseDownEvent.button !== 0) return
+    mouseDownEvent.preventDefault()
+    mouseDownEvent.stopPropagation()
+
+    const nodeSize = taskItemNode.nodeSize
+    const initialFrom = taskItemPos
+    const initialTo = taskItemPos + nodeSize
+
+    // Find the parent taskList range at drag start
+    const $pos = view.state.doc.resolve(taskItemPos)
+    const listPos = $pos.before($pos.depth)
+    const listNode = view.state.doc.nodeAt(listPos)
+    const listEnd = listPos + (listNode ? listNode.nodeSize : 0)
+
+    const startX = mouseDownEvent.clientX
+    const startY = mouseDownEvent.clientY
+    const DRAG_THRESHOLD = 4
+
+    let isDragging = false
+    let dropTarget: number | null = null
+    let indicator: HTMLDivElement | null = null
+
+    const ensureIndicator = (): HTMLDivElement => {
+      if (indicator) return indicator
+      const el = document.createElement('div')
+      el.className = 'monetCmdDropIndicator'
+      document.body.appendChild(el)
+      indicator = el
+      return el
+    }
+
+    const positionIndicator = (target: number) => {
+      try {
+        const coords = view.coordsAtPos(target)
+        const editorRect = view.dom.getBoundingClientRect()
+        const el = ensureIndicator()
+        el.style.display = 'block'
+        el.style.left = `${editorRect.left}px`
+        el.style.top = `${coords.top - 1}px`
+        el.style.width = `${editorRect.width}px`
+      } catch {
+        if (indicator) indicator.style.display = 'none'
+      }
+    }
+
+    const onMouseMove = (mv: MouseEvent) => {
+      if (!isDragging) {
+        const dx = mv.clientX - startX
+        const dy = mv.clientY - startY
+        if (Math.sqrt(dx * dx + dy * dy) < DRAG_THRESHOLD) return
+        isDragging = true
+        document.body.style.cursor = 'grabbing'
+        document.body.style.userSelect = 'none'
+      }
+      const raw = computeTaskDropTarget(view, mv.clientX, mv.clientY, listPos, listEnd)
+      if (raw === null) {
+        dropTarget = null
+        if (indicator) indicator.style.display = 'none'
+        return
+      }
+      dropTarget = raw
+      if (dropTarget >= initialFrom && dropTarget <= initialTo) {
+        if (indicator) indicator.style.display = 'none'
+        return
+      }
+      positionIndicator(dropTarget)
+    }
+
+    const cleanup = () => {
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+      document.removeEventListener('keydown', onKeyDown)
+      if (indicator) {
+        indicator.remove()
+        indicator = null
+      }
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+
+    const onMouseUp = () => {
+      if (isDragging && dropTarget !== null) {
+        const currentNode = view.state.doc.nodeAt(initialFrom)
+        if (currentNode && currentNode.type.name === 'taskItem') {
+          const currentFrom = initialFrom
+          const currentTo = initialFrom + currentNode.nodeSize
+          if (!(dropTarget >= currentFrom && dropTarget <= currentTo)) {
+            const sliceContent = view.state.doc.slice(currentFrom, currentTo).content
+            let tr = view.state.tr.delete(currentFrom, currentTo)
+            const mappedTarget = tr.mapping.map(dropTarget)
+            tr.insert(mappedTarget, sliceContent)
+            view.dispatch(tr)
+          }
+        }
+      }
+      cleanup()
+    }
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') cleanup()
+    }
+
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+    document.addEventListener('keydown', onKeyDown)
+  })
+
+  return handle
+}
+
 function buildDecorations(
   state: EditorState,
   pluginState: CommandPluginState,
@@ -565,6 +726,22 @@ function buildDecorations(
     }
     return false
   })
+
+  if (view) {
+    state.doc.descendants((node, pos) => {
+      if (node.type.name !== 'taskItem') return true
+      decorations.push(
+        Decoration.widget(pos + 1, () => makeTaskDragHandle(view, pos, node), {
+          side: -1,
+          ignoreSelection: true,
+          stopEvent: () => true,
+          key: `taskdrag-${pos}`,
+        })
+      )
+      return false
+    })
+  }
+
   return DecorationSet.create(state.doc, decorations)
 }
 

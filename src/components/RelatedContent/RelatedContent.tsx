@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react'
-import type { Note } from '../../types'
+import type { Note, Notebook } from '../../types'
 import { cleanContent, scoreRelatedNotes } from './scoreNotes'
 import styles from './RelatedContent.module.css'
 
 interface Props {
   activeNote: Note
   notes: Note[]
+  notebooks: Notebook[]
   onSelect: (id: string) => void
 }
 
@@ -18,7 +19,7 @@ function snippet(content: string, max = 140): string {
   return clean.slice(0, max).trimEnd() + '…'
 }
 
-export function RelatedContent({ activeNote, notes, onSelect }: Props) {
+export function RelatedContent({ activeNote, notes, notebooks, onSelect }: Props) {
   const [open, setOpen] = useState(true)
   const related = useMemo(
     () => scoreRelatedNotes(activeNote, notes),
@@ -42,6 +43,7 @@ export function RelatedContent({ activeNote, notes, onSelect }: Props) {
         <ul className={styles.list}>
           {related.map(({ note }) => {
             const preview = snippet(note.content)
+            const notebookName = notebooks.find((n) => n.id === note.notebookId)?.name
             return (
               <li key={note.id} className={styles.item}>
                 <button
@@ -49,6 +51,9 @@ export function RelatedContent({ activeNote, notes, onSelect }: Props) {
                   className={styles.itemButton}
                   onClick={() => onSelect(note.id)}
                 >
+                  {notebookName && (
+                    <div className={styles.itemNotebook}>{notebookName}</div>
+                  )}
                   <div className={styles.itemTitle}>
                     {note.title.trim() || 'Untitled'}
                   </div>

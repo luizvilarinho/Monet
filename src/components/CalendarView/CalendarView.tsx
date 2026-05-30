@@ -7,6 +7,14 @@ function toDateKey(y: number, m: number, d: number): string {
   return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
 }
 
+function noteHasContent(content: string): boolean {
+  return content.trim().length > 0
+}
+
+function noteHasUnfinishedTodos(content: string): boolean {
+  return /^- \[ \] .+/m.test(content)
+}
+
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -87,23 +95,25 @@ export function CalendarView({
     }
   }, [onWidthChange])
 
-  const notedDays = useMemo(() => {
-    const set = new Set<string>()
+  const dayDotMap = useMemo(() => {
+    const map = new Map<string, 'todo' | 'content'>()
     for (const note of notes) {
-      if (/^\d{2}\/\d{2}\/\d{4}$/.test(note.title)) {
-        set.add(note.title)
+      if (!/^\d{2}\/\d{2}\/\d{4}$/.test(note.title)) continue
+      if (!noteHasContent(note.content)) continue
+      const dotType = noteHasUnfinishedTodos(note.content) ? 'todo' : 'content'
+      map.set(note.title, dotType)
+    }
+    for (const note of datedNotes) {
+      if (!note.date) continue
+      if (!noteHasContent(note.content)) continue
+      const dotType = noteHasUnfinishedTodos(note.content) ? 'todo' : 'content'
+      const existing = map.get(note.date)
+      if (!existing || existing === 'content') {
+        map.set(note.date, dotType)
       }
     }
-    return set
-  }, [notes])
-
-  const datedDaysSet = useMemo(() => {
-    const set = new Set<string>()
-    for (const note of datedNotes) {
-      if (note.date) set.add(note.date)
-    }
-    return set
-  }, [datedNotes])
+    return map
+  }, [notes, datedNotes])
 
   const dayCards = useMemo(() => {
     if (!selectedDay) return []
@@ -232,7 +242,7 @@ export function CalendarView({
             {cells.map((cell, i) => {
               const title = cell.current ? dayTitle(cell.day) : ''
               const dateKey = cell.current ? toDateKey(year, month, cell.day) : ''
-              const hasNote = cell.current && (notedDays.has(title) || datedDaysSet.has(dateKey))
+              const dotType = cell.current ? (dayDotMap.get(title) ?? dayDotMap.get(dateKey) ?? null) : null
               const today_ = isToday(cell.day, cell.current)
               const isSelected = cell.current && selectedDay === dateKey
               return (
@@ -258,7 +268,7 @@ export function CalendarView({
                   } : undefined}
                 >
                   <span className={styles.dayNumber}>{cell.day}</span>
-                  {hasNote && <span className={styles.dot} aria-hidden />}
+                  {dotType && <span className={`${styles.dot} ${dotType === 'todo' ? styles.dotPurple : ''}`} aria-hidden />}
                 </div>
               )
             })}

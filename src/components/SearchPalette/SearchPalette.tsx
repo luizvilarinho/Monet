@@ -1,13 +1,19 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { storage } from '../../storage'
-import type { Note } from '../../types'
+import type { Note, Notebook } from '../../types'
 import styles from './SearchPalette.module.css'
 
 interface SearchPaletteProps {
   open: boolean
   onClose: () => void
-  onSelectNote: (notebookId: string, noteId: string) => void
+  onSelectNote: (notebookId: string, noteId: string, subjectId?: string | null) => void
+  onSelectNotebook?: (notebookId: string) => void
+  notebooks?: Notebook[]
 }
+
+type SearchResult =
+  | { kind: 'notebook'; notebook: Notebook }
+  | { kind: 'note'; note: Note }
 
 function stripMarkdown(text: string): string {
   return text
@@ -18,11 +24,24 @@ function stripMarkdown(text: string): string {
     .slice(0, 80)
 }
 
-export function SearchPalette({ open, onClose, onSelectNote }: SearchPaletteProps) {
+function sortResults(notes: Note[], query: string, notebookMap: Map<string, string>): Note[] {
+  const q = query.trim().toLowerCase()
+  return [...notes].sort((a, b) => {
+    const aNb = (notebookMap.get(a.notebookId ?? '') ?? '').toLowerCase()
+    const bNb = (notebookMap.get(b.notebookId ?? '') ?? '').toLowerCase()
+    const aScore = aNb.includes(q) ? 0 : a.title.toLowerCase().includes(q) ? 1 : 2
+    const bScore = bNb.includes(q) ? 0 : b.title.toLowerCase().includes(q) ? 1 : 2
+    return aScore - bScore
+  })
+}
+
+export function SearchPalette({ open, onClose, onSelectNote, onSelectNotebook, notebooks = [] }: SearchPaletteProps) {
   const [query, setQuery] = useState('')
-  const [results, setResults] = useState<Note[]>([])
+  const [results, setResults] = useState<SearchResult[]>([])
   const [selectedIndex, setSelectedIndex] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  const notebookMap = new Map(notebooks.map((nb) => [nb.id, nb.name]))
 
   useEffect(() => {
     if (!open) {
@@ -40,12 +59,32 @@ export function SearchPalette({ open, onClose, onSelectNote }: SearchPaletteProp
       return
     }
     const timer = setTimeout(async () => {
-      const found = await storage.searchNotes(query)
-      setResults(found)
+      const q = query.trim().toLowerCase()
+      const matchingNotebooks: SearchResult[] = notebooks
+        .filter((nb) => nb.name.toLowerCase().includes(q))
+        .map((nb) => ({ kind: 'notebook', notebook: nb }))
+      const foundNotes = await storage.searchNotes(query)
+      const sortedNotes: SearchResult[] = sortResults(foundNotes, query, notebookMap).map((n) => ({
+        kind: 'note',
+        note: n,
+      }))
+      setResults([...matchingNotebooks, ...sortedNotes])
       setSelectedIndex(0)
     }, 150)
     return () => clearTimeout(timer)
-  }, [query])
+  }, [query, notebooks])
+
+  const selectResult = useCallback((result: SearchResult) => {
+    if (result.kind === 'notebook') {
+      onSelectNotebook?.(result.notebook.id)
+    } else {
+      const note = result.note
+      if (note.notebookId) {
+        onSelectNote(note.notebookId, note.id, note.subjectId)
+      }
+    }
+    onClose()
+  }, [onSelectNotebook, onSelectNote, onClose])
 
   useEffect(() => {
     if (!open) return
@@ -61,16 +100,13 @@ export function SearchPalette({ open, onClose, onSelectNote }: SearchPaletteProp
         setSelectedIndex((prev) => Math.max(prev - 1, 0))
       } else if (e.key === 'Enter') {
         e.preventDefault()
-        const note = results[selectedIndex]
-        if (note && note.notebookId) {
-          onSelectNote(note.notebookId, note.id)
-          onClose()
-        }
+        const result = results[selectedIndex]
+        if (result) selectResult(result)
       }
     }
     document.addEventListener('keydown', handleKeyDown, true)
     return () => document.removeEventListener('keydown', handleKeyDown, true)
-  }, [open, results, selectedIndex, onClose, onSelectNote])
+  }, [open, results, selectedIndex, onClose, onSelectNote, onSelectNotebook, selectResult])
 
   if (!open) return null
 
@@ -81,7 +117,7 @@ export function SearchPalette({ open, onClose, onSelectNote }: SearchPaletteProp
           ref={inputRef}
           className={styles.input}
           type="text"
-          placeholder="Search notes..."
+          placeholder="Search notes and notebooks..."
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
@@ -89,21 +125,28 @@ export function SearchPalette({ open, onClose, onSelectNote }: SearchPaletteProp
           {results.length === 0 && query.trim() && (
             <div className={styles.empty}>No results found</div>
           )}
-          {results.map((note, i) => (
+          {results.map((result, i) => (
             <div
-              key={note.id}
+              key={result.kind === 'notebook' ? `nb-${result.notebook.id}` : result.note.id}
               className={`${styles.item} ${i === selectedIndex ? styles.itemActive : ''}`}
               onMouseEnter={() => setSelectedIndex(i)}
-              onMouseDown={() => {
-                if (note.notebookId) {
-                  onSelectNote(note.notebookId, note.id)
-                  onClose()
-                }
-              }}
+              onMouseDown={() => selectResult(result)}
             >
-              <div className={styles.itemTitle}>{note.title || 'Untitled'}</div>
-              {note.content && (
-                <div className={styles.itemPreview}>{stripMarkdown(note.content)}</div>
+              {result.kind === 'notebook' ? (
+                <>
+                  <div className={styles.itemNotebook}>Notebook</div>
+                  <div className={styles.itemTitle}>{result.notebook.name}</div>
+                </>
+              ) : (
+                <>
+                  {result.note.notebookId && notebookMap.has(result.note.notebookId) && (
+                    <div className={styles.itemNotebook}>{notebookMap.get(result.note.notebookId)}</div>
+                  )}
+                  <div className={styles.itemTitle}>{result.note.title || 'Untitled'}</div>
+                  {result.note.content && (
+                    <div className={styles.itemPreview}>{stripMarkdown(result.note.content)}</div>
+                  )}
+                </>
               )}
             </div>
           ))}

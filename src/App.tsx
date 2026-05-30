@@ -184,6 +184,12 @@ function App() {
   const { subjects, save: saveSubject, remove: removeSubject, create: createSubject, reorder: reorderSubjects } =
     useSubjects(activeNotebookId)
   const [activeId, setActiveId] = useState<string | null>(null)
+  // When in All Notes (activeNotebookId === null), load subjects for the active note's notebook
+  const allNotesNoteNotebookId = activeNotebookId === null
+    ? (notes.find((n) => n.id === activeId)?.notebookId ?? null)
+    : null
+  const { subjects: allNotesSubjects } = useSubjects(allNotesNoteNotebookId)
+  const effectiveSubjects = activeNotebookId === null ? allNotesSubjects : subjects
   const [search, setSearch] = useState('')
   const [activeTag, setActiveTag] = useState<string | null>(null)
   const [aiOpen, setAiOpen] = useState(true)
@@ -425,7 +431,7 @@ function App() {
   )
 
   const subjectFilteredNotes = useMemo(() => {
-    if (activeNotebookId === null) return notes
+    if (activeNotebookId === null) return notes.filter((n) => n.notebookId !== calendarNotebookId)
     if (activeSubjectId !== null) {
       return notes.filter((n) => n.notebookId === activeNotebookId && n.subjectId === activeSubjectId)
     }
@@ -724,6 +730,7 @@ function App() {
       const existing = notes.find(
         (n) => n.notebookId === calendarNotebookId && n.title === title
       )
+      setActiveNotebookId(calendarNotebookId)
       if (existing) {
         setActiveId(existing.id)
       } else {
@@ -799,10 +806,10 @@ function App() {
   )
 
   const handleNavigateToNote = useCallback(
-    (notebookId: string, noteId: string) => {
+    (notebookId: string, noteId: string, subjectId?: string | null) => {
       setActiveMode('notebook')
       setActiveNotebookId(notebookId)
-      setActiveSubjectId(null)
+      setActiveSubjectId(subjectId ?? null)
       setActiveId(noteId)
       setActiveTag(null)
       setSearch('')
@@ -900,11 +907,11 @@ function App() {
           notebooks={orderedNotebooks}
           activeId={activeNotebookId}
           onSelect={(id) => {
-            setActiveNotebookId(id)
             setActiveSubjectId(null)
             if (id === calendarNotebookId) {
-              setActiveId(null)
+              void handleCalendarDayClick(new Date())
             } else {
+              setActiveNotebookId(id)
               const notebookNotes = applyOrder(
                 notes.filter((n) => n.notebookId === id),
                 noteOrder
@@ -969,7 +976,7 @@ function App() {
             collapsed={sidebarCollapsed}
             onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
             onWidthChange={setSidebarWidth}
-            subjects={subjects}
+            subjects={effectiveSubjects}
             onAssignSubject={handleAssignNoteToSubject}
           />
         ))}
@@ -977,7 +984,7 @@ function App() {
           <Editor
             key={activeNote.id}
             notebookName={notebooks.find((nb) => nb.id === activeNote.notebookId)?.name}
-            subjectName={subjects.find(s => s.id === activeNote.subjectId)?.name}
+            subjectName={effectiveSubjects.find(s => s.id === activeNote.subjectId)?.name}
             title={activeNote.title}
             onTitleChange={(title) => updateActive({ title })}
             tags={activeNote.tags}
@@ -996,7 +1003,7 @@ function App() {
             notebookNotes={notebookNotes.filter((n) => n.id !== activeId)}
             onNavigateToNote={handleNoteLinkNavigation}
             relatedContent={
-              <RelatedContent activeNote={activeNote} notes={notes} onSelect={setActiveId} />
+              <RelatedContent activeNote={activeNote} notes={notes} notebooks={notebooks} onSelect={setActiveId} />
             }
           />
         ) : (
@@ -1062,10 +1069,20 @@ function App() {
       <SearchPalette
         open={searchPaletteOpen}
         onClose={() => setSearchPaletteOpen(false)}
-        onSelectNote={(notebookId, noteId) => {
-          handleNavigateToNote(notebookId, noteId)
+        onSelectNote={(notebookId, noteId, subjectId) => {
+          handleNavigateToNote(notebookId, noteId, subjectId)
           setSearchPaletteOpen(false)
         }}
+        onSelectNotebook={(notebookId) => {
+          setActiveMode('notebook')
+          setActiveNotebookId(notebookId)
+          setActiveSubjectId(null)
+          setActiveId(null)
+          setSearch('')
+          setActiveTag(null)
+          setSearchPaletteOpen(false)
+        }}
+        notebooks={notebooks}
       />
     </div>
   )
