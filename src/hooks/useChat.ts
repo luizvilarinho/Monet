@@ -513,6 +513,7 @@ export interface UseChatResult {
   newConversation: () => void
   newConversationInFolder: (folderId: string) => void
   deleteConversation: (id: string) => void
+  renameConversation: (id: string, title: string) => void
   createFolder: () => string
   renameFolder: (id: string, name: string) => void
   deleteFolder: (id: string) => void
@@ -746,6 +747,25 @@ export function useChat(models: AiModel[] = []): UseChatResult {
     setFolders((prev) => [folder, ...prev])
     return folder.id
   }, [setFolders])
+
+  // Renomeia uma conversa. Titulo custom eh "sticky": nao chama deriveTitle()
+  // no fluxo de updateMessages (que so re-deriva se o titulo atual for
+  // 'New conversation' ou vazio), entao o titulo definido aqui nao sera
+  // sobrescrito por mensagens futuras.
+  const renameConversation = useCallback(
+    (id: string, title: string) => {
+      const trimmed = title.trim().slice(0, 100)
+      if (!trimmed) return
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === id
+            ? { ...c, title: trimmed, updatedAt: new Date().toISOString() }
+            : c
+        )
+      )
+    },
+    [setConversations]
+  )
 
   const renameFolder = useCallback(
     (id: string, name: string) => {
@@ -1576,6 +1596,7 @@ export function useChat(models: AiModel[] = []): UseChatResult {
     newConversation,
     newConversationInFolder,
     deleteConversation,
+    renameConversation,
     createFolder,
     renameFolder,
     deleteFolder,

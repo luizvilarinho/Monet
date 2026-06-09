@@ -28,6 +28,7 @@ export interface ChatSidebarProps {
   onSelect: (id: string) => void
   onNew: () => void
   onDelete: (id: string) => void
+  onRenameConversation: (id: string, title: string) => void
   onCreateFolder: () => string
   onRenameFolder: (id: string, name: string) => void
   onDeleteFolder: (id: string) => void
@@ -131,6 +132,7 @@ export function ChatSidebar({
   onSelect,
   onNew,
   onDelete,
+  onRenameConversation,
   onCreateFolder,
   onRenameFolder,
   onDeleteFolder,
@@ -152,6 +154,9 @@ export function ChatSidebar({
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null)
   const [editingFolderName, setEditingFolderName] = useState('')
   const editingInputRef = useRef<HTMLInputElement>(null)
+  const [editingConvId, setEditingConvId] = useState<string | null>(null)
+  const [editingConvName, setEditingConvName] = useState('')
+  const convEditingInputRef = useRef<HTMLInputElement>(null)
   const [activeDragKind, setActiveDragKind] = useState<ActiveDragKind>(null)
   const dragging = useRef(false)
   const startX = useRef(0)
@@ -217,6 +222,14 @@ export function ChatSidebar({
     }
   }, [editingFolderId])
 
+  // Auto-foco no input quando entra em modo edicao (conversa)
+  useEffect(() => {
+    if (editingConvId && convEditingInputRef.current) {
+      convEditingInputRef.current.focus()
+      convEditingInputRef.current.select()
+    }
+  }, [editingConvId])
+
   function startCreateFolder() {
     const id = onCreateFolder()
     setEditingFolderId(id)
@@ -249,6 +262,28 @@ export function ChatSidebar({
     }
     setEditingFolderId(null)
     setEditingFolderName('')
+  }
+
+  function startConvEdit(conv: ChatConversation) {
+    if (editingFolderId) cancelFolderEdit()
+    setEditingConvId(conv.id)
+    setEditingConvName(conv.title)
+  }
+
+  function commitConvEdit() {
+    if (!editingConvId) return
+    const trimmed = editingConvName.trim().slice(0, 100)
+    if (trimmed) {
+      onRenameConversation(editingConvId, trimmed)
+    }
+    setEditingConvId(null)
+    setEditingConvName('')
+  }
+
+  function cancelConvEdit() {
+    if (!editingConvId) return
+    setEditingConvId(null)
+    setEditingConvName('')
   }
 
   async function handleDeleteFolder(folder: ChatFolder) {
@@ -449,6 +484,7 @@ export function ChatSidebar({
                 onCommitEdit={commitFolderEdit}
                 onCancelEdit={cancelFolderEdit}
                 onStartEdit={(f) => {
+                  if (editingConvId) cancelConvEdit()
                   setEditingFolderId(f.id)
                   setEditingFolderName(f.name)
                 }}
@@ -463,6 +499,13 @@ export function ChatSidebar({
                 onOpenSystemPrompt={() => onOpenFolderSystemPrompt(folder)}
                 onOpenFolderDocuments={() => onOpenFolderDocuments(folder)}
                 isAnyConvDragging={activeDragKind === 'conv'}
+                editingConvId={editingConvId}
+                editingConvName={editingConvName}
+                onEditingConvNameChange={setEditingConvName}
+                convEditingInputRef={convEditingInputRef}
+                onCommitConvEdit={commitConvEdit}
+                onCancelConvEdit={cancelConvEdit}
+                onStartConvEdit={startConvEdit}
               />
             ))}
           </SortableContext>
@@ -490,6 +533,13 @@ export function ChatSidebar({
                     conv={conv}
                     isActive={cid === activeId}
                     inFolder={false}
+                    editing={editingConvId === cid}
+                    editingName={editingConvName}
+                    onEditingNameChange={setEditingConvName}
+                    inputRef={convEditingInputRef}
+                    onCommitEdit={commitConvEdit}
+                    onCancelEdit={cancelConvEdit}
+                    onStartEdit={startConvEdit}
                     onSelect={() => onSelect(cid)}
                     onDelete={() => onDelete(cid)}
                   />
@@ -528,6 +578,13 @@ interface SortableFolderProps {
   onOpenSystemPrompt: () => void
   onOpenFolderDocuments: () => void
   isAnyConvDragging: boolean
+  editingConvId: string | null
+  editingConvName: string
+  onEditingConvNameChange: (v: string) => void
+  convEditingInputRef: React.RefObject<HTMLInputElement | null>
+  onCommitConvEdit: () => void
+  onCancelConvEdit: () => void
+  onStartConvEdit: (conv: ChatConversation) => void
 }
 
 function SortableFolder({
@@ -550,6 +607,13 @@ function SortableFolder({
   onOpenSystemPrompt,
   onOpenFolderDocuments,
   isAnyConvDragging,
+  editingConvId,
+  editingConvName,
+  onEditingConvNameChange,
+  convEditingInputRef,
+  onCommitConvEdit,
+  onCancelConvEdit,
+  onStartConvEdit,
 }: SortableFolderProps) {
   const {
     attributes,
@@ -711,6 +775,13 @@ function SortableFolder({
           onDeleteConv={onDeleteConv}
           onRemoveFromFolder={onRemoveFromFolder}
           isAnyConvDragging={isAnyConvDragging}
+          editingConvId={editingConvId}
+          editingConvName={editingConvName}
+          onEditingConvNameChange={onEditingConvNameChange}
+          convEditingInputRef={convEditingInputRef}
+          onCommitConvEdit={onCommitConvEdit}
+          onCancelConvEdit={onCancelConvEdit}
+          onStartConvEdit={onStartConvEdit}
         />
       )}
     </div>
@@ -727,6 +798,13 @@ interface FolderBodyProps {
   onDeleteConv: (id: string) => void
   onRemoveFromFolder: (convId: string) => void
   isAnyConvDragging: boolean
+  editingConvId: string | null
+  editingConvName: string
+  onEditingConvNameChange: (v: string) => void
+  convEditingInputRef: React.RefObject<HTMLInputElement | null>
+  onCommitConvEdit: () => void
+  onCancelConvEdit: () => void
+  onStartConvEdit: (conv: ChatConversation) => void
 }
 
 function FolderBody({
@@ -737,6 +815,13 @@ function FolderBody({
   onDeleteConv,
   onRemoveFromFolder,
   isAnyConvDragging,
+  editingConvId,
+  editingConvName,
+  onEditingConvNameChange,
+  convEditingInputRef,
+  onCommitConvEdit,
+  onCancelConvEdit,
+  onStartConvEdit,
 }: FolderBodyProps) {
   const items = folder.conversationIds.map((id) => `conv:${id}`)
   return (
@@ -759,6 +844,13 @@ function FolderBody({
                   conv={conv}
                   isActive={cid === activeId}
                   inFolder
+                  editing={editingConvId === cid}
+                  editingName={editingConvName}
+                  onEditingNameChange={onEditingConvNameChange}
+                  inputRef={convEditingInputRef}
+                  onCommitEdit={onCommitConvEdit}
+                  onCancelEdit={onCancelConvEdit}
+                  onStartEdit={onStartConvEdit}
                   onSelect={() => onSelectConv(cid)}
                   onDelete={() => onDeleteConv(cid)}
                   onRemoveFromFolder={() => onRemoveFromFolder(cid)}
@@ -840,6 +932,13 @@ interface SortableConversationProps {
   conv: ChatConversation
   isActive: boolean
   inFolder: boolean
+  editing: boolean
+  editingName: string
+  onEditingNameChange: (v: string) => void
+  inputRef: React.RefObject<HTMLInputElement | null>
+  onCommitEdit: () => void
+  onCancelEdit: () => void
+  onStartEdit: (conv: ChatConversation) => void
   onSelect: () => void
   onDelete: () => void
   onRemoveFromFolder?: () => void
@@ -849,6 +948,13 @@ function SortableConversation({
   conv,
   isActive,
   inFolder,
+  editing,
+  editingName,
+  onEditingNameChange,
+  inputRef,
+  onCommitEdit,
+  onCancelEdit,
+  onStartEdit,
   onSelect,
   onDelete,
   onRemoveFromFolder,
@@ -887,6 +993,11 @@ function SortableConversation({
       role="button"
       tabIndex={0}
       onClick={onSelect}
+      onDoubleClick={(e) => {
+        if ((e.target as HTMLElement).closest('button, input')) return
+        if (editing) return
+        onStartEdit(conv)
+      }}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault()
@@ -894,38 +1005,64 @@ function SortableConversation({
         }
       }}
     >
-      <span className={styles.convTitle}>{conv.title}</span>
-      <span
-        className={styles.convActions}
-        onPointerDown={(e) => e.stopPropagation()}
-      >
-        {inFolder && onRemoveFromFolder && (
-          <button
-            type="button"
-            className={styles.convActionBtn}
-            onClick={(e) => {
-              e.stopPropagation()
-              onRemoveFromFolder()
-            }}
-            aria-label="remove from folder"
-            title="remove from folder"
-          >
-            <RemoveFromFolderIcon />
-          </button>
-        )}
-        <button
-          type="button"
-          className={`${styles.convActionBtn} ${styles.convActionBtnDelete}`}
-          onClick={(e) => {
+      {editing ? (
+        <input
+          ref={inputRef}
+          className={styles.convRenameInput}
+          value={editingName}
+          onChange={(e) => onEditingNameChange(e.target.value)}
+          onBlur={onCommitEdit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              onCommitEdit()
+            } else if (e.key === 'Escape') {
+              e.preventDefault()
+              onCancelEdit()
+            }
             e.stopPropagation()
-            onDelete()
           }}
-          aria-label="delete conversation"
-          title="delete conversation"
-        >
-          ×
-        </button>
-      </span>
+          onClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+          placeholder="conversation name"
+          aria-label="conversation name"
+        />
+      ) : (
+        <>
+          <span className={styles.convTitle}>{conv.title}</span>
+          <span
+            className={styles.convActions}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            {inFolder && onRemoveFromFolder && (
+              <button
+                type="button"
+                className={styles.convActionBtn}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onRemoveFromFolder()
+                }}
+                aria-label="remove from folder"
+                title="remove from folder"
+              >
+                <RemoveFromFolderIcon />
+              </button>
+            )}
+            <button
+              type="button"
+              className={`${styles.convActionBtn} ${styles.convActionBtnDelete}`}
+              onClick={(e) => {
+                e.stopPropagation()
+                onDelete()
+              }}
+              aria-label="delete conversation"
+              title="delete conversation"
+            >
+              ×
+            </button>
+          </span>
+        </>
+      )}
     </div>
   )
 }

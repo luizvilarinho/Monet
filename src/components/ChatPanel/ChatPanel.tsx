@@ -65,6 +65,7 @@ export function ChatPanel({
     newConversation,
     newConversationInFolder,
     deleteConversation,
+    renameConversation,
     createFolder,
     renameFolder,
     deleteFolder,
@@ -298,6 +299,7 @@ export function ChatPanel({
         onSelect={selectConversation}
         onNew={newConversation}
         onDelete={deleteConversation}
+        onRenameConversation={renameConversation}
         onCreateFolder={createFolder}
         onRenameFolder={renameFolder}
         onDeleteFolder={deleteFolder}
