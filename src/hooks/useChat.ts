@@ -277,7 +277,12 @@ function saveConversations(list: ChatConversation[]) {
         return rest
       }),
     }))
-    localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify(stripped))
+    const serialized = JSON.stringify(stripped)
+    // Anti-loop do sync cross-window: se o valor ja persistido for identico
+    // (caso tipico de hidratacao via evento `storage`), nao re-grava — assim
+    // nao dispara um novo evento `storage` na outra janela.
+    if (serialized === localStorage.getItem(CONVERSATIONS_KEY)) return
+    localStorage.setItem(CONVERSATIONS_KEY, serialized)
   } catch (err) {
     console.error('failed to persist chat conversations', err)
   }
@@ -299,7 +304,9 @@ function loadFolders(): ChatFolder[] {
 
 function saveFolders(list: ChatFolder[]) {
   try {
-    localStorage.setItem(FOLDERS_KEY, JSON.stringify(list))
+    const serialized = JSON.stringify(list)
+    if (serialized === localStorage.getItem(FOLDERS_KEY)) return
+    localStorage.setItem(FOLDERS_KEY, serialized)
   } catch (err) {
     console.error('failed to persist chat folders', err)
   }
@@ -321,7 +328,9 @@ function loadLooseOrder(): string[] {
 
 function saveLooseOrder(order: string[]) {
   try {
-    localStorage.setItem(LOOSE_ORDER_KEY, JSON.stringify(order))
+    const serialized = JSON.stringify(order)
+    if (serialized === localStorage.getItem(LOOSE_ORDER_KEY)) return
+    localStorage.setItem(LOOSE_ORDER_KEY, serialized)
   } catch (err) {
     console.error('failed to persist loose order', err)
   }
@@ -427,6 +436,9 @@ export function createPreloadedChatConversation(params: {
   return id
 }
 
+// Nome da pasta de chat usada pelas conversas iniciadas na janela assistant.
+export const ASSISTANT_FOLDER_NAME = 'assistant'
+
 function makeNewConversation(): ChatConversation {
   const now = new Date().toISOString()
   return {
@@ -453,6 +465,56 @@ function makeNewFolder(name = 'New folder'): ChatFolder {
   }
 }
 
+// Consolida pastas `assistant` DUPLICADAS num unico registro. Iteracoes de
+// teste antigas acumularam mais de uma pasta com o mesmo nome no localStorage;
+// com duplicatas, modal/send/materializacao podiam referenciar instancias
+// diferentes (prompt gravado numa, lido de outra). Aqui mantemos UMA pasta
+// (a primeira por ordem), priorizando systemPrompt/visibleDocumentIds ja
+// configurados, e unindo os `conversationIds` de todas. Idempotente: sem
+// duplicatas, retorna o array inalterado (mesma referencia).
+function dedupeAssistantFolders(folders: ChatFolder[]): ChatFolder[] {
+  const assistantFolders = folders.filter((f) => f.name === ASSISTANT_FOLDER_NAME)
+  if (assistantFolders.length <= 1) return folders
+
+  // Prioriza a pasta com systemPrompt ou documentos configurados; senao a 1a.
+  const primary =
+    assistantFolders.find(
+      (f) => f.systemPrompt.trim().length > 0 || f.visibleDocumentIds.length > 0
+    ) ?? assistantFolders[0]
+
+  // Une conversationIds de todas as duplicatas (sem repetir), preservando ordem.
+  const mergedConvIds: string[] = []
+  const seen = new Set<string>()
+  for (const f of assistantFolders) {
+    for (const id of f.conversationIds) {
+      if (seen.has(id)) continue
+      seen.add(id)
+      mergedConvIds.push(id)
+    }
+  }
+
+  const consolidated: ChatFolder = {
+    ...primary,
+    conversationIds: mergedConvIds,
+  }
+
+  // Reconstroi a lista mantendo a posicao da pasta `primary` e removendo as
+  // demais pastas `assistant`.
+  const out: ChatFolder[] = []
+  let placed = false
+  for (const f of folders) {
+    if (f.name === ASSISTANT_FOLDER_NAME) {
+      if (!placed) {
+        out.push(consolidated)
+        placed = true
+      }
+      continue
+    }
+    out.push(f)
+  }
+  return out
+}
+
 // Reconcilia ordens persistidas com o conjunto atual de conversas.
 // Conversas novas (sem registro de ordem) vao para o topo da lista solta.
 function reconcileOrders(
@@ -462,6 +524,11 @@ function reconcileOrders(
 ): { folders: ChatFolder[]; looseOrder: string[] } {
   const allIds = new Set(conversations.map((c) => c.id))
   const seen = new Set<string>()
+
+  // Consolida pastas `assistant` duplicadas ANTES de reconciliar, garantindo
+  // que o estado nunca carregue mais de uma pasta `assistant` (raiz do bug do
+  // system prompt nao aplicado: prompt gravado numa pasta, lido de outra).
+  folders = dedupeAssistantFolders(folders)
 
   const nextFolders = folders.map((f) => {
     const cleaned = f.conversationIds.filter((id) => {
@@ -512,6 +579,8 @@ export interface UseChatResult {
   selectConversation: (id: string) => void
   newConversation: () => void
   newConversationInFolder: (folderId: string) => void
+  startAssistantConversation: () => void
+  ensureAssistantFolder: () => void
   deleteConversation: (id: string) => void
   renameConversation: (id: string, title: string) => void
   createFolder: () => string
@@ -534,11 +603,20 @@ export interface UseChatResult {
   reorderLoose: (newOrder: string[]) => void
 }
 
-export function useChat(models: AiModel[] = []): UseChatResult {
+export function useChat(
+  models: AiModel[] = [],
+  options?: { isAssistant?: boolean }
+): UseChatResult {
+  const isAssistant = options?.isAssistant ?? false
   // Estado inicial reconciliado entre conversas + folders + looseOrder
   const [conversations, setConversations] = useState<ChatConversation[]>(() =>
     loadConversations()
   )
+  // Conversa-rascunho da janela assistant: vive SO em memoria ate a 1a mensagem.
+  // Abrir/fechar o assistant sem enviar nada nao deixa rastro no localStorage.
+  const [draftConversation, setDraftConversation] = useState<ChatConversation | null>(null)
+  const draftRef = useRef<ChatConversation | null>(null)
+  draftRef.current = draftConversation
   const [folders, setFoldersState] = useState<ChatFolder[]>(() => {
     const initialConvs = loadConversations()
     const initialFolders = loadFolders()
@@ -586,6 +664,23 @@ export function useChat(models: AiModel[] = []): UseChatResult {
   const looseOrderRef = useRef<string[]>(looseOrder)
   looseOrderRef.current = looseOrder
 
+  // Mescla a lista remota (vinda do `storage` da outra janela) preservando a
+  // conversa que ESTA janela esta gerando agora. Durante o streaming, a outra
+  // janela ecoa uma copia levemente ATRASADA de `CONVERSATIONS_KEY`; sem essa
+  // protecao, esse eco sobrescreveria a mensagem em andamento e a resposta
+  // apareceria truncada (BUG 2). As demais conversas recebem a versao remota
+  // normalmente.
+  const mergeRemoteConversations = useCallback(
+    (remote: ChatConversation[]): ChatConversation[] => {
+      const streamingId = activeStreamRef.current?.convId
+      if (!streamingId) return remote
+      const local = conversationsRef.current.find((c) => c.id === streamingId)
+      if (!local) return remote
+      return remote.map((c) => (c.id === streamingId ? local : c))
+    },
+    []
+  )
+
   // Auto-expand pasta da conversa ativa ao montar (1x)
   const autoExpandedOnMountRef = useRef(false)
   useEffect(() => {
@@ -618,12 +713,18 @@ export function useChat(models: AiModel[] = []): UseChatResult {
     []
   )
 
-  // Garante que activeId aponta pra uma conversa existente
+  // Garante que activeId aponta pra uma conversa existente. O rascunho do
+  // assistant (so em memoria) e um alvo valido mesmo nao estando em
+  // `conversations`, entao nao deve ser resetado aqui.
   useEffect(() => {
-    if (activeId && !conversations.some((c) => c.id === activeId)) {
+    if (
+      activeId &&
+      !conversations.some((c) => c.id === activeId) &&
+      draftConversation?.id !== activeId
+    ) {
       setActiveIdState(conversations[0]?.id ?? null)
     }
-  }, [conversations, activeId])
+  }, [conversations, activeId, draftConversation])
 
   useEffect(() => {
     saveConversations(conversations)
@@ -638,9 +739,47 @@ export function useChat(models: AiModel[] = []): UseChatResult {
   }, [looseOrder])
 
   useEffect(() => {
-    if (activeId) localStorage.setItem(ACTIVE_ID_KEY, activeId)
-    else localStorage.removeItem(ACTIVE_ID_KEY)
+    // O assistant sempre comeca em rascunho novo (so-memoria): nao deve
+    // restaurar nem clobberar o ACTIVE_ID_KEY compartilhado da janela principal.
+    // "Qual conversa esta ativa" e per-janela.
+    if (isAssistant) return
+    // Mesma guarda anti-loop por comparacao de conteudo dos demais save-effects.
+    const current = localStorage.getItem(ACTIVE_ID_KEY)
+    if (activeId) {
+      if (current !== activeId) localStorage.setItem(ACTIVE_ID_KEY, activeId)
+    } else if (current !== null) {
+      localStorage.removeItem(ACTIVE_ID_KEY)
+    }
   }, [activeId])
+
+  // Sync cross-window: o evento `storage` dispara apenas nas OUTRAS janelas da
+  // mesma origem. Quando a outra janela grava nas chaves de chat, recarregamos
+  // o valor canonico do localStorage e re-hidratamos o estado. O anti-eco fica
+  // nos save-effects (comparacao de conteudo nos save-helpers): hidratar a
+  // partir do proprio localStorage gera a mesma string serializada, entao os
+  // save-effects nao re-gravam e nao disparam um novo evento `storage`. A
+  // protecao do streaming (BUG 2) e o `mergeRemoteConversations`, que preserva
+  // a conversa que ESTA janela esta gerando contra a copia atrasada da outra.
+  useEffect(() => {
+    function handler(e: StorageEvent) {
+      if (e.key === null) return
+      if (e.key === CONVERSATIONS_KEY) {
+        const next = mergeRemoteConversations(loadConversations())
+        setConversations(next)
+        const r = reconcileOrders(next, loadFolders(), loadLooseOrder())
+        setFoldersState(r.folders)
+        setLooseOrderState(r.looseOrder)
+      } else if (e.key === FOLDERS_KEY) {
+        setFoldersState(dedupeAssistantFolders(loadFolders()))
+      } else if (e.key === LOOSE_ORDER_KEY) {
+        setLooseOrderState(loadLooseOrder())
+      }
+      // Outras chaves (ex.: ACTIVE_ID_KEY) NAO sao sincronizadas: "qual
+      // conversa esta ativa" e per-janela.
+    }
+    window.addEventListener('storage', handler)
+    return () => window.removeEventListener('storage', handler)
+  }, [])
 
   const setModel = useCallback((id: string | null) => {
     setModelState(id)
@@ -707,6 +846,28 @@ export function useChat(models: AiModel[] = []): UseChatResult {
     },
     [setFolders]
   )
+
+  // Inicia uma conversa NOVA e zerada para a janela assistant a cada exibicao.
+  // Persistencia preguiçosa: a conversa-rascunho vive SO em memoria e NAO toca o
+  // localStorage. Ela so e materializada na pasta `assistant` quando o usuario
+  // envia a 1a mensagem (ver `send`). Abrir/fechar sem enviar nao deixa rastro
+  // nem cria conversa vazia, e nao ressuscita lista obsoleta na outra janela.
+  const startAssistantConversation = useCallback(() => {
+    const conv = makeNewConversation()
+    setDraftConversation(conv)
+    setActiveIdState(conv.id)
+  }, [])
+
+  // Garante (idempotente, por nome) a pasta `assistant` no estado React, sem
+  // vincular conversa. Usado pelos modais de system prompt/RAG da janela
+  // assistant para configurar a pasta ANTES de enviar a 1a mensagem.
+  const ensureAssistantFolder = useCallback(() => {
+    setFolders((prev) => {
+      if (prev.some((f) => f.name === ASSISTANT_FOLDER_NAME)) return prev
+      const folder = makeNewFolder(ASSISTANT_FOLDER_NAME)
+      return [folder, ...prev]
+    })
+  }, [setFolders])
 
   const deleteConversation = useCallback(
     (id: string) => {
@@ -843,15 +1004,19 @@ export function useChat(models: AiModel[] = []): UseChatResult {
 
   const setFolderVisibleDocuments = useCallback(
     (folderId: string, visibleDocumentIds: string[]) => {
-      setFolders((prev) => {
-        const next = prev.map((f) =>
-          f.id === folderId ? { ...f, visibleDocumentIds, updatedAt: new Date().toISOString() } : f
+      setFolders((prev) =>
+        prev.map((f) =>
+          f.id === folderId
+            ? {
+                ...f,
+                visibleDocumentIds,
+                updatedAt: new Date().toISOString(),
+              }
+            : f
         )
-        saveFolders(next)
-        return next
-      })
+      )
     },
-    [],
+    [setFolders]
   )
 
   const moveConversation = useCallback(
@@ -1104,7 +1269,34 @@ export function useChat(models: AiModel[] = []): UseChatResult {
 
       // Garante uma conversa ativa
       let convId = activeId
-      if (!convId) {
+      const draft = draftRef.current
+      if (draft && draft.id === activeId) {
+        // Materializa o rascunho do assistant: insere na lista persistida e
+        // vincula a pasta `assistant` (idempotente por nome), tudo via setters
+        // de estado React.
+        convId = draft.id
+        setConversations((prev) => [draft, ...prev])
+        setFolders((prev) => {
+          const existing = prev.find((f) => f.name === ASSISTANT_FOLDER_NAME)
+          if (existing) {
+            return prev.map((f) =>
+              f.id === existing.id
+                ? {
+                    ...f,
+                    conversationIds: [draft.id, ...f.conversationIds],
+                    expanded: true,
+                    updatedAt: new Date().toISOString(),
+                  }
+                : f
+            )
+          }
+          const folder = makeNewFolder(ASSISTANT_FOLDER_NAME)
+          folder.conversationIds = [draft.id]
+          return [folder, ...prev]
+        })
+        setDraftConversation(null)
+        draftRef.current = null
+      } else if (!convId) {
         const conv = makeNewConversation()
         convId = conv.id
         setConversations((prev) => [conv, ...prev])
@@ -1294,9 +1486,14 @@ export function useChat(models: AiModel[] = []): UseChatResult {
       // - sem pasta ou prompt vazio -> apenas o prompt padrao
       // - modo "replace" -> apenas o prompt da pasta (padrao nao entra)
       // - modo "append"  -> prompt padrao primeiro, depois o da pasta
-      const containingFolder = foldersRef.current.find((f) =>
-        f.conversationIds.includes(targetId)
-      )
+      // No turno da 1a mensagem do assistant, a pasta `assistant` pode ter
+      // acabado de ser criada via `setFolders` (assincrono) e ainda nao estar
+      // refletida em `foldersRef.current`; resolvemos por NOME para aplicar
+      // system prompt/RAG ja na 1a mensagem.
+      const containingFolder = isAssistant
+        ? foldersRef.current.find((f) => f.name === ASSISTANT_FOLDER_NAME) ??
+          foldersRef.current.find((f) => f.conversationIds.includes(targetId))
+        : foldersRef.current.find((f) => f.conversationIds.includes(targetId))
       const folderPrompt = containingFolder?.systemPrompt.trim() ?? ''
       let systemMessages: ChatMessageInput[]
       if (containingFolder && folderPrompt.length > 0) {
@@ -1530,7 +1727,7 @@ export function useChat(models: AiModel[] = []): UseChatResult {
         failOnAssistant(message)
       }
     },
-    [activeId, isStreaming, model, models, setLooseOrder, updateMessages, thinkingEnabled]
+    [activeId, isAssistant, isStreaming, model, models, setFolders, setLooseOrder, updateMessages, thinkingEnabled]
   )
 
   useEffect(() => {
@@ -1567,7 +1764,10 @@ export function useChat(models: AiModel[] = []): UseChatResult {
   }, [updateMessages])
 
   const activeConversation =
-    conversations.find((c) => c.id === activeId) ?? null
+    conversations.find((c) => c.id === activeId) ??
+    (draftConversation && draftConversation.id === activeId
+      ? draftConversation
+      : null)
   const messages = activeConversation?.messages ?? []
 
   return {
@@ -1595,6 +1795,8 @@ export function useChat(models: AiModel[] = []): UseChatResult {
     selectConversation,
     newConversation,
     newConversationInFolder,
+    startAssistantConversation,
+    ensureAssistantFolder,
     deleteConversation,
     renameConversation,
     createFolder,

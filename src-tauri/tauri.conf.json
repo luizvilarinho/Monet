@@ -12,9 +12,21 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "",
         "width": 1280,
         "height": 800
+      },
+      {
+        "label": "assistant",
+        "title": "Monet Assistant",
+        "width": 420,
+        "height": 560,
+        "visible": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "decorations": false,
+        "resizable": true
       }
     ],
     "security": {
