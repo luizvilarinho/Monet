@@ -1,11 +1,11 @@
 {
-  "version": "1.3.11",
-  "notes": "Monet v1.3.11",
-  "pub_date": "2026-05-30T00:00:00Z",
+  "version": "1.3.12",
+  "notes": "Monet v1.3.12",
+  "pub_date": "2026-06-10T00:00:00Z",
   "platforms": {
     "windows-x86_64": {
-      "url": "https://github.com/luizvilarinho/Monet/releases/download/v1.3.11/monet_1.3.11_x64_en-US.msi",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRlFHSkpLWXhzckE4L0M1QUhKdXZ5VkdVUm9KV3IxWTJXcmZvTnJtNE1jYVkwaFZVRVpnZHRrcVRJZzN4MGd1a081bTB1WGU4eEVRSVJGYXNUdUdwUTduekc4WmFFemdzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgwMTY1Mjk0CWZpbGU6bW9uZXRfMS4zLjExX3g2NF9lbi1VUy5tc2kKekltY2doTUJIa3EyRjZnajRyZ0h1NThGbUlDOE1vcThBenRqa0Niemxpa3B6a2daUkRzaHlBMC9wNmxuc2hFL3dKam5HcTlkUytYOEx3SDR6MTZsQmc9PQo="
+      "url": "https://github.com/luizvilarinho/Monet/releases/download/v1.3.12/monet_1.3.12_x64_en-US.msi",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRlFHSkpLWXhzckdpNUc5WE1ZS1doQlRVc1RFbDRNV1FCQzUxdzR6cmpNZDI4c3BjdzFQL0NhQ0hKNkJnZjVYdkpRWjVTNHdybzdGVS9MTnJ6RWZZZ3E1VnR6WW5wUkFjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgxMTAxMjkzCWZpbGU6bW9uZXRfMS4zLjEyX3g2NF9lbi1VUy5tc2kKVFJSZWtyN2xIeDB1dG9yVUN6aUl1WUpaR2V3UHZBdFE3UFZYVzNQWXNlWHRBMCsyVGRMbmc0RzNNSG9JdWN6aXRJcmNVSFpEeXhTNEU2MGRZb3JXQUE9PQo="
     }
   }
 }
