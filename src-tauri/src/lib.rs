@@ -219,7 +219,20 @@ async fn save_chat_doc(app: AppHandle, filename: String, content: String) -> Res
     let data_dir = app.path().app_local_data_dir().map_err(|e| e.to_string())?;
     let docs_dir = data_dir.join("chat-docs");
     std::fs::create_dir_all(&docs_dir).map_err(|e| e.to_string())?;
-    let file_path = docs_dir.join(&filename);
+
+    // Rejeita qualquer filename que não seja um nome simples (sem componentes de
+    // diretório, sem `..`, sem path absoluto). `file_name()` extrai apenas o
+    // último componente; se o resultado diferir do input, há tentativa de escapar
+    // do diretório chat-docs — bloqueia a escrita arbitrária de arquivo.
+    let safe_name = std::path::Path::new(&filename)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| "Invalid filename".to_string())?;
+    if safe_name != filename {
+        return Err("Invalid filename: path components are not allowed".into());
+    }
+
+    let file_path = docs_dir.join(safe_name);
     std::fs::write(&file_path, &content).map_err(|e| e.to_string())?;
     Ok(file_path.to_string_lossy().into_owned())
 }
