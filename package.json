@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev --config src-tauri/tauri.conf.dev.json",
-    "tauri:build": "dotenv -e .env -- powershell -Command \"$env:TAURI_SIGNING_PRIVATE_KEY = Get-Content 'C:\\Users\\User\\Documents\\projetos\\Monet\\~\\.tauri\\monet.key' -Raw; $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = \\\"$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD\\\"; npm run tauri build\""
+    "tauri:build": "dotenv -e .env -- powershell -Command \"$env:TAURI_SIGNING_PRIVATE_KEY = Get-Content 'C:\\Users\\User\\Documents\\projetos\\Monet\\~\\.tauri\\monet.key' -Raw; $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = \\\"$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD\\\"; npm run tauri build\"",
+    "tauri:build-msix": "npm run tauri:build && powershell -ExecutionPolicy Bypass -File src-tauri\\msix\\build-msix.ps1"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",
