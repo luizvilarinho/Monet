@@ -196,7 +196,6 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [documentsModalNotebookId, setDocumentsModalNotebookId] = useState<string | null>(null)
   const [notebooksWithDocs, setNotebooksWithDocs] = useState<Set<string>>(new Set())
-
   const [kbOpen, setKbOpen] = useState(false)
   const [hasApiKey, setHasApiKey] = useState<boolean>(false)
   const [apiKeyChecked, setApiKeyChecked] = useState<boolean>(false)
@@ -1000,10 +999,16 @@ function App() {
               removeResponse(id)
               unlinkResponseFromChat(id)
             }}
-            notebookNotes={notebookNotes.filter((n) => n.id !== activeId)}
+            notebookNotes={
+              activeNote.notebookId === calendarNotebookId
+                ? notes.filter((n) => n.id !== activeId)
+                : notebookNotes.filter((n) => n.id !== activeId)
+            }
             onNavigateToNote={handleNoteLinkNavigation}
             relatedContent={
-              <RelatedContent activeNote={activeNote} notes={notes} notebooks={notebooks} onSelect={setActiveId} />
+              activeNote.notebookId !== calendarNotebookId
+                ? <RelatedContent activeNote={activeNote} notes={notes} notebooks={notebooks} onSelect={setActiveId} />
+                : undefined
             }
           />
         ) : (

@@ -56,18 +56,37 @@ const TITLE_WEIGHT = 0.25
 const CONTENT_WEIGHT = 0.30
 const MIN_SCORE = 0.04
 
+export function extractLinkedNoteIds(content: string): string[] {
+  const ids: string[] = []
+  const re = /data-note-id="([^"]+)"/g
+  let match: RegExpExecArray | null
+  while ((match = re.exec(content)) !== null) {
+    ids.push(match[1])
+  }
+  return ids
+}
+
 export function scoreRelatedNotes(active: Note, notes: Note[], topK = 5): ScoredNote[] {
   const activeTags = new Set(active.tags)
   const activeTitle = tokenize(active.title)
   const activeContent = tokenize(cleanContent(active.content))
+  const activeLinkedIds = new Set(extractLinkedNoteIds(active.content))
 
-  if (activeTags.size === 0 && activeTitle.size === 0 && activeContent.size === 0) {
+  if (activeTags.size === 0 && activeTitle.size === 0 && activeContent.size === 0 && activeLinkedIds.size === 0) {
     return []
   }
 
   const scored: ScoredNote[] = []
   for (const note of notes) {
     if (note.id === active.id) continue
+
+    const noteLinkedIds = new Set(extractLinkedNoteIds(note.content))
+    const isLinked = activeLinkedIds.has(note.id) || noteLinkedIds.has(active.id)
+
+    if (isLinked) {
+      scored.push({ note, score: 1.0 })
+      continue
+    }
 
     const tagsScore = jaccard(activeTags, new Set(note.tags))
     const titleScore = jaccard(activeTitle, tokenize(note.title))

@@ -9,8 +9,40 @@ use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{
+    menu::{MenuBuilder, MenuItemBuilder},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    AppHandle, Emitter, Manager, State, WindowEvent,
+};
 use tauri_plugin_sql::{Migration, MigrationKind};
+
+// Mostra e foca uma janela pelo label, restaurando-a caso esteja minimizada.
+fn show_and_focus_window(app: &AppHandle, label: &str) {
+    if let Some(window) = app.get_webview_window(label) {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+// Alterna a janela assistant: esconde se ja estiver visivel e focada,
+// caso contrario mostra e foca.
+fn toggle_assistant_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("assistant") {
+        let visible = window.is_visible().unwrap_or(false);
+        let focused = window.is_focused().unwrap_or(false);
+        if visible && focused {
+            let _ = window.hide();
+        } else {
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+            // Sinaliza a exibicao para a janela assistant criar uma conversa
+            // nova e zerada. So emitido ao MOSTRAR (nunca ao esconder).
+            let _ = app.emit_to("assistant", "assistant-shown", ());
+        }
+    }
+}
 use tokio::sync::oneshot;
 use tokio::time::timeout;
 
@@ -187,7 +219,20 @@ async fn save_chat_doc(app: AppHandle, filename: String, content: String) -> Res
     let data_dir = app.path().app_local_data_dir().map_err(|e| e.to_string())?;
     let docs_dir = data_dir.join("chat-docs");
     std::fs::create_dir_all(&docs_dir).map_err(|e| e.to_string())?;
-    let file_path = docs_dir.join(&filename);
+
+    // Rejeita qualquer filename que não seja um nome simples (sem componentes de
+    // diretório, sem `..`, sem path absoluto). `file_name()` extrai apenas o
+    // último componente; se o resultado diferir do input, há tentativa de escapar
+    // do diretório chat-docs — bloqueia a escrita arbitrária de arquivo.
+    let safe_name = std::path::Path::new(&filename)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| "Invalid filename".to_string())?;
+    if safe_name != filename {
+        return Err("Invalid filename: path components are not allowed".into());
+    }
+
+    let file_path = docs_dir.join(safe_name);
     std::fs::write(&file_path, &content).map_err(|e| e.to_string())?;
     Ok(file_path.to_string_lossy().into_owned())
 }
@@ -1154,6 +1199,46 @@ pub fn run() {
                     let _ = window.set_icon(icon.clone());
                 }
             }
+
+            // ─── System tray ───────────────────────────────────────────────
+            let open_item = MenuItemBuilder::with_id("open", "Open").build(app)?;
+            let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
+            let tray_menu = MenuBuilder::new(app).items(&[&open_item, &quit_item]).build()?;
+            let mut tray_builder = TrayIconBuilder::new()
+                .tooltip("Monet")
+                .menu(&tray_menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id().as_ref() {
+                    "open" => show_and_focus_window(app, "main"),
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        show_and_focus_window(tray.app_handle(), "main");
+                    }
+                });
+            if let Some(icon) = app.default_window_icon() {
+                tray_builder = tray_builder.icon(icon.clone());
+            }
+            tray_builder.build(app)?;
+
+            // ─── X sempre esconde a main na bandeja (nunca encerra) ────────
+            if let Some(main_window) = app.get_webview_window("main") {
+                let win = main_window.clone();
+                main_window.on_window_event(move |event| {
+                    if let WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = win.hide();
+                    }
+                });
+            }
+
             let vec_db = vec_db::init(&app.handle())
                 .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
             app.manage(vec_db);
@@ -1169,8 +1254,32 @@ pub fn run() {
                 documents::scan_all_watched_folders_on_startup(scan_handle).await;
             });
 
+            // ─── Atalho global Ctrl+M → toggle da janela assistant ─────────
+            // Falha de registro (ex.: atalho ja em uso) nao deve crashar o startup.
+            {
+                use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
+                let ctrl_m = Shortcut::new(Some(Modifiers::CONTROL), Code::KeyM);
+                if let Err(err) = app.global_shortcut().register(ctrl_m) {
+                    eprintln!("failed to register Ctrl+M global shortcut: {err}");
+                }
+            }
+
             Ok(())
         })
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, shortcut, event| {
+                    use tauri_plugin_global_shortcut::{Code, Modifiers, ShortcutState};
+                    let ctrl_m = tauri_plugin_global_shortcut::Shortcut::new(
+                        Some(Modifiers::CONTROL),
+                        Code::KeyM,
+                    );
+                    if shortcut == &ctrl_m && event.state() == ShortcutState::Pressed {
+                        toggle_assistant_window(app);
+                    }
+                })
+                .build(),
+        )
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_opener::init())

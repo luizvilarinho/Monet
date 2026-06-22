@@ -449,6 +449,16 @@ export function NotebookList({
                       <CalendarBlank size={16} aria-hidden />
                     </span>
                     <span className={styles.rowLabel}>{calNb.name}</span>
+                    <button
+                      className={`${styles.rowDocs} ${notebooksWithDocs.has(calNb.id) ? styles.rowDocsActive : ''}`}
+                      onClick={(e) => { e.stopPropagation(); onSelect(calNb.id); onOpenDocuments(calNb.id) }}
+                      onDoubleClick={(e) => e.stopPropagation()}
+                      aria-label={`documents for notebook ${calNb.name}`}
+                      title={notebooksWithDocs.has(calNb.id) ? 'notebook documents (active)' : 'notebook documents'}
+                      type="button"
+                    >
+                      <FileText size={13} aria-hidden />
+                    </button>
                   </li>
                 )
               })()}
@@ -554,7 +564,7 @@ export function NotebookList({
       )}
 
       <div className={`${styles.footer} ${collapsed ? styles.footerCollapsed : ''}`}>
-        {!collapsed && <span className={styles.version}>v1.3.11</span>}
+        {!collapsed && <span className={styles.version}>v1.3.13</span>}
         <button
           className={styles.settings}
           onClick={onOpenKnowledgeBase}

@@ -299,6 +299,19 @@
   white-space: nowrap;
 }
 
+.convRenameInput {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface-2, #26262c);
+  border: 1px solid var(--accent, #7c6af5);
+  border-radius: 4px;
+  color: var(--text-primary, #e8e8f0);
+  font-size: 12px;
+  padding: 2px 6px;
+  outline: none;
+  font-family: inherit;
+}
+
 .convActions {
   display: inline-flex;
   align-items: center;

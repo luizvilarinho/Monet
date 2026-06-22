@@ -72,6 +72,17 @@ const imgSchema = {
       ...(defaultSchema.attributes?.span ?? []),
       'data-img-blocked',
     ],
+    // Preserva os atributos estruturais dos blocos customizados de nota
+    // (toggle/embed/linked-note) no preview de nota vinculada, sem permitir
+    // handlers de evento ou outros vetores de execução.
+    div: [
+      ...(defaultSchema.attributes?.div ?? []),
+      'data-type',
+      'data-title',
+      'data-collapsed',
+      'data-cmd',
+      'data-note-id',
+    ],
   },
   tagNames: [
     ...(defaultSchema.tagNames ?? []),
@@ -92,11 +103,18 @@ export async function renderMarkdown(md: string): Promise<string> {
   return String(file)
 }
 
+// Preview de nota vinculada: o conteúdo pode conter HTML bruto (colado da web,
+// gerado por IA, ou serializado dos blocos do editor). `allowDangerousHtml`
+// converte esse raw HTML em nós HAST que então passam OBRIGATORIAMENTE por
+// rehype-sanitize — assim a estrutura dos blocos é preservada, mas <script>,
+// iframes e handlers on* são removidos antes de chegar ao dangerouslySetInnerHTML.
 const embedProcessor = unified()
   .use(remarkParse)
   .use(remarkGfm)
   .use(remarkRehype, { allowDangerousHtml: true })
-  .use(rehypeStringify, { allowDangerousHtml: true })
+  .use(rehypeSecureImages)
+  .use(rehypeSanitize, imgSchema)
+  .use(rehypeStringify)
 
 export async function renderNoteContent(md: string): Promise<string> {
   const file = await embedProcessor.process(md)
