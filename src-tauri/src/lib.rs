@@ -1192,6 +1192,9 @@ pub fn run() {
     ];
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_and_focus_window(app, "main");
+        }))
         .manage(RequestRegistry(Mutex::new(HashMap::new())))
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {

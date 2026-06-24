@@ -6,6 +6,7 @@ import { storage } from '../storage'
 export function useNotes() {
   const [notes, setNotes] = useState<Note[]>([])
   const [loaded, setLoaded] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   useEffect(() => {
     storage
@@ -27,8 +28,10 @@ export function useNotes() {
     })
     try {
       await storage.saveNote(note)
+      setSaveError(null)
     } catch (err) {
       console.error('failed to save note', err)
+      setSaveError('Failed to save note. Your changes may be lost.')
     }
   }, [])
 
@@ -36,8 +39,10 @@ export function useNotes() {
     setNotes((prev) => prev.filter((n) => n.id !== id))
     try {
       await storage.deleteNote(id)
+      setSaveError(null)
     } catch (err) {
       console.error('failed to delete note', err)
+      setSaveError('Failed to delete note.')
     }
   }, [])
 
@@ -60,5 +65,5 @@ export function useNotes() {
     [save]
   )
 
-  return { notes, loaded, save, remove, create }
+  return { notes, loaded, save, remove, create, saveError }
 }

@@ -76,6 +76,13 @@ function getSystemLanguage(): string {
 
 const USER_LANGUAGE = getSystemLanguage()
 
+// O notebook "Calendar" é um singleton com id fixo. Antes era identificado por
+// um id aleatório guardado em localStorage; quando localStorage e banco
+// divergiam, o app recriava um Calendar novo a cada abertura (duplicatas, e
+// notas que "sumiam" por ficarem sob um Calendar antigo). Com id fixo, a PK do
+// banco garante unicidade e o save é idempotente.
+const CALENDAR_NOTEBOOK_ID = 'calendar'
+
 function buildSystemPrompt(language: string): string {
   return `You are the Monet study assistant.
 
@@ -166,13 +173,20 @@ function buildUserMessage(
 }
 
 function App() {
-  const { notebooks, loaded: notebooksLoaded, save: saveNotebook, create: createNotebook, remove: removeNotebook } =
-    useNotebooks()
+  const {
+    notebooks,
+    loaded: notebooksLoaded,
+    save: saveNotebook,
+    create: createNotebook,
+    remove: removeNotebook,
+    saveError: notebookSaveError,
+  } = useNotebooks()
   const {
     notes,
     save: saveNote,
     create: createNote,
     remove: removeNote,
+    saveError: noteSaveError,
   } = useNotes()
 
   const [activeMode, setActiveMode] = useState<ActiveMode>(() => {
@@ -181,8 +195,14 @@ function App() {
   })
   const [activeNotebookId, setActiveNotebookId] = useState<string | null>(null)
   const [activeSubjectId, setActiveSubjectId] = useState<string | null>(null)
-  const { subjects, save: saveSubject, remove: removeSubject, create: createSubject, reorder: reorderSubjects } =
-    useSubjects(activeNotebookId)
+  const {
+    subjects,
+    save: saveSubject,
+    remove: removeSubject,
+    create: createSubject,
+    reorder: reorderSubjects,
+    saveError: subjectSaveError,
+  } = useSubjects(activeNotebookId)
   const [activeId, setActiveId] = useState<string | null>(null)
   // When in All Notes (activeNotebookId === null), load subjects for the active note's notebook
   const allNotesNoteNotebookId = activeNotebookId === null
@@ -226,9 +246,7 @@ function App() {
   const exportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [noteOrder, setNoteOrder] = useState<string[]>(() => loadNoteOrder())
   const [notebookOrder, setNotebookOrder] = useState<string[]>(() => loadOrder('monet:notebook-order'))
-  const [calendarNotebookId, setCalendarNotebookId] = useState<string | null>(
-    () => localStorage.getItem('monet:calendar-notebook-id')
-  )
+  const calendarNotebookId = CALENDAR_NOTEBOOK_ID
 
   const [updateDialog, setUpdateDialog] = useState<{
     update: Update
@@ -240,12 +258,18 @@ function App() {
 
   useEffect(() => {
     if (!notebooksLoaded) return
-    if (calendarNotebookId && notebooks.some((nb) => nb.id === calendarNotebookId)) return
-    createNotebook('Calendar').then((nb) => {
-      setCalendarNotebookId(nb.id)
-      localStorage.setItem('monet:calendar-notebook-id', nb.id)
+    if (notebooks.some((nb) => nb.id === CALENDAR_NOTEBOOK_ID)) return
+    // Cria o Calendar com id fixo. saveNotebook é UPSERT por id (ON CONFLICT),
+    // então mesmo que este efeito dispare mais de uma vez nunca gera duplicata.
+    const now = Date.now()
+    void saveNotebook({
+      id: CALENDAR_NOTEBOOK_ID,
+      name: 'Calendar',
+      createdAt: now,
+      updatedAt: now,
+    }).then(() => {
       setNotebookOrder((prev) => {
-        const next = [nb.id, ...prev.filter((x) => x !== nb.id)]
+        const next = [CALENDAR_NOTEBOOK_ID, ...prev.filter((x) => x !== CALENDAR_NOTEBOOK_ID)]
         saveOrder('monet:notebook-order', next)
         return next
       })
@@ -885,6 +909,11 @@ function App() {
         focusMode={focusMode}
         onToggleFocus={() => setFocusMode((v) => !v)}
       />
+      {(noteSaveError || notebookSaveError || subjectSaveError) && (
+        <div className="saveErrorBanner" role="alert">
+          {noteSaveError || notebookSaveError || subjectSaveError}
+        </div>
+      )}
       {activeMode === 'chat' ? (
         <div className="workspace">
           <ChatPanel

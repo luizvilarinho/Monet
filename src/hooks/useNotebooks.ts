@@ -6,6 +6,7 @@ import { storage } from '../storage'
 export function useNotebooks() {
   const [notebooks, setNotebooks] = useState<Notebook[]>([])
   const [loaded, setLoaded] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   useEffect(() => {
     storage
@@ -27,8 +28,10 @@ export function useNotebooks() {
     })
     try {
       await storage.saveNotebook(nb)
+      setSaveError(null)
     } catch (err) {
       console.error('failed to save notebook', err)
+      setSaveError('Failed to save notebook. Your changes may be lost.')
     }
   }, [])
 
@@ -36,8 +39,10 @@ export function useNotebooks() {
     setNotebooks((prev) => prev.filter((n) => n.id !== id))
     try {
       await storage.deleteNotebook(id)
+      setSaveError(null)
     } catch (err) {
       console.error('failed to delete notebook', err)
+      setSaveError('Failed to delete notebook.')
     }
   }, [])
 
@@ -56,5 +61,5 @@ export function useNotebooks() {
     [save]
   )
 
-  return { notebooks, loaded, save, remove, create }
+  return { notebooks, loaded, save, remove, create, saveError }
 }

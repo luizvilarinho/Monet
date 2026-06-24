@@ -126,6 +126,12 @@ fn documents_dir(app: &AppHandle) -> Result<PathBuf, String> {
 fn open_doc_db(app: &AppHandle) -> Result<Connection, String> {
     let path = doc_db_path(app)?;
     let conn = Connection::open(&path).map_err(|e| format!("failed to open monet.db: {}", e))?;
+    // O frontend (tauri-plugin-sql) abre o MESMO monet.db. Sem busy_timeout, uma
+    // contenção de lock no startup falha na hora com "database is locked" — aqui
+    // esperamos até 5s pelo lock em vez de falhar, reduzindo a corrida entre as
+    // duas conexões (scan de watched folders vs migrations/queries do plugin).
+    conn.busy_timeout(Duration::from_secs(5))
+        .map_err(|e| format!("failed to set busy_timeout: {}", e))?;
     conn.pragma_update(None, "journal_mode", &"WAL")
         .map_err(|e| format!("failed to configure WAL: {}", e))?;
 
