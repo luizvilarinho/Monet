@@ -141,28 +141,99 @@ function rowToSubject(r: SubjectRow): Subject {
 }
 
 
+// O banco roda em modo WAL (default do SQLite). Com o pool de múltiplas
+// conexões do tauri-plugin-sql, o autocheckpoint PASSIVE quase nunca
+// completa (sempre há um leitor segurando o lock), então o WAL cresce e o
+// monet.db principal nunca é atualizado. Se o processo é encerrado sem
+// checkpoint (ex. "Sair" na bandeja → app.exit(0)), a próxima abertura pode
+// voltar a ver só o monet.db congelado e as notas "somem".
+//
+// Solução em duas frentes:
+//  1. Um checkpoint no startup (logo após Database.load) drena qualquer WAL
+//     acumulado de sessões anteriores para o monet.db — recupera dados presos
+//     no WAL e zera o seu crescimento.
+//  2. Após cada escrita, um PRAGMA wal_checkpoint(TRUNCATE) throttled mantém o
+//     monet.db sempre atualizado, independente de como o processo é encerrado.
+// O checkpoint convive com leitores em WAL (não exige lock exclusivo, ao
+// contrário de trocar journal_mode, que falhava com SQLITE_BUSY) e nunca
+// rejeita o dbPromise: uma falha é apenas logada.
+const CHECKPOINT_INTERVAL_MS = 1500
+
 export class TauriStorage implements StorageAdapter {
   private dbPromise?: Promise<Database>
+  private checkpointTimer?: ReturnType<typeof setTimeout>
+  private lastCheckpoint = 0
 
   private db(): Promise<Database> {
     if (!this.dbPromise) {
-      this.dbPromise = Database.load(DB_URL).then(async (db) => {
-        // Uso local single-user: DELETE evita depender de checkpoint do WAL
-        // no encerramento do app para persistir no monet.db principal.
-        // Precisa rodar aqui, antes de qualquer outra query, porque a troca
-        // de modo exige lock exclusivo no arquivo: se outras conexões do pool
-        // já estiverem abertas (ex. queries concorrentes), falha com
-        // "database is locked" (SQLITE_BUSY). O catch garante que uma falha
-        // nessa troca nunca quebre o dbPromise (save/load continuam em WAL).
-        try {
-          await db.execute('PRAGMA journal_mode=DELETE')
-        } catch (err) {
-          console.error('failed to set journal_mode=DELETE', err)
-        }
-        return db
+      const p = this.load()
+      this.dbPromise = p
+      // Nunca cacheia uma rejeição: se a carga falhar, limpa o cache para que a
+      // próxima chamada tente de novo (senão um único erro transitório quebraria
+      // todos os save/load da sessão até um reload da página).
+      p.catch(() => {
+        if (this.dbPromise === p) this.dbPromise = undefined
       })
     }
     return this.dbPromise
+  }
+
+  private async load(): Promise<Database> {
+    // O backend (documents.rs) abre o MESMO monet.db via rusqlite no startup
+    // (scan de watched folders). Enquanto esse lock existe, as migrations do
+    // tauri-plugin-sql podem falhar com "database is locked" e rejeitar o
+    // Database.load. O lock é transitório, então tentamos algumas vezes antes
+    // de desistir — é o que torna o cold start confiável (antes só funcionava
+    // após um F5, que recriava o load depois do scan terminar).
+    const MAX_ATTEMPTS = 15
+    const RETRY_DELAY_MS = 200
+    let lastErr: unknown
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        const db = await Database.load(DB_URL)
+        // Drena o WAL acumulado para o monet.db logo na abertura. Nunca derruba
+        // a carga (uma falha de checkpoint é só logada).
+        try {
+          await db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+        } catch (err) {
+          console.error('initial wal_checkpoint failed', err)
+        }
+        return db
+      } catch (err) {
+        lastErr = err
+        console.error(`Database.load falhou (tentativa ${attempt}/${MAX_ATTEMPTS})`, err)
+        if (attempt < MAX_ATTEMPTS) {
+          await new Promise((r) => setTimeout(r, RETRY_DELAY_MS))
+        }
+      }
+    }
+    throw lastErr
+  }
+
+  // Throttle: roda no máximo 1×/CHECKPOINT_INTERVAL_MS. Dispara na borda de
+  // subida (primeira escrita após o intervalo) e agenda uma execução de
+  // saída (garante que a última escrita de uma rajada seja persistida).
+  // Não é awaited pelos saves — uma falha de checkpoint nunca quebra a escrita.
+  private scheduleCheckpoint(): void {
+    const elapsed = Date.now() - this.lastCheckpoint
+    if (elapsed >= CHECKPOINT_INTERVAL_MS) {
+      void this.checkpoint()
+    } else if (!this.checkpointTimer) {
+      this.checkpointTimer = setTimeout(() => {
+        this.checkpointTimer = undefined
+        void this.checkpoint()
+      }, CHECKPOINT_INTERVAL_MS - elapsed)
+    }
+  }
+
+  private async checkpoint(): Promise<void> {
+    this.lastCheckpoint = Date.now()
+    try {
+      const db = await this.db()
+      await db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+    } catch (err) {
+      console.error('wal_checkpoint failed', err)
+    }
   }
 
   async getNotebooks(): Promise<Notebook[]> {
@@ -183,6 +254,7 @@ export class TauriStorage implements StorageAdapter {
          updated_at = excluded.updated_at`,
       [nb.id, nb.name, nb.createdAt, nb.updatedAt]
     )
+    this.scheduleCheckpoint()
   }
 
   async deleteNotebook(id: string): Promise<void> {
@@ -194,6 +266,7 @@ export class TauriStorage implements StorageAdapter {
     await db.execute('DELETE FROM notes WHERE notebook_id = $1', [id])
     await db.execute('DELETE FROM subjects WHERE notebook_id = $1', [id])
     await db.execute('DELETE FROM notebooks WHERE id = $1', [id])
+    this.scheduleCheckpoint()
   }
 
   async getSubjects(notebookId: string): Promise<Subject[]> {
@@ -216,6 +289,7 @@ export class TauriStorage implements StorageAdapter {
          updated_at = excluded.updated_at`,
       [s.id, s.notebookId, s.name, s.sortOrder, s.createdAt, s.updatedAt]
     )
+    this.scheduleCheckpoint()
   }
 
   async deleteSubject(id: string): Promise<void> {
@@ -233,11 +307,13 @@ export class TauriStorage implements StorageAdapter {
       await db.execute('ROLLBACK')
       throw err
     }
+    this.scheduleCheckpoint()
   }
 
   async deleteSubjectsByNotebook(notebookId: string): Promise<void> {
     const db = await this.db()
     await db.execute('DELETE FROM subjects WHERE notebook_id = $1', [notebookId])
+    this.scheduleCheckpoint()
   }
 
   async getNotes(): Promise<Note[]> {
@@ -282,11 +358,13 @@ export class TauriStorage implements StorageAdapter {
         n.updatedAt,
       ]
     )
+    this.scheduleCheckpoint()
   }
 
   async deleteNote(id: string): Promise<void> {
     const db = await this.db()
     await db.execute('DELETE FROM notes WHERE id = $1', [id])
+    this.scheduleCheckpoint()
   }
 
   async searchNotes(query: string): Promise<Note[]> {
@@ -317,6 +395,7 @@ export class TauriStorage implements StorageAdapter {
         WHERE id = $4`,
       [status, errorMessage ?? null, Date.now(), id],
     )
+    this.scheduleCheckpoint()
   }
 
   async getResponses(noteId: string): Promise<AiResponse[]> {
@@ -356,16 +435,19 @@ export class TauriStorage implements StorageAdapter {
         sourcesJson,
       ]
     )
+    this.scheduleCheckpoint()
   }
 
   async deleteResponse(id: string): Promise<void> {
     const db = await this.db()
     await db.execute('DELETE FROM ai_responses WHERE id = $1', [id])
+    this.scheduleCheckpoint()
   }
 
   async deleteResponses(noteId: string): Promise<void> {
     const db = await this.db()
     await db.execute('DELETE FROM ai_responses WHERE note_id = $1', [noteId])
+    this.scheduleCheckpoint()
   }
 
   async exportMarkdown(_note: Note): Promise<void> {
