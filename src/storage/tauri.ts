@@ -145,7 +145,23 @@ export class TauriStorage implements StorageAdapter {
   private dbPromise?: Promise<Database>
 
   private db(): Promise<Database> {
-    if (!this.dbPromise) this.dbPromise = Database.load(DB_URL)
+    if (!this.dbPromise) {
+      this.dbPromise = Database.load(DB_URL).then(async (db) => {
+        // Uso local single-user: DELETE evita depender de checkpoint do WAL
+        // no encerramento do app para persistir no monet.db principal.
+        // Precisa rodar aqui, antes de qualquer outra query, porque a troca
+        // de modo exige lock exclusivo no arquivo: se outras conexões do pool
+        // já estiverem abertas (ex. queries concorrentes), falha com
+        // "database is locked" (SQLITE_BUSY). O catch garante que uma falha
+        // nessa troca nunca quebre o dbPromise (save/load continuam em WAL).
+        try {
+          await db.execute('PRAGMA journal_mode=DELETE')
+        } catch (err) {
+          console.error('failed to set journal_mode=DELETE', err)
+        }
+        return db
+      })
+    }
     return this.dbPromise
   }
 

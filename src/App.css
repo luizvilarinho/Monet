@@ -36,3 +36,12 @@ body { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif; }
   flex: 1;
   min-height: 0;
 }
+
+.saveErrorBanner {
+  background: rgba(239, 159, 39, 0.08);
+  border-bottom: 1px solid rgba(239, 159, 39, 0.3);
+  color: var(--accent-warn);
+  padding: 6px 16px;
+  font-size: 12px;
+  flex-shrink: 0;
+}

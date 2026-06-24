@@ -5,6 +5,7 @@ import { storage } from '../storage'
 
 export function useSubjects(notebookId: string | null) {
   const [subjects, setSubjects] = useState<Subject[]>([])
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!notebookId) {
@@ -29,8 +30,10 @@ export function useSubjects(notebookId: string | null) {
     })
     try {
       await storage.saveSubject(subject)
+      setSaveError(null)
     } catch (err) {
       console.error('failed to save subject', err)
+      setSaveError('Failed to save subject. Your changes may be lost.')
     }
   }, [])
 
@@ -38,8 +41,10 @@ export function useSubjects(notebookId: string | null) {
     setSubjects((prev) => prev.filter((s) => s.id !== id))
     try {
       await storage.deleteSubject(id)
+      setSaveError(null)
     } catch (err) {
       console.error('failed to delete subject', err)
+      setSaveError('Failed to delete subject.')
     }
   }, [])
 
@@ -73,12 +78,14 @@ export function useSubjects(notebookId: string | null) {
       setSubjects(updated)
       try {
         await Promise.all(updated.map((s) => storage.saveSubject(s)))
+        setSaveError(null)
       } catch (err) {
         console.error('failed to reorder subjects', err)
+        setSaveError('Failed to save subject order. Your changes may be lost.')
       }
     },
     [subjects]
   )
 
-  return { subjects, save, remove, create, reorder }
+  return { subjects, save, remove, create, reorder, saveError }
 }
