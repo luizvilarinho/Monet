@@ -109,7 +109,8 @@ Command behavior:
 - /opinion: organize into pros, cons, and a direct conclusion.
 - /search and /profile: respond factually, based only on the provided results.
 - /expand: deliver only new and useful information not explicitly present in the note. Do not summarize, rephrase, or repeat the note's text in other words. Add only context, connections, implications, examples, exceptions, risks, counterpoints, or missing details.
-- /docs: respond using exclusively the "Relevant document excerpts from the notebook". Ignore the note and your general knowledge. Cite the document name in parentheses at the end of each claim. If the excerpts do not contain enough information to answer, respond exactly: "I could not find this information in the notebook documents."`
+- /docs: respond using exclusively the "Relevant document excerpts from the notebook". Ignore the note and your general knowledge. Cite the document name in parentheses at the end of each claim. If the excerpts do not contain enough information to answer, respond exactly: "I could not find this information in the notebook documents."
+- /week: respond using exclusively the "Calendar notes from the last 7 days" block as context. Answer the user's free-form question about their week (activities, plans, patterns) based only on those notes. If they do not contain enough information, say so plainly.`
 }
 
 const SYSTEM_PROMPT = buildSystemPrompt(USER_LANGUAGE)
@@ -152,19 +153,77 @@ function formatRagContext(chunks: ChunkResult[]): string {
   return `Relevant document excerpts from the notebook:\n\n${blocks.join('\n\n')}\n\n---`
 }
 
+const CALENDAR_TITLE_RE = /^(\d{2})\/(\d{2})\/(\d{4})$/
+
+function formatCalendarTitle(date: Date): string {
+  const d = String(date.getDate()).padStart(2, '0')
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const y = date.getFullYear()
+  return `${d}/${m}/${y}`
+}
+
+function parseCalendarTitle(title: string): Date | null {
+  const match = title.trim().match(CALENDAR_TITLE_RE)
+  if (!match) return null
+  const day = Number(match[1])
+  const month = Number(match[2])
+  const year = Number(match[3])
+  const date = new Date(year, month - 1, day)
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
+    return null
+  }
+  return date
+}
+
+function stripEmbedBlockTags(content: string): string {
+  if (!content.includes('<embed-block')) return content
+  return content.replace(/<embed-block\b[^>]*><\/embed-block>/g, '')
+}
+
+function getWeekCalendarNotes(
+  notes: Note[],
+  anchor: Date
+): { dateLabel: string; content: string }[] {
+  const byTitle = new Map(
+    notes
+      .filter((n) => n.notebookId === CALENDAR_NOTEBOOK_ID)
+      .map((n) => [n.title, n] as const)
+  )
+  const entries: { dateLabel: string; content: string }[] = []
+  for (let i = 6; i >= 0; i--) {
+    const day = new Date(anchor)
+    day.setDate(day.getDate() - i)
+    const title = formatCalendarTitle(day)
+    const note = byTitle.get(title)
+    if (!note) continue
+    const content = stripCommandLines(stripEmbedBlockTags(note.content)).trim()
+    if (!content) continue
+    entries.push({ dateLabel: title, content })
+  }
+  return entries
+}
+
+function formatWeekContext(entries: { dateLabel: string; content: string }[]): string {
+  if (entries.length === 0) return ''
+  const blocks = entries.map((e) => `[${e.dateLabel}]\n${e.content}`)
+  return `Calendar notes from the last 7 days:\n\n${blocks.join('\n\n')}\n\n---`
+}
+
 function buildUserMessage(
   command: string,
   description: string,
   query: string,
   noteContent: string,
   searchContext?: string,
-  ragContext?: string
+  ragContext?: string,
+  weekContext?: string
 ): string {
   const parts: string[] = []
   parts.push(`Command: ${command} - ${description}`)
   if (query.trim()) parts.push(`Parameter: ${query.trim()}`)
   if (ragContext) parts.push(`\n${ragContext}`)
   if (searchContext) parts.push(`\n${searchContext}`)
+  if (weekContext) parts.push(`\n${weekContext}`)
   const cleanContent = stripCommandLines(noteContent)
   if (cleanContent) {
     parts.push(`\nCurrent note content:\n${cleanContent}`)
@@ -509,6 +568,9 @@ function App() {
       if (!activeId) return false
       const def = findCommand(cmd)
       if (!def) return false
+      if (def.calendarOnly && activeNote?.notebookId !== CALENDAR_NOTEBOOK_ID) {
+        return false
+      }
       if (def.takesQuery && query.trim().length === 0) {
         return false
       }
@@ -631,9 +693,37 @@ function App() {
         return true
       }
 
+      const isWeekOnly = cmd === '/week'
+      let weekContext: string | undefined
+      if (isWeekOnly) {
+        const anchor = activeNote ? parseCalendarTitle(activeNote.title) : null
+        if (!anchor) {
+          addErrorCard(
+            activeId,
+            cmd,
+            query,
+            "This note's title is not a valid calendar date (DD/MM/YYYY)."
+          )
+          return true
+        }
+        const weekEntries = getWeekCalendarNotes(notes, anchor)
+        if (weekEntries.length === 0) {
+          addErrorCard(
+            activeId,
+            cmd,
+            query,
+            'No calendar notes with content found in the last 7 days.'
+          )
+          return true
+        }
+        weekContext = formatWeekContext(weekEntries)
+      }
+
       const userMessage = isDocsOnly
         ? buildUserMessage(cmd, def.description, query, '', undefined, ragContext)
-        : buildUserMessage(cmd, def.description, query, noteContent, searchContext, ragContext)
+        : isWeekOnly
+          ? buildUserMessage(cmd, def.description, query, '', searchContext, ragContext, weekContext)
+          : buildUserMessage(cmd, def.description, query, noteContent, searchContext, ragContext)
 
       await start({
         noteId: activeId,
@@ -647,7 +737,7 @@ function App() {
       })
       return true
     },
-    [activeId, activeNote, modelId, models.length, start, addErrorCard]
+    [activeId, activeNote, modelId, models.length, start, addErrorCard, notes]
   )
 
   const effectiveNotebookWidth = notebookCollapsed ? COLLAPSED_PANEL_WIDTH : notebookWidth
@@ -746,10 +836,7 @@ function App() {
   const handleCalendarDayClick = useCallback(
     async (date: Date) => {
       if (!calendarNotebookId) return
-      const d = String(date.getDate()).padStart(2, '0')
-      const m = String(date.getMonth() + 1).padStart(2, '0')
-      const y = date.getFullYear()
-      const title = `${d}/${m}/${y}`
+      const title = formatCalendarTitle(date)
       const existing = notes.find(
         (n) => n.notebookId === calendarNotebookId && n.title === title
       )
@@ -1039,6 +1126,7 @@ function App() {
                 ? <RelatedContent activeNote={activeNote} notes={notes} notebooks={notebooks} onSelect={setActiveId} />
                 : undefined
             }
+            isCalendarNote={activeNote.notebookId === calendarNotebookId}
           />
         ) : (
           <EmptyEditor

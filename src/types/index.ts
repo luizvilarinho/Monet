@@ -84,6 +84,7 @@ export interface CommandDef {
   example: string
   takesQuery: boolean
   usesSearch?: boolean
+  calendarOnly?: boolean
 }
 
 export interface CommandExecutionRequest {

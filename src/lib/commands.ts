@@ -14,6 +14,7 @@ export const COMMANDS: CommandDef[] = [
   { name: '/ask', description: 'Ask a free-form question to the AI model', example: '/ask what is the difference between HTTP/1.1 and HTTP/2?', takesQuery: true, usesSearch: true },
   { name: '/docs', description: 'Answer using only the notebook documents', example: '/docs which companies did the person work for?', takesQuery: true },
   { name: '/action', description: 'Perform an action on the current note text (edit, rewrite, organize, transform)', example: '/action rewrite this section more concisely', takesQuery: true },
+  { name: '/week', description: 'Answers free-form questions using the last 7 days of calendar notes', example: '/week what were my activities this week?', takesQuery: true, calendarOnly: true },
 ]
 
 export function findCommand(name: string): CommandDef | undefined {

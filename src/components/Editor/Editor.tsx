@@ -60,6 +60,7 @@ export interface EditorProps {
   relatedContent?: ReactNode
   notebookNotes?: Note[]
   onNavigateToNote?: (noteId: string) => void
+  isCalendarNote?: boolean
 }
 
 function getMarkdown(editor: TiptapEditor): string {
@@ -134,6 +135,7 @@ export function Editor({
   relatedContent,
   notebookNotes = [],
   onNavigateToNote,
+  isCalendarNote = false,
 }: EditorProps) {
   const [adding, setAdding] = useState(false)
   const [draft, setDraft] = useState('')
@@ -163,6 +165,8 @@ export function Editor({
   onRemoveResponseRef.current = onRemoveResponse
   const onNavigateToNoteRef = useRef(onNavigateToNote)
   onNavigateToNoteRef.current = onNavigateToNote
+  const isCalendarNoteRef = useRef(isCalendarNote)
+  isCalendarNoteRef.current = isCalendarNote
 
   const contextValue = useMemo(
     () => ({ responses: responses ?? [] }),
@@ -273,7 +277,7 @@ export function Editor({
           }
           if (event.key === 'Escape') {
             event.preventDefault()
-            const info = getCurrentCommandLine(view.state)
+            const info = getCurrentCommandLine(view.state, isCalendarNoteRef.current)
             dismissedFingerprintRef.current = info?.text ?? null
             setAutocomplete(HIDDEN_AUTOCOMPLETE)
             return true
@@ -306,7 +310,7 @@ export function Editor({
         }
 
         if (event.key === 'Enter' && !event.shiftKey) {
-          const info = getCurrentCommandLine(view.state)
+          const info = getCurrentCommandLine(view.state, isCalendarNoteRef.current)
           if (!info) return false
           const { selection } = view.state
           const $from = selection.$from
@@ -371,7 +375,7 @@ export function Editor({
 
   acceptSuggestionRef.current = (suggestion: string) => {
     if (!editor) return
-    const info = getCurrentCommandLine(editor.state)
+    const info = getCurrentCommandLine(editor.state, isCalendarNoteRef.current)
     if (!info) {
       setAutocomplete(HIDDEN_AUTOCOMPLETE)
       return
@@ -389,7 +393,7 @@ export function Editor({
 
   const updateAutocomplete = useCallback(() => {
     if (!editor) return
-    const info = getCurrentCommandLine(editor.state)
+    const info = getCurrentCommandLine(editor.state, isCalendarNoteRef.current)
     if (!info) {
       dismissedFingerprintRef.current = null
       if (autocompleteRef.current.visible) {
@@ -403,7 +407,7 @@ export function Editor({
       }
       return
     }
-    const suggestions = getCommandSuggestions(info.text)
+    const suggestions = getCommandSuggestions(info.text, isCalendarNoteRef.current)
     if (suggestions.length === 0) {
       if (autocompleteRef.current.visible) {
         setAutocomplete(HIDDEN_AUTOCOMPLETE)

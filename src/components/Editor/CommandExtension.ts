@@ -831,7 +831,7 @@ export interface CommandLineInfo {
   paragraphEnd: number
 }
 
-export function getCurrentCommandLine(state: EditorState): CommandLineInfo | null {
+export function getCurrentCommandLine(state: EditorState, isCalendarNote = false): CommandLineInfo | null {
   const { selection } = state
   if (!selection.empty) return null
   const $pos = selection.$from
@@ -849,7 +849,7 @@ export function getCurrentCommandLine(state: EditorState): CommandLineInfo | nul
     text,
     cmd,
     query,
-    status: getCommandLineStatus(text),
+    status: getCommandLineStatus(text, isCalendarNote),
     paragraphPos,
     paragraphEnd,
   }
