@@ -12,6 +12,7 @@ import styles from './ChatPanel.module.css'
 import { ChatSidebar } from './ChatSidebar'
 import { ChatToolsMenu } from './ChatToolsMenu'
 import { FolderDocumentSelectorModal } from './FolderDocumentSelectorModal'
+import { FolderMemoryModal } from './FolderMemoryModal'
 import { FolderSystemPromptModal } from './FolderSystemPromptModal'
 import { SaveToNoteModal } from './SaveToNoteModal'
 
@@ -72,6 +73,9 @@ export function ChatPanel({
     setFolderExpanded,
     setFolderSystemPrompt,
     setFolderVisibleDocuments,
+    setFolderMemory,
+    setFolderMemoryEnabled,
+    folderMemoryUpdatedAt,
     moveConversation,
     removeConversationFromFolder,
     reorderFolders,
@@ -89,6 +93,8 @@ export function ChatPanel({
   const [systemPromptFolderId, setSystemPromptFolderId] = useState<string | null>(
     null,
   )
+  const [memoryFolderId, setMemoryFolderId] = useState<string | null>(null)
+  const [memoryToastVisible, setMemoryToastVisible] = useState(false)
   const [folderDocsFolder, setFolderDocsFolder] = useState<ChatFolder | null>(null)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const historyRef = useRef<HTMLDivElement | null>(null)
@@ -159,6 +165,16 @@ export function ChatPanel({
     return folders.find((f) => f.id === systemPromptFolderId) ?? null
   }, [folders, systemPromptFolderId])
 
+  const memoryFolder: ChatFolder | null = useMemo(() => {
+    if (!memoryFolderId) return null
+    return folders.find((f) => f.id === memoryFolderId) ?? null
+  }, [folders, memoryFolderId])
+
+  const activeFolder: ChatFolder | null = useMemo(() => {
+    if (!activeId) return null
+    return folders.find((f) => f.conversationIds.includes(activeId)) ?? null
+  }, [folders, activeId])
+
   // Scroll unico ao final do historico quando o usuario envia uma nova mensagem
   // na mesma conversa. Trocas de conversa nao disparam (cada conversa preserva
   // sua posicao). Streaming nao dispara (so o id da ultima msg de user importa).
@@ -195,6 +211,13 @@ export function ChatPanel({
       el.scrollTo({ top: el.scrollHeight, behavior: 'instant' })
     }
   }, [messages, isStreaming])
+
+  useEffect(() => {
+    if (folderMemoryUpdatedAt === null) return
+    setMemoryToastVisible(true)
+    const id = window.setTimeout(() => setMemoryToastVisible(false), 4000)
+    return () => window.clearTimeout(id)
+  }, [folderMemoryUpdatedAt])
 
   function handleSend() {
     if (!canSend) return
@@ -313,6 +336,7 @@ export function ChatPanel({
         onOpenFolderSystemPrompt={(folder) =>
           setSystemPromptFolderId(folder.id)
         }
+        onOpenFolderMemory={(folder) => setMemoryFolderId(folder.id)}
         onOpenFolderDocuments={(folder) => setFolderDocsFolder(folder)}
         width={sidebarCollapsed ? 48 : sidebarWidth}
         collapsed={sidebarCollapsed}
@@ -456,6 +480,12 @@ export function ChatPanel({
                 Searching the web...
               </div>
             )}
+            {memoryToastVisible && (
+              <div className={styles.webSearchProgress} role="status" aria-live="polite">
+                <span className={styles.webSearchDot} aria-hidden="true" />
+                Folder memory updated
+              </div>
+            )}
             {visionWarning && (
               <div className={styles.visionWarning} role="alert">
                 This model does not support images. Switch to a vision-capable model or remove the image.
@@ -533,7 +563,12 @@ export function ChatPanel({
               >
                 <Paperclip size={15} />
               </button>
-              <ChatToolsMenu tools={tools} onToggle={setTool} />
+              <ChatToolsMenu
+                tools={tools}
+                onToggle={setTool}
+                folderMemory={activeFolder ? { enabled: activeFolder.memoryEnabled } : null}
+                onToggleFolderMemory={(v) => activeFolder && setFolderMemoryEnabled(activeFolder.id, v)}
+              />
               {isStreaming ? (
                 <button
                   type="button"
@@ -586,6 +621,13 @@ export function ChatPanel({
           setFolderVisibleDocuments(folderId, visibleDocumentIds)
         }
         onClose={() => setFolderDocsFolder(null)}
+      />
+
+      <FolderMemoryModal
+        open={memoryFolder !== null}
+        folder={memoryFolder}
+        onConfirm={(folderId, text) => setFolderMemory(folderId, text)}
+        onClose={() => setMemoryFolderId(null)}
       />
     </section>
   )

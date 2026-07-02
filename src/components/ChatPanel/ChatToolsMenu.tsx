@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { Brain } from '@phosphor-icons/react'
 import type { ChatTools } from '../../hooks/useChat'
 import styles from './ChatToolsMenu.module.css'
 
@@ -37,9 +38,11 @@ const TOOLS: ToolDef[] = [
 export interface ChatToolsMenuProps {
   tools: ChatTools
   onToggle: (key: keyof ChatTools, value: boolean) => void
+  folderMemory: { enabled: boolean } | null
+  onToggleFolderMemory: (value: boolean) => void
 }
 
-export function ChatToolsMenu({ tools, onToggle }: ChatToolsMenuProps) {
+export function ChatToolsMenu({ tools, onToggle, folderMemory, onToggleFolderMemory }: ChatToolsMenuProps) {
   const [open, setOpen] = useState(false)
   const wrapRef = useRef<HTMLDivElement | null>(null)
 
@@ -53,7 +56,8 @@ export function ChatToolsMenu({ tools, onToggle }: ChatToolsMenuProps) {
     return () => document.removeEventListener('mousedown', onDoc)
   }, [open])
 
-  const activeCount = TOOLS.filter((t) => tools[t.key]).length
+  const activeCount =
+    TOOLS.filter((t) => tools[t.key]).length + (folderMemory?.enabled ? 1 : 0)
 
   return (
     <div className={styles.wrap} ref={wrapRef}>
@@ -113,6 +117,29 @@ export function ChatToolsMenu({ tools, onToggle }: ChatToolsMenuProps) {
                 </div>
               )
             })}
+            {folderMemory && (
+              <div className={styles.toolRow}>
+                <span className={styles.toolIcon}>
+                  <Brain size={16} />
+                </span>
+                <div className={styles.toolText}>
+                  <span className={styles.toolName}>Folder memory</span>
+                  <span className={styles.toolDescription}>
+                    Lets the AI remember context across conversations in this folder.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={folderMemory.enabled}
+                  aria-label="toggle folder memory"
+                  className={folderMemory.enabled ? styles.toggleOn : styles.toggleOff}
+                  onClick={() => onToggleFolderMemory(!folderMemory.enabled)}
+                >
+                  <span className={styles.toggleKnob} aria-hidden="true" />
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

@@ -86,6 +86,22 @@ recommendations.
 Always respond in the same language as the user's message.`
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─── System prompt de gerenciamento de memoria de pasta ──────────────────────
+// Injetado como mensagem system ADICIONAL (independente do CHAT_SYSTEM_PROMPT
+// e do systemPrompt opcional da pasta) sempre que ChatFolder.memoryEnabled
+// for true. Ver `send()` para o ponto de injecao.
+const MEMORY_SYSTEM_PROMPT = `
+Each chat can be saved to a folder, and you have access to a persistent
+memory for each folder. This memory doesn't need to be highly precise.
+Record here the topics covered and any new information you come across
+during the interaction with the user. Record anything that might be
+important for future conversations, but keep it concise. Pay special
+attention to recurring topics, or when the user shows emotion about them.
+Call \`update_folder_memory\` to save it. If the memory gets too large, you
+can edit it, removing parts you judge to be less important or condensing
+the information further. Don't be afraid to make mistakes.`
+// ─────────────────────────────────────────────────────────────────────────────
+
 const CONVERSATIONS_KEY = 'monet:chat-conversations'
 const FOLDERS_KEY = 'monet:chat-folders'
 const LOOSE_ORDER_KEY = 'monet:chat-loose-order'
@@ -125,6 +141,8 @@ export interface ChatFolder {
   expanded: boolean
   systemPrompt: string
   systemPromptMode: SystemPromptMode
+  memory: string
+  memoryEnabled: boolean
   createdAt: string
   updatedAt: string
 }
@@ -214,7 +232,9 @@ function normalizeFolder(f: ChatFolder): ChatFolder {
   const visibleDocumentIds = Array.isArray(raw.visibleDocumentIds)
     ? (raw.visibleDocumentIds as unknown[]).filter((x) => typeof x === 'string') as string[]
     : []
-  return { ...f, systemPrompt: sp, systemPromptMode: mode, visibleDocumentIds }
+  const memory = typeof raw.memory === 'string' ? raw.memory : ''
+  const memoryEnabled = raw.memoryEnabled === true
+  return { ...f, systemPrompt: sp, systemPromptMode: mode, visibleDocumentIds, memory, memoryEnabled }
 }
 
 function deriveTitle(messages: ChatMessage[]): string {
@@ -460,6 +480,8 @@ function makeNewFolder(name = 'New folder'): ChatFolder {
     expanded: true,
     systemPrompt: '',
     systemPromptMode: 'replace',
+    memory: '',
+    memoryEnabled: false,
     createdAt: now,
     updatedAt: now,
   }
@@ -476,10 +498,14 @@ function dedupeAssistantFolders(folders: ChatFolder[]): ChatFolder[] {
   const assistantFolders = folders.filter((f) => f.name === ASSISTANT_FOLDER_NAME)
   if (assistantFolders.length <= 1) return folders
 
-  // Prioriza a pasta com systemPrompt ou documentos configurados; senao a 1a.
+  // Prioriza a pasta com systemPrompt, documentos ou memoria configurados; senao a 1a.
   const primary =
     assistantFolders.find(
-      (f) => f.systemPrompt.trim().length > 0 || f.visibleDocumentIds.length > 0
+      (f) =>
+        f.systemPrompt.trim().length > 0 ||
+        f.visibleDocumentIds.length > 0 ||
+        f.memory.trim().length > 0 ||
+        f.memoryEnabled
     ) ?? assistantFolders[0]
 
   // Une conversationIds de todas as duplicatas (sem repetir), preservando ordem.
@@ -593,6 +619,9 @@ export interface UseChatResult {
     mode: SystemPromptMode
   ) => void
   setFolderVisibleDocuments: (folderId: string, visibleDocumentIds: string[]) => void
+  setFolderMemory: (folderId: string, text: string) => void
+  setFolderMemoryEnabled: (folderId: string, enabled: boolean) => void
+  folderMemoryUpdatedAt: number | null
   moveConversation: (
     convId: string,
     target: { type: 'loose'; index?: number } | { type: 'folder'; folderId: string; index?: number }
@@ -647,6 +676,7 @@ export function useChat(
   const [isStreaming, setIsStreaming] = useState<boolean>(false)
   const [deepResearchPhase, setDeepResearchPhase] = useState<DeepResearchPhase | null>(null)
   const [webSearchActive, setWebSearchActive] = useState<boolean>(false)
+  const [folderMemoryUpdatedAt, setFolderMemoryUpdatedAt] = useState<number | null>(null)
   const toolCallHandlerRef = useRef<((p: StreamToolCallPayload) => void) | null>(null)
   const toolCancelledRef = useRef<boolean>(false)
   const [thinkingEnabled, setThinkingEnabled] = useState<boolean>(false)
@@ -1012,6 +1042,32 @@ export function useChat(
                 visibleDocumentIds,
                 updatedAt: new Date().toISOString(),
               }
+            : f
+        )
+      )
+    },
+    [setFolders]
+  )
+
+  const setFolderMemory = useCallback(
+    (folderId: string, text: string) => {
+      setFolders((prev) =>
+        prev.map((f) =>
+          f.id === folderId
+            ? { ...f, memory: text, updatedAt: new Date().toISOString() }
+            : f
+        )
+      )
+    },
+    [setFolders]
+  )
+
+  const setFolderMemoryEnabled = useCallback(
+    (folderId: string, enabled: boolean) => {
+      setFolders((prev) =>
+        prev.map((f) =>
+          f.id === folderId
+            ? { ...f, memoryEnabled: enabled, updatedAt: new Date().toISOString() }
             : f
         )
       )
@@ -1508,6 +1564,20 @@ export function useChat(
       } else {
         systemMessages = [{ role: 'system', content: CHAT_SYSTEM_PROMPT }]
       }
+      // Memoria da pasta: injetada SEMPRE que memoryEnabled, independente do
+      // systemPromptMode (mesmo em 'replace', que descarta o CHAT_SYSTEM_PROMPT
+      // padrao mas nao pode descartar a memoria — ela e uma 3a variavel de
+      // prompt, independente das outras duas).
+      if (containingFolder?.memoryEnabled) {
+        systemMessages.push({ role: 'system', content: MEMORY_SYSTEM_PROMPT })
+        systemMessages.push({
+          role: 'system',
+          content:
+            containingFolder.memory.trim().length > 0
+              ? `Current folder memory:\n\n${containingFolder.memory}`
+              : 'Current folder memory: (empty — nothing recorded yet for this folder).',
+        })
+      }
       systemMessages.push({ role: 'system', content: `Current date: ${currentDate}` })
 
       // RAG context for folder documents
@@ -1585,35 +1655,56 @@ export function useChat(
         },
         required: ['queries'],
       }
-      let toolsPayload: object[] | undefined
+      const toolDefs: object[] = []
       if (supportsTools && (toolsRef.current.deepResearch || toolsRef.current.webSearch)) {
         const tavilyOk = await hasTavilyKey()
         if (tavilyOk) {
           if (toolsRef.current.deepResearch) {
-            toolsPayload = [
-              {
-                type: 'function',
-                function: {
-                  name: 'deep_research',
-                  description: 'Perform deep multi-source web research. IMPORTANT: the query argument must be a short keyword search string (3–8 words), NOT the user\'s message verbatim. Rewrite the topic as a search engine query: canonical noun phrases only, no filler words, no pronouns, no verbs, no question syntax.',
-                  parameters: deepResearchToolParameters,
-                },
+            toolDefs.push({
+              type: 'function',
+              function: {
+                name: 'deep_research',
+                description: 'Perform deep multi-source web research. IMPORTANT: the query argument must be a short keyword search string (3–8 words), NOT the user\'s message verbatim. Rewrite the topic as a search engine query: canonical noun phrases only, no filler words, no pronouns, no verbs, no question syntax.',
+                parameters: deepResearchToolParameters,
               },
-            ]
+            })
           } else if (toolsRef.current.webSearch) {
-            toolsPayload = [
-              {
-                type: 'function',
-                function: {
-                  name: 'web_search',
-                  description: 'Search the web for current information. IMPORTANT: pass 1 to 3 short keyword search queries (3–8 words each), NOT the user\'s message verbatim. Rewrite the topic as search engine queries: canonical noun phrases only, no filler words, no pronouns, no verbs, no question syntax. Use multiple queries when the topic has distinct facets worth searching separately.',
-                  parameters: webSearchToolParameters,
-                },
+            toolDefs.push({
+              type: 'function',
+              function: {
+                name: 'web_search',
+                description: 'Search the web for current information. IMPORTANT: pass 1 to 3 short keyword search queries (3–8 words each), NOT the user\'s message verbatim. Rewrite the topic as search engine queries: canonical noun phrases only, no filler words, no pronouns, no verbs, no question syntax. Use multiple queries when the topic has distinct facets worth searching separately.',
+                parameters: webSearchToolParameters,
               },
-            ]
+            })
           }
         }
       }
+      // update_folder_memory nao depende de Tavily; e independente de web_search/
+      // deep_research e pode coexistir com qualquer uma das duas (ou nenhuma).
+      // Modelos sem suporte a tools (supportsTools === false) nunca a recebem —
+      // nesse caso a memoria fica inoperante para ESCRITA (leitura de contexto via
+      // system message continua funcionando normalmente).
+      if (supportsTools && containingFolder?.memoryEnabled) {
+        toolDefs.push({
+          type: 'function',
+          function: {
+            name: 'update_folder_memory',
+            description: 'Rewrite this folder\'s persistent memory with a new, complete version. Call this only when the current exchange contains something durable, novel, and worth remembering for future conversations in this folder — most turns do not need this. You are given the current memory as context in the system prompt; pass back the FULL replacement text (reorganized, condensed, or pruned as needed), not just an addition.',
+            parameters: {
+              type: 'object',
+              properties: {
+                memory: {
+                  type: 'string',
+                  description: 'The full new memory content for this folder, replacing the previous memory entirely.',
+                },
+              },
+              required: ['memory'],
+            },
+          },
+        })
+      }
+      const toolsPayload: object[] | undefined = toolDefs.length > 0 ? toolDefs : undefined
 
       // Register tool call handler for this turn
       if (toolsPayload) {
@@ -1621,63 +1712,71 @@ export function useChat(
           if (p.requestId !== requestId) return
           if (!activeStreamRef.current) return
 
-          let parsedArgs: { query?: string; queries?: unknown } = {}
-          try {
-            parsedArgs = JSON.parse(p.argumentsJson) as { query?: string; queries?: unknown }
-          } catch {
-            /* fallback handled per-tool below */
-          }
-
           // Clear streaming state while tool executes
           activeStreamRef.current = null
           setIsStreaming(false)
 
           try {
             let toolSearchMessage: ChatMessageInput | null = null
-            if (p.toolName === 'deep_research') {
-              const query = parsedArgs.query?.trim() || trimmed.slice(0, 380)
-              setDeepResearchPhase('searching')
-              const { formattedContext, sources } = await runDeepResearch(
-                query,
-                (phase) => setDeepResearchPhase(phase),
-                currentDate
-              )
-              setDeepResearchPhase('synthesizing')
-              const sourceList = sources
-                .map((s, i) => `${i + 1}. [${s.title}](${s.url})`)
-                .join('\n')
-              if (formattedContext) {
-                toolSearchMessage = {
-                  role: 'system',
-                  content: `You have access to the following deeply researched web sources. Synthesize them into a complete, well-structured answer. At the end of your response add a "Sources" section with these references:\n\n${sourceList}\n\n---\n\nResearch results:\n\n${formattedContext}`,
+            for (const tc of p.toolCalls) {
+              let parsedArgs: { query?: string; queries?: unknown; memory?: unknown } = {}
+              try {
+                parsedArgs = JSON.parse(tc.argumentsJson) as { query?: string; queries?: unknown; memory?: unknown }
+              } catch {
+                /* fallback handled per-tool below */
+              }
+
+              if (tc.toolName === 'deep_research') {
+                const query = parsedArgs.query?.trim() || trimmed.slice(0, 380)
+                setDeepResearchPhase('searching')
+                const { formattedContext, sources } = await runDeepResearch(
+                  query,
+                  (phase) => setDeepResearchPhase(phase),
+                  currentDate
+                )
+                setDeepResearchPhase('synthesizing')
+                const sourceList = sources
+                  .map((s, i) => `${i + 1}. [${s.title}](${s.url})`)
+                  .join('\n')
+                if (formattedContext) {
+                  toolSearchMessage = {
+                    role: 'system',
+                    content: `You have access to the following deeply researched web sources. Synthesize them into a complete, well-structured answer. At the end of your response add a "Sources" section with these references:\n\n${sourceList}\n\n---\n\nResearch results:\n\n${formattedContext}`,
+                  }
+                }
+                setDeepResearchPhase(null)
+              } else if (tc.toolName === 'web_search') {
+                const rawQueries = Array.isArray(parsedArgs.queries)
+                  ? (parsedArgs.queries as unknown[]).filter(
+                      (q): q is string => typeof q === 'string' && q.trim().length > 0
+                    ).map((q) => q.trim()).slice(0, 3)
+                  : []
+                const queries = rawQueries.length > 0 ? rawQueries : [trimmed.slice(0, 380)]
+                setWebSearchActive(true)
+                const allResults = await Promise.all(
+                  queries.map((q) => webSearch(q, 3).catch(() => []))
+                )
+                const seen = new Set<string>()
+                const deduplicated = allResults.flat().filter((r) => {
+                  if (seen.has(r.url)) return false
+                  seen.add(r.url)
+                  return true
+                })
+                const formatted = formatSearchResults(deduplicated)
+                if (formatted) {
+                  toolSearchMessage = {
+                    role: 'system',
+                    content: `You have access to the following web search results. Use them to support your response and always cite sources with inline links in the format [Title](url), close to the claim each source supports. Do not group sources at the end — distribute citations throughout the text. Some results include an Image URL — only embed it using markdown image syntax \`![description](url)\` if the user explicitly asked to see or show images AND the URL appears verbatim in the search results above. Never invent, guess, or modify image URLs.\n\n${formatted}`,
+                  }
+                }
+                setWebSearchActive(false)
+              } else if (tc.toolName === 'update_folder_memory') {
+                const newMemory = typeof parsedArgs.memory === 'string' ? parsedArgs.memory : null
+                if (newMemory !== null && containingFolder) {
+                  setFolderMemory(containingFolder.id, newMemory)
+                  setFolderMemoryUpdatedAt(Date.now())
                 }
               }
-              setDeepResearchPhase(null)
-            } else if (p.toolName === 'web_search') {
-              const rawQueries = Array.isArray(parsedArgs.queries)
-                ? (parsedArgs.queries as unknown[]).filter(
-                    (q): q is string => typeof q === 'string' && q.trim().length > 0
-                  ).map((q) => q.trim()).slice(0, 3)
-                : []
-              const queries = rawQueries.length > 0 ? rawQueries : [trimmed.slice(0, 380)]
-              setWebSearchActive(true)
-              const allResults = await Promise.all(
-                queries.map((q) => webSearch(q, 3).catch(() => []))
-              )
-              const seen = new Set<string>()
-              const deduplicated = allResults.flat().filter((r) => {
-                if (seen.has(r.url)) return false
-                seen.add(r.url)
-                return true
-              })
-              const formatted = formatSearchResults(deduplicated)
-              if (formatted) {
-                toolSearchMessage = {
-                  role: 'system',
-                  content: `You have access to the following web search results. Use them to support your response and always cite sources with inline links in the format [Title](url), close to the claim each source supports. Do not group sources at the end — distribute citations throughout the text. Some results include an Image URL — only embed it using markdown image syntax \`![description](url)\` if the user explicitly asked to see or show images AND the URL appears verbatim in the search results above. Never invent, guess, or modify image URLs.\n\n${formatted}`,
-                }
-              }
-              setWebSearchActive(false)
             }
 
             if (toolCancelledRef.current) {
@@ -1805,6 +1904,9 @@ export function useChat(
     setFolderExpanded,
     setFolderSystemPrompt,
     setFolderVisibleDocuments,
+    setFolderMemory,
+    setFolderMemoryEnabled,
+    folderMemoryUpdatedAt,
     moveConversation,
     removeConversationFromFolder,
     reorderFolders,

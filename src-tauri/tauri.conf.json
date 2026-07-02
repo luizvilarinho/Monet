@@ -20,7 +20,7 @@
       {
         "label": "assistant",
         "title": "Monet Assistant",
-        "width": 420,
+        "width": 480,
         "height": 560,
         "visible": false,
         "alwaysOnTop": true,

@@ -83,10 +83,16 @@ struct StreamErrorEvent {
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct StreamToolCallEvent {
-    request_id: String,
+struct ToolCallItem {
     tool_name: String,
     arguments_json: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StreamToolCallEvent {
+    request_id: String,
+    tool_calls: Vec<ToolCallItem>,
 }
 
 #[derive(Serialize)]
@@ -876,8 +882,8 @@ async fn run_openrouter_stream(
     let mut stream = resp.bytes_stream();
     let mut buffer = String::new();
     let mut completion_tokens: u64 = 0;
-    let mut tool_call_name = String::new();
-    let mut tool_call_args = String::new();
+    let mut tool_calls: std::collections::BTreeMap<u64, (String, String)> =
+        std::collections::BTreeMap::new();
 
     loop {
         tokio::select! {
@@ -977,39 +983,54 @@ async fn run_openrouter_stream(
                         .and_then(|c| c.get(0))
                         .and_then(|c| c.get("finish_reason"))
                         .and_then(|f| f.as_str());
-                    if let Some(tool_call) = delta
+                    if let Some(delta_tool_calls) = delta
                         .and_then(|d| d.get("tool_calls"))
-                        .and_then(|tc| tc.get(0))
+                        .and_then(|tc| tc.as_array())
                     {
-                        if let Some(name) = tool_call
-                            .get("function")
-                            .and_then(|f| f.get("name"))
-                            .and_then(|n| n.as_str())
-                        {
-                            if !name.is_empty() {
-                                tool_call_name = name.to_string();
+                        for tool_call in delta_tool_calls {
+                            let idx = tool_call
+                                .get("index")
+                                .and_then(|i| i.as_u64())
+                                .unwrap_or(0);
+                            let entry = tool_calls
+                                .entry(idx)
+                                .or_insert_with(|| (String::new(), String::new()));
+                            if let Some(name) = tool_call
+                                .get("function")
+                                .and_then(|f| f.get("name"))
+                                .and_then(|n| n.as_str())
+                            {
+                                if !name.is_empty() {
+                                    entry.0 = name.to_string();
+                                }
+                            }
+                            if let Some(args_chunk) = tool_call
+                                .get("function")
+                                .and_then(|f| f.get("arguments"))
+                                .and_then(|a| a.as_str())
+                            {
+                                entry.1.push_str(args_chunk);
                             }
                         }
-                        if let Some(args_chunk) = tool_call
-                            .get("function")
-                            .and_then(|f| f.get("arguments"))
-                            .and_then(|a| a.as_str())
-                        {
-                            tool_call_args.push_str(args_chunk);
-                        }
                     }
-                    if finish_reason == Some("tool_calls") && !tool_call_name.is_empty() {
-                        let arguments_json = if tool_call_args.is_empty() {
-                            "{}".to_string()
-                        } else {
-                            tool_call_args.clone()
-                        };
+                    if finish_reason == Some("tool_calls") && !tool_calls.is_empty() {
+                        let items: Vec<ToolCallItem> = tool_calls
+                            .values()
+                            .filter(|(name, _)| !name.is_empty())
+                            .map(|(name, args)| ToolCallItem {
+                                tool_name: name.clone(),
+                                arguments_json: if args.is_empty() {
+                                    "{}".to_string()
+                                } else {
+                                    args.clone()
+                                },
+                            })
+                            .collect();
                         let _ = app.emit(
                             "openrouter://tool_call",
                             StreamToolCallEvent {
                                 request_id: request_id.to_string(),
-                                tool_name: tool_call_name.clone(),
-                                arguments_json,
+                                tool_calls: items,
                             },
                         );
                         return Err(StreamError::ToolCall);

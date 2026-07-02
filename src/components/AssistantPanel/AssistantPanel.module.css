@@ -27,12 +27,16 @@
   color: var(--accent-ai, #5dcaa5);
   font-size: 12px;
   letter-spacing: 0.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .titleActions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 
 /* O popover do ChatToolsMenu abre para CIMA por padrao (composer do chat

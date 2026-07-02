@@ -1,7 +1,7 @@
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { listen } from '@tauri-apps/api/event'
 import { openUrl } from '@tauri-apps/plugin-opener'
-import { Stop, Sliders, Files } from '@phosphor-icons/react'
+import { Stop, Sliders, Files, Brain } from '@phosphor-icons/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   useChat,
@@ -18,6 +18,7 @@ import { ModelSelector } from '../AiPanel/ModelSelector'
 import { ChatToolsMenu } from '../ChatPanel/ChatToolsMenu'
 import { FolderSystemPromptModal } from '../ChatPanel/FolderSystemPromptModal'
 import { FolderDocumentSelectorModal } from '../ChatPanel/FolderDocumentSelectorModal'
+import { FolderMemoryModal } from '../ChatPanel/FolderMemoryModal'
 import styles from './AssistantPanel.module.css'
 
 // Versao compacta do chat para a janela `assistant`. Reaproveita o motor de
@@ -47,11 +48,14 @@ export function AssistantPanel() {
     ensureAssistantFolder,
     setFolderSystemPrompt,
     setFolderVisibleDocuments,
+    setFolderMemory,
+    setFolderMemoryEnabled,
   } = useChat(models, { isAssistant: true })
 
   const [draft, setDraft] = useState('')
   const [promptOpen, setPromptOpen] = useState(false)
   const [docsOpen, setDocsOpen] = useState(false)
+  const [memoryOpen, setMemoryOpen] = useState(false)
   const assistantFolder = useMemo(
     () => folders.find((f) => f.name === ASSISTANT_FOLDER_NAME) ?? null,
     [folders]
@@ -94,11 +98,14 @@ export function AssistantPanel() {
     if (!startedRef.current) {
       startedRef.current = true
       startAssistantConversation()
+      ensureAssistantFolder()
     }
     let unlisten: (() => void) | undefined
     let cancelled = false
     void listen('assistant-shown', () => {
       startAssistantConversation()
+      ensureAssistantFolder()
+      inputRef.current?.focus()
     }).then((fn) => {
       if (cancelled) fn()
       else unlisten = fn
@@ -107,7 +114,7 @@ export function AssistantPanel() {
       cancelled = true
       unlisten?.()
     }
-  }, [startAssistantConversation])
+  }, [startAssistantConversation, ensureAssistantFolder])
 
   // Seleciona um modelo padrao quando a lista carregar.
   useEffect(() => {
@@ -182,8 +189,25 @@ export function AssistantPanel() {
           >
             <Files size={14} />
           </button>
+          <button
+            type="button"
+            className={styles.iconBtn}
+            aria-label="Folder memory"
+            title="Folder memory"
+            onClick={() => {
+              ensureAssistantFolder()
+              setMemoryOpen(true)
+            }}
+          >
+            <Brain size={14} />
+          </button>
           <div className={styles.toolsMenu}>
-            <ChatToolsMenu tools={tools} onToggle={setTool} />
+            <ChatToolsMenu
+              tools={tools}
+              onToggle={setTool}
+              folderMemory={assistantFolder ? { enabled: assistantFolder.memoryEnabled } : null}
+              onToggleFolderMemory={(v) => assistantFolder && setFolderMemoryEnabled(assistantFolder.id, v)}
+            />
           </div>
           <ModelSelector
             hasApiKey={hasApiKey}
@@ -288,6 +312,12 @@ export function AssistantPanel() {
           setFolderVisibleDocuments(folderId, visibleDocumentIds)
         }
         onClose={() => setDocsOpen(false)}
+      />
+      <FolderMemoryModal
+        open={memoryOpen}
+        folder={assistantFolder}
+        onConfirm={(folderId, text) => setFolderMemory(folderId, text)}
+        onClose={() => setMemoryOpen(false)}
       />
     </div>
   )

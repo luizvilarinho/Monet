@@ -51,10 +51,14 @@ export interface ChatMessageInput {
   content: string | ContentBlock[]
 }
 
-export interface StreamToolCallPayload {
-  requestId: string
+export interface ToolCallItem {
   toolName: string
   argumentsJson: string
+}
+
+export interface StreamToolCallPayload {
+  requestId: string
+  toolCalls: ToolCallItem[]
 }
 
 export interface StartStreamMessagesInput {

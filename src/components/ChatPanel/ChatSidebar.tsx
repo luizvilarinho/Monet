@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { FileText, SidebarSimple } from '@phosphor-icons/react'
+import { Brain, FileText, SidebarSimple } from '@phosphor-icons/react'
 import {
   DndContext,
   PointerSensor,
@@ -18,6 +18,7 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import { useConfirm } from '../../hooks/useConfirm'
 import type { ChatConversation, ChatFolder } from '../../hooks/useChat'
+import { ASSISTANT_FOLDER_NAME } from '../../hooks/useChat'
 import styles from './ChatSidebar.module.css'
 
 export interface ChatSidebarProps {
@@ -45,6 +46,7 @@ export interface ChatSidebarProps {
   onReorderInFolder: (folderId: string, newOrder: string[]) => void
   onReorderLoose: (newOrder: string[]) => void
   onOpenFolderSystemPrompt: (folder: ChatFolder) => void
+  onOpenFolderMemory: (folder: ChatFolder) => void
   onOpenFolderDocuments: (folder: ChatFolder) => void
   width: number
   collapsed?: boolean
@@ -144,6 +146,7 @@ export function ChatSidebar({
   onReorderInFolder,
   onReorderLoose,
   onOpenFolderSystemPrompt,
+  onOpenFolderMemory,
   onOpenFolderDocuments,
   width,
   collapsed = false,
@@ -497,6 +500,7 @@ export function ChatSidebar({
                 }
                 onDeleteFolder={() => handleDeleteFolder(folder)}
                 onOpenSystemPrompt={() => onOpenFolderSystemPrompt(folder)}
+                onOpenFolderMemory={() => onOpenFolderMemory(folder)}
                 onOpenFolderDocuments={() => onOpenFolderDocuments(folder)}
                 isAnyConvDragging={activeDragKind === 'conv'}
                 editingConvId={editingConvId}
@@ -576,6 +580,7 @@ interface SortableFolderProps {
   onToggleExpanded: () => void
   onDeleteFolder: () => void
   onOpenSystemPrompt: () => void
+  onOpenFolderMemory: () => void
   onOpenFolderDocuments: () => void
   isAnyConvDragging: boolean
   editingConvId: string | null
@@ -605,6 +610,7 @@ function SortableFolder({
   onToggleExpanded,
   onDeleteFolder,
   onOpenSystemPrompt,
+  onOpenFolderMemory,
   onOpenFolderDocuments,
   isAnyConvDragging,
   editingConvId,
@@ -651,6 +657,7 @@ function SortableFolder({
         }}
         onDoubleClick={(e) => {
           if ((e.target as HTMLElement).closest('button, input')) return
+          if (folder.name === ASSISTANT_FOLDER_NAME) return
           onStartEdit(folder)
         }}
         {...attributes}
@@ -733,6 +740,27 @@ function SortableFolder({
             >
               <SystemPromptIcon />
             </button>
+            <button
+              type="button"
+              className={`${styles.folderSysPromptBtn} ${
+                folder.memory.trim().length > 0
+                  ? styles.folderSysPromptBtnActive
+                  : ''
+              }`}
+              onClick={(e) => {
+                e.stopPropagation()
+                onOpenFolderMemory()
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+              aria-label={`view folder memory for ${folder.name || 'folder'}`}
+              title={
+                folder.memory.trim().length > 0
+                  ? 'folder memory active (click to view/edit)'
+                  : 'view/edit folder memory'
+              }
+            >
+              <Brain size={12} aria-hidden />
+            </button>
             <span
               className={styles.folderActions}
               onPointerDown={(e) => e.stopPropagation()}
@@ -749,18 +777,20 @@ function SortableFolder({
               >
                 <PlusIcon />
               </button>
-              <button
-                type="button"
-                className={`${styles.folderActionBtn} ${styles.folderActionBtnDelete}`}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onDeleteFolder()
-                }}
-                aria-label={`delete folder ${folder.name || ''}`}
-                title="delete folder"
-              >
-                ×
-              </button>
+              {folder.name !== ASSISTANT_FOLDER_NAME && (
+                <button
+                  type="button"
+                  className={`${styles.folderActionBtn} ${styles.folderActionBtnDelete}`}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onDeleteFolder()
+                  }}
+                  aria-label={`delete folder ${folder.name || ''}`}
+                  title="delete folder"
+                >
+                  ×
+                </button>
+              )}
             </span>
           </>
         )}
