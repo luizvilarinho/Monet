@@ -209,6 +209,32 @@ function formatWeekContext(entries: { dateLabel: string; content: string }[]): s
   return `Calendar notes from the last 7 days:\n\n${blocks.join('\n\n')}\n\n---`
 }
 
+function toIsoDate(date: Date): string {
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
+function getDatedNotes(notes: Note[], anchor: Date): { title: string; content: string }[] {
+  const isoDate = toIsoDate(anchor)
+  const entries: { title: string; content: string }[] = []
+  for (const note of notes) {
+    if (note.notebookId === CALENDAR_NOTEBOOK_ID) continue
+    if (note.date !== isoDate) continue
+    const content = stripCommandLines(stripEmbedBlockTags(note.content)).trim()
+    if (!content) continue
+    entries.push({ title: note.title.trim() || 'Untitled', content })
+  }
+  return entries
+}
+
+function formatDatedNotesContext(entries: { title: string; content: string }[]): string {
+  if (entries.length === 0) return ''
+  const blocks = entries.map((e) => `[${e.title}]\n${e.content}`)
+  return `Notes tagged with this date:\n\n${blocks.join('\n\n')}\n\n---`
+}
+
 function buildUserMessage(
   command: string,
   description: string,
@@ -216,7 +242,8 @@ function buildUserMessage(
   noteContent: string,
   searchContext?: string,
   ragContext?: string,
-  weekContext?: string
+  weekContext?: string,
+  datedNotesContext?: string
 ): string {
   const parts: string[] = []
   parts.push(`Command: ${command} - ${description}`)
@@ -224,6 +251,7 @@ function buildUserMessage(
   if (ragContext) parts.push(`\n${ragContext}`)
   if (searchContext) parts.push(`\n${searchContext}`)
   if (weekContext) parts.push(`\n${weekContext}`)
+  if (datedNotesContext) parts.push(`\n${datedNotesContext}`)
   const cleanContent = stripCommandLines(noteContent)
   if (cleanContent) {
     parts.push(`\nCurrent note content:\n${cleanContent}`)
@@ -693,10 +721,11 @@ function App() {
         return true
       }
 
+      const anchor = activeNote ? parseCalendarTitle(activeNote.title) : null
+
       const isWeekOnly = cmd === '/week'
       let weekContext: string | undefined
       if (isWeekOnly) {
-        const anchor = activeNote ? parseCalendarTitle(activeNote.title) : null
         if (!anchor) {
           addErrorCard(
             activeId,
@@ -719,11 +748,19 @@ function App() {
         weekContext = formatWeekContext(weekEntries)
       }
 
+      let datedNotesContext: string | undefined
+      if (activeNote?.notebookId === CALENDAR_NOTEBOOK_ID && anchor) {
+        const datedEntries = getDatedNotes(notes, anchor)
+        if (datedEntries.length > 0) {
+          datedNotesContext = formatDatedNotesContext(datedEntries)
+        }
+      }
+
       const userMessage = isDocsOnly
-        ? buildUserMessage(cmd, def.description, query, '', undefined, ragContext)
+        ? buildUserMessage(cmd, def.description, query, '', undefined, ragContext, undefined, datedNotesContext)
         : isWeekOnly
-          ? buildUserMessage(cmd, def.description, query, '', searchContext, ragContext, weekContext)
-          : buildUserMessage(cmd, def.description, query, noteContent, searchContext, ragContext)
+          ? buildUserMessage(cmd, def.description, query, '', searchContext, ragContext, weekContext, datedNotesContext)
+          : buildUserMessage(cmd, def.description, query, noteContent, searchContext, ragContext, undefined, datedNotesContext)
 
       await start({
         noteId: activeId,
