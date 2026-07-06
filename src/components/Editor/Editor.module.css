@@ -19,7 +19,15 @@
   text-transform: uppercase;
 }
 
+.titleRow {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+}
+
 .title {
+  flex: 1;
+  min-width: 0;
   background: transparent;
   color: var(--text-primary, #e8e8f0);
   border: none;
@@ -28,6 +36,22 @@
   font-size: 24px;
   font-weight: 600;
   letter-spacing: -0.01em;
+}
+
+/* Nota diária do Calendar: título tem largura fixa (DD/MM/YYYY) para o dia
+   da semana ficar logo ao lado do texto. */
+.titleCompact {
+  flex: 0 0 auto;
+  width: 12ch;
+  padding-right: 0;
+}
+
+.weekday {
+  color: var(--text-muted, #606070);
+  font-size: 20px;
+  font-weight: 500;
+  white-space: nowrap;
+  padding-right: 32px;
 }
 
 .title::placeholder {

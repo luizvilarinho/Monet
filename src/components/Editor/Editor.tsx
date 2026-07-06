@@ -1,13 +1,4 @@
 import { EditorContent, useEditor } from '@tiptap/react'
-import { Placeholder } from '@tiptap/extensions'
-import TaskItem from '@tiptap/extension-task-item'
-import TaskList from '@tiptap/extension-task-list'
-import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table'
-import Image from '@tiptap/extension-image'
-import Code from '@tiptap/extension-code'
-import StarterKit from '@tiptap/starter-kit'
-import { Markdown } from 'tiptap-markdown'
-import { defaultMarkdownSerializer } from 'prosemirror-markdown'
 import {
   useCallback,
   useEffect,
@@ -21,6 +12,7 @@ import { CalendarBlank } from '@phosphor-icons/react'
 import { nanoid } from 'nanoid'
 import type { Editor as TiptapEditor } from '@tiptap/core'
 import { TextSelection } from '@tiptap/pm/state'
+import { getWeekdayName, parseCalendarTitle } from '../../lib/calendar'
 import { findClosestHeading, parseHeadings, type Heading } from '../../lib/headingParser'
 import { attachSpellCheckEnforcer } from '../../lib/spellcheck'
 import { HeadingNavigator } from '../HeadingNavigator/HeadingNavigator'
@@ -32,12 +24,11 @@ import {
   commandPluginKey,
   getCurrentCommandLine,
 } from './CommandExtension'
-import { EmbedBlock } from './EmbedBlock'
-import { ToggleBlock } from './ToggleBlock'
+import { buildBaseExtensions } from './extensions'
 import { EditorResponsesProvider } from './EditorResponsesContext'
 import { EditorNotesProvider } from './EditorNotesContext'
-import { LinkedNoteBlock } from './LinkedNoteBlock'
 import { NotePicker } from './NotePicker'
+import { TimePicker } from './TimePicker'
 import { SearchInNote } from './SearchInNote'
 import { getCommandSuggestions } from './commandParser'
 import type { AiResponse, CommandExecutionRequest, Note } from '../../types'
@@ -81,20 +72,6 @@ const HIDDEN_AUTOCOMPLETE: AutocompleteState = {
   top: 0,
   left: 0,
 }
-
-// Custom inline-code mark — força serialização com um único backtick
-// (defaultMarkdownSerializer.marks.code usa `backticksFor` que adiciona mais
-// crases apenas quando o texto contém crases; texto comum vira `text`)
-const InlineCode = Code.extend({
-  addStorage() {
-    return {
-      markdown: {
-        serialize: defaultMarkdownSerializer.marks.code,
-        parse: {},
-      },
-    }
-  },
-})
 
 function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -145,6 +122,8 @@ export function Editor({
   const [notePickerVisible, setNotePickerVisible] = useState(false)
   const [notePickerPos, setNotePickerPos] = useState<{ top: number; left: number } | undefined>(undefined)
   const notePickerInsertPosRef = useRef<number>(0)
+  const [timePickerPos, setTimePickerPos] = useState<{ top: number; left: number } | null>(null)
+  const timePickerInsertPosRef = useRef<number>(0)
   const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const titleRef = useRef<HTMLInputElement>(null)
@@ -176,34 +155,7 @@ export function Editor({
   const editor = useEditor({
     immediatelyRender: false,
     extensions: [
-      StarterKit.configure({
-        heading: { levels: [1, 2, 3] },
-        link: { openOnClick: true, autolink: false },
-        code: false,
-      }),
-      InlineCode,
-      TaskList,
-      TaskItem.configure({ nested: false }),
-      Table.configure({ resizable: true }),
-      TableRow,
-      TableHeader,
-      TableCell,
-      Image.configure({ inline: false, allowBase64: true }),
-      Placeholder.configure({
-        placeholder: 'Capture your thoughts...',
-      }),
-      Markdown.configure({
-        html: true,
-        tightLists: true,
-        bulletListMarker: '-',
-        linkify: false,
-        breaks: false,
-        transformPastedText: true,
-        transformCopiedText: true,
-      }),
-      EmbedBlock,
-      ToggleBlock,
-      LinkedNoteBlock,
+      ...buildBaseExtensions('Capture your thoughts...'),
       CommandExtension.configure({
         getResponses: () => responsesRef.current,
         onRemoveResponse: (id) => {
@@ -307,6 +259,17 @@ export function Editor({
               return true
             }
           }
+        }
+
+        // Gatilho "@" nas notas diárias do Calendar: abre o seletor de horário
+        // para inserir um chip de lembrete. Fora do Calendar, "@" digita normal.
+        if (event.key === '@' && isCalendarNoteRef.current) {
+          event.preventDefault()
+          const { from } = view.state.selection
+          timePickerInsertPosRef.current = from
+          const coords = view.coordsAtPos(from)
+          setTimePickerPos({ top: coords.bottom + 4, left: coords.left })
+          return true
         }
 
         if (event.key === 'Enter' && !event.shiftKey) {
@@ -547,6 +510,28 @@ export function Editor({
     return () => document.removeEventListener('mousedown', handler)
   }, [contextMenuPos])
 
+  function handleTimePickerConfirm(time: string) {
+    setTimePickerPos(null)
+    if (!editor) return
+    const pos = timePickerInsertPosRef.current
+    editor
+      .chain()
+      .focus()
+      .insertContentAt(pos, [
+        { type: 'reminderChip', attrs: { id: nanoid(), time } },
+        { type: 'text', text: ' ' },
+      ])
+      .run()
+  }
+
+  function handleTimePickerCancel() {
+    setTimePickerPos(null)
+    if (!editor) return
+    // Cancelou o seletor: recupera o "@" literal na posição do cursor.
+    const pos = timePickerInsertPosRef.current
+    editor.chain().focus().insertContentAt(pos, '@').run()
+  }
+
   function handleNotePickerSelect(note: Note) {
     if (!editor) return
     const pos = notePickerInsertPosRef.current
@@ -630,6 +615,11 @@ export function Editor({
     onTagsChange(tags.filter((t) => t !== tag))
   }
 
+  // Weekday é apenas exibição: o valor do input e o título persistido
+  // permanecem DD/MM/YYYY.
+  const calendarDate = isCalendarNote ? parseCalendarTitle(title) : null
+  const weekdayLabel = calendarDate ? getWeekdayName(calendarDate) : null
+
   return (
     <div className={styles.editor}>
       {notebookName && (
@@ -637,13 +627,16 @@ export function Editor({
           {notebookName}{subjectName ? ` | ${subjectName}` : ''}
         </span>
       )}
-      <input
-        ref={titleRef}
-        className={styles.title}
-        value={title}
-        onChange={(e) => onTitleChange(e.target.value)}
-        placeholder="note title"
-      />
+      <div className={styles.titleRow}>
+        <input
+          ref={titleRef}
+          className={`${styles.title} ${weekdayLabel ? styles.titleCompact : ''}`}
+          value={title}
+          onChange={(e) => onTitleChange(e.target.value)}
+          placeholder="note title"
+        />
+        {weekdayLabel && <span className={styles.weekday}>— {weekdayLabel}</span>}
+      </div>
       <div className={styles.tagsRow}>
         {onDateChange && (
           <span className={styles.dateWrapper} onClick={() => dateInputRef.current?.showPicker()}>
@@ -731,6 +724,13 @@ export function Editor({
           onNavigate={handleNavigateToHeading}
         />
       </div>
+      {timePickerPos && (
+        <TimePicker
+          position={timePickerPos}
+          onConfirm={handleTimePickerConfirm}
+          onCancel={handleTimePickerCancel}
+        />
+      )}
       {notePickerVisible && (
         <NotePicker
           notes={notebookNotes}

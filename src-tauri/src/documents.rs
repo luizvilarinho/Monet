@@ -173,6 +173,23 @@ fn open_doc_db(app: &AppHandle) -> Result<Connection, String> {
         .map_err(|e| format!("failed to create visibility table: {}", e))?;
     }
 
+    // Reconcilia o estado de migrations do tauri-plugin-sql quando um build
+    // antigo aplicou uma v11 diferente (notes_rag_doc_ids) no DB de produção.
+    // O sqlx aborta o migrate por checksum mismatch na 1ª carga e o retry do
+    // plugin pula o migrate, deixando reminder_state sem criar e o sistema de
+    // migrations quebrado para upgrades futuros. Aqui removemos a v11 obsoleta
+    // e garantimos reminder_state (idempotente) ainda no startup, antes do
+    // plugin-sql carregar lazy pelo frontend. Erros aqui são apenas logados:
+    // o runtime tem o safety net em TauriStorage.ensureReminderStateTable.
+    let _: std::result::Result<(), rusqlite::Error> = conn.execute_batch(
+        "DELETE FROM _sqlx_migrations WHERE version = 11 AND description = 'notes_rag_doc_ids';
+         CREATE TABLE IF NOT EXISTS reminder_state (
+             id TEXT PRIMARY KEY,
+             note_id TEXT NOT NULL,
+             fired_at INTEGER NOT NULL
+         );",
+    );
+
     Ok(conn)
 }
 

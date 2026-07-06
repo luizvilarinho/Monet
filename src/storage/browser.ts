@@ -38,6 +38,31 @@ export class BrowserStorage implements StorageAdapter {
   async searchNotes(_query: string): Promise<Note[]> {
     throw new Error('BrowserStorage.searchNotes not implemented')
   }
+  // Estado de lembretes em localStorage (paridade de interface; o app em
+  // browser não dispara notificações).
+  private firedKey(noteId: string): string {
+    return `monet:reminders-fired:${noteId}`
+  }
+
+  async getFiredReminderIds(noteId: string): Promise<string[]> {
+    try {
+      const raw = localStorage.getItem(this.firedKey(noteId))
+      const parsed = raw ? JSON.parse(raw) : []
+      return Array.isArray(parsed)
+        ? parsed.filter((x): x is string => typeof x === 'string')
+        : []
+    } catch {
+      return []
+    }
+  }
+
+  async markRemindersFired(ids: string[], noteId: string): Promise<void> {
+    if (ids.length === 0) return
+    const current = await this.getFiredReminderIds(noteId)
+    const next = Array.from(new Set([...current, ...ids]))
+    localStorage.setItem(this.firedKey(noteId), JSON.stringify(next))
+  }
+
   async getResponses(_noteId: string): Promise<AiResponse[]> {
     throw new Error('BrowserStorage.getResponses not implemented')
   }

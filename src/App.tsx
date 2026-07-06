@@ -1,4 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { check } from '@tauri-apps/plugin-updater'
 import type { Update } from '@tauri-apps/plugin-updater'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -29,6 +31,7 @@ import {
 } from './hooks/useChat'
 import { useNotebooks } from './hooks/useNotebooks'
 import { useNotes } from './hooks/useNotes'
+import { useReminders } from './hooks/useReminders'
 import { useSubjects } from './hooks/useSubjects'
 import { findCommand } from './lib/commands'
 import {
@@ -40,6 +43,13 @@ import {
   setSkippedVersion,
 } from './lib/updater'
 import { getToggleTitle } from './components/Editor/commandParser'
+import { RemindersProvider } from './components/Editor/RemindersContext'
+import {
+  CALENDAR_NOTEBOOK_ID,
+  formatCalendarTitle,
+  parseCalendarTitle,
+} from './lib/calendar'
+import { storage } from './storage'
 import {
   documentsSearchByIds,
   embedText,
@@ -75,13 +85,6 @@ function getSystemLanguage(): string {
 }
 
 const USER_LANGUAGE = getSystemLanguage()
-
-// O notebook "Calendar" é um singleton com id fixo. Antes era identificado por
-// um id aleatório guardado em localStorage; quando localStorage e banco
-// divergiam, o app recriava um Calendar novo a cada abertura (duplicatas, e
-// notas que "sumiam" por ficarem sob um Calendar antigo). Com id fixo, a PK do
-// banco garante unicidade e o save é idempotente.
-const CALENDAR_NOTEBOOK_ID = 'calendar'
 
 function buildSystemPrompt(language: string): string {
   return `You are the Monet study assistant.
@@ -121,6 +124,9 @@ function stripCommandLines(content: string): string {
   return content
     .split('\n')
     .filter((line) => !/^\/[a-zA-Z]/.test(line.trim()))
+    // Marcador de parágrafo em branco (ver extensions.ts) vira linha em
+    // branco de verdade no contexto enviado à IA.
+    .map((line) => (line.trim() === '<br>' ? '' : line))
     .join('\n')
     .trim()
 }
@@ -151,28 +157,6 @@ function formatRagContext(chunks: ChunkResult[]): string {
     return `${header}\n${c.snippet}`
   })
   return `Relevant document excerpts from the notebook:\n\n${blocks.join('\n\n')}\n\n---`
-}
-
-const CALENDAR_TITLE_RE = /^(\d{2})\/(\d{2})\/(\d{4})$/
-
-function formatCalendarTitle(date: Date): string {
-  const d = String(date.getDate()).padStart(2, '0')
-  const m = String(date.getMonth() + 1).padStart(2, '0')
-  const y = date.getFullYear()
-  return `${d}/${m}/${y}`
-}
-
-function parseCalendarTitle(title: string): Date | null {
-  const match = title.trim().match(CALENDAR_TITLE_RE)
-  if (!match) return null
-  const day = Number(match[1])
-  const month = Number(match[2])
-  const year = Number(match[3])
-  const date = new Date(year, month - 1, day)
-  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
-    return null
-  }
-  return date
 }
 
 function stripEmbedBlockTags(content: string): string {
@@ -273,6 +257,7 @@ function App() {
     save: saveNote,
     create: createNote,
     remove: removeNote,
+    refresh: refreshNotes,
     saveError: noteSaveError,
   } = useNotes()
 
@@ -570,6 +555,120 @@ function App() {
   const activeNote = useMemo(
     () => notes.find((n) => n.id === activeId) ?? null,
     [notes, activeId]
+  )
+  const activeNoteRef = useRef<Note | null>(null)
+  activeNoteRef.current = activeNote
+
+  // ─── Sincronização com a janela keep (Ctrl+K) ────────────────────────────
+  // Ao ganhar foco com uma nota diária do Calendar ativa, relê as notas do
+  // banco: a keep pode ter editado a nota de hoje enquanto a main estava em
+  // segundo plano (last-write-wins, recarga no ponto de troca de contexto).
+  useEffect(() => {
+    let cancelled = false
+    let unlisten: (() => void) | undefined
+    void getCurrentWindow()
+      .onFocusChanged(({ payload: focused }) => {
+        if (!focused) return
+        const current = activeNoteRef.current
+        if (!current) return
+        if (current.notebookId !== CALENDAR_NOTEBOOK_ID) return
+        if (!parseCalendarTitle(current.title)) return
+        void refreshNotes().catch((err) =>
+          console.error('refresh on focus failed', err)
+        )
+      })
+      .then((fn) => {
+        if (cancelled) fn()
+        else unlisten = fn
+      })
+    return () => {
+      cancelled = true
+      unlisten?.()
+    }
+  }, [refreshNotes])
+
+  // Botão "Open Monet" da keep: abre a nota de hoje sobre a lista recém-lida
+  // do banco (a nota pode ter sido criada pela keep e não existir no estado).
+  useEffect(() => {
+    let cancelled = false
+    let unlisten: (() => void) | undefined
+    void listen('open-today-note', () => {
+      void (async () => {
+        try {
+          const fresh = await refreshNotes()
+          const title = formatCalendarTitle(new Date())
+          const existing = fresh.find(
+            (n) => n.notebookId === CALENDAR_NOTEBOOK_ID && n.title === title
+          )
+          setActiveMode('notebook')
+          setActiveSubjectId(null)
+          setActiveNotebookId(CALENDAR_NOTEBOOK_ID)
+          if (existing) {
+            setActiveId(existing.id)
+            return
+          }
+          const note = await createNote(CALENDAR_NOTEBOOK_ID)
+          const filled: Note = { ...note, title, updatedAt: Date.now() }
+          await saveNote(filled)
+          setActiveId(filled.id)
+          setNoteOrder((prev) => {
+            const next = [filled.id, ...prev]
+            saveNoteOrder(next)
+            return next
+          })
+        } catch (err) {
+          console.error('open-today-note failed', err)
+        }
+      })()
+    }).then((fn) => {
+      if (cancelled) fn()
+      else unlisten = fn
+    })
+    return () => {
+      cancelled = true
+      unlisten?.()
+    }
+  }, [refreshNotes, createNote, saveNote])
+
+  // ─── Lembretes ───────────────────────────────────────────────────────────
+  // Estado "disparado" da nota diária ativa, para o Editor riscar os chips.
+  const [firedReminderIds, setFiredReminderIds] = useState<Set<string>>(new Set())
+  const activeIsDailyNote =
+    activeNote?.notebookId === CALENDAR_NOTEBOOK_ID &&
+    !!parseCalendarTitle(activeNote?.title ?? '')
+
+  useEffect(() => {
+    if (!activeId || !activeIsDailyNote) {
+      setFiredReminderIds(new Set())
+      return
+    }
+    let cancelled = false
+    storage
+      .getFiredReminderIds(activeId)
+      .then((ids) => {
+        if (!cancelled) setFiredReminderIds(new Set(ids))
+      })
+      .catch((err) => console.error('failed to load fired reminders', err))
+    return () => {
+      cancelled = true
+    }
+  }, [activeId, activeIsDailyNote])
+
+  const handleRemindersFired = useCallback((noteId: string, ids: string[]) => {
+    if (activeNoteRef.current?.id !== noteId) return
+    setFiredReminderIds((prev) => {
+      const next = new Set(prev)
+      for (const id of ids) next.add(id)
+      return next
+    })
+  }, [])
+
+  // Scheduler (tick de 30s) — roda somente nesta janela (main).
+  useReminders(notes, handleRemindersFired)
+
+  const remindersContextValue = useMemo(
+    () => ({ firedIds: firedReminderIds }),
+    [firedReminderIds]
   )
 
   const handleExport = useCallback(async () => {
@@ -1133,6 +1232,7 @@ function App() {
           />
         ))}
         {activeNote ? (
+          <RemindersProvider value={remindersContextValue}>
           <Editor
             key={activeNote.id}
             notebookName={notebooks.find((nb) => nb.id === activeNote.notebookId)?.name}
@@ -1165,6 +1265,7 @@ function App() {
             }
             isCalendarNote={activeNote.notebookId === calendarNotebookId}
           />
+          </RemindersProvider>
         ) : (
           <EmptyEditor
             hasNotebook={activeNotebookId !== null}

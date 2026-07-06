@@ -16,6 +16,14 @@ export function useNotes() {
       .finally(() => setLoaded(true))
   }, [])
 
+  // Refaz a leitura do banco e retorna a lista fresca — usado pela janela
+  // main para ressincronizar após edições feitas pela janela keep.
+  const refresh = useCallback(async () => {
+    const list = await storage.getNotes()
+    setNotes(list)
+    return list
+  }, [])
+
   const save = useCallback(async (note: Note) => {
     setNotes((prev) => {
       const i = prev.findIndex((n) => n.id === note.id)
@@ -65,5 +73,5 @@ export function useNotes() {
     [save]
   )
 
-  return { notes, loaded, save, remove, create, saveError }
+  return { notes, loaded, save, remove, create, refresh, saveError }
 }

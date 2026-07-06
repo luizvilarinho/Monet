@@ -398,6 +398,46 @@ export class TauriStorage implements StorageAdapter {
     this.scheduleCheckpoint()
   }
 
+  // Garante idempotente que reminder_state existe. Ela é criada pela migration
+  // v11, mas builds antigos do MSI aplicaram uma v11 diferente
+  // (notes_rag_doc_ids) no DB de produção, deixando o sistema de migrations
+  // quebrado em upgrades (sqlx aborta por checksum mismatch na 1ª carga; o
+  // retry do plugin pula o migrate). Criar a tabela aqui desacopla o runtime
+  // do estado de migrations e impede que a keep quebre ao carregar a nota.
+  private async ensureReminderStateTable(db: Database): Promise<void> {
+    await db.execute(
+      `CREATE TABLE IF NOT EXISTS reminder_state (
+        id TEXT PRIMARY KEY,
+        note_id TEXT NOT NULL,
+        fired_at INTEGER NOT NULL
+      )`
+    )
+  }
+
+  async getFiredReminderIds(noteId: string): Promise<string[]> {
+    const db = await this.db()
+    await this.ensureReminderStateTable(db)
+    const rows = await db.select<{ id: string }[]>(
+      'SELECT id FROM reminder_state WHERE note_id = $1',
+      [noteId]
+    )
+    return rows.map((r) => r.id)
+  }
+
+  async markRemindersFired(ids: string[], noteId: string): Promise<void> {
+    if (ids.length === 0) return
+    const db = await this.db()
+    await this.ensureReminderStateTable(db)
+    const now = Date.now()
+    for (const id of ids) {
+      await db.execute(
+        'INSERT OR IGNORE INTO reminder_state (id, note_id, fired_at) VALUES ($1, $2, $3)',
+        [id, noteId, now]
+      )
+    }
+    this.scheduleCheckpoint()
+  }
+
   async getResponses(noteId: string): Promise<AiResponse[]> {
     const db = await this.db()
     const rows = await db.select<AiResponseRow[]>(

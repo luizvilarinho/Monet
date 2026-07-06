@@ -43,6 +43,32 @@ fn toggle_assistant_window(app: &AppHandle) {
         }
     }
 }
+
+// Alterna a janela keep (nota do dia): esconde se ja estiver visivel e focada,
+// caso contrario mostra e foca. `keep-shown` avisa o frontend para recarregar
+// a nota do dia atual (so emitido ao MOSTRAR, nunca ao esconder).
+fn toggle_keep_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("keep") {
+        let visible = window.is_visible().unwrap_or(false);
+        let focused = window.is_focused().unwrap_or(false);
+        if visible && focused {
+            let _ = window.hide();
+        } else {
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+            let _ = app.emit_to("keep", "keep-shown", ());
+        }
+    }
+}
+
+// Botao "Open Monet" da janela keep: mostra/foca a main e pede a ela para
+// abrir a nota do dia atual do Calendar.
+#[tauri::command]
+fn open_main_window(app: AppHandle) {
+    show_and_focus_window(&app, "main");
+    let _ = app.emit_to("main", "open-today-note", ());
+}
 use tokio::sync::oneshot;
 use tokio::time::timeout;
 
@@ -1210,6 +1236,21 @@ pub fn run() {
             ",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 11,
+            description: "reminder_state",
+            // Estado "ja disparado" dos lembretes (chips <reminder-chip> nas
+            // notas diarias do Calendar). Fica fora do conteudo da nota para o
+            // disparo nunca reescrever note.content.
+            sql: "
+                CREATE TABLE IF NOT EXISTS reminder_state (
+                    id TEXT PRIMARY KEY,
+                    note_id TEXT NOT NULL,
+                    fired_at INTEGER NOT NULL
+                );
+            ",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
@@ -1286,6 +1327,12 @@ pub fn run() {
                 if let Err(err) = app.global_shortcut().register(ctrl_m) {
                     eprintln!("failed to register Ctrl+M global shortcut: {err}");
                 }
+                // Ctrl+K → toggle da janela keep (nota do dia). Mesmo
+                // tratamento tolerante a falha do Ctrl+M.
+                let ctrl_k = Shortcut::new(Some(Modifiers::CONTROL), Code::KeyK);
+                if let Err(err) = app.global_shortcut().register(ctrl_k) {
+                    eprintln!("failed to register Ctrl+K global shortcut: {err}");
+                }
             }
 
             Ok(())
@@ -1298,13 +1345,21 @@ pub fn run() {
                         Some(Modifiers::CONTROL),
                         Code::KeyM,
                     );
+                    let ctrl_k = tauri_plugin_global_shortcut::Shortcut::new(
+                        Some(Modifiers::CONTROL),
+                        Code::KeyK,
+                    );
                     if shortcut == &ctrl_m && event.state() == ShortcutState::Pressed {
                         toggle_assistant_window(app);
+                    }
+                    if shortcut == &ctrl_k && event.state() == ShortcutState::Pressed {
+                        toggle_keep_window(app);
                     }
                 })
                 .build(),
         )
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(
@@ -1332,6 +1387,7 @@ pub fn run() {
             read_chat_doc,
             delete_chat_doc,
             export_markdown,
+            open_main_window,
             vec_db::vec_db_smoke_test,
             documents::documents_upload_global,
             documents::documents_reindex,

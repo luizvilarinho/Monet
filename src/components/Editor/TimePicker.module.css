@@ -1,0 +1,46 @@
+.popup {
+  position: fixed;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--surface-1, #1e1e22);
+  border: 1px solid var(--border, #333340);
+  border-radius: 6px;
+  z-index: 200;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.label {
+  color: var(--text-muted, #606070);
+  font-size: 12px;
+}
+
+.input {
+  background: var(--surface-2, #26262c);
+  border: 1px solid var(--border, #333340);
+  border-radius: 4px;
+  color: var(--text-primary, #e8e8f0);
+  font-size: 13px;
+  font-family: inherit;
+  padding: 4px 6px;
+  outline: none;
+}
+
+.input:focus {
+  border-color: rgba(124, 106, 245, 0.6);
+}
+
+.confirm {
+  background: rgba(124, 106, 245, 0.2);
+  border: 1px solid rgba(124, 106, 245, 0.45);
+  border-radius: 4px;
+  color: var(--text-primary, #e8e8f0);
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.confirm:hover {
+  background: rgba(124, 106, 245, 0.3);
+}

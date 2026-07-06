@@ -18,6 +18,9 @@ export interface StorageAdapter {
   deleteNote(id: string): Promise<void>
   searchNotes(query: string): Promise<Note[]>
 
+  getFiredReminderIds(noteId: string): Promise<string[]>
+  markRemindersFired(ids: string[], noteId: string): Promise<void>
+
   getResponses(noteId: string): Promise<AiResponse[]>
   saveResponse(response: AiResponse): Promise<void>
   deleteResponse(id: string): Promise<void>

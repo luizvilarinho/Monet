@@ -1,0 +1,30 @@
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: rgba(124, 106, 245, 0.12);
+  border: 1px solid rgba(124, 106, 245, 0.35);
+  color: var(--text-primary, #e8e8f0);
+  font-size: 0.85em;
+  line-height: 1.5;
+  white-space: nowrap;
+  vertical-align: baseline;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.selected {
+  outline: 2px solid rgba(124, 106, 245, 0.6);
+}
+
+.fired {
+  opacity: 0.55;
+  text-decoration: line-through;
+}
+
+.check {
+  color: var(--accent-ai, #5dcaa5);
+  text-decoration: none;
+}

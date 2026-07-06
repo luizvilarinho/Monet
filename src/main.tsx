@@ -3,11 +3,18 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import { AssistantPanel } from "./components/AssistantPanel/AssistantPanel";
+import { KeepPanel } from "./components/KeepPanel/KeepPanel";
 
-const isAssistantWindow = getCurrentWindow().label === "assistant";
+const windowLabel = getCurrentWindow().label;
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    {isAssistantWindow ? <AssistantPanel /> : <App />}
+    {windowLabel === "assistant" ? (
+      <AssistantPanel />
+    ) : windowLabel === "keep" ? (
+      <KeepPanel />
+    ) : (
+      <App />
+    )}
   </React.StrictMode>,
 );
