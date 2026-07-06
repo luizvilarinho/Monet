@@ -53,6 +53,33 @@ export interface Book {
   lastPage: number
   addedAt: number
   lastOpenedAt: number | null
+  zoom: number
+}
+
+export interface BookHighlightRect {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+export interface BookHighlight {
+  id: string
+  bookId: string
+  page: number
+  text: string
+  color: string
+  rects: BookHighlightRect[]
+  createdAt: number
+}
+
+export interface BookQuote {
+  id: string
+  bookId: string
+  page: number
+  text: string
+  targetNoteId: string | null
+  createdAt: number
 }
 
 export type AiResponseStatus =

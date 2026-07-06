@@ -4,6 +4,9 @@ import type {
   AiResponseStatus,
   AiSource,
   Book,
+  BookHighlight,
+  BookHighlightRect,
+  BookQuote,
   DocumentStatus,
   Note,
   Notebook,
@@ -51,6 +54,7 @@ interface BookRow {
   last_page: number
   added_at: number
   last_opened_at: number | null
+  zoom: number | null
 }
 
 interface AiResponseRow {
@@ -141,6 +145,18 @@ function rowToNote(r: NoteRow): Note {
   }
 }
 
+// Limites de zoom espelhados do Reader (src/components/Reader/Reader.tsx).
+// O frontend é dono da tabela `books`; o storage apenas garante que valores
+// inválidos vindos do banco (NULL, NaN, fora do range) caiam em algo
+// utilizável ao abrir o livro.
+const BOOK_MIN_ZOOM = 0.5
+const BOOK_MAX_ZOOM = 3
+
+function clampZoom(z: number | null | undefined): number {
+  if (z == null || !Number.isFinite(z)) return 1
+  return Math.min(Math.max(BOOK_MIN_ZOOM, z), BOOK_MAX_ZOOM)
+}
+
 function rowToBook(r: BookRow): Book {
   return {
     id: r.id,
@@ -153,6 +169,7 @@ function rowToBook(r: BookRow): Book {
     lastPage: Math.min(Math.max(1, r.last_page), r.total_pages),
     addedAt: r.added_at,
     lastOpenedAt: r.last_opened_at,
+    zoom: clampZoom(r.zoom),
   }
 }
 
@@ -164,6 +181,61 @@ function rowToSubject(r: SubjectRow): Subject {
     sortOrder: r.sort_order,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
+  }
+}
+
+interface BookHighlightRow {
+  id: string
+  book_id: string
+  page: number
+  text: string
+  color: string
+  rects_json: string
+  created_at: number
+}
+
+function parseHighlightRects(raw: string): BookHighlightRect[] {
+  try {
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    const valid: BookHighlightRect[] = []
+    for (const item of parsed) {
+      if (
+        item &&
+        typeof item.x === 'number' &&
+        typeof item.y === 'number' &&
+        typeof item.w === 'number' &&
+        typeof item.h === 'number' &&
+        Number.isFinite(item.x) &&
+        Number.isFinite(item.y) &&
+        Number.isFinite(item.w) &&
+        Number.isFinite(item.h) &&
+        item.w > 0 &&
+        item.h > 0
+      ) {
+        valid.push({
+          x: Math.min(Math.max(0, item.x), 1),
+          y: Math.min(Math.max(0, item.y), 1),
+          w: Math.min(Math.max(0, item.w), 1),
+          h: Math.min(Math.max(0, item.h), 1),
+        })
+      }
+    }
+    return valid
+  } catch {
+    return []
+  }
+}
+
+function rowToHighlight(r: BookHighlightRow): BookHighlight {
+  return {
+    id: r.id,
+    bookId: r.book_id,
+    page: r.page,
+    text: r.text,
+    color: r.color,
+    rects: parseHighlightRects(r.rects_json),
+    createdAt: r.created_at,
   }
 }
 
@@ -452,13 +524,14 @@ export class TauriStorage implements StorageAdapter {
   async saveBook(b: Book): Promise<void> {
     const db = await this.db()
     await db.execute(
-      `INSERT INTO books (id, title, author, file_path, total_pages, last_page, added_at, last_opened_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO books (id, title, author, file_path, total_pages, last_page, added_at, last_opened_at, zoom)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        ON CONFLICT(id) DO UPDATE SET
          title = excluded.title,
          author = excluded.author,
          last_page = excluded.last_page,
-         last_opened_at = excluded.last_opened_at`,
+         last_opened_at = excluded.last_opened_at,
+         zoom = excluded.zoom`,
       [
         b.id,
         b.title,
@@ -468,6 +541,7 @@ export class TauriStorage implements StorageAdapter {
         b.lastPage,
         b.addedAt,
         b.lastOpenedAt,
+        clampZoom(b.zoom),
       ]
     )
     this.scheduleCheckpoint()
@@ -475,7 +549,78 @@ export class TauriStorage implements StorageAdapter {
 
   async deleteBook(id: string): Promise<void> {
     const db = await this.db()
+    // Cascata explícita: garante ordem determinística e um scheduleCheckpoint
+    // por tabela. A FK ON DELETE CASCADE na v13 é só defesa em profundidade
+    // (a migration pode ter sido aplicada parcialmente, ou o WAL pode atrasar).
+    await db.execute('DELETE FROM book_highlights WHERE book_id = $1', [id])
+    this.scheduleCheckpoint()
+    await db.execute('DELETE FROM book_quotes WHERE book_id = $1', [id])
+    this.scheduleCheckpoint()
     await db.execute('DELETE FROM books WHERE id = $1', [id])
+    this.scheduleCheckpoint()
+  }
+
+  async getHighlights(bookId: string): Promise<BookHighlight[]> {
+    const db = await this.db()
+    const rows = await db.select<BookHighlightRow[]>(
+      'SELECT * FROM book_highlights WHERE book_id = $1 ORDER BY page ASC, created_at DESC',
+      [bookId]
+    )
+    return rows.map(rowToHighlight)
+  }
+
+  async saveHighlight(h: BookHighlight): Promise<void> {
+    const db = await this.db()
+    await db.execute(
+      `INSERT INTO book_highlights (id, book_id, page, text, color, rects_json, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT(id) DO UPDATE SET
+         page = excluded.page,
+         text = excluded.text,
+         color = excluded.color,
+         rects_json = excluded.rects_json`,
+      [
+        h.id,
+        h.bookId,
+        h.page,
+        h.text,
+        h.color,
+        JSON.stringify(h.rects),
+        h.createdAt,
+      ]
+    )
+    this.scheduleCheckpoint()
+  }
+
+  async deleteHighlight(id: string): Promise<void> {
+    const db = await this.db()
+    await db.execute('DELETE FROM book_highlights WHERE id = $1', [id])
+    this.scheduleCheckpoint()
+  }
+
+  async deleteHighlightsByBook(bookId: string): Promise<void> {
+    const db = await this.db()
+    await db.execute('DELETE FROM book_highlights WHERE book_id = $1', [bookId])
+    this.scheduleCheckpoint()
+  }
+
+  async saveQuote(q: BookQuote): Promise<void> {
+    const db = await this.db()
+    await db.execute(
+      `INSERT INTO book_quotes (id, book_id, page, text, target_note_id, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT(id) DO UPDATE SET
+         page = excluded.page,
+         text = excluded.text,
+         target_note_id = excluded.target_note_id`,
+      [q.id, q.bookId, q.page, q.text, q.targetNoteId, q.createdAt]
+    )
+    this.scheduleCheckpoint()
+  }
+
+  async deleteQuotesByBook(bookId: string): Promise<void> {
+    const db = await this.db()
+    await db.execute('DELETE FROM book_quotes WHERE book_id = $1', [bookId])
     this.scheduleCheckpoint()
   }
 

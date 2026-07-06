@@ -64,6 +64,7 @@ export async function importBook(): Promise<Book | null> {
     lastPage: 1,
     addedAt: Date.now(),
     lastOpenedAt: null,
+    zoom: 1,
   }
   await storage.saveBook(book)
   return book

@@ -1,4 +1,13 @@
-import type { AiResponse, Book, DocumentStatus, Note, Notebook, Subject } from '../types'
+import type {
+  AiResponse,
+  Book,
+  BookHighlight,
+  BookQuote,
+  DocumentStatus,
+  Note,
+  Notebook,
+  Subject,
+} from '../types'
 import { TauriStorage } from './tauri'
 import { BrowserStorage } from './browser'
 
@@ -21,6 +30,14 @@ export interface StorageAdapter {
   getBooks(): Promise<Book[]>
   saveBook(book: Book): Promise<void>
   deleteBook(id: string): Promise<void>
+
+  getHighlights(bookId: string): Promise<BookHighlight[]>
+  saveHighlight(highlight: BookHighlight): Promise<void>
+  deleteHighlight(id: string): Promise<void>
+  deleteHighlightsByBook(bookId: string): Promise<void>
+
+  saveQuote(quote: BookQuote): Promise<void>
+  deleteQuotesByBook(bookId: string): Promise<void>
 
   getFiredReminderIds(noteId: string): Promise<string[]>
   markRemindersFired(ids: string[], noteId: string): Promise<void>

@@ -1140,7 +1140,13 @@ function App() {
       )}
       {activeMode === 'library' ? (
         <div className="workspace">
-          <Library />
+          <Library
+            notebooks={orderedNotebooks}
+            notes={notes}
+            onCreateNotebook={handleCreateNotebookFromChat}
+            onCreateNote={handleCreateNoteFromChat}
+            onSaveNote={saveNote}
+          />
         </div>
       ) : activeMode === 'chat' ? (
         <div className="workspace">

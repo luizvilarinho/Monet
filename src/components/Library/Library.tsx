@@ -1,10 +1,18 @@
 import { useEffect, useState } from 'react'
-import type { Book } from '../../types'
+import type { Book, Note, Notebook } from '../../types'
 import { storage } from '../../storage'
 import { booksDeleteFile, importBook } from '../../lib/books'
 import { useConfirm } from '../../hooks/useConfirm'
 import { Reader } from '../Reader/Reader'
 import styles from './Library.module.css'
+
+export interface LibraryProps {
+  notebooks: Notebook[]
+  notes: Note[]
+  onCreateNotebook: (name: string) => Promise<Notebook>
+  onCreateNote: (notebookId: string, title: string, content: string) => Promise<Note>
+  onSaveNote: (note: Note) => Promise<void>
+}
 
 function formatDate(ms: number): string {
   return new Date(ms).toLocaleDateString()
@@ -15,7 +23,13 @@ function formatDate(ms: number): string {
 // livro direto na última página, mesmo após fechar/reabrir o app.
 const OPEN_BOOK_KEY = 'monet:reader-open-book'
 
-export function Library() {
+export function Library({
+  notebooks,
+  notes,
+  onCreateNotebook,
+  onCreateNote,
+  onSaveNote,
+}: LibraryProps) {
   const [books, setBooks] = useState<Book[]>([])
   const [loading, setLoading] = useState(true)
   const [importing, setImporting] = useState(false)
@@ -130,6 +144,12 @@ export function Library() {
         onBack={closeReader}
         onBookChange={handleBookChange}
         onLoadError={() => localStorage.removeItem(OPEN_BOOK_KEY)}
+        notebooks={notebooks}
+        notes={notes}
+        onCreateNotebook={onCreateNotebook}
+        onCreateNote={onCreateNote}
+        onSaveNote={onSaveNote}
+        onNavigateToNote={() => {}}
       />
     )
   }

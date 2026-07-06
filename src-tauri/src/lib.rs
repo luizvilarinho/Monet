@@ -1272,6 +1272,55 @@ pub fn run() {
             ",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 13,
+            description: "book_highlights_and_quotes",
+            // Fase 2 do leitor: grifos (book_highlights) e citacoes copiadas
+            // para cadernos (book_quotes). Propriedade EXCLUSIVA do frontend
+            // (tauri-plugin-sql), como books/notebooks/notes — o backend nao
+            // mexe nessas tabelas. A cascata em ON DELETE do book_id e
+            // defesa em profundidade; a logica real vive em deleteBook
+            // (storage/tauri.ts) e roda deleteHighlightsByBook +
+            // deleteQuotesByBook antes do DELETE FROM books.
+            sql: "
+                CREATE TABLE IF NOT EXISTS book_highlights (
+                    id TEXT PRIMARY KEY,
+                    book_id TEXT NOT NULL,
+                    page INTEGER NOT NULL,
+                    text TEXT NOT NULL,
+                    color TEXT NOT NULL,
+                    rects_json TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_book_highlights_book ON book_highlights(book_id);
+                CREATE TABLE IF NOT EXISTS book_quotes (
+                    id TEXT PRIMARY KEY,
+                    book_id TEXT NOT NULL,
+                    page INTEGER NOT NULL,
+                    text TEXT NOT NULL,
+                    target_note_id TEXT,
+                    created_at INTEGER NOT NULL,
+                    FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_book_quotes_book ON book_quotes(book_id);
+            ",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 14,
+            description: "book_zoom",
+            // Fase 2 do leitor (continuacao): persistir o ultimo zoom por
+            // livro. DEFAULT 1.0 garante retro-compatibilidade com livros
+            // ja gravados (coluna adicionada em um ALTER TABLE). A tabela
+            // `books` e de propriedade EXCLUSIVA do frontend
+            // (tauri-plugin-sql), como books/notebooks/notes — o backend
+            // nao mexe nesta tabela.
+            sql: "
+                ALTER TABLE books ADD COLUMN zoom REAL NOT NULL DEFAULT 1.0;
+            ",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
