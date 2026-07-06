@@ -31,6 +31,7 @@ Ponto de entrada para a documentação do projeto. Leia este arquivo primeiro pa
 
 | Arquivo                             | Quando usar                                                                                                                              |
 | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `DOCS/specs/productVision.md`       | Visão de produto: o problema que o Monet resolve e o papel da IA como meio, não fim. Consulte ao avaliar features ou decisões de design. |
 | `DOCS/specs/systemSpecification.md` | Stack tecnológica e decisões de arquitetura do projeto. Consulte para entender restrições técnicas ou verificar versões de dependências. |
 
 ---
