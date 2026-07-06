@@ -1,0 +1,185 @@
+.reader {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: var(--bg-app, #1f1f2f);
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border, #333340);
+  background: var(--bg-panel, #161625);
+  flex-shrink: 0;
+}
+
+.backButton {
+  background: transparent;
+  border: 1px solid var(--border, #333340);
+  border-radius: 6px;
+  color: var(--text-secondary, #9898a4);
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+}
+
+.backButton:hover {
+  color: var(--text-primary, #ddddf1);
+  border-color: var(--accent, #7b6ed4);
+}
+
+.pageControls,
+.zoomControls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.navButton {
+  background: transparent;
+  border: 1px solid var(--border, #333340);
+  border-radius: 6px;
+  color: var(--text-secondary, #9898a4);
+  width: 28px;
+  height: 28px;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.navButton:hover:not(:disabled) {
+  color: var(--text-primary, #ddddf1);
+  border-color: var(--accent, #7b6ed4);
+}
+
+.navButton:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pageInput {
+  width: 56px;
+  background: var(--surface-1, #1d1d34);
+  border: 1px solid var(--border, #333340);
+  border-radius: 6px;
+  color: var(--text-primary, #ddddf1);
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  text-align: center;
+}
+
+.pageInput:focus {
+  outline: none;
+  border-color: var(--accent, #7b6ed4);
+}
+
+.pageIndicator {
+  font-size: 12px;
+  color: var(--text-secondary, #9898a4);
+  white-space: nowrap;
+}
+
+.zoomLabel {
+  font-size: 12px;
+  color: var(--text-secondary, #9898a4);
+  min-width: 42px;
+  text-align: center;
+}
+
+.pageArea {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 24px;
+}
+
+.pageWrap {
+  position: relative;
+  margin: auto;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.canvas {
+  display: block;
+  background: #fff;
+}
+
+.loadingText {
+  color: var(--text-muted, #7c7c93);
+  font-size: 13px;
+  margin: auto;
+}
+
+.errorState {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 32px;
+  text-align: center;
+}
+
+.errorMessage {
+  margin: 0;
+  color: var(--text-secondary, #9898a4);
+  font-size: 13px;
+  max-width: 420px;
+  line-height: 1.5;
+}
+
+.primary {
+  background: var(--accent-ai, #5dcaa5);
+  color: #0e0e10;
+  border: 1px solid var(--accent-ai, #5dcaa5);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.primary:hover {
+  filter: brightness(1.05);
+}
+
+/* Text layer mínimo do pdfjs 5.x (sem importar pdf_viewer.css completo).
+   Spans transparentes sobre o canvas — habilitam seleção de texto e são a
+   base das fases futuras de grifo/citação. */
+.textLayer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  line-height: 1;
+  text-align: initial;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  caret-color: CanvasText;
+}
+
+.textLayer span,
+.textLayer br {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0 0;
+}
+
+.textLayer span::selection {
+  background: rgba(123, 110, 212, 0.35);
+  color: transparent;
+}

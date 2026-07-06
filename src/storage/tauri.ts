@@ -3,6 +3,7 @@ import type {
   AiResponse,
   AiResponseStatus,
   AiSource,
+  Book,
   DocumentStatus,
   Note,
   Notebook,
@@ -40,6 +41,17 @@ interface SubjectRow {
   updated_at: number
 }
 
+
+interface BookRow {
+  id: string
+  title: string
+  author: string | null
+  file_path: string
+  total_pages: number
+  last_page: number
+  added_at: number
+  last_opened_at: number | null
+}
 
 interface AiResponseRow {
   id: string
@@ -126,6 +138,21 @@ function rowToNote(r: NoteRow): Note {
     date: r.date ?? null,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
+  }
+}
+
+function rowToBook(r: BookRow): Book {
+  return {
+    id: r.id,
+    title: r.title,
+    author: r.author,
+    filePath: r.file_path,
+    totalPages: r.total_pages,
+    // Clamp defensivo: dados inconsistentes (last_page fora de 1..total_pages)
+    // são corrigidos na leitura.
+    lastPage: Math.min(Math.max(1, r.last_page), r.total_pages),
+    addedAt: r.added_at,
+    lastOpenedAt: r.last_opened_at,
   }
 }
 
@@ -412,6 +439,44 @@ export class TauriStorage implements StorageAdapter {
         fired_at INTEGER NOT NULL
       )`
     )
+  }
+
+  async getBooks(): Promise<Book[]> {
+    const db = await this.db()
+    const rows = await db.select<BookRow[]>(
+      'SELECT * FROM books ORDER BY added_at DESC'
+    )
+    return rows.map(rowToBook)
+  }
+
+  async saveBook(b: Book): Promise<void> {
+    const db = await this.db()
+    await db.execute(
+      `INSERT INTO books (id, title, author, file_path, total_pages, last_page, added_at, last_opened_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT(id) DO UPDATE SET
+         title = excluded.title,
+         author = excluded.author,
+         last_page = excluded.last_page,
+         last_opened_at = excluded.last_opened_at`,
+      [
+        b.id,
+        b.title,
+        b.author,
+        b.filePath,
+        b.totalPages,
+        b.lastPage,
+        b.addedAt,
+        b.lastOpenedAt,
+      ]
+    )
+    this.scheduleCheckpoint()
+  }
+
+  async deleteBook(id: string): Promise<void> {
+    const db = await this.db()
+    await db.execute('DELETE FROM books WHERE id = $1', [id])
+    this.scheduleCheckpoint()
   }
 
   async getFiredReminderIds(noteId: string): Promise<string[]> {

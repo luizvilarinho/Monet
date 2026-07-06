@@ -1,4 +1,4 @@
-import type { AiResponse, DocumentStatus, Note, Notebook, Subject } from '../types'
+import type { AiResponse, Book, DocumentStatus, Note, Notebook, Subject } from '../types'
 import type { StorageAdapter } from './index'
 
 export class BrowserStorage implements StorageAdapter {
@@ -37,6 +37,15 @@ export class BrowserStorage implements StorageAdapter {
   }
   async searchNotes(_query: string): Promise<Note[]> {
     throw new Error('BrowserStorage.searchNotes not implemented')
+  }
+  async getBooks(): Promise<Book[]> {
+    throw new Error('BrowserStorage.getBooks not implemented')
+  }
+  async saveBook(_book: Book): Promise<void> {
+    throw new Error('BrowserStorage.saveBook not implemented')
+  }
+  async deleteBook(_id: string): Promise<void> {
+    throw new Error('BrowserStorage.deleteBook not implemented')
   }
   // Estado de lembretes em localStorage (paridade de interface; o app em
   // browser não dispara notificações).

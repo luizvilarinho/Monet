@@ -1,7 +1,7 @@
 import logoUrl from '../../assets/logo_monet_vector.svg'
 import styles from './Toolbar.module.css'
 
-export type ActiveMode = 'notebook' | 'chat'
+export type ActiveMode = 'notebook' | 'chat' | 'library'
 
 export interface ToolbarProps {
   activeMode: ActiveMode
@@ -108,6 +108,15 @@ export function Toolbar({
           aria-pressed={activeMode === 'chat'}
         >
           Chat
+        </button>
+
+        <button
+          type="button"
+          className={activeMode === 'library' ? styles.modeButtonActive : styles.modeButton}
+          onClick={() => onSetMode('library')}
+          aria-pressed={activeMode === 'library'}
+        >
+          Library
         </button>
       </nav>
     </header>

@@ -1,3 +1,4 @@
+mod books;
 mod documents;
 mod vec_db;
 
@@ -1251,6 +1252,26 @@ pub fn run() {
             ",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 12,
+            description: "books_table",
+            // Biblioteca de livros (PDF) do modo Library. Tabela de propriedade
+            // EXCLUSIVA do frontend (tauri-plugin-sql), como notebooks/notes —
+            // o backend Rust (books.rs) só mexe nos arquivos, nunca nesta tabela.
+            sql: "
+                CREATE TABLE IF NOT EXISTS books (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    author TEXT,
+                    file_path TEXT NOT NULL,
+                    total_pages INTEGER NOT NULL,
+                    last_page INTEGER NOT NULL DEFAULT 1,
+                    added_at INTEGER NOT NULL,
+                    last_opened_at INTEGER
+                );
+            ",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
@@ -1402,7 +1423,10 @@ pub fn run() {
             documents::documents_add_watched_folder,
             documents::documents_scan_watched_folder,
             documents::documents_delete_watched_folder,
-            documents::embed_text
+            documents::embed_text,
+            books::books_import_file,
+            books::books_read_file,
+            books::books_delete_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

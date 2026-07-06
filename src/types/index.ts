@@ -44,6 +44,17 @@ export interface Document {
   isExternal: boolean
 }
 
+export interface Book {
+  id: string
+  title: string
+  author: string | null
+  filePath: string
+  totalPages: number
+  lastPage: number
+  addedAt: number
+  lastOpenedAt: number | null
+}
+
 export type AiResponseStatus =
   | 'streaming'
   | 'completed'

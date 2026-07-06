@@ -8,6 +8,7 @@ import './App.css'
 import { AiPanel } from './components/AiPanel/AiPanel'
 import { CalendarView } from './components/CalendarView/CalendarView'
 import { ChatPanel } from './components/ChatPanel/ChatPanel'
+import { Library } from './components/Library/Library'
 import { DocumentsModal } from './components/DocumentsModal/DocumentsModal'
 import { KnowledgeBaseModal } from './components/KnowledgeBaseModal/KnowledgeBaseModal'
 import { Editor } from './components/Editor/Editor'
@@ -263,7 +264,7 @@ function App() {
 
   const [activeMode, setActiveMode] = useState<ActiveMode>(() => {
     const saved = localStorage.getItem('monet:active-mode')
-    return saved === 'chat' ? 'chat' : 'notebook'
+    return saved === 'chat' || saved === 'library' ? saved : 'notebook'
   })
   const [activeNotebookId, setActiveNotebookId] = useState<string | null>(null)
   const [activeSubjectId, setActiveSubjectId] = useState<string | null>(null)
@@ -1137,7 +1138,11 @@ function App() {
           {noteSaveError || notebookSaveError || subjectSaveError}
         </div>
       )}
-      {activeMode === 'chat' ? (
+      {activeMode === 'library' ? (
+        <div className="workspace">
+          <Library />
+        </div>
+      ) : activeMode === 'chat' ? (
         <div className="workspace">
           <ChatPanel
             models={models}
