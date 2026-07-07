@@ -343,6 +343,31 @@
   letter-spacing: 0.02em;
 }
 
+.removalPopoverQuickActions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.removalPopoverQuickButton {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid var(--border, #333340);
+  border-radius: 5px;
+  color: var(--text-primary, #ddddf1);
+  padding: 5px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.removalPopoverQuickButton:hover {
+  border-color: var(--accent, #7b6ed4);
+  background: rgba(123, 110, 212, 0.1);
+}
+
 .removalPopoverActions {
   display: flex;
   justify-content: flex-end;
@@ -396,7 +421,130 @@
   border-color: var(--accent, #7b6ed4);
 }
 
-.highlightsToggleBadge {
+/* ─── Marcador de retorno ("Back to p. N") ────────────────────────────────
+   Aparece só depois de uma navegação "de citação" (grifo/sumário) para uma
+   página diferente — some sozinho quando o usuário chega de volta nela. */
+.jumpBackButton {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(123, 110, 212, 0.12);
+  border: 1px solid rgba(123, 110, 212, 0.4);
+  border-radius: 6px;
+  color: var(--accent, #7b6ed4);
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+}
+
+.jumpBackButton:hover {
+  background: rgba(123, 110, 212, 0.2);
+}
+
+/* ─── Coluna de navegação do livro (Summary / Highlights) ────────────────
+   Sempre montada — retrátil como a coluna de notebooks (NotebookList):
+   recolhida mostra só ícones (SIDE_PANEL_COLLAPSED_WIDTH), expandida mostra
+   as abas e o conteúdo (SIDE_PANEL_WIDTH). Largura fixa nos dois estados —
+   sem arrasto de resize, ao contrário do ReaderChatPanel. */
+.sidePanel {
+  flex-shrink: 0;
+  border-right: 1px solid var(--border, #333340);
+  background: var(--bg-panel, #161625);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sidePanelCollapsed {
+  align-items: center;
+}
+
+.sidePanelRail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 0;
+  width: 100%;
+}
+
+.sidePanelRailButton,
+.sidePanelRailToggle {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-muted, #7c7c93);
+  cursor: pointer;
+  padding: 0;
+}
+
+.sidePanelRailButton:hover,
+.sidePanelRailToggle:hover {
+  color: var(--text-primary, #ddddf1);
+  background: rgba(123, 110, 212, 0.12);
+}
+
+.sidePanelRailToggle {
+  margin-bottom: 6px;
+}
+
+.sidePanelRailBadge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  background: var(--accent, #7b6ed4);
+  color: #0e0e10;
+  font-weight: 600;
+  font-size: 9px;
+  padding: 0 4px;
+  border-radius: 999px;
+  min-width: 14px;
+  line-height: 14px;
+  text-align: center;
+}
+
+.sidePanelTabs {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border, #333340);
+  flex-shrink: 0;
+}
+
+.sidePanelTab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-secondary, #9898a4);
+  padding: 10px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.sidePanelTab:hover {
+  color: var(--text-primary, #ddddf1);
+}
+
+.sidePanelTabActive {
+  color: var(--text-primary, #ddddf1);
+  border-bottom-color: var(--accent, #7b6ed4);
+}
+
+.sidePanelTabBadge {
   background: var(--accent, #7b6ed4);
   color: #0e0e10;
   font-weight: 600;
@@ -407,49 +555,85 @@
   text-align: center;
 }
 
-/* ─── Painel lateral de grifos ─────────────────────────────────────────── */
-.highlightsPanel {
-  flex-shrink: 0;
-  width: 280px;
-  border-left: 1px solid var(--border, #333340);
-  background: var(--bg-panel, #161625);
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.highlightsPanelHeader {
-  display: flex;
+.sidePanelCollapseBtn {
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border, #333340);
-  flex-shrink: 0;
-}
-
-.highlightsPanelTitle {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-primary, #ddddf1);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.highlightsPanelClose {
+  justify-content: center;
   background: transparent;
   border: none;
+  border-right: 1px solid var(--border, #333340);
   color: var(--text-muted, #7c7c93);
-  font-size: 18px;
   cursor: pointer;
-  line-height: 1;
-  padding: 0 4px;
+  padding: 8px 10px;
 }
 
-.highlightsPanelClose:hover {
+.sidePanelCollapseBtn:hover {
   color: var(--text-primary, #ddddf1);
 }
 
+/* ─── Aba Summary: sumário/outline nativo do PDF (getOutline) ────────────── */
+.summaryPanel {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.outlineList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.outlineList:not([data-depth='0']) {
+  padding-left: 12px;
+  border-left: 1px solid var(--border, #333340);
+  margin-left: 8px;
+}
+
+.outlineItem {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  color: var(--text-primary, #ddddf1);
+  padding: 6px 8px;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.outlineItem:hover:not(:disabled) {
+  background: rgba(123, 110, 212, 0.1);
+}
+
+.outlineItem:disabled {
+  color: var(--text-muted, #7c7c93);
+  cursor: default;
+}
+
+.outlineItemTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.outlineItemPage {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted, #7c7c93);
+}
+
+/* ─── Aba Highlights ──────────────────────────────────────────────────── */
 .highlightsPanelList {
   list-style: none;
   margin: 0;
@@ -490,17 +674,23 @@
   position: relative;
 }
 
-/* Reserva espaço à direita do item para o botão de lixeira não cobrir o
-   texto nem o "p. N". O valor casa com o offset/width do botão de delete
-   (top 6px + 20px de largura + 6px de respiro). */
+/* Reserva espaço à direita do item para a fileira de ações (Ask AI, Copy
+   citation, Delete) não cobrir o texto nem o "p. N". Largura casa com 3
+   botões de 20px + 2px de gap + o offset/respiro de 6px do wrapper. */
 .highlightsPanelItemWrap .highlightsPanelItem {
-  padding-right: 32px;
+  padding-right: 82px;
 }
 
-.highlightsPanelItemDelete {
+.highlightsPanelItemActions {
   position: absolute;
   top: 6px;
   right: 6px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.highlightsPanelItemAction {
   width: 20px;
   height: 20px;
   display: inline-flex;
@@ -516,16 +706,23 @@
   transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
 }
 
-.highlightsPanelItemDelete:hover {
+.highlightsPanelItemAction:hover {
+  color: var(--accent, #7b6ed4);
+  background: rgba(123, 110, 212, 0.12);
+  border-color: rgba(123, 110, 212, 0.35);
+}
+
+.highlightsPanelItemAction:focus-visible {
+  outline: none;
+  color: var(--accent, #7b6ed4);
+  border-color: var(--accent, #7b6ed4);
+}
+
+.highlightsPanelItemDelete:hover,
+.highlightsPanelItemDelete:focus-visible {
   color: var(--accent-warn, #ef9f27);
   background: rgba(239, 159, 39, 0.12);
   border-color: rgba(239, 159, 39, 0.45);
-}
-
-.highlightsPanelItemDelete:focus-visible {
-  outline: none;
-  color: var(--accent-warn, #ef9f27);
-  border-color: var(--accent-warn, #ef9f27);
 }
 
 .highlightsPanelItemTop {

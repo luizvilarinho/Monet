@@ -50,7 +50,7 @@ export function AssistantPanel() {
     setFolderVisibleDocuments,
     setFolderMemory,
     setFolderMemoryEnabled,
-  } = useChat(models, { isAssistant: true })
+  } = useChat(models, { mode: 'assistant' })
 
   const [draft, setDraft] = useState('')
   const [promptOpen, setPromptOpen] = useState(false)

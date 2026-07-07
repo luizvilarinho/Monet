@@ -136,6 +136,7 @@
 
 .table {
   width: 100%;
+  table-layout: fixed;
   border-collapse: collapse;
   font-size: 13px;
   color: var(--text-primary, #ddddf1);

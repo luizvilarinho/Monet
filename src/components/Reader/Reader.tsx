@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PDFPageProxy, RenderTask } from 'pdfjs-dist'
+import {
+  ArrowUUpLeft,
+  Highlighter,
+  ListBullets,
+  Quotes,
+  SidebarSimple,
+  Sparkle,
+} from '@phosphor-icons/react'
 import type {
   Book,
   BookHighlight,
@@ -13,6 +21,7 @@ import { booksReadFile } from '../../lib/books'
 import { openPdf, TextLayer, type PDFDocumentProxy } from '../../lib/pdf'
 import { useConfirm } from '../../hooks/useConfirm'
 import { QuoteToNoteModal } from './QuoteToNoteModal'
+import { ReaderChatPanel } from './ReaderChatPanel'
 import styles from './Reader.module.css'
 
 export interface ReaderProps {
@@ -30,7 +39,6 @@ export interface ReaderProps {
     content: string,
   ) => Promise<Note>
   onSaveNote: (note: Note) => Promise<void>
-  onNavigateToNote: (notebookId: string, noteId: string) => void
 }
 
 const MIN_SCALE = 0.5
@@ -42,6 +50,18 @@ const HIGHLIGHT_OPACITY = 0.35
 const HIGHLIGHT_COLORS = ['#FFEB3B', '#A5D6A7', '#90CAF9', '#F48FB1']
 const DEFAULT_HIGHLIGHT_COLOR = HIGHLIGHT_COLORS[0]
 const SAVE_TOAST_MS = 2500
+
+// Estado do toggle da coluna de chat, persistido entre sessões.
+const CHAT_OPEN_KEY = 'monet:reader-chat-open'
+
+// Estado retrátil da coluna de navegação (Summary/Highlights), persistido
+// entre sessões — mesmo padrão do NotebookList (ícones apenas quando
+// recolhida, largura fixa quando expandida).
+const SIDE_PANEL_COLLAPSED_KEY = 'monet:reader-sidepanel-collapsed'
+const SIDE_PANEL_WIDTH = 280
+const SIDE_PANEL_COLLAPSED_WIDTH = 48
+
+type SidePanelTab = 'summary' | 'highlights'
 
 interface PagePoint {
   x: number
@@ -89,6 +109,98 @@ function formatShortDate(ms: number): string {
 function truncateText(s: string, max: number): string {
   if (s.length <= max) return s
   return s.slice(0, max).trimEnd() + '…'
+}
+
+// ─── Sumário do PDF (tab "Summary") ─────────────────────────────────────
+// pdf.js expõe o outline/bookmarks nativo do arquivo (getOutline), quando o
+// PDF os inclui — nem todo PDF tem. Cada nó traz um `dest` que precisa ser
+// resolvido para um número de página: destino nomeado (string) primeiro via
+// getDestination, depois o ref da página (1º item do array) via
+// getPageIndex. Resolvido uma vez no carregamento do doc e cacheado em
+// estado — a navegação por clique fica então síncrona.
+interface RawOutlineNode {
+  title: string
+  dest: string | unknown[] | null
+  items: RawOutlineNode[]
+}
+
+interface OutlineEntry {
+  title: string
+  page: number | null
+  items: OutlineEntry[]
+}
+
+// pdfjs-dist não reexporta o tipo `RefProxy` (usado por getPageIndex) do seu
+// entrypoint público — derivamos o tipo do próprio método em vez de importar
+// de um caminho interno do pacote.
+type PageRef = Parameters<PDFDocumentProxy['getPageIndex']>[0]
+
+async function resolveOutlineDestPage(
+  doc: PDFDocumentProxy,
+  dest: string | unknown[] | null,
+): Promise<number | null> {
+  if (!dest) return null
+  try {
+    const explicit = typeof dest === 'string' ? await doc.getDestination(dest) : dest
+    if (!Array.isArray(explicit) || explicit.length === 0) return null
+    const index = await doc.getPageIndex(explicit[0] as PageRef)
+    return index + 1
+  } catch {
+    return null
+  }
+}
+
+async function resolveOutlineNode(
+  doc: PDFDocumentProxy,
+  node: RawOutlineNode,
+): Promise<OutlineEntry> {
+  const [page, items] = await Promise.all([
+    resolveOutlineDestPage(doc, node.dest),
+    Promise.all((node.items ?? []).map((child) => resolveOutlineNode(doc, child))),
+  ])
+  return { title: node.title, page, items }
+}
+
+async function loadOutline(doc: PDFDocumentProxy): Promise<OutlineEntry[] | null> {
+  try {
+    const raw = (await doc.getOutline()) as RawOutlineNode[] | null
+    if (!raw || raw.length === 0) return null
+    return await Promise.all(raw.map((node) => resolveOutlineNode(doc, node)))
+  } catch {
+    return null
+  }
+}
+
+interface OutlineListProps {
+  items: OutlineEntry[]
+  depth: number
+  onNavigate: (page: number) => void
+}
+
+function OutlineList({ items, depth, onNavigate }: OutlineListProps) {
+  return (
+    <ul className={styles.outlineList} data-depth={depth}>
+      {items.map((item, i) => (
+        <li key={i}>
+          <button
+            type="button"
+            className={styles.outlineItem}
+            disabled={item.page == null}
+            title={item.title}
+            onClick={() => item.page != null && onNavigate(item.page)}
+          >
+            <span className={styles.outlineItemTitle}>{item.title}</span>
+            {item.page != null && (
+              <span className={styles.outlineItemPage}>{item.page}</span>
+            )}
+          </button>
+          {item.items.length > 0 && (
+            <OutlineList items={item.items} depth={depth + 1} onNavigate={onNavigate} />
+          )}
+        </li>
+      ))}
+    </ul>
+  )
 }
 
 // ─── Controlador de seleção manual ─────────────────────────────────────
@@ -171,9 +283,28 @@ export function Reader({
   const [removalCandidate, setRemovalCandidate] = useState<RemovalCandidate | null>(
     null,
   )
-  const [highlightsPanelOpen, setHighlightsPanelOpen] = useState(false)
+  const [sidePanelCollapsed, setSidePanelCollapsed] = useState(
+    () => localStorage.getItem(SIDE_PANEL_COLLAPSED_KEY) !== '0',
+  )
+  const [sidePanelTab, setSidePanelTab] = useState<SidePanelTab>('highlights')
+  const [outline, setOutline] = useState<OutlineEntry[] | null | undefined>(undefined)
+  // Página de onde o usuário saiu ao seguir um grifo/item do sumário — permite
+  // voltar com um clique. Só é marcada em navegação "de citação" (painel de
+  // grifos, sumário), nunca em ‹›/input de página, e some sozinha quando o
+  // usuário chega de volta nela por qualquer meio (ver effect abaixo).
+  const [jumpBackPage, setJumpBackPage] = useState<number | null>(null)
+  const [chatOpen, setChatOpen] = useState(
+    () => localStorage.getItem(CHAT_OPEN_KEY) === '1',
+  )
+  const [pendingQuote, setPendingQuote] = useState<{
+    text: string
+    page: number
+  } | null>(null)
   const [quoteModalOpen, setQuoteModalOpen] = useState(false)
-  const [quoteContext, setQuoteContext] = useState<{ text: string } | null>(null)
+  const [quoteContext, setQuoteContext] = useState<{
+    text: string
+    page: number
+  } | null>(null)
   const [saveToast, setSaveToast] = useState<string | null>(null)
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -195,6 +326,10 @@ export function Reader({
   // flush de um não dependa do outro.
   const saveZoomTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pendingZoomRef = useRef<number | null>(null)
+  // Cache de texto extraído por página (contexto do chat). Preenchido sob
+  // demanda (só no envio de mensagem) para não travar a navegação de páginas.
+  // `null` cacheado = página sem texto extraível (PDF escaneado).
+  const pageTextCacheRef = useRef<Map<number, string | null>>(new Map())
   // Refs do controlador de seleção manual. Nada disso vai em state — não
   // queremos re-render por arrasto. `isDraggingRef` é true entre o
   // `mousedown` na text layer e o `mouseup` correspondente. `anchorRef`
@@ -286,6 +421,74 @@ export function Reader({
       cancelled = true
     }
   }, [book.id])
+
+  // Persistência do toggle do chat.
+  useEffect(() => {
+    try {
+      localStorage.setItem(CHAT_OPEN_KEY, chatOpen ? '1' : '0')
+    } catch (err) {
+      console.error('failed to persist reader chat toggle', err)
+    }
+  }, [chatOpen])
+
+  // Persistência do colapso da coluna de navegação (Summary/Highlights).
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIDE_PANEL_COLLAPSED_KEY, sidePanelCollapsed ? '1' : '0')
+    } catch (err) {
+      console.error('failed to persist reader side panel toggle', err)
+    }
+  }, [sidePanelCollapsed])
+
+  // Carrega o sumário (outline nativo do PDF) uma vez por documento. `undefined`
+  // = carregando, `null` = PDF sem sumário embutido.
+  useEffect(() => {
+    if (!doc) {
+      setOutline(undefined)
+      return
+    }
+    let cancelled = false
+    setOutline(undefined)
+    void loadOutline(doc).then((result) => {
+      if (!cancelled) setOutline(result)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [doc])
+
+  // Cache de texto por página é do documento atual; zera ao (re)carregar.
+  useEffect(() => {
+    pageTextCacheRef.current = new Map()
+  }, [doc])
+
+  // Extração de texto da página sob demanda (contexto do chat), com cache.
+  // Não usa a TextLayer visual: `getTextContent` é rápido e o pdfjs cacheia
+  // os page proxies internamente.
+  const getPageText = useCallback(
+    async (n: number): Promise<string | null> => {
+      const cache = pageTextCacheRef.current
+      const cached = cache.get(n)
+      if (cached !== undefined) return cached
+      if (!doc) return null
+      try {
+        const page = await doc.getPage(n)
+        const tc = await page.getTextContent()
+        const text = tc.items
+          .map((item) => ('str' in item ? item.str : ''))
+          .join(' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+        const value = text.length > 0 ? text : null
+        cache.set(n, value)
+        return value
+      } catch (err) {
+        console.error('failed to extract page text', err)
+        return null
+      }
+    },
+    [doc],
+  )
 
   // Renderização sob demanda: apenas a página atual (canvas + text layer).
   useEffect(() => {
@@ -636,6 +839,22 @@ export function Reader({
     [doc],
   )
 
+  // Navegação "de citação" (clique num grifo ou item do sumário): marca a
+  // página atual como ponto de retorno antes de saltar, para o botão "Back
+  // to p. N" da toolbar. Chamadas de ‹›/input de página usam goToPage
+  // diretamente e não mexem no marcador.
+  function jumpToPage(page: number) {
+    if (page === pageNum) return
+    setJumpBackPage(pageNum)
+    goToPage(page)
+  }
+
+  // O marcador some sozinho assim que o usuário chega de volta na página de
+  // origem — por qualquer meio, não só pelo botão "Back".
+  useEffect(() => {
+    setJumpBackPage((prev) => (prev === pageNum ? null : prev))
+  }, [pageNum])
+
   // Fechar toolbar/popover em troca de página, zoom, resize.
   useEffect(() => {
     setSelection(null)
@@ -807,6 +1026,47 @@ export function Reader({
     return () => document.removeEventListener('mousedown', onDocMouseDown)
   }, [])
 
+  // Registra uma cópia feita DENTRO do leitor como BookQuote sem nota alvo
+  // (contexto do chat). Fire-and-forget: não bloqueia nem degrada a UX de
+  // copiar; falha é apenas logada. NUNCA lê o clipboard do sistema — só
+  // eventos de cópia originados no leitor.
+  const recordCopiedText = useCallback(
+    (text: string) => {
+      void storage
+        .saveQuote({
+          id: crypto.randomUUID(),
+          bookId: book.id,
+          page: pageNum,
+          text,
+          targetNoteId: null,
+          createdAt: Date.now(),
+        })
+        .catch((err) => console.error('failed to record copy as quote', err))
+    },
+    [book.id, pageNum],
+  )
+
+  // Ctrl+C / cópia nativa sobre seleção DENTRO da text layer também vira
+  // BookQuote (contexto do chat). Não chama preventDefault — a cópia nativa
+  // segue normal — e NUNCA lê o clipboard do SO. O botão Copy da toolbar usa
+  // navigator.clipboard.writeText, que NÃO dispara o evento 'copy', então não
+  // há registro duplicado entre os dois caminhos.
+  useEffect(() => {
+    function onCopy() {
+      const textContainer = textLayerRef.current
+      if (!textContainer) return
+      const sel = window.getSelection()
+      if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return
+      const range = sel.getRangeAt(0)
+      if (!textContainer.contains(range.commonAncestorContainer)) return
+      const text = sel.toString().trim()
+      if (!text) return
+      recordCopiedText(text)
+    }
+    document.addEventListener('copy', onCopy)
+    return () => document.removeEventListener('copy', onCopy)
+  }, [recordCopiedText])
+
   // ─── Ações da toolbar ─────────────────────────────────────────────────
   async function handleHighlight(color: string) {
     if (!selection) return
@@ -826,19 +1086,42 @@ export function Reader({
 
   async function handleCopyText() {
     if (!selection) return
+    const text = selection.text
     try {
-      await navigator.clipboard.writeText(selection.text)
+      await navigator.clipboard.writeText(text)
     } catch (err) {
       console.error('clipboard write failed', err)
     }
+    recordCopiedText(text)
     setSelection(null)
     window.getSelection()?.removeAllRanges()
   }
 
+  // Ações compartilhadas entre a toolbar de seleção, o popover de grifo e os
+  // itens do painel de grifos — cada chamador resolve seu próprio
+  // texto/página (seleção atual ou grifo específico) e delega aqui.
+  function askAiAbout(text: string, page: number) {
+    setPendingQuote({ text, page })
+    setChatOpen(true)
+  }
+
+  function copyCitationAbout(text: string, page: number) {
+    setQuoteContext({ text, page })
+    setQuoteModalOpen(true)
+  }
+
   function handleCopyCitation() {
     if (!selection) return
-    setQuoteContext({ text: selection.text })
-    setQuoteModalOpen(true)
+    copyCitationAbout(selection.text, pageNum)
+    setSelection(null)
+    window.getSelection()?.removeAllRanges()
+  }
+
+  // "Ask AI": abre o chat (se fechado) e envia o trecho selecionado para o
+  // composer como citação — o usuário complementa e envia.
+  function handleAskAi() {
+    if (!selection) return
+    askAiAbout(selection.text, pageNum)
     setSelection(null)
     window.getSelection()?.removeAllRanges()
   }
@@ -1030,17 +1313,26 @@ export function Reader({
           </button>
         </div>
 
+        {jumpBackPage !== null && (
+          <button
+            type="button"
+            className={styles.jumpBackButton}
+            onClick={() => goToPage(jumpBackPage)}
+            title={`Back to page ${jumpBackPage}`}
+          >
+            <ArrowUUpLeft size={13} aria-hidden />
+            Back to p. {jumpBackPage}
+          </button>
+        )}
+
         <button
           type="button"
           className={styles.highlightsToggle}
-          onClick={() => setHighlightsPanelOpen((v) => !v)}
-          aria-pressed={highlightsPanelOpen}
-          aria-label="Toggle highlights panel"
+          onClick={() => setChatOpen((v) => !v)}
+          aria-pressed={chatOpen}
+          aria-label="Toggle chat panel"
         >
-          Highlights
-          {highlights.length > 0 && (
-            <span className={styles.highlightsToggleBadge}>{highlights.length}</span>
-          )}
+          Chat
         </button>
 
         <div className={styles.zoomControls}>
@@ -1067,6 +1359,193 @@ export function Reader({
       </div>
 
       <div className={styles.readerBody}>
+        <aside
+          className={`${styles.sidePanel} ${
+            sidePanelCollapsed ? styles.sidePanelCollapsed : ''
+          }`}
+          style={{
+            width: sidePanelCollapsed ? SIDE_PANEL_COLLAPSED_WIDTH : SIDE_PANEL_WIDTH,
+          }}
+          aria-label="Book navigation"
+        >
+          {sidePanelCollapsed ? (
+            <div className={styles.sidePanelRail}>
+              <button
+                type="button"
+                className={styles.sidePanelRailToggle}
+                onClick={() => setSidePanelCollapsed(false)}
+                aria-label="Expand panel"
+                title="Expand"
+              >
+                <SidebarSimple size={16} aria-hidden />
+              </button>
+              <button
+                type="button"
+                className={styles.sidePanelRailButton}
+                onClick={() => {
+                  setSidePanelTab('summary')
+                  setSidePanelCollapsed(false)
+                }}
+                aria-label="Show summary"
+                title="Summary"
+              >
+                <ListBullets size={16} aria-hidden />
+              </button>
+              <button
+                type="button"
+                className={styles.sidePanelRailButton}
+                onClick={() => {
+                  setSidePanelTab('highlights')
+                  setSidePanelCollapsed(false)
+                }}
+                aria-label="Show highlights"
+                title="Highlights"
+              >
+                <Highlighter size={16} aria-hidden />
+                {highlights.length > 0 && (
+                  <span className={styles.sidePanelRailBadge}>{highlights.length}</span>
+                )}
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className={styles.sidePanelTabs}>
+                <button
+                  type="button"
+                  className={styles.sidePanelCollapseBtn}
+                  onClick={() => setSidePanelCollapsed(true)}
+                  aria-label="Collapse panel"
+                  title="Collapse"
+                >
+                  <SidebarSimple size={16} aria-hidden />
+                </button>
+                <button
+                  type="button"
+                  className={`${styles.sidePanelTab} ${
+                    sidePanelTab === 'summary' ? styles.sidePanelTabActive : ''
+                  }`}
+                  onClick={() => setSidePanelTab('summary')}
+                >
+                  Summary
+                </button>
+                <button
+                  type="button"
+                  className={`${styles.sidePanelTab} ${
+                    sidePanelTab === 'highlights' ? styles.sidePanelTabActive : ''
+                  }`}
+                  onClick={() => setSidePanelTab('highlights')}
+                >
+                  Highlights
+                  {highlights.length > 0 && (
+                    <span className={styles.sidePanelTabBadge}>{highlights.length}</span>
+                  )}
+                </button>
+              </div>
+
+              {sidePanelTab === 'summary' ? (
+                <div className={styles.summaryPanel}>
+                  {outline === undefined ? (
+                    <p className={styles.highlightsPanelEmpty}>Loading…</p>
+                  ) : outline === null || outline.length === 0 ? (
+                    <p className={styles.highlightsPanelEmpty}>
+                      This PDF has no table of contents.
+                    </p>
+                  ) : (
+                    <OutlineList items={outline} depth={0} onNavigate={jumpToPage} />
+                  )}
+                </div>
+              ) : orderedHighlights.length === 0 ? (
+                <p className={styles.highlightsPanelEmpty}>No highlights yet</p>
+              ) : (
+                <ul className={styles.highlightsPanelList}>
+                  {orderedHighlights.map((h) => (
+                    <li key={h.id} className={styles.highlightsPanelItemWrap}>
+                      <button
+                        type="button"
+                        className={styles.highlightsPanelItem}
+                        onClick={() => {
+                          // O painel PERMANECE aberto ao navegar — o
+                          // usuário pode clicar em vários grifos sem
+                          // precisar reabrir o painel.
+                          jumpToPage(h.page)
+                        }}
+                      >
+                        <div className={styles.highlightsPanelItemTop}>
+                          <span
+                            className={styles.highlightsPanelSwatch}
+                            style={{ background: h.color }}
+                            aria-hidden="true"
+                          />
+                          <span className={styles.highlightsPanelPage}>
+                            p. {h.page}
+                          </span>
+                          <span className={styles.highlightsPanelDate}>
+                            {formatShortDate(h.createdAt)}
+                          </span>
+                        </div>
+                        <span className={styles.highlightsPanelText}>
+                          {truncateText(h.text, 240)}
+                        </span>
+                      </button>
+                      <div className={styles.highlightsPanelItemActions}>
+                        <button
+                          type="button"
+                          className={styles.highlightsPanelItemAction}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            askAiAbout(h.text, h.page)
+                          }}
+                          aria-label="Ask AI about this highlight"
+                          title="Ask AI"
+                        >
+                          <Sparkle size={12} aria-hidden />
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.highlightsPanelItemAction}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            copyCitationAbout(h.text, h.page)
+                          }}
+                          aria-label="Copy citation"
+                          title="Copy citation"
+                        >
+                          <Quotes size={12} aria-hidden />
+                        </button>
+                        <button
+                          type="button"
+                          className={`${styles.highlightsPanelItemAction} ${styles.highlightsPanelItemDelete}`}
+                          onClick={(e) => void handleDeleteFromPanel(e, h)}
+                          aria-label="Delete highlight"
+                          title="Delete highlight"
+                        >
+                          <svg
+                            width="12"
+                            height="12"
+                            viewBox="0 0 16 16"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.6"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            aria-hidden="true"
+                          >
+                            <path d="M3 4h10" />
+                            <path d="M5.5 4V2.5h5V4" />
+                            <path d="M4.5 4l.6 9a1 1 0 0 0 1 .9h3.8a1 1 0 0 0 1-.9l.6-9" />
+                            <path d="M7 7v5" />
+                            <path d="M9 7v5" />
+                          </svg>
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+        </aside>
+
         <div className={styles.pageArea}>
           {loading ? (
             <p className={styles.loadingText}>Loading book…</p>
@@ -1139,6 +1618,13 @@ export function Reader({
                   >
                     Copy citation
                   </button>
+                  <button
+                    type="button"
+                    className={styles.highlightToolbarButton}
+                    onClick={handleAskAi}
+                  >
+                    Ask AI
+                  </button>
                 </div>
               )}
               {removalCandidate && (
@@ -1151,6 +1637,36 @@ export function Reader({
                   <p className={styles.removalPopoverDate}>
                     {formatHighlightDate(removalCandidate.highlight.createdAt)}
                   </p>
+                  <div className={styles.removalPopoverQuickActions}>
+                    <button
+                      type="button"
+                      className={styles.removalPopoverQuickButton}
+                      onClick={() => {
+                        askAiAbout(
+                          removalCandidate.highlight.text,
+                          removalCandidate.highlight.page,
+                        )
+                        setRemovalCandidate(null)
+                      }}
+                    >
+                      <Sparkle size={13} aria-hidden />
+                      Ask AI
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.removalPopoverQuickButton}
+                      onClick={() => {
+                        copyCitationAbout(
+                          removalCandidate.highlight.text,
+                          removalCandidate.highlight.page,
+                        )
+                        setRemovalCandidate(null)
+                      }}
+                    >
+                      <Quotes size={13} aria-hidden />
+                      Copy citation
+                    </button>
+                  </div>
                   <div className={styles.removalPopoverActions}>
                     <button
                       type="button"
@@ -1175,85 +1691,21 @@ export function Reader({
           )}
         </div>
 
-        {highlightsPanelOpen && (
-          <aside className={styles.highlightsPanel} aria-label="Book highlights">
-            <div className={styles.highlightsPanelHeader}>
-              <h3 className={styles.highlightsPanelTitle}>Highlights</h3>
-              <button
-                type="button"
-                className={styles.highlightsPanelClose}
-                onClick={() => setHighlightsPanelOpen(false)}
-                aria-label="Close highlights panel"
-              >
-                ×
-              </button>
-            </div>
-            {orderedHighlights.length === 0 ? (
-              <p className={styles.highlightsPanelEmpty}>No highlights yet</p>
-            ) : (
-              <ul className={styles.highlightsPanelList}>
-                {orderedHighlights.map((h) => (
-                  <li key={h.id} className={styles.highlightsPanelItemWrap}>
-                    <button
-                      type="button"
-                      className={styles.highlightsPanelItem}
-                      onClick={() => {
-                        // O painel PERMANECE aberto ao navegar — o
-                        // usuário pode clicar em vários grifos sem
-                        // precisar reabrir o painel. O fechamento
-                        // continua sendo responsabilidade do toggle
-                        // "Highlights" na toolbar ou do X no header.
-                        goToPage(h.page)
-                      }}
-                    >
-                      <div className={styles.highlightsPanelItemTop}>
-                        <span
-                          className={styles.highlightsPanelSwatch}
-                          style={{ background: h.color }}
-                          aria-hidden="true"
-                        />
-                        <span className={styles.highlightsPanelPage}>
-                          p. {h.page}
-                        </span>
-                        <span className={styles.highlightsPanelDate}>
-                          {formatShortDate(h.createdAt)}
-                        </span>
-                      </div>
-                      <span className={styles.highlightsPanelText}>
-                        {truncateText(h.text, 240)}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      className={styles.highlightsPanelItemDelete}
-                      onClick={(e) => void handleDeleteFromPanel(e, h)}
-                      aria-label="Delete highlight"
-                      title="Delete highlight"
-                    >
-                      <svg
-                        width="12"
-                        height="12"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.6"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        aria-hidden="true"
-                      >
-                        <path d="M3 4h10" />
-                        <path d="M5.5 4V2.5h5V4" />
-                        <path d="M4.5 4l.6 9a1 1 0 0 0 1 .9h3.8a1 1 0 0 0 1-.9l.6-9" />
-                        <path d="M7 7v5" />
-                        <path d="M9 7v5" />
-                      </svg>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </aside>
-        )}
+        {/* SEMPRE montado (fora do ternário de loading): fechar o toggle só
+            esconde via CSS — desmontar o painel cancelaria o useChat e um
+            stream ativo. Abrir/fechar também não recarrega o PDF (o effect
+            de render depende só de doc/pageNum/scale). */}
+        <ReaderChatPanel
+          book={book}
+          pageNum={pageNum}
+          totalPages={doc?.numPages ?? book.totalPages}
+          highlights={highlights}
+          getPageText={getPageText}
+          open={chatOpen}
+          onClose={() => setChatOpen(false)}
+          pendingQuote={pendingQuote}
+          onPendingQuoteConsumed={() => setPendingQuote(null)}
+        />
       </div>
 
       {quoteContext && quoteModalOpen && (
@@ -1266,7 +1718,7 @@ export function Reader({
           onSaveNote={onSaveNote}
           quoteText={quoteContext.text}
           bookTitle={book.title}
-          page={pageNum}
+          page={quoteContext.page}
           bookId={book.id}
           onSaved={handleSavedQuote}
           onClose={handleCloseQuoteModal}

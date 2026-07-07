@@ -239,6 +239,26 @@ function rowToHighlight(r: BookHighlightRow): BookHighlight {
   }
 }
 
+interface BookQuoteRow {
+  id: string
+  book_id: string
+  page: number
+  text: string
+  target_note_id: string | null
+  created_at: number
+}
+
+function rowToQuote(r: BookQuoteRow): BookQuote {
+  return {
+    id: r.id,
+    bookId: r.book_id,
+    page: r.page,
+    text: r.text,
+    targetNoteId: r.target_note_id,
+    createdAt: r.created_at,
+  }
+}
+
 
 // O banco roda em modo WAL (default do SQLite). Com o pool de múltiplas
 // conexões do tauri-plugin-sql, o autocheckpoint PASSIVE quase nunca
@@ -602,6 +622,15 @@ export class TauriStorage implements StorageAdapter {
     const db = await this.db()
     await db.execute('DELETE FROM book_highlights WHERE book_id = $1', [bookId])
     this.scheduleCheckpoint()
+  }
+
+  async getQuotes(bookId: string): Promise<BookQuote[]> {
+    const db = await this.db()
+    const rows = await db.select<BookQuoteRow[]>(
+      'SELECT * FROM book_quotes WHERE book_id = $1 ORDER BY created_at DESC',
+      [bookId]
+    )
+    return rows.map(rowToQuote)
   }
 
   async saveQuote(q: BookQuote): Promise<void> {

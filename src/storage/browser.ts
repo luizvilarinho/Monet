@@ -68,6 +68,9 @@ export class BrowserStorage implements StorageAdapter {
   async deleteHighlightsByBook(_bookId: string): Promise<void> {
     throw new Error('BrowserStorage.deleteHighlightsByBook not implemented')
   }
+  async getQuotes(_bookId: string): Promise<BookQuote[]> {
+    throw new Error('BrowserStorage.getQuotes not implemented')
+  }
   async saveQuote(_quote: BookQuote): Promise<void> {
     throw new Error('BrowserStorage.saveQuote not implemented')
   }

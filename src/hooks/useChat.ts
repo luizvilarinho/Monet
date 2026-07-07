@@ -102,6 +102,37 @@ can edit it, removing parts you judge to be less important or condensing
 the information further. Don't be afraid to make mistakes.`
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─── System prompt do chat do leitor (pasta por livro) ───────────────────────
+// Gravado programaticamente como systemPrompt (modo `replace`) da pasta do
+// livro quando ela é CRIADA em `ensureReaderBookFolder`. Depois da criação o
+// prompt passa a ser do usuário (editável no modal de system prompt da
+// pasta), então o ensure não o regrava. Alinhado à visão de produto
+// (DOCS/specs/productVision.md): a IA como auxiliar de leitura, ancorada no
+// material do usuário, sem substituir o esforço da leitura.
+function buildReaderSystemPrompt(language: string): string {
+  return `
+You are Monet's reading assistant. You live in a side panel next to a book
+the user is actively reading. Each user message includes a system message
+with the CURRENT reading context: book title/author, current page and its
+text, the user's recent highlights, and passages they copied (most recent
+first, with dates and page numbers).
+
+Ground every answer in that context. When the user says "this", "here" or
+asks about "this page/passage", they mean the current page or selection.
+Refer to specific passages, highlights or pages when helpful.
+
+Your role is to help the reader move through the book — clarify difficult
+passages, define terms, unpack arguments, connect ideas to their highlights —
+never to replace the reading itself. Do not volunteer summaries of the whole
+book or of chapters ahead of the current page unless explicitly asked.
+If the context says the page text is unavailable, say you cannot see the
+page text and work with the book info, highlights and copies instead.
+
+Use concise Markdown. No greetings or filler.
+Always respond in the user's language: ${language}.`
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 const CONVERSATIONS_KEY = 'monet:chat-conversations'
 const FOLDERS_KEY = 'monet:chat-folders'
 const LOOSE_ORDER_KEY = 'monet:chat-loose-order'
@@ -110,6 +141,7 @@ const MODEL_KEY = 'monet:chat-model'
 const TOOLS_KEY = 'monet:chat-tools'
 const LEGACY_HISTORY_KEY = 'monet:chat-history'
 const RESPONSE_LINK_KEY = 'monet:ai-response-chat-link'
+const READER_BOOK_FOLDER_LINK_KEY = 'monet:reader-book-folder-link'
 
 export interface ChatMessage {
   id: string
@@ -129,6 +161,14 @@ export interface ChatConversation {
   messages: ChatMessage[]
   createdAt: string
   updatedAt: string
+  // Pasta a que a conversa pertence (null = lista solta; undefined = legado,
+  // derivado das listas de ordem no reconcile). FONTE DE VERDADE da
+  // vinculação conversa→pasta: é gravada ATOMICAMENTE junto com a conversa em
+  // CONVERSATIONS_KEY. `folder.conversationIds` guarda apenas a ORDEM de
+  // exibição e é reconstruída a partir deste campo (ver reconcileOrders) —
+  // uma leitura defasada de FOLDERS_KEY em outra janela não consegue mais
+  // "desvincular" uma conversa da pasta.
+  folderId?: string | null
 }
 
 export type SystemPromptMode = 'replace' | 'append'
@@ -245,9 +285,32 @@ function deriveTitle(messages: ChatMessage[]): string {
   return cleaned.length > 50 ? cleaned.slice(0, 50) + '…' : cleaned
 }
 
-function loadConversations(): ChatConversation[] {
+// ─── Anti-eco de persistência ────────────────────────────────────────────────
+// Último valor conhecido de cada chave de chat NESTA janela — escrito por nós
+// ou recebido via evento `storage` (e.newValue). Os save-effects comparam com
+// este cache em vez de reler o localStorage: entre processos (WebView2, uma
+// webview por janela) a leitura pode vir DEFASADA, e comparar com leitura
+// defasada tanto podia suprimir uma escrita necessária quanto re-gravar
+// conteúdo obsoleto por cima de uma escrita recente da outra janela.
+const lastKnownValues = new Map<string, string>()
+
+function readChatKey(key: string): string | null {
+  const raw = localStorage.getItem(key)
+  if (raw !== null) lastKnownValues.set(key, raw)
+  return raw
+}
+
+// Retorna true se gravou (conteúdo mudou em relação ao último valor conhecido).
+function writeChatKey(key: string, serialized: string): boolean {
+  const known = lastKnownValues.get(key) ?? localStorage.getItem(key)
+  lastKnownValues.set(key, serialized)
+  if (serialized === known) return false
+  localStorage.setItem(key, serialized)
+  return true
+}
+
+function parseConversations(raw: string | null): ChatConversation[] {
   try {
-    const raw = localStorage.getItem(CONVERSATIONS_KEY)
     if (raw) {
       const parsed = JSON.parse(raw)
       if (Array.isArray(parsed) && parsed.every(isConversation)) {
@@ -257,6 +320,12 @@ function loadConversations(): ChatConversation[] {
   } catch {
     /* ignore */
   }
+  return []
+}
+
+function loadConversations(): ChatConversation[] {
+  const parsed = parseConversations(readChatKey(CONVERSATIONS_KEY))
+  if (parsed.length > 0) return parsed
   // Migracao do historico unico legado
   try {
     const legacy = localStorage.getItem(LEGACY_HISTORY_KEY)
@@ -274,8 +343,9 @@ function loadConversations(): ChatConversation[] {
           messages: parsed,
           createdAt: now,
           updatedAt: now,
+          folderId: null,
         }
-        localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify([conv]))
+        writeChatKey(CONVERSATIONS_KEY, JSON.stringify([conv]))
         localStorage.setItem(ACTIVE_ID_KEY, conv.id)
         localStorage.removeItem(LEGACY_HISTORY_KEY)
         return [conv]
@@ -298,19 +368,17 @@ function saveConversations(list: ChatConversation[]) {
       }),
     }))
     const serialized = JSON.stringify(stripped)
-    // Anti-loop do sync cross-window: se o valor ja persistido for identico
-    // (caso tipico de hidratacao via evento `storage`), nao re-grava — assim
-    // nao dispara um novo evento `storage` na outra janela.
-    if (serialized === localStorage.getItem(CONVERSATIONS_KEY)) return
-    localStorage.setItem(CONVERSATIONS_KEY, serialized)
+    // Anti-loop do sync cross-window: se o conteudo nao mudou em relacao ao
+    // ultimo valor conhecido (caso tipico de hidratacao via evento `storage`),
+    // nao re-grava — assim nao dispara um novo evento na outra janela.
+    writeChatKey(CONVERSATIONS_KEY, serialized)
   } catch (err) {
     console.error('failed to persist chat conversations', err)
   }
 }
 
-function loadFolders(): ChatFolder[] {
+function parseFolders(raw: string | null): ChatFolder[] {
   try {
-    const raw = localStorage.getItem(FOLDERS_KEY)
     if (!raw) return []
     const parsed = JSON.parse(raw)
     if (Array.isArray(parsed) && parsed.every(isFolder)) {
@@ -322,19 +390,20 @@ function loadFolders(): ChatFolder[] {
   return []
 }
 
+function loadFolders(): ChatFolder[] {
+  return parseFolders(readChatKey(FOLDERS_KEY))
+}
+
 function saveFolders(list: ChatFolder[]) {
   try {
-    const serialized = JSON.stringify(list)
-    if (serialized === localStorage.getItem(FOLDERS_KEY)) return
-    localStorage.setItem(FOLDERS_KEY, serialized)
+    writeChatKey(FOLDERS_KEY, JSON.stringify(list))
   } catch (err) {
     console.error('failed to persist chat folders', err)
   }
 }
 
-function loadLooseOrder(): string[] {
+function parseLooseOrder(raw: string | null): string[] {
   try {
-    const raw = localStorage.getItem(LOOSE_ORDER_KEY)
     if (!raw) return []
     const parsed = JSON.parse(raw)
     if (Array.isArray(parsed) && parsed.every((x) => typeof x === 'string')) {
@@ -346,11 +415,13 @@ function loadLooseOrder(): string[] {
   return []
 }
 
+function loadLooseOrder(): string[] {
+  return parseLooseOrder(readChatKey(LOOSE_ORDER_KEY))
+}
+
 function saveLooseOrder(order: string[]) {
   try {
-    const serialized = JSON.stringify(order)
-    if (serialized === localStorage.getItem(LOOSE_ORDER_KEY)) return
-    localStorage.setItem(LOOSE_ORDER_KEY, serialized)
+    writeChatKey(LOOSE_ORDER_KEY, JSON.stringify(order))
   } catch (err) {
     console.error('failed to persist loose order', err)
   }
@@ -409,6 +480,87 @@ export function chatConversationExists(conversationId: string): boolean {
   return loadConversations().some((c) => c.id === conversationId)
 }
 
+// ─── Vínculo livro ↔ pasta de chat do leitor ─────────────────────────────────
+// Record bookId → folderId em localStorage, no mesmo padrão do
+// RESPONSE_LINK_KEY acima. Materializa "uma PASTA por livro" do chat do
+// Reader (várias conversas por livro dentro da pasta). A resolução robusta é
+// pelo folderId (o nome da pasta — título do livro — é cosmético e pode ser
+// renomeado pelo usuário).
+type ReaderBookFolderLinks = Record<string, string>
+
+function loadReaderBookFolderLinks(): ReaderBookFolderLinks {
+  try {
+    const raw = localStorage.getItem(READER_BOOK_FOLDER_LINK_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const out: ReaderBookFolderLinks = {}
+      for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+        if (typeof v === 'string') out[k] = v
+      }
+      return out
+    }
+  } catch {
+    /* ignore */
+  }
+  return {}
+}
+
+function saveReaderBookFolderLinks(links: ReaderBookFolderLinks): void {
+  try {
+    localStorage.setItem(READER_BOOK_FOLDER_LINK_KEY, JSON.stringify(links))
+  } catch (err) {
+    console.error('failed to persist reader book-folder links', err)
+  }
+}
+
+export function getReaderChatFolderId(bookId: string): string | null {
+  const links = loadReaderBookFolderLinks()
+  return links[bookId] ?? null
+}
+
+function linkBookToReaderFolder(bookId: string, folderId: string): void {
+  const links = loadReaderBookFolderLinks()
+  links[bookId] = folderId
+  saveReaderBookFolderLinks(links)
+}
+
+export function unlinkBookFromReaderFolder(bookId: string): void {
+  const links = loadReaderBookFolderLinks()
+  if (!(bookId in links)) return
+  delete links[bookId]
+  saveReaderBookFolderLinks(links)
+}
+
+// Remove uma PASTA inteira diretamente do localStorage (pasta + conversas +
+// arquivos de documentos anexados + ordem solta). ATENÇÃO: este helper
+// manipula o localStorage diretamente e NÃO atualiza instâncias `useChat`
+// montadas na MESMA janela (o evento `storage` só dispara em outras janelas).
+// Usar apenas em fluxos onde nenhum `useChat` está montado — ex.: cascata de
+// deleção de livro no Library (Library e ChatPanel vivem em modos mutuamente
+// exclusivos do App).
+export function deleteChatFolderById(folderId: string): void {
+  const folders = loadFolders()
+  const folder = folders.find((f) => f.id === folderId)
+  if (!folder) return
+  const convIdsToDelete = new Set(folder.conversationIds)
+  const conversations = loadConversations()
+  // Mesma limpeza de documentos anexados do deleteFolder do hook.
+  for (const conv of conversations) {
+    if (!convIdsToDelete.has(conv.id)) continue
+    for (const msg of conv.messages) {
+      for (const doc of msg.attachedDocs ?? []) {
+        void invoke('delete_chat_doc', { path: doc.path }).catch(() => {
+          /* ignorar erros */
+        })
+      }
+    }
+  }
+  saveConversations(conversations.filter((c) => !convIdsToDelete.has(c.id)))
+  saveFolders(folders.filter((f) => f.id !== folderId))
+  saveLooseOrder(loadLooseOrder().filter((id) => !convIdsToDelete.has(id)))
+}
+
 export function activateChatConversation(conversationId: string): void {
   try {
     localStorage.setItem(ACTIVE_ID_KEY, conversationId)
@@ -443,6 +595,7 @@ export function createPreloadedChatConversation(params: {
     ],
     createdAt: now,
     updatedAt: now,
+    folderId: null,
   }
   const existing = loadConversations()
   saveConversations([conv, ...existing])
@@ -459,7 +612,7 @@ export function createPreloadedChatConversation(params: {
 // Nome da pasta de chat usada pelas conversas iniciadas na janela assistant.
 export const ASSISTANT_FOLDER_NAME = 'assistant'
 
-function makeNewConversation(): ChatConversation {
+function makeNewConversation(folderId: string | null = null): ChatConversation {
   const now = new Date().toISOString()
   return {
     id: nanoid(),
@@ -467,6 +620,7 @@ function makeNewConversation(): ChatConversation {
     messages: [],
     createdAt: now,
     updatedAt: now,
+    folderId,
   }
 }
 
@@ -493,7 +647,9 @@ function makeNewFolder(name = 'New folder'): ChatFolder {
 // diferentes (prompt gravado numa, lido de outra). Aqui mantemos UMA pasta
 // (a primeira por ordem), priorizando systemPrompt/visibleDocumentIds ja
 // configurados, e unindo os `conversationIds` de todas. Idempotente: sem
-// duplicatas, retorna o array inalterado (mesma referencia).
+// duplicatas, retorna o array inalterado (mesma referencia). As pastas por
+// livro do Reader NAO passam por aqui: sao resolvidas por folderId, entao
+// nomes duplicados (dois livros com o mesmo titulo) sao apenas cosmeticos.
 function dedupeAssistantFolders(folders: ChatFolder[]): ChatFolder[] {
   const assistantFolders = folders.filter((f) => f.name === ASSISTANT_FOLDER_NAME)
   if (assistantFolders.length <= 1) return folders
@@ -541,43 +697,115 @@ function dedupeAssistantFolders(folders: ChatFolder[]): ChatFolder[] {
   return out
 }
 
-// Reconcilia ordens persistidas com o conjunto atual de conversas.
-// Conversas novas (sem registro de ordem) vao para o topo da lista solta.
+// Reconcilia o estado de chat em torno da FONTE DE VERDADE da vinculação:
+// `conversation.folderId`. As listas de ordem (folder.conversationIds e
+// looseOrder) são apenas apresentação e são RECONSTRUÍDAS a partir da
+// vinculação — nunca o contrário. Consequências:
+// - uma conversa com folderId válido SEMPRE aparece na pasta, mesmo que uma
+//   escrita defasada de FOLDERS_KEY (outra janela) tenha perdido o id dela
+//   na lista de ordem — era a causa do "chat órfão" do leitor;
+// - conversas legadas (folderId undefined) herdam a pasta das listas de
+//   ordem persistidas (backfill em memória; persiste na próxima gravação);
+// - folderId apontando para pasta inexistente: adota a pasta que ainda
+//   listar a conversa na ordem (ex.: pastas `assistant` deduplicadas) ou
+//   cai para a lista solta.
+// Determinística e idempotente: reaplicar sobre o próprio output devolve o
+// mesmo conteúdo (e preserva identidade dos itens inalterados) — requisito
+// do efeito de reparo local e do anti-eco cross-window.
 function reconcileOrders(
   conversations: ChatConversation[],
   folders: ChatFolder[],
   looseOrder: string[]
-): { folders: ChatFolder[]; looseOrder: string[] } {
-  const allIds = new Set(conversations.map((c) => c.id))
-  const seen = new Set<string>()
-
+): {
+  conversations: ChatConversation[]
+  folders: ChatFolder[]
+  looseOrder: string[]
+} {
   // Consolida pastas `assistant` duplicadas ANTES de reconciliar, garantindo
   // que o estado nunca carregue mais de uma pasta `assistant` (raiz do bug do
   // system prompt nao aplicado: prompt gravado numa pasta, lido de outra).
   folders = dedupeAssistantFolders(folders)
 
+  const folderIds = new Set(folders.map((f) => f.id))
+  // Vinculação implícita nas listas de ordem (1ª pasta que listar a conversa
+  // vence) — usada para backfill de legado e re-adoção após dedupe.
+  const orderMembership = new Map<string, string>()
+  for (const f of folders) {
+    for (const id of f.conversationIds) {
+      if (!orderMembership.has(id)) orderMembership.set(id, f.id)
+    }
+  }
+
+  // 1) Normaliza folderId de cada conversa (identidade preservada se nada
+  // muda). IMPORTANTE: folderId apontando para pasta AUSENTE não é reescrito
+  // para null — a ausência pode ser transitória (ex.: a pasta foi criada em
+  // outra janela e o evento de FOLDERS_KEY ainda não chegou); reescrever
+  // destruiria o vínculo. A conversa só é EXIBIDA na lista solta enquanto a
+  // pasta não existe (passo 3). Reescreve-se apenas de forma construtiva:
+  // backfill de legado (undefined) e re-adoção pela pasta que ainda lista a
+  // conversa na ordem (ex.: pastas `assistant` deduplicadas).
+  const nextConversations = conversations.map((c) => {
+    if (c.folderId === undefined) {
+      return { ...c, folderId: orderMembership.get(c.id) ?? null }
+    }
+    if (c.folderId !== null && !folderIds.has(c.folderId)) {
+      const adopted = orderMembership.get(c.id)
+      if (adopted) return { ...c, folderId: adopted }
+    }
+    return c
+  })
+  const byId = new Map(nextConversations.map((c) => [c.id, c]))
+
+  // 2) Reconstrói a ordem de cada pasta: mantém a ordem persistida das
+  // conversas que continuam vinculadas e PREPENDA as vinculadas ainda fora
+  // da lista (recém-materializadas ou resgatadas de uma escrita defasada).
   const nextFolders = folders.map((f) => {
-    const cleaned = f.conversationIds.filter((id) => {
-      if (!allIds.has(id)) return false
-      if (seen.has(id)) return false
-      seen.add(id)
+    const keptSet = new Set<string>()
+    const kept = f.conversationIds.filter((id) => {
+      if (keptSet.has(id)) return false
+      if (byId.get(id)?.folderId !== f.id) return false
+      keptSet.add(id)
       return true
     })
-    return { ...f, conversationIds: cleaned }
+    const missing = nextConversations
+      .filter((c) => c.folderId === f.id && !keptSet.has(c.id))
+      .map((c) => c.id)
+    return { ...f, conversationIds: [...missing, ...kept] }
   })
 
-  const cleanedLoose = looseOrder.filter((id) => {
-    if (!allIds.has(id)) return false
-    if (seen.has(id)) return false
-    seen.add(id)
+  // 3) Lista solta: conversas sem pasta — ou com pasta AUSENTE (vínculo
+  // preservado; ver passo 1) — na ordem persistida; novas no topo.
+  const isLoose = (c: ChatConversation) =>
+    c.folderId == null || !folderIds.has(c.folderId)
+  const looseIds = new Set(
+    nextConversations.filter(isLoose).map((c) => c.id)
+  )
+  const keptLooseSet = new Set<string>()
+  const keptLoose = looseOrder.filter((id) => {
+    if (keptLooseSet.has(id)) return false
+    if (!looseIds.has(id)) return false
+    keptLooseSet.add(id)
     return true
   })
+  const missingLoose = nextConversations
+    .filter((c) => isLoose(c) && !keptLooseSet.has(c.id))
+    .map((c) => c.id)
 
-  // Conversas nao registradas em pasta nem em ordem solta -> topo da lista solta
-  const unseen = conversations.filter((c) => !seen.has(c.id)).map((c) => c.id)
-  const nextLoose = [...unseen, ...cleanedLoose]
+  return {
+    conversations: nextConversations,
+    folders: nextFolders,
+    looseOrder: [...missingLoose, ...keptLoose],
+  }
+}
 
-  return { folders: nextFolders, looseOrder: nextLoose }
+// Estado inicial reconciliado (conversas + pastas + ordem solta) a partir do
+// localStorage. Pura e barata: pode ser chamada por cada useState initializer.
+function loadReconciledChatState(): {
+  conversations: ChatConversation[]
+  folders: ChatFolder[]
+  looseOrder: string[]
+} {
+  return reconcileOrders(loadConversations(), loadFolders(), loadLooseOrder())
 }
 
 export interface UseChatResult {
@@ -600,13 +828,21 @@ export interface UseChatResult {
   thinkingEnabled: boolean
   toggleThinking: () => void
   error: string | null
-  send: (text: string, imageDataUrl?: string, documents?: Array<{ name: string; type: string; data: string }>) => Promise<void>
+  send: (
+    text: string,
+    imageDataUrl?: string,
+    documents?: Array<{ name: string; type: string; data: string }>,
+    opts?: { ephemeralContext?: string }
+  ) => Promise<void>
   cancel: () => void
   selectConversation: (id: string) => void
   newConversation: () => void
   newConversationInFolder: (folderId: string) => void
-  startAssistantConversation: () => void
+  // Cria um rascunho de conversa (memoria) para instancias dedicadas;
+  // `folderId` fixa a pasta de destino da materializacao (modo reader).
+  startAssistantConversation: (folderId?: string) => void
   ensureAssistantFolder: () => void
+  ensureReaderBookFolder: (book: { id: string; title: string }) => string
   deleteConversation: (id: string) => void
   renameConversation: (id: string, title: string) => void
   createFolder: () => string
@@ -634,34 +870,38 @@ export interface UseChatResult {
 
 export function useChat(
   models: AiModel[] = [],
-  options?: { isAssistant?: boolean }
+  options?: { mode?: 'main' | 'assistant' | 'reader' }
 ): UseChatResult {
-  const isAssistant = options?.isAssistant ?? false
+  const mode = options?.mode ?? 'main'
+  // Instancias "detached" (assistant/reader) vivem fora do ChatPanel principal
+  // e nao leem/gravam o ACTIVE_ID_KEY compartilhado: "qual conversa esta
+  // ativa" e per-instancia.
+  const isDetached = mode !== 'main'
+  // Pasta dedicada por NOME (so o assistant): conversas dessa instancia sao
+  // materializadas dentro dela no 1o envio. O modo reader usa pasta por ID
+  // (uma pasta por livro — ver readerFolderIdRef/ensureReaderBookFolder).
+  const dedicatedFolderName =
+    mode === 'assistant' ? ASSISTANT_FOLDER_NAME : null
   // Estado inicial reconciliado entre conversas + folders + looseOrder
-  const [conversations, setConversations] = useState<ChatConversation[]>(() =>
-    loadConversations()
+  const [conversations, setConversations] = useState<ChatConversation[]>(
+    () => loadReconciledChatState().conversations
   )
   // Conversa-rascunho da janela assistant: vive SO em memoria ate a 1a mensagem.
   // Abrir/fechar o assistant sem enviar nada nao deixa rastro no localStorage.
   const [draftConversation, setDraftConversation] = useState<ChatConversation | null>(null)
   const draftRef = useRef<ChatConversation | null>(null)
   draftRef.current = draftConversation
-  const [folders, setFoldersState] = useState<ChatFolder[]>(() => {
-    const initialConvs = loadConversations()
-    const initialFolders = loadFolders()
-    const initialLoose = loadLooseOrder()
-    const reconciled = reconcileOrders(initialConvs, initialFolders, initialLoose)
-    return reconciled.folders
-  })
-  const [looseOrder, setLooseOrderState] = useState<string[]>(() => {
-    const initialConvs = loadConversations()
-    const initialFolders = loadFolders()
-    const initialLoose = loadLooseOrder()
-    const reconciled = reconcileOrders(initialConvs, initialFolders, initialLoose)
-    return reconciled.looseOrder
-  })
+  const [folders, setFoldersState] = useState<ChatFolder[]>(
+    () => loadReconciledChatState().folders
+  )
+  const [looseOrder, setLooseOrderState] = useState<string[]>(
+    () => loadReconciledChatState().looseOrder
+  )
 
   const [activeId, setActiveIdState] = useState<string | null>(() => {
+    // Instancias detached nao leem o ACTIVE_ID_KEY compartilhado: comecam sem
+    // conversa ativa (o dono da instancia seleciona/cria a conversa dele).
+    if (isDetached) return null
     const saved = localStorage.getItem(ACTIVE_ID_KEY)
     return saved && saved.length > 0 ? saved : null
   })
@@ -693,6 +933,38 @@ export function useChat(
   foldersRef.current = folders
   const looseOrderRef = useRef<string[]>(looseOrder)
   looseOrderRef.current = looseOrder
+  // Modo reader: id da pasta do livro atual (setado por ensureReaderBookFolder).
+  // E ref (nao state) porque so o send() precisa dele, sem re-render.
+  const readerFolderIdRef = useRef<string | null>(null)
+
+  // Mapa bookId → folderId para criacoes ainda nao commitadas no estado.
+  // O setTimeout do React pode fazer com que a pasta ainda nao esteja visivel
+  // em `folders` (efeito da linha 838) enquanto o recovery-effect do
+  // ReaderChatPanel ja chama ensureReaderBookFolder de novo. Este mapa
+  // impede a criacao de pastas duplicadas nessa janela.
+  const pendingBookFolderIds = useRef<Map<string, string>>(new Map())
+
+  // Se a pasta do livro for apagada (ex.: no ChatPanel de outra janela) e a
+  // remocao ja estiver refletida no estado, limpa o ref para que o proximo
+  // ensureReaderBookFolder RECRIE a pasta em vez de devolver um id morto.
+  // (Enquanto a criacao de uma pasta ainda nao foi commitada, `folders` nunca
+  // e observado sem ela — ver a guarda de criacao pendente no ensure.)
+  useEffect(() => {
+    if (mode !== 'reader') return
+    const rid = readerFolderIdRef.current
+    if (rid && !folders.some((f) => f.id === rid)) {
+      // So limpa se nao ha criacao pendente que referencia este id.
+      // Se houver, o ensureReaderBookFolder cuida de reatribuir o ref
+      // quando a pasta aparecer no estado.
+      let hasPending = false
+      for (const pid of pendingBookFolderIds.current.values()) {
+        if (pid === rid) { hasPending = true; break }
+      }
+      if (!hasPending) {
+        readerFolderIdRef.current = null
+      }
+    }
+  }, [folders, mode])
 
   // Mescla a lista remota (vinda do `storage` da outra janela) preservando a
   // conversa que ESTA janela esta gerando agora. Durante o streaming, a outra
@@ -752,9 +1024,12 @@ export function useChat(
       !conversations.some((c) => c.id === activeId) &&
       draftConversation?.id !== activeId
     ) {
-      setActiveIdState(conversations[0]?.id ?? null)
+      // Instancias detached NAO caem para uma conversa alheia (ex.: a conversa
+      // do livro apagada em outra janela nao pode fazer o leitor "pular" para
+      // outra conversa qualquer): caem para null e o dono da instancia decide.
+      setActiveIdState(isDetached ? null : conversations[0]?.id ?? null)
     }
-  }, [conversations, activeId, draftConversation])
+  }, [conversations, activeId, draftConversation, isDetached])
 
   useEffect(() => {
     saveConversations(conversations)
@@ -768,11 +1043,31 @@ export function useChat(
     saveLooseOrder(looseOrder)
   }, [looseOrder])
 
+  // Reparo de invariante: mantém as listas de ordem coerentes com a fonte de
+  // verdade (conversation.folderId) a cada mudança de estado — inclusive após
+  // hidratação via evento `storage` (o handler abaixo hidrata só a chave que
+  // mudou e delega a coerência a este efeito). Como reconcileOrders é
+  // idempotente e preserva identidade/conteúdo quando nada muda, os setState
+  // condicionais abaixo não re-disparam o efeito em estado já consistente.
   useEffect(() => {
-    // O assistant sempre comeca em rascunho novo (so-memoria): nao deve
-    // restaurar nem clobberar o ACTIVE_ID_KEY compartilhado da janela principal.
-    // "Qual conversa esta ativa" e per-janela.
-    if (isAssistant) return
+    const r = reconcileOrders(conversations, folders, looseOrder)
+    const convsChanged =
+      r.conversations.length !== conversations.length ||
+      r.conversations.some((c, i) => c !== conversations[i])
+    if (convsChanged) setConversations(r.conversations)
+    if (JSON.stringify(r.folders) !== JSON.stringify(folders)) {
+      setFoldersState(r.folders)
+    }
+    if (JSON.stringify(r.looseOrder) !== JSON.stringify(looseOrder)) {
+      setLooseOrderState(r.looseOrder)
+    }
+  }, [conversations, folders, looseOrder])
+
+  useEffect(() => {
+    // Instancias detached (assistant/reader) nao devem restaurar nem clobberar
+    // o ACTIVE_ID_KEY compartilhado da janela principal. "Qual conversa esta
+    // ativa" e per-janela/per-instancia.
+    if (isDetached) return
     // Mesma guarda anti-loop por comparacao de conteudo dos demais save-effects.
     const current = localStorage.getItem(ACTIVE_ID_KEY)
     if (activeId) {
@@ -793,19 +1088,28 @@ export function useChat(
   useEffect(() => {
     function handler(e: StorageEvent) {
       if (e.key === null) return
-      if (e.key === CONVERSATIONS_KEY) {
-        const next = mergeRemoteConversations(loadConversations())
-        setConversations(next)
-        const r = reconcileOrders(next, loadFolders(), loadLooseOrder())
-        setFoldersState(r.folders)
-        setLooseOrderState(r.looseOrder)
-      } else if (e.key === FOLDERS_KEY) {
-        setFoldersState(dedupeAssistantFolders(loadFolders()))
-      } else if (e.key === LOOSE_ORDER_KEY) {
-        setLooseOrderState(loadLooseOrder())
+      if (
+        e.key !== CONVERSATIONS_KEY &&
+        e.key !== FOLDERS_KEY &&
+        e.key !== LOOSE_ORDER_KEY
+      ) {
+        // Outras chaves (ex.: ACTIVE_ID_KEY) NAO sao sincronizadas: "qual
+        // conversa esta ativa" e per-janela.
+        return
       }
-      // Outras chaves (ex.: ACTIVE_ID_KEY) NAO sao sincronizadas: "qual
-      // conversa esta ativa" e per-janela.
+      // Hidrata a partir do PROPRIO evento (e.newValue e o valor autoritativo
+      // da escrita remota) — nunca relendo o localStorage aqui: entre
+      // processos a releitura pode vir defasada e ressuscitar estado antigo.
+      // So a chave alterada e hidratada; a coerencia vinculacao↔ordem fica a
+      // cargo do efeito de reparo (reconcileOrders) acima.
+      lastKnownValues.set(e.key, e.newValue ?? '')
+      if (e.key === CONVERSATIONS_KEY) {
+        setConversations(mergeRemoteConversations(parseConversations(e.newValue)))
+      } else if (e.key === FOLDERS_KEY) {
+        setFoldersState(dedupeAssistantFolders(parseFolders(e.newValue)))
+      } else {
+        setLooseOrderState(parseLooseOrder(e.newValue))
+      }
     }
     window.addEventListener('storage', handler)
     return () => window.removeEventListener('storage', handler)
@@ -858,7 +1162,7 @@ export function useChat(
 
   const newConversationInFolder = useCallback(
     (folderId: string) => {
-      const conv = makeNewConversation()
+      const conv = makeNewConversation(folderId)
       setConversations((prev) => [conv, ...prev])
       setFolders((prev) =>
         prev.map((f) =>
@@ -877,13 +1181,15 @@ export function useChat(
     [setFolders]
   )
 
-  // Inicia uma conversa NOVA e zerada para a janela assistant a cada exibicao.
-  // Persistencia preguiçosa: a conversa-rascunho vive SO em memoria e NAO toca o
-  // localStorage. Ela so e materializada na pasta `assistant` quando o usuario
-  // envia a 1a mensagem (ver `send`). Abrir/fechar sem enviar nao deixa rastro
-  // nem cria conversa vazia, e nao ressuscita lista obsoleta na outra janela.
-  const startAssistantConversation = useCallback(() => {
-    const conv = makeNewConversation()
+  // Inicia uma conversa NOVA e zerada para uma instancia dedicada
+  // (assistant/reader). Persistencia preguiçosa: a conversa-rascunho vive SO
+  // em memoria e NAO toca o localStorage. Ela so e materializada quando o
+  // usuario envia a 1a mensagem (ver `send`). Abrir/fechar sem enviar nao
+  // deixa rastro nem cria conversa vazia. `folderId` fixa desde ja a pasta de
+  // destino do rascunho (modo reader: a pasta do livro); sem ele, o send()
+  // resolve a pasta dedicada por nome (modo assistant).
+  const startAssistantConversation = useCallback((folderId?: string) => {
+    const conv = makeNewConversation(folderId ?? null)
     setDraftConversation(conv)
     setActiveIdState(conv.id)
   }, [])
@@ -898,6 +1204,55 @@ export function useChat(
       return [folder, ...prev]
     })
   }, [setFolders])
+
+  // Garante (idempotente) a PASTA DO LIVRO no modo reader e retorna o id
+  // dela. Resolve pelo vinculo bookId → folderId em localStorage; se o
+  // vinculo nao existe ou a pasta foi apagada, cria uma pasta nova (nome =
+  // "Library - <titulo>", cosmetico) com o system prompt do auxiliar de
+  // leitura (modo `replace`) e regrava o vinculo. O prompt e gravado SO na
+  // criacao: depois disso a pasta e do usuario (system prompt/documentos/
+  // memoria editaveis pelos modais de pasta no painel do Reader).
+  const ensureReaderBookFolder = useCallback(
+    (book: { id: string; title: string }): string => {
+      const linkedId = getReaderChatFolderId(book.id)
+      if (linkedId) {
+        const existing = foldersRef.current.find((f) => f.id === linkedId)
+        if (existing) {
+          readerFolderIdRef.current = existing.id
+          pendingBookFolderIds.current.delete(book.id)
+          return existing.id
+        }
+        // Criacao deste mesmo vinculo ainda pendente de commit (ex.: chamadas
+        // duplicadas no mesmo tick / StrictMode): nao duplica a pasta.
+        if (readerFolderIdRef.current === linkedId) {
+          return linkedId
+        }
+        // Guarda adicional: criacao pendente mapeada — cobre o cenario em que
+        // o efeito da linha 838 zerou readerFolderIdRef entre a criacao e o
+        // commit do estado (causa dos bugs de pasta duplicada e chat fora da
+        // pasta).
+        const pendingId = pendingBookFolderIds.current.get(book.id)
+        if (pendingId === linkedId) return linkedId
+        if (pendingId) return pendingId
+      }
+      // Criacao pendente para este livro (fallback: linkedId pode ser null
+      // na primeira chamada, mas uma chamada concorrente ja criou e mapeou).
+      const pendingFallback = pendingBookFolderIds.current.get(book.id)
+      if (pendingFallback) return pendingFallback
+      const language =
+        localStorage.getItem('monet:user-language') ?? navigator.language
+      const title = book.title.trim().slice(0, 90) || 'Untitled book'
+      const folder = makeNewFolder(`Library - ${title}`)
+      folder.systemPrompt = buildReaderSystemPrompt(language)
+      folder.systemPromptMode = 'replace'
+      pendingBookFolderIds.current.set(book.id, folder.id)
+      setFolders((prev) => [folder, ...prev])
+      linkBookToReaderFolder(book.id, folder.id)
+      readerFolderIdRef.current = folder.id
+      return folder.id
+    },
+    [setFolders]
+  )
 
   const deleteConversation = useCallback(
     (id: string) => {
@@ -926,11 +1281,14 @@ export function useChat(
       setLooseOrder((prev) => prev.filter((cid) => cid !== id))
       setActiveIdState((current) => {
         if (current !== id) return current
+        // Mesmo padrao de isDetached usado no efeito de fallback acima:
+        // instancias detached nao pulam para uma conversa alheia.
+        if (isDetached) return null
         const remaining = conversationsRef.current.filter((c) => c.id !== id)
         return remaining[0]?.id ?? null
       })
     },
-    [setFolders, setLooseOrder]
+    [setFolders, setLooseOrder, isDetached]
   )
 
   const createFolder = useCallback((): string => {
@@ -1140,6 +1498,15 @@ export function useChat(
 
       setFolders(nextFolders)
       setLooseOrder(nextLoose)
+      // Fonte de verdade da vinculacao acompanha o movimento.
+      const nextFolderId = target.type === 'folder' ? target.folderId : null
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === convId && c.folderId !== nextFolderId
+            ? { ...c, folderId: nextFolderId }
+            : c
+        )
+      )
     },
     [setFolders, setLooseOrder]
   )
@@ -1312,7 +1679,12 @@ export function useChat(
   }, [updateMessages])
 
   const send = useCallback(
-    async (text: string, imageDataUrl?: string, documents?: Array<{ name: string; type: string; data: string }>) => {
+    async (
+      text: string,
+      imageDataUrl?: string,
+      documents?: Array<{ name: string; type: string; data: string }>,
+      opts?: { ephemeralContext?: string }
+    ) => {
       const trimmed = text.trim()
       if (!trimmed && !imageDataUrl && (!documents || documents.length === 0)) return
       if (isStreaming) return
@@ -1326,30 +1698,71 @@ export function useChat(
       // Garante uma conversa ativa
       let convId = activeId
       const draft = draftRef.current
-      if (draft && draft.id === activeId) {
-        // Materializa o rascunho do assistant: insere na lista persistida e
-        // vincula a pasta `assistant` (idempotente por nome), tudo via setters
-        // de estado React.
+      // Pasta recem-criada NESTE send (assistant sem pasta previa): objeto
+      // conhecido antes do commit do estado — usado tambem na resolucao do
+      // system prompt abaixo.
+      let materializedFolder: ChatFolder | null = null
+      // Pasta de destino da conversa materializada neste send (se houver).
+      let materializedFolderId: string | null | undefined
+      if (draft && draft.id === activeId && isDetached) {
+        // Materializa o rascunho da instancia dedicada (assistant/reader).
+        // A pasta de destino ja esta gravada NO PROPRIO rascunho
+        // (draft.folderId, fixado na criacao — modo reader); o modo assistant
+        // resolve a pasta dedicada por NOME aqui (lazy: abrir o assistant sem
+        // enviar nada nao cria pasta). A vinculacao e persistida de forma
+        // ATOMICA junto com a conversa (folderId); a insercao na lista de
+        // ordem da pasta e cosmetica e auto-reparavel via reconcileOrders.
         convId = draft.id
-        setConversations((prev) => [draft, ...prev])
-        setFolders((prev) => {
-          const existing = prev.find((f) => f.name === ASSISTANT_FOLDER_NAME)
+        let targetFolderId: string | null = draft.folderId ?? null
+        if (dedicatedFolderName) {
+          const existing = foldersRef.current.find(
+            (f) => f.name === dedicatedFolderName
+          )
           if (existing) {
-            return prev.map((f) =>
-              f.id === existing.id
+            targetFolderId = existing.id
+          } else {
+            materializedFolder = makeNewFolder(dedicatedFolderName)
+            targetFolderId = materializedFolder.id
+          }
+        } else if (mode === 'reader') {
+          // Fallback do reader: se a pasta do rascunho foi apagada/recriada
+          // entre a criacao do rascunho e o 1o envio, o ensure chamado pelo
+          // painel antes do send deixou o id fresco no ref.
+          const rid = readerFolderIdRef.current
+          if (
+            targetFolderId &&
+            !foldersRef.current.some((f) => f.id === targetFolderId) &&
+            rid &&
+            foldersRef.current.some((f) => f.id === rid)
+          ) {
+            targetFolderId = rid
+          }
+        }
+        const conv: ChatConversation = { ...draft, folderId: targetFolderId }
+        setConversations((prev) => [conv, ...prev])
+        if (targetFolderId) {
+          const fid = targetFolderId
+          const created = materializedFolder
+          setFolders((prev) => {
+            const base =
+              created && !prev.some((f) => f.id === fid)
+                ? [created, ...prev]
+                : prev
+            return base.map((f) =>
+              f.id === fid
                 ? {
                     ...f,
-                    conversationIds: [draft.id, ...f.conversationIds],
+                    conversationIds: [conv.id, ...f.conversationIds],
                     expanded: true,
                     updatedAt: new Date().toISOString(),
                   }
                 : f
             )
-          }
-          const folder = makeNewFolder(ASSISTANT_FOLDER_NAME)
-          folder.conversationIds = [draft.id]
-          return [folder, ...prev]
-        })
+          })
+        } else {
+          setLooseOrder((prev) => [conv.id, ...prev])
+        }
+        materializedFolderId = targetFolderId
         setDraftConversation(null)
         draftRef.current = null
       } else if (!convId) {
@@ -1542,14 +1955,22 @@ export function useChat(
       // - sem pasta ou prompt vazio -> apenas o prompt padrao
       // - modo "replace" -> apenas o prompt da pasta (padrao nao entra)
       // - modo "append"  -> prompt padrao primeiro, depois o da pasta
-      // No turno da 1a mensagem do assistant, a pasta `assistant` pode ter
-      // acabado de ser criada via `setFolders` (assincrono) e ainda nao estar
-      // refletida em `foldersRef.current`; resolvemos por NOME para aplicar
-      // system prompt/RAG ja na 1a mensagem.
-      const containingFolder = isAssistant
-        ? foldersRef.current.find((f) => f.name === ASSISTANT_FOLDER_NAME) ??
-          foldersRef.current.find((f) => f.conversationIds.includes(targetId))
-        : foldersRef.current.find((f) => f.conversationIds.includes(targetId))
+      // Resolucao pela FONTE DE VERDADE (conversation.folderId). No turno da
+      // 1a mensagem de uma instancia dedicada a conversa acabou de ser
+      // materializada neste send (estado ainda nao commitado): usamos o
+      // folderId/objeto capturados na materializacao para aplicar system
+      // prompt/RAG/memoria ja na 1a mensagem.
+      const targetConvFolderId =
+        materializedFolderId !== undefined
+          ? materializedFolderId
+          : conversationsRef.current.find((c) => c.id === targetId)?.folderId ??
+            null
+      const containingFolder = targetConvFolderId
+        ? foldersRef.current.find((f) => f.id === targetConvFolderId) ??
+          (materializedFolder?.id === targetConvFolderId
+            ? materializedFolder
+            : undefined)
+        : undefined
       const folderPrompt = containingFolder?.systemPrompt.trim() ?? ''
       let systemMessages: ChatMessageInput[]
       if (containingFolder && folderPrompt.length > 0) {
@@ -1579,6 +2000,17 @@ export function useChat(
         })
       }
       systemMessages.push({ role: 'system', content: `Current date: ${currentDate}` })
+
+      // Contexto EFEMERO por envio (ex.: contexto de leitura do chat do
+      // Reader): entra apenas nos payloads da API deste turno — nunca em
+      // ChatMessage.content, no historico persistido ou nas queries de web
+      // search/deep research (que derivam de historyForApi/trimmed). Por ser
+      // `const` no closure do send(), entra nos DOIS payloads (inicial e
+      // pos tool-call).
+      const ephemeralSystemMessage: ChatMessageInput | null =
+        opts?.ephemeralContext?.trim()
+          ? { role: 'system', content: opts.ephemeralContext }
+          : null
 
       // RAG context for folder documents
       let ragSystemMessage: ChatMessageInput | null = null
@@ -1621,6 +2053,7 @@ export function useChat(
 
       const apiMessages: ChatMessageInput[] = [
         ...systemMessages,
+        ...(ephemeralSystemMessage ? [ephemeralSystemMessage] : []),
         ...(ragSystemMessage ? [ragSystemMessage] : []),
         ...(searchSystemMessage ? [searchSystemMessage] : []),
         ...historyForApi,
@@ -1786,6 +2219,7 @@ export function useChat(
 
             const toolApiMessages: ChatMessageInput[] = [
               ...systemMessages,
+              ...(ephemeralSystemMessage ? [ephemeralSystemMessage] : []),
               ...(ragSystemMessage ? [ragSystemMessage] : []),
               ...(toolSearchMessage ? [toolSearchMessage] : []),
               ...historyForApi,
@@ -1826,7 +2260,7 @@ export function useChat(
         failOnAssistant(message)
       }
     },
-    [activeId, isAssistant, isStreaming, model, models, setFolders, setLooseOrder, updateMessages, thinkingEnabled]
+    [activeId, dedicatedFolderName, isDetached, mode, isStreaming, model, models, setFolders, setLooseOrder, updateMessages, thinkingEnabled]
   )
 
   useEffect(() => {
@@ -1896,6 +2330,7 @@ export function useChat(
     newConversationInFolder,
     startAssistantConversation,
     ensureAssistantFolder,
+    ensureReaderBookFolder,
     deleteConversation,
     renameConversation,
     createFolder,

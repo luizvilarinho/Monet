@@ -3,6 +3,11 @@ import type { Book, Note, Notebook } from '../../types'
 import { storage } from '../../storage'
 import { booksDeleteFile, importBook } from '../../lib/books'
 import { useConfirm } from '../../hooks/useConfirm'
+import {
+  deleteChatFolderById,
+  getReaderChatFolderId,
+  unlinkBookFromReaderFolder,
+} from '../../hooks/useChat'
 import { Reader } from '../Reader/Reader'
 import styles from './Library.module.css'
 
@@ -121,6 +126,14 @@ export function Library({
     try {
       await booksDeleteFile(book.filePath)
       await storage.deleteBook(book.id)
+      // Cascata: a PASTA de chat do leitor deste livro (com todas as
+      // conversas) é REMOVIDA junto com o livro (decisão explícita — sem
+      // pasta órfã no Chat). Seguro na mesma janela: no modo Library nenhum
+      // useChat está montado (ver comentário de deleteChatFolderById). O
+      // unlink roda mesmo sem pasta existente, limpando links órfãos.
+      const linkedFolderId = getReaderChatFolderId(book.id)
+      if (linkedFolderId) deleteChatFolderById(linkedFolderId)
+      unlinkBookFromReaderFolder(book.id)
       setBooks((prev) => prev.filter((b) => b.id !== book.id))
     } catch (e) {
       setErrorMessage(e instanceof Error ? e.message : String(e))
@@ -149,7 +162,6 @@ export function Library({
         onCreateNotebook={onCreateNotebook}
         onCreateNote={onCreateNote}
         onSaveNote={onSaveNote}
-        onNavigateToNote={() => {}}
       />
     )
   }
