@@ -2,11 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PDFPageProxy, RenderTask } from 'pdfjs-dist'
 import {
   ArrowUUpLeft,
+  CaretDown,
+  CaretLeft,
+  CaretRight,
+  CaretUp,
   Highlighter,
   ListBullets,
+  MagnifyingGlass,
   Quotes,
   SidebarSimple,
   Sparkle,
+  X,
 } from '@phosphor-icons/react'
 import type {
   Book,
@@ -20,8 +26,14 @@ import { storage } from '../../storage'
 import { booksReadFile } from '../../lib/books'
 import { openPdf, TextLayer, type PDFDocumentProxy } from '../../lib/pdf'
 import { useConfirm } from '../../hooks/useConfirm'
-import { QuoteToNoteModal } from './QuoteToNoteModal'
+import { getReaderNoteLink } from '../../lib/readerNoteLink'
+import {
+  appendQuoteToContent,
+  buildQuoteBlock,
+  QuoteToNoteModal,
+} from './QuoteToNoteModal'
 import { ReaderChatPanel } from './ReaderChatPanel'
+import { ReaderNotesPanel } from './ReaderNotesPanel'
 import styles from './Reader.module.css'
 
 export interface ReaderProps {
@@ -48,11 +60,23 @@ const SAVE_DEBOUNCE_MS = 500
 const HIGHLIGHT_OPACITY = 0.35
 
 const HIGHLIGHT_COLORS = ['#FFEB3B', '#A5D6A7', '#90CAF9', '#F48FB1']
+// Nomes legíveis para os swatches de cor, usados em aria-label (leitores de
+// tela não conseguem distinguir botões por um hex cru).
+const HIGHLIGHT_COLOR_NAMES: Record<string, string> = {
+  '#FFEB3B': 'yellow',
+  '#A5D6A7': 'green',
+  '#90CAF9': 'blue',
+  '#F48FB1': 'pink',
+}
 const DEFAULT_HIGHLIGHT_COLOR = HIGHLIGHT_COLORS[0]
 const SAVE_TOAST_MS = 2500
 
-// Estado do toggle da coluna de chat, persistido entre sessões.
-const CHAT_OPEN_KEY = 'monet:reader-chat-open'
+// Estado do toggle da coluna lateral (Chat/Notes), persistido entre sessões.
+// Mesma chave/valor de antes (CHAT_OPEN_KEY) — preserva a preferência já
+// salva de usuários existentes, agora representando "coluna aberta" em vez
+// de "chat aberto" especificamente.
+const SIDE_OPEN_KEY = 'monet:reader-chat-open'
+const SIDE_TAB_KEY = 'monet:reader-side-tab'
 
 // Estado retrátil da coluna de navegação (Summary/Highlights), persistido
 // entre sessões — mesmo padrão do NotebookList (ícones apenas quando
@@ -62,6 +86,7 @@ const SIDE_PANEL_WIDTH = 280
 const SIDE_PANEL_COLLAPSED_WIDTH = 48
 
 type SidePanelTab = 'summary' | 'highlights'
+type SideTab = 'chat' | 'notes'
 
 interface PagePoint {
   x: number
@@ -79,6 +104,16 @@ interface SelectionState {
 interface RemovalCandidate {
   highlight: BookHighlight
   anchor: PagePoint
+}
+
+interface SearchMatch {
+  page: number
+  occurrenceIndexOnPage: number
+}
+
+interface PageMatchCount {
+  page: number
+  count: number
 }
 
 function clampPage(page: number, total: number): number {
@@ -255,6 +290,95 @@ function getCaretFromPoint(x: number, y: number): CaretPoint | null {
   return null
 }
 
+// ─── Busca textual no ebook ─────────────────────────────────────────────
+// Reconstrói o texto de uma página a partir dos <span> renderizados pela
+// TextLayer do pdfjs, na mesma ordem em que são renderizados (1 span por
+// item de texto). Junta com um único espaço entre spans — MESMA
+// convenção usada por getPageText (`.map(item => item.str).join(' ')`),
+// para que a busca no DOM ao vivo encontre os mesmos termos que a
+// indexação em background encontrou no texto extraído.
+function getPageSpans(container: HTMLElement): HTMLElement[] {
+  return Array.from(container.querySelectorAll<HTMLElement>('span')).filter(
+    (s) => (s.textContent ?? '').length > 0,
+  )
+}
+
+interface SpanRange {
+  span: HTMLElement
+  start: number
+  end: number
+}
+
+function buildJoinedPageText(spans: HTMLElement[]): {
+  text: string
+  spanRanges: SpanRange[]
+} {
+  let text = ''
+  const spanRanges: SpanRange[] = []
+  spans.forEach((span, i) => {
+    const content = span.textContent ?? ''
+    const start = text.length
+    text += content
+    spanRanges.push({ span, start, end: text.length })
+    if (i < spans.length - 1) text += ' '
+  })
+  return { text, spanRanges }
+}
+
+function buildRangeFromOffsets(
+  spanRanges: SpanRange[],
+  start: number,
+  end: number,
+): Range | null {
+  let startInfo: { span: HTMLElement; offset: number } | null = null
+  let endInfo: { span: HTMLElement; offset: number } | null = null
+  for (const sr of spanRanges) {
+    if (!startInfo && start < sr.end) {
+      startInfo = { span: sr.span, offset: start - sr.start }
+    }
+    if (!endInfo && end <= sr.end) {
+      endInfo = { span: sr.span, offset: end - sr.start }
+      break
+    }
+  }
+  if (!startInfo || !endInfo) return null
+  const startTextNode = startInfo.span.firstChild
+  const endTextNode = endInfo.span.firstChild
+  if (!startTextNode || !endTextNode) return null
+  try {
+    const range = document.createRange()
+    range.setStart(startTextNode, Math.max(0, startInfo.offset))
+    range.setEnd(endTextNode, Math.max(0, endInfo.offset))
+    return range
+  } catch {
+    return null
+  }
+}
+
+// Localiza todas as ocorrências (case-insensitive) de `query` no texto
+// reconstruído da text layer e devolve um Range por ocorrência,
+// construído a partir dos spans que a ocorrência atravessa. Uma
+// ocorrência pode cruzar mais de um span (frase); nesse caso o Range
+// vai do offset inicial no primeiro span ao offset final no último.
+function findAllOccurrenceRanges(container: HTMLElement, query: string): Range[] {
+  if (!query) return []
+  const spans = getPageSpans(container)
+  if (spans.length === 0) return []
+  const { text, spanRanges } = buildJoinedPageText(spans)
+  const lower = text.toLowerCase()
+  const q = query.toLowerCase()
+  const ranges: Range[] = []
+  let searchFrom = 0
+  let idx = lower.indexOf(q, searchFrom)
+  while (idx !== -1) {
+    const range = buildRangeFromOffsets(spanRanges, idx, idx + q.length)
+    if (range) ranges.push(range)
+    searchFrom = idx + q.length
+    idx = lower.indexOf(q, searchFrom)
+  }
+  return ranges
+}
+
 export function Reader({
   book,
   onBack,
@@ -283,6 +407,14 @@ export function Reader({
   const [removalCandidate, setRemovalCandidate] = useState<RemovalCandidate | null>(
     null,
   )
+  const [colorFilter, setColorFilter] = useState<string | null>(null)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchIndexReady, setSearchIndexReady] = useState(false)
+  const [searchIndexProgress, setSearchIndexProgress] = useState(0)
+  const [activeMatchIndex, setActiveMatchIndex] = useState(-1)
+  const [pageMatchRects, setPageMatchRects] = useState<BookHighlightRect[][]>([])
+  const searchIndexingRef = useRef(false)
   const [sidePanelCollapsed, setSidePanelCollapsed] = useState(
     () => localStorage.getItem(SIDE_PANEL_COLLAPSED_KEY) !== '0',
   )
@@ -293,8 +425,11 @@ export function Reader({
   // grifos, sumário), nunca em ‹›/input de página, e some sozinha quando o
   // usuário chega de volta nela por qualquer meio (ver effect abaixo).
   const [jumpBackPage, setJumpBackPage] = useState<number | null>(null)
-  const [chatOpen, setChatOpen] = useState(
-    () => localStorage.getItem(CHAT_OPEN_KEY) === '1',
+  const [sideOpen, setSideOpen] = useState(
+    () => localStorage.getItem(SIDE_OPEN_KEY) === '1',
+  )
+  const [sideTab, setSideTab] = useState<SideTab>(
+    () => (localStorage.getItem(SIDE_TAB_KEY) === 'notes' ? 'notes' : 'chat'),
   )
   const [pendingQuote, setPendingQuote] = useState<{
     text: string
@@ -411,6 +546,10 @@ export function Reader({
     setHighlights([])
     setSelection(null)
     setRemovalCandidate(null)
+    setColorFilter(null)
+    setSearchOpen(false)
+    setSearchQuery('')
+    setActiveMatchIndex(-1)
     void storage
       .getHighlights(book.id)
       .then((list) => {
@@ -422,14 +561,22 @@ export function Reader({
     }
   }, [book.id])
 
-  // Persistência do toggle do chat.
+  // Persistência do toggle e da aba ativa da coluna lateral.
   useEffect(() => {
     try {
-      localStorage.setItem(CHAT_OPEN_KEY, chatOpen ? '1' : '0')
+      localStorage.setItem(SIDE_OPEN_KEY, sideOpen ? '1' : '0')
     } catch (err) {
-      console.error('failed to persist reader chat toggle', err)
+      console.error('failed to persist reader side panel toggle', err)
     }
-  }, [chatOpen])
+  }, [sideOpen])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIDE_TAB_KEY, sideTab)
+    } catch (err) {
+      console.error('failed to persist reader side tab', err)
+    }
+  }, [sideTab])
 
   // Persistência do colapso da coluna de navegação (Summary/Highlights).
   useEffect(() => {
@@ -462,6 +609,11 @@ export function Reader({
     pageTextCacheRef.current = new Map()
   }, [doc])
 
+  useEffect(() => {
+    setSearchIndexReady(false)
+    setSearchIndexProgress(0)
+  }, [doc])
+
   // Extração de texto da página sob demanda (contexto do chat), com cache.
   // Não usa a TextLayer visual: `getTextContent` é rápido e o pdfjs cacheia
   // os page proxies internamente.
@@ -489,6 +641,35 @@ export function Reader({
     },
     [doc],
   )
+
+  // Indexação full-document em background: dispara quando a busca é
+  // aberta pela primeira vez neste documento, varre TODAS as páginas via
+  // getPageText (que já cacheia em pageTextCacheRef) e cede a thread a
+  // cada página (setTimeout 0) para nunca travar a UI/render da página
+  // atual. Fechar a busca antes de terminar cancela o loop (cleanup),
+  // mas reabrir retoma quase instantaneamente pelas páginas já
+  // cacheadas — não é necessário persistir um ponteiro de progresso à
+  // parte.
+  useEffect(() => {
+    if (!searchOpen || !doc) return
+    if (searchIndexReady || searchIndexingRef.current) return
+    searchIndexingRef.current = true
+    let cancelled = false
+    void (async () => {
+      for (let n = 1; n <= doc.numPages; n++) {
+        if (cancelled) return
+        await getPageText(n)
+        if (cancelled) return
+        setSearchIndexProgress(n)
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      }
+      if (!cancelled) setSearchIndexReady(true)
+    })()
+    return () => {
+      cancelled = true
+      searchIndexingRef.current = false
+    }
+  }, [searchOpen, doc, searchIndexReady, getPageText])
 
   // Renderização sob demanda: apenas a página atual (canvas + text layer).
   useEffect(() => {
@@ -554,6 +735,8 @@ export function Reader({
           // sem text layer — segue só com o canvas
         }
         if (cancelled) return
+
+        computeSearchMatchRectsRef.current()
 
         // Instala os listeners do controlador de seleção manual. Limpa
         // qualquer estado de drag anterior cujos nodes podem ter sido
@@ -855,10 +1038,42 @@ export function Reader({
     setJumpBackPage((prev) => (prev === pageNum ? null : prev))
   }, [pageNum])
 
+  // ─── Navegação entre ocorrências de busca ─────────────────────────────
+  // Não usa jumpToPage aqui: jumpToPage sempre sobrescreve jumpBackPage com a
+  // página atual, o que faria o marcador "andar" junto com cada Next/Previous.
+  // Em vez disso, o marcador só é setado na primeira vez que a busca sai da
+  // página de origem (jumpBackPage ainda null) e é preservado nos saltos
+  // seguintes, até o useEffect acima limpá-lo ao retornar à página marcada.
+  function goToMatch(index: number) {
+    const m = flatMatches[index]
+    if (!m) return
+    setActiveMatchIndex(index)
+    if (m.page !== pageNum) {
+      setJumpBackPage((prev) => (prev === null ? pageNum : prev))
+    }
+    goToPage(m.page)
+  }
+
+  function goToNextMatch() {
+    if (flatMatches.length === 0) return
+    const next = activeMatchIndex < 0 ? 0 : (activeMatchIndex + 1) % flatMatches.length
+    goToMatch(next)
+  }
+
+  function goToPreviousMatch() {
+    if (flatMatches.length === 0) return
+    const prev =
+      activeMatchIndex < 0
+        ? flatMatches.length - 1
+        : (activeMatchIndex - 1 + flatMatches.length) % flatMatches.length
+    goToMatch(prev)
+  }
+
   // Fechar toolbar/popover em troca de página, zoom, resize.
   useEffect(() => {
     setSelection(null)
     setRemovalCandidate(null)
+    setPageMatchRects([])
   }, [pageNum, scale])
 
   useEffect(() => {
@@ -915,6 +1130,53 @@ export function Reader({
     })
   }, [highlights])
 
+  const filteredHighlights = useMemo(
+    () => (colorFilter ? orderedHighlights.filter((h) => h.color === colorFilter) : orderedHighlights),
+    [orderedHighlights, colorFilter],
+  )
+
+  const normalizedQuery = searchQuery.trim().toLowerCase()
+
+  const matchesByPage = useMemo<PageMatchCount[]>(() => {
+    if (!normalizedQuery) return []
+    const result: PageMatchCount[] = []
+    for (let n = 1; n <= searchIndexProgress; n++) {
+      const text = pageTextCacheRef.current.get(n)
+      if (!text) continue
+      const lower = text.toLowerCase()
+      let count = 0
+      let idx = lower.indexOf(normalizedQuery)
+      while (idx !== -1) {
+        count++
+        idx = lower.indexOf(normalizedQuery, idx + normalizedQuery.length)
+      }
+      if (count > 0) result.push({ page: n, count })
+    }
+    return result
+  }, [normalizedQuery, searchIndexProgress])
+
+  const flatMatches = useMemo<SearchMatch[]>(() => {
+    const flat: SearchMatch[] = []
+    for (const pm of matchesByPage) {
+      for (let i = 0; i < pm.count; i++) {
+        flat.push({ page: pm.page, occurrenceIndexOnPage: i })
+      }
+    }
+    return flat
+  }, [matchesByPage])
+
+  const currentMatch = activeMatchIndex >= 0 ? (flatMatches[activeMatchIndex] ?? null) : null
+
+  useEffect(() => {
+    setActiveMatchIndex(-1)
+  }, [normalizedQuery])
+
+  useEffect(() => {
+    if (!currentMatch || currentMatch.page !== pageNum) return
+    const el = pageWrapRef.current?.querySelector<HTMLElement>('[data-match-active="true"]')
+    el?.scrollIntoView({ block: 'center', inline: 'nearest' })
+  }, [currentMatch, pageMatchRects, pageNum])
+
   // ─── Helpers de persistência de grifos ─────────────────────────────────
   async function persistHighlight(h: BookHighlight) {
     setHighlights((prev) => {
@@ -942,6 +1204,12 @@ export function Reader({
     }
   }
 
+  function handleChangeHighlightColor(h: BookHighlight, color: string) {
+    setRemovalCandidate(null)
+    if (color === h.color) return
+    void persistHighlight({ ...h, color })
+  }
+
   function showSaveToast(message: string) {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
     setSaveToast(message)
@@ -956,6 +1224,46 @@ export function Reader({
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
     }
   }, [])
+
+  // ─── Retângulos de destaque das ocorrências de busca ──────────────────
+  const computeSearchMatchRects = useCallback(() => {
+    const textContainer = textLayerRef.current
+    if (!textContainer || !searchOpen || !normalizedQuery) {
+      setPageMatchRects([])
+      return
+    }
+    const textRect = textContainer.getBoundingClientRect()
+    if (textRect.width === 0 || textRect.height === 0) {
+      setPageMatchRects([])
+      return
+    }
+    const ranges = findAllOccurrenceRanges(textContainer, normalizedQuery)
+    const rectsPerMatch: BookHighlightRect[][] = ranges.map((range) => {
+      const domRects = Array.from(range.getClientRects())
+      const rects: BookHighlightRect[] = []
+      for (const r of domRects) {
+        if (r.width === 0 || r.height === 0) continue
+        rects.push({
+          x: (r.left - textRect.left) / textRect.width,
+          y: (r.top - textRect.top) / textRect.height,
+          w: r.width / textRect.width,
+          h: r.height / textRect.height,
+        })
+      }
+      return rects
+    })
+    setPageMatchRects(rectsPerMatch)
+  }, [searchOpen, normalizedQuery])
+
+  const computeSearchMatchRectsRef = useRef(computeSearchMatchRects)
+  computeSearchMatchRectsRef.current = computeSearchMatchRects
+
+  // Recalcula os retângulos de destaque quando o usuário digita/abre/fecha a
+  // busca sem trocar de página (a troca de página já é coberta pela chamada
+  // via computeSearchMatchRectsRef dentro do effect de renderização).
+  useEffect(() => {
+    computeSearchMatchRects()
+  }, [searchOpen, normalizedQuery, pageNum, computeSearchMatchRects])
 
   // ─── Seleção → toolbar flutuante ──────────────────────────────────────
   function handleTextMouseUp() {
@@ -1102,10 +1410,54 @@ export function Reader({
   // texto/página (seleção atual ou grifo específico) e delega aqui.
   function askAiAbout(text: string, page: number) {
     setPendingQuote({ text, page })
-    setChatOpen(true)
+    setSideTab('chat')
+    setSideOpen(true)
+  }
+
+  // Alterna a coluna lateral: clicar na aba já ativa (com a coluna aberta)
+  // fecha a coluna; clicar em outra aba troca e garante a coluna aberta.
+  function selectSideTab(tab: SideTab) {
+    if (sideOpen && sideTab === tab) {
+      setSideOpen(false)
+    } else {
+      setSideTab(tab)
+      setSideOpen(true)
+    }
+  }
+
+  // Anexa a citação direto na nota já vinculada ao livro (aba "Notes"),
+  // sem passar pelo QuoteToNoteModal. Reaproveita as mesmas funções de
+  // montagem de bloco/conteúdo do modal e o mesmo fluxo de persistência
+  // (onSaveNote + handleSavedQuote) para manter paridade de comportamento
+  // (toast, registro do BookQuote) com o salvamento via modal.
+  async function appendQuoteDirectlyToNote(note: Note, text: string, page: number) {
+    const { content: block } = buildQuoteBlock(text, book.title, page)
+    const newContent = appendQuoteToContent(note.content, block)
+    await onSaveNote({ ...note, content: newContent, updatedAt: Date.now() })
+    const quote: BookQuote = {
+      id: crypto.randomUUID(),
+      bookId: book.id,
+      page,
+      text,
+      targetNoteId: note.id,
+      createdAt: Date.now(),
+    }
+    await handleSavedQuote(quote)
   }
 
   function copyCitationAbout(text: string, page: number) {
+    const link = getReaderNoteLink(book.id)
+    const note = link?.noteId
+      ? notesRef.current.find((n) => n.id === link.noteId)
+      : undefined
+    if (note) {
+      appendQuoteDirectlyToNote(note, text, page).catch((err) => {
+        console.error('failed to append quote to linked note', err)
+        setQuoteContext({ text, page })
+        setQuoteModalOpen(true)
+      })
+      return
+    }
     setQuoteContext({ text, page })
     setQuoteModalOpen(true)
   }
@@ -1313,6 +1665,75 @@ export function Reader({
           </button>
         </div>
 
+        {!searchOpen ? (
+          <button
+            type="button"
+            className={styles.highlightsToggle}
+            onClick={() => setSearchOpen(true)}
+            aria-label="Search in book"
+          >
+            <MagnifyingGlass size={14} aria-hidden />
+            Search
+          </button>
+        ) : (
+          <div className={styles.searchBar}>
+            <input
+              type="text"
+              className={styles.searchInput}
+              placeholder="Search in book…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  if (e.shiftKey) goToPreviousMatch()
+                  else goToNextMatch()
+                } else if (e.key === 'Escape') {
+                  setSearchOpen(false)
+                }
+              }}
+              aria-label="Search query"
+              autoFocus
+            />
+            <span className={styles.searchCount}>
+              {!normalizedQuery
+                ? ''
+                : flatMatches.length === 0
+                  ? searchIndexReady
+                    ? 'No results'
+                    : 'Searching…'
+                  : activeMatchIndex < 0
+                    ? `${flatMatches.length} result${flatMatches.length === 1 ? '' : 's'}`
+                    : `${activeMatchIndex + 1} of ${flatMatches.length}`}
+            </span>
+            <button
+              type="button"
+              className={`${styles.navButton} ${styles.navButtonIcon}`}
+              onClick={goToPreviousMatch}
+              disabled={flatMatches.length === 0}
+              aria-label="Previous match"
+            >
+              <CaretUp size={12} aria-hidden />
+            </button>
+            <button
+              type="button"
+              className={`${styles.navButton} ${styles.navButtonIcon}`}
+              onClick={goToNextMatch}
+              disabled={flatMatches.length === 0}
+              aria-label="Next match"
+            >
+              <CaretDown size={12} aria-hidden />
+            </button>
+            <button
+              type="button"
+              className={`${styles.navButton} ${styles.navButtonIcon}`}
+              onClick={() => setSearchOpen(false)}
+              aria-label="Close search"
+            >
+              <X size={12} aria-hidden />
+            </button>
+          </div>
+        )}
+
         {jumpBackPage !== null && (
           <button
             type="button"
@@ -1324,16 +1745,6 @@ export function Reader({
             Back to p. {jumpBackPage}
           </button>
         )}
-
-        <button
-          type="button"
-          className={styles.highlightsToggle}
-          onClick={() => setChatOpen((v) => !v)}
-          aria-pressed={chatOpen}
-          aria-label="Toggle chat panel"
-        >
-          Chat
-        </button>
 
         <div className={styles.zoomControls}>
           <button
@@ -1354,6 +1765,31 @@ export function Reader({
             aria-label="Zoom in"
           >
             +
+          </button>
+        </div>
+
+        <div className={styles.sideTabGroup}>
+          <button
+            type="button"
+            className={`${styles.highlightsToggle} ${
+              sideOpen && sideTab === 'chat' ? styles.highlightsToggleActive : ''
+            }`}
+            onClick={() => selectSideTab('chat')}
+            aria-pressed={sideOpen && sideTab === 'chat'}
+            aria-label="Toggle chat panel"
+          >
+            Chat
+          </button>
+          <button
+            type="button"
+            className={`${styles.highlightsToggle} ${
+              sideOpen && sideTab === 'notes' ? styles.highlightsToggleActive : ''
+            }`}
+            onClick={() => selectSideTab('notes')}
+            aria-pressed={sideOpen && sideTab === 'notes'}
+            aria-label="Toggle notes panel"
+          >
+            Notes
           </button>
         </div>
       </div>
@@ -1454,93 +1890,119 @@ export function Reader({
                     <OutlineList items={outline} depth={0} onNavigate={jumpToPage} />
                   )}
                 </div>
-              ) : orderedHighlights.length === 0 ? (
-                <p className={styles.highlightsPanelEmpty}>No highlights yet</p>
               ) : (
-                <ul className={styles.highlightsPanelList}>
-                  {orderedHighlights.map((h) => (
-                    <li key={h.id} className={styles.highlightsPanelItemWrap}>
-                      <button
-                        type="button"
-                        className={styles.highlightsPanelItem}
-                        onClick={() => {
-                          // O painel PERMANECE aberto ao navegar — o
-                          // usuário pode clicar em vários grifos sem
-                          // precisar reabrir o painel.
-                          jumpToPage(h.page)
-                        }}
-                      >
-                        <div className={styles.highlightsPanelItemTop}>
-                          <span
-                            className={styles.highlightsPanelSwatch}
-                            style={{ background: h.color }}
-                            aria-hidden="true"
-                          />
-                          <span className={styles.highlightsPanelPage}>
-                            p. {h.page}
-                          </span>
-                          <span className={styles.highlightsPanelDate}>
-                            {formatShortDate(h.createdAt)}
-                          </span>
-                        </div>
-                        <span className={styles.highlightsPanelText}>
-                          {truncateText(h.text, 240)}
-                        </span>
-                      </button>
-                      <div className={styles.highlightsPanelItemActions}>
-                        <button
-                          type="button"
-                          className={styles.highlightsPanelItemAction}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            askAiAbout(h.text, h.page)
-                          }}
-                          aria-label="Ask AI about this highlight"
-                          title="Ask AI"
-                        >
-                          <Sparkle size={12} aria-hidden />
-                        </button>
-                        <button
-                          type="button"
-                          className={styles.highlightsPanelItemAction}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            copyCitationAbout(h.text, h.page)
-                          }}
-                          aria-label="Copy citation"
-                          title="Copy citation"
-                        >
-                          <Quotes size={12} aria-hidden />
-                        </button>
-                        <button
-                          type="button"
-                          className={`${styles.highlightsPanelItemAction} ${styles.highlightsPanelItemDelete}`}
-                          onClick={(e) => void handleDeleteFromPanel(e, h)}
-                          aria-label="Delete highlight"
-                          title="Delete highlight"
-                        >
-                          <svg
-                            width="12"
-                            height="12"
-                            viewBox="0 0 16 16"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="1.6"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            aria-hidden="true"
+                <>
+                  {orderedHighlights.length === 0 ? (
+                    <p className={styles.highlightsPanelEmpty}>No highlights yet</p>
+                  ) : filteredHighlights.length === 0 ? (
+                    <p className={styles.highlightsPanelEmpty}>
+                      No highlights match this color
+                    </p>
+                  ) : (
+                    <ul className={styles.highlightsPanelList}>
+                      {filteredHighlights.map((h) => (
+                        <li key={h.id} className={styles.highlightsPanelItemWrap}>
+                          <button
+                            type="button"
+                            className={styles.highlightsPanelItem}
+                            onClick={() => {
+                              // O painel PERMANECE aberto ao navegar — o
+                              // usuário pode clicar em vários grifos sem
+                              // precisar reabrir o painel.
+                              jumpToPage(h.page)
+                            }}
                           >
-                            <path d="M3 4h10" />
-                            <path d="M5.5 4V2.5h5V4" />
-                            <path d="M4.5 4l.6 9a1 1 0 0 0 1 .9h3.8a1 1 0 0 0 1-.9l.6-9" />
-                            <path d="M7 7v5" />
-                            <path d="M9 7v5" />
-                          </svg>
-                        </button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
+                            <div className={styles.highlightsPanelItemTop}>
+                              <span
+                                className={styles.highlightsPanelSwatch}
+                                style={{ background: h.color }}
+                                aria-hidden="true"
+                              />
+                              <span className={styles.highlightsPanelPage}>
+                                p. {h.page}
+                              </span>
+                              <span className={styles.highlightsPanelDate}>
+                                {formatShortDate(h.createdAt)}
+                              </span>
+                            </div>
+                            <span className={styles.highlightsPanelText}>
+                              {truncateText(h.text, 240)}
+                            </span>
+                          </button>
+                          <div className={styles.highlightsPanelItemActions}>
+                            <button
+                              type="button"
+                              className={styles.highlightsPanelItemAction}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                askAiAbout(h.text, h.page)
+                              }}
+                              aria-label="Ask AI about this highlight"
+                              title="Ask AI"
+                            >
+                              <Sparkle size={12} aria-hidden />
+                            </button>
+                            <button
+                              type="button"
+                              className={styles.highlightsPanelItemAction}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                copyCitationAbout(h.text, h.page)
+                              }}
+                              aria-label="Copy citation"
+                              title="Copy citation"
+                            >
+                              <Quotes size={12} aria-hidden />
+                            </button>
+                            <button
+                              type="button"
+                              className={`${styles.highlightsPanelItemAction} ${styles.highlightsPanelItemDelete}`}
+                              onClick={(e) => void handleDeleteFromPanel(e, h)}
+                              aria-label="Delete highlight"
+                              title="Delete highlight"
+                            >
+                              <svg
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="1.6"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                aria-hidden="true"
+                              >
+                                <path d="M3 4h10" />
+                                <path d="M5.5 4V2.5h5V4" />
+                                <path d="M4.5 4l.6 9a1 1 0 0 0 1 .9h3.8a1 1 0 0 0 1-.9l.6-9" />
+                                <path d="M7 7v5" />
+                                <path d="M9 7v5" />
+                              </svg>
+                            </button>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {orderedHighlights.length > 0 && (
+                    <div className={styles.highlightsColorFilter}>
+                      {HIGHLIGHT_COLORS.map((c) => (
+                        <button
+                          key={c}
+                          type="button"
+                          className={`${styles.highlightSwatch} ${
+                            c === colorFilter ? styles.highlightSwatchActive : ''
+                          }`}
+                          style={{ background: c }}
+                          onClick={() => setColorFilter((prev) => (prev === c ? null : c))}
+                          aria-pressed={c === colorFilter}
+                          aria-label={`Filter highlights by ${HIGHLIGHT_COLOR_NAMES[c] ?? c} color`}
+                          title="Filter by color"
+                        />
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
             </>
           )}
@@ -1579,6 +2041,27 @@ export function Reader({
                     />
                   )),
                 )}
+              </div>
+              <div className={styles.searchMatchLayer} aria-hidden="true">
+                {searchOpen &&
+                  normalizedQuery &&
+                  pageMatchRects.map((rects, occIdx) => {
+                    const isActive =
+                      currentMatch?.page === pageNum && currentMatch.occurrenceIndexOnPage === occIdx
+                    return rects.map((r, i) => (
+                      <div
+                        key={`match-${occIdx}-${i}`}
+                        data-match-active={isActive ? 'true' : undefined}
+                        className={`${styles.searchMatchRect} ${isActive ? styles.searchMatchRectActive : ''}`}
+                        style={{
+                          left: `${r.x * 100}%`,
+                          top: `${r.y * 100}%`,
+                          width: `${r.w * 100}%`,
+                          height: `${r.h * 100}%`,
+                        }}
+                      />
+                    ))
+                  })}
               </div>
               <div ref={textLayerRef} className={styles.textLayer} />
               {selection && (
@@ -1667,6 +2150,21 @@ export function Reader({
                       Copy citation
                     </button>
                   </div>
+                  <div className={styles.removalPopoverColors}>
+                    {HIGHLIGHT_COLORS.map((c) => (
+                      <button
+                        key={c}
+                        type="button"
+                        className={`${styles.highlightSwatch} ${
+                          c === removalCandidate.highlight.color ? styles.highlightSwatchActive : ''
+                        }`}
+                        style={{ background: c }}
+                        onClick={() => handleChangeHighlightColor(removalCandidate.highlight, c)}
+                        aria-label={`Change highlight color to ${HIGHLIGHT_COLOR_NAMES[c] ?? c}`}
+                        title="Change color"
+                      />
+                    ))}
+                  </div>
                   <div className={styles.removalPopoverActions}>
                     <button
                       type="button"
@@ -1689,22 +2187,55 @@ export function Reader({
               )}
             </div>
           )}
+          {doc && (
+            <>
+              <button
+                type="button"
+                className={`${styles.floatingNavButton} ${styles.floatingNavButtonLeft}`}
+                onClick={() => goToPage(pageNum - 1)}
+                disabled={pageNum <= 1}
+                aria-label="Previous page"
+              >
+                <CaretLeft size={18} aria-hidden />
+              </button>
+              <button
+                type="button"
+                className={`${styles.floatingNavButton} ${styles.floatingNavButtonRight}`}
+                onClick={() => goToPage(pageNum + 1)}
+                disabled={pageNum >= doc.numPages}
+                aria-label="Next page"
+              >
+                <CaretRight size={18} aria-hidden />
+              </button>
+            </>
+          )}
         </div>
 
-        {/* SEMPRE montado (fora do ternário de loading): fechar o toggle só
-            esconde via CSS — desmontar o painel cancelaria o useChat e um
-            stream ativo. Abrir/fechar também não recarrega o PDF (o effect
-            de render depende só de doc/pageNum/scale). */}
+        {/* SEMPRE montados (fora do ternário de loading): fechar o toggle só
+            esconde via CSS — desmontar o ReaderChatPanel cancelaria o
+            useChat e um stream ativo, e desmontar o ReaderNotesPanel
+            perderia o estado de seleção Notebook/Nota da aba. Abrir/fechar
+            também não recarrega o PDF (o effect de render depende só de
+            doc/pageNum/scale). */}
         <ReaderChatPanel
           book={book}
           pageNum={pageNum}
           totalPages={doc?.numPages ?? book.totalPages}
           highlights={highlights}
           getPageText={getPageText}
-          open={chatOpen}
-          onClose={() => setChatOpen(false)}
+          open={sideOpen && sideTab === 'chat'}
+          onClose={() => setSideOpen(false)}
           pendingQuote={pendingQuote}
           onPendingQuoteConsumed={() => setPendingQuote(null)}
+        />
+        <ReaderNotesPanel
+          book={book}
+          notebooks={notebooks}
+          notes={notes}
+          onCreateNote={onCreateNote}
+          onSaveNote={onSaveNote}
+          open={sideOpen && sideTab === 'notes'}
+          onClose={() => setSideOpen(false)}
         />
       </div>
 

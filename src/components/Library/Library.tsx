@@ -8,6 +8,7 @@ import {
   getReaderChatFolderId,
   unlinkBookFromReaderFolder,
 } from '../../hooks/useChat'
+import { unlinkBookFromReaderNote } from '../../lib/readerNoteLink'
 import { Reader } from '../Reader/Reader'
 import styles from './Library.module.css'
 
@@ -134,6 +135,10 @@ export function Library({
       const linkedFolderId = getReaderChatFolderId(book.id)
       if (linkedFolderId) deleteChatFolderById(linkedFolderId)
       unlinkBookFromReaderFolder(book.id)
+      // Vínculo livro→nota da aba Notes: só o LINK é removido — a
+      // nota/notebook são conteúdo do usuário e sobrevivem à exclusão do
+      // livro (diferente da pasta de chat, exclusiva do livro).
+      unlinkBookFromReaderNote(book.id)
       setBooks((prev) => prev.filter((b) => b.id !== book.id))
     } catch (e) {
       setErrorMessage(e instanceof Error ? e.message : String(e))

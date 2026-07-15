@@ -41,6 +41,12 @@
   gap: 8px;
 }
 
+.sideTabGroup {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .navButton {
   background: transparent;
   border: 1px solid var(--border, #333340);
@@ -94,7 +100,48 @@
   text-align: center;
 }
 
+/* ─── Barra de busca no ebook ────────────────────────────────────────── */
+.searchBar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.searchInput {
+  width: 180px;
+  background: var(--surface-1, #1d1d34);
+  border: 1px solid var(--border, #333340);
+  border-radius: 6px;
+  color: var(--text-primary, #ddddf1);
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.searchInput:focus {
+  outline: none;
+  border-color: var(--accent, #7b6ed4);
+}
+
+.searchCount {
+  font-size: 11px;
+  color: var(--text-muted, #7c7c93);
+  white-space: nowrap;
+  min-width: 64px;
+}
+
+/* Modificador de .navButton para conter um ícone (svg) em vez de um
+   glifo de texto — centraliza via flex. Não altera .navButton em si
+   (usado em vários lugares só com texto) para não arriscar regressão
+   visual nos botões existentes. */
+.navButtonIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .pageArea {
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow: auto;
@@ -121,6 +168,48 @@
   display: block;
   background: #fff;
   box-sizing: border-box;
+}
+
+/* ─── Botões flutuantes de navegação de página ──────────────────────────
+   Filhos diretos de .pageArea (não de .pageWrap): como .pageArea é o
+   ancestral posicionado (position: relative) E o scroll container, os
+   botões absolutos ficam fixos na parte inferior VISÍVEL mesmo quando
+   o conteúdo rola (não acompanham o scroll), sem ocupar altura no
+   layout. */
+.floatingNavButton {
+  position: absolute;
+  bottom: 20px;
+  z-index: 5;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-panel, #161625);
+  border: 1px solid var(--border, #333340);
+  color: var(--text-primary, #ddddf1);
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 0.15s ease, border-color 0.15s ease;
+}
+
+.floatingNavButton:hover:not(:disabled) {
+  opacity: 1;
+  border-color: var(--accent, #7b6ed4);
+}
+
+.floatingNavButton:disabled {
+  opacity: 0.2;
+  cursor: not-allowed;
+}
+
+.floatingNavButtonLeft {
+  left: 20px;
+}
+
+.floatingNavButtonRight {
+  right: 20px;
 }
 
 .loadingText {
@@ -263,6 +352,30 @@
   border-radius: 2px;
 }
 
+/* ─── Camada de destaque das ocorrências de busca ────────────────────────
+   Mesma técnica do .highlightLayer (retângulos normalizados sobre a
+   página atual), mas só populada quando a busca está aberta — ver
+   computeSearchMatchRects. pointer-events: none para não interferir
+   com seleção de texto/clique em highlights. */
+.searchMatchLayer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.searchMatchRect {
+  position: absolute;
+  pointer-events: none;
+  border-radius: 2px;
+  background: rgba(255, 165, 0, 0.35);
+}
+
+.searchMatchRectActive {
+  background: rgba(255, 140, 0, 0.6);
+  outline: 2px solid rgba(255, 111, 0, 0.9);
+}
+
 /* ─── Toolbar flutuante de grifo ──────────────────────────────────────── */
 .highlightToolbar {
   position: absolute;
@@ -368,6 +481,13 @@
   background: rgba(123, 110, 212, 0.1);
 }
 
+.removalPopoverColors {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+
 .removalPopoverActions {
   display: flex;
   justify-content: flex-end;
@@ -419,6 +539,12 @@
 .highlightsToggle:hover {
   color: var(--text-primary, #ddddf1);
   border-color: var(--accent, #7b6ed4);
+}
+
+.highlightsToggleActive {
+  color: var(--text-primary, #ddddf1);
+  border-color: var(--accent, #7b6ed4);
+  background: rgba(123, 110, 212, 0.12);
 }
 
 /* ─── Marcador de retorno ("Back to p. N") ────────────────────────────────
@@ -766,6 +892,17 @@
   font-size: 12px;
   color: var(--text-muted, #7c7c93);
   text-align: center;
+}
+
+/* ─── Filtro de cor no painel de grifos ──────────────────────────────── */
+.highlightsColorFilter {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px 8px;
+  border-top: 1px solid var(--border, #333340);
+  flex-shrink: 0;
 }
 
 /* ─── Toast de confirmação de citação ─────────────────────────────────── */

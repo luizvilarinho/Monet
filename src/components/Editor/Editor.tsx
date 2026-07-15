@@ -52,6 +52,7 @@ export interface EditorProps {
   notebookNotes?: Note[]
   onNavigateToNote?: (noteId: string) => void
   isCalendarNote?: boolean
+  disableSlashCommands?: boolean
 }
 
 function getMarkdown(editor: TiptapEditor): string {
@@ -113,6 +114,7 @@ export function Editor({
   notebookNotes = [],
   onNavigateToNote,
   isCalendarNote = false,
+  disableSlashCommands,
 }: EditorProps) {
   const [adding, setAdding] = useState(false)
   const [draft, setDraft] = useState('')
@@ -146,6 +148,8 @@ export function Editor({
   onNavigateToNoteRef.current = onNavigateToNote
   const isCalendarNoteRef = useRef(isCalendarNote)
   isCalendarNoteRef.current = isCalendarNote
+  const disableSlashCommandsRef = useRef(disableSlashCommands)
+  disableSlashCommandsRef.current = disableSlashCommands
 
   const contextValue = useMemo(
     () => ({ responses: responses ?? [] }),
@@ -156,12 +160,16 @@ export function Editor({
     immediatelyRender: false,
     extensions: [
       ...buildBaseExtensions('Capture your thoughts...'),
-      CommandExtension.configure({
-        getResponses: () => responsesRef.current,
-        onRemoveResponse: (id) => {
-          onRemoveResponseRef.current?.(id)
-        },
-      }),
+      ...(disableSlashCommands
+        ? []
+        : [
+            CommandExtension.configure({
+              getResponses: () => responsesRef.current,
+              onRemoveResponse: (id) => {
+                onRemoveResponseRef.current?.(id)
+              },
+            }),
+          ]),
     ],
     content: value,
     editorProps: {
@@ -273,6 +281,7 @@ export function Editor({
         }
 
         if (event.key === 'Enter' && !event.shiftKey) {
+          if (disableSlashCommandsRef.current) return false
           const info = getCurrentCommandLine(view.state, isCalendarNoteRef.current)
           if (!info) return false
           const { selection } = view.state
@@ -356,6 +365,7 @@ export function Editor({
 
   const updateAutocomplete = useCallback(() => {
     if (!editor) return
+    if (disableSlashCommands) return
     const info = getCurrentCommandLine(editor.state, isCalendarNoteRef.current)
     if (!info) {
       dismissedFingerprintRef.current = null
@@ -410,7 +420,7 @@ export function Editor({
         left: nextLeft,
       }
     })
-  }, [editor])
+  }, [editor, disableSlashCommands])
 
   useEffect(() => {
     if (!editor) return
