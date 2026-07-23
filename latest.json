@@ -1,11 +1,11 @@
 {
-  "version": "1.3.17",
-  "notes": "Monet v1.3.17 — Agenda como assistente diário: dia da semana no cabeçalho da nota diária, janela rápida Ctrl+K (nota do dia) e lembretes com notificação nativa via chip @+horário. Correção de bug de linha em branco duplicada ao trocar de nota. Correção de bug que abria a janela Ctrl+K em branco e perdia o texto digitado em instalações via MSI.",
-  "pub_date": "2026-07-03T00:00:00Z",
+  "version": "1.4.1",
+  "notes": "Monet v1.4.1 — Nova aba Notes na coluna lateral do leitor de ebook: selecione um notebook e uma anotação (ou crie uma nova ali mesmo) e escreva enquanto lê, com o editor completo. \"Copy citation\" agora grava direto na anotação selecionada. Leitor também ganhou busca no texto do livro, filtro de cor e troca de cor de grifos, e botões flutuantes de navegação de página. Correção de bug de barra de rolagem intermitente na Library/Reader.",
+  "pub_date": "2026-07-15T00:00:00Z",
   "platforms": {
     "windows-x86_64": {
-      "url": "https://github.com/luizvilarinho/Monet/releases/download/v1.3.17/monet_1.3.17_x64_en-US.msi",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRlFHSkpLWXhzckdURURGV0Mxa2xFcHN0MldmeHJhNWxEaTZPcFBnRW1uNk5pM3FoUFFEN1ZOOXZMaGpFTm5OTjAwUTVjaER0ZWkxbk5wWGtTOHE2RzB0Y2RoNDZVd0FFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzMTE0ODQ1CWZpbGU6bW9uZXRfMS4zLjE3X3g2NF9lbi1VUy5tc2kKUGRHWVFOSUR4dGlFeHNXRmMwa1p3RXpYQkgwMFBtTzJRTkdaVEt0OXo1dGxZNlJPUGRFT2I5QVg4NW5rWXBYNEVSdnZxTHB0YlNlYWVlTUxzUGJHQWc9PQo="
+      "url": "https://github.com/luizvilarinho/Monet/releases/download/v1.4.1/monet_1.4.1_x64_en-US.msi",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRlFHSkpLWXhzck93Y1J0UFUrK01ZWWZkUTRPeVNWdWdIMzhQRTNDTTh6bU8wZEhJRG9sNVpFOGFYVE9GMUZ4MWRlYUFkVDYyakxzdWI3VnpwdTg1d0JwSXZqRW5vcFFFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0MTQyNTc1CWZpbGU6bW9uZXRfMS40LjFfeDY0X2VuLVVTLm1zaQpZLzdrV1ZuOWpwQVU2d0dSaTZDMG1DYXUzRXhWdGJFVFFlSnF3L1RPRXFLQ2hCTHgwdmcxc0FIOVJwR0FtRWl4dUhJYXk5N0JpbEdPVWFtUVphSTBDZz09Cg=="
     }
   }
 }
