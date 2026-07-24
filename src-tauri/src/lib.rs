@@ -502,6 +502,166 @@ async fn deep_research_generate_sub_queries(
     Ok(vec![])
 }
 
+// Modelo interno do "bibliotecário" (triagem/julgamento de fontes web). Não é
+// exposto ao usuário; trocável por 1 constante. Usa response_format json_object
+// (JSON mode) — não json_schema strict, cujo suporte varia por rota no OpenRouter.
+const LIBRARIAN_MODEL: &str = "deepseek/deepseek-chat";
+
+// Extrai um array de strings de um Value: tenta a chave dada, senão o próprio
+// array (fallback quando o modelo devolve só o array). Espelha o parsing
+// tolerante de deep_research_generate_sub_queries.
+fn librarian_extract_field(value: &serde_json::Value, field: &str) -> Option<Vec<String>> {
+    let arr = value
+        .get(field)
+        .and_then(|q| q.as_array())
+        .or_else(|| value.as_array())?;
+    let strings: Vec<String> = arr
+        .iter()
+        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+        .collect();
+    Some(strings)
+}
+
+// Chama o LIBRARIAN_MODEL com o prompt dado (JSON mode) e extrai o array de
+// strings do campo `field`. Retorna Ok(vec![]) em qualquer falha de rede/status/
+// parse — nunca grava sem uma decisão parseada.
+async fn librarian_decide(
+    app: &AppHandle,
+    prompt: String,
+    field: &str,
+) -> Result<Vec<String>, String> {
+    let key = match read_key(app, "openrouter_key") {
+        Some(k) => k,
+        None => return Ok(vec![]),
+    };
+
+    let body = serde_json::json!({
+        "model": LIBRARIAN_MODEL,
+        "messages": [{ "role": "user", "content": prompt }],
+        "max_tokens": 300,
+        "response_format": { "type": "json_object" },
+    });
+
+    let client = reqwest::Client::new();
+    let resp = match client
+        .post("https://openrouter.ai/api/v1/chat/completions")
+        .bearer_auth(&key)
+        .header("Content-Type", "application/json")
+        .header("HTTP-Referer", "https://monet.local")
+        .header("X-Title", "Monet")
+        .json(&body)
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(_) => return Ok(vec![]),
+    };
+
+    if !resp.status().is_success() {
+        return Ok(vec![]);
+    }
+
+    let data: serde_json::Value = match resp.json().await {
+        Ok(v) => v,
+        Err(_) => return Ok(vec![]),
+    };
+
+    let content = data
+        .get("choices")
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("message"))
+        .and_then(|m| m.get("content"))
+        .and_then(|c| c.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+
+    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
+        if let Some(strings) = librarian_extract_field(&parsed, field) {
+            return Ok(strings);
+        }
+    }
+
+    // Fallback: extrai o primeiro {...} ou [...] do conteúdo.
+    for (open, close) in [('{', '}'), ('[', ']')] {
+        if let (Some(start), Some(end)) = (content.find(open), content.rfind(close)) {
+            if end > start {
+                let slice = &content[start..=end];
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(slice) {
+                    if let Some(strings) = librarian_extract_field(&parsed, field) {
+                        return Ok(strings);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(vec![])
+}
+
+// Triagem: decide quais URLs candidatas valem o extract (e possível gravação
+// permanente). Barra deliberadamente conservadora. Retorna as URLs selecionadas
+// (o TS filtra contra o conjunto de candidatas).
+#[tauri::command]
+async fn librarian_triage(
+    app: AppHandle,
+    question: String,
+    candidates_block: String,
+    current_date: String,
+) -> Result<Vec<String>, String> {
+    let prompt = format!(
+        "Current date: {current_date}\n\nYou are a conservative library curator. Given a user's question and a list of candidate web pages (URL, title, snippet), select ONLY the ones genuinely worth extracting and possibly saving permanently to a personal knowledge base.\n\nUser question: {question}\n\nCandidates:\n{candidates_block}\n\nRules:\n1. Set the bar HIGH. Select only durable, substantial sources: reference articles, documentation, papers, in-depth analyses, primary sources. \n2. Reject ephemeral or trivial news, navigation/aggregator/listicle/SEO pages, redundant results, and anything shallow.\n3. URLs marked [CITED] were referenced in the answer and have a slight priority, but must still clear the same bar.\n4. When in doubt, do NOT select. It is fine to select nothing.\n\nReturn a JSON object of the form {{\"urls\": [\"<url>\", ...]}} containing only the selected URLs (verbatim from the list), nothing else. If nothing qualifies, return {{\"urls\": []}}."
+    );
+    librarian_decide(&app, prompt, "urls").await
+}
+
+// Julgamento: lê o conteúdo real extraído de cada fonte e decide qual presta
+// como material de referência permanente (rejeita paywall/teaser, boilerplate,
+// páginas de erro/login, conteúdo vazio ou irrelevante).
+#[tauri::command]
+async fn librarian_judge(
+    app: AppHandle,
+    question: String,
+    sources_block: String,
+    current_date: String,
+) -> Result<Vec<String>, String> {
+    let prompt = format!(
+        "Current date: {current_date}\n\nYou are a quality judge for a personal knowledge base. For each source below you are given its URL and the REAL extracted content. Decide, per source, whether the actual content is worth keeping as permanent reference material.\n\nUser question: {question}\n\nSources:\n{sources_block}\n\nRules:\n1. REJECT paywalled teasers (only a public preview with no real substance), boilerplate, error/login pages, empty content, and content irrelevant to the question.\n2. APPROVE only sources with substantive, usable content.\n3. When in doubt, reject.\n\nReturn a JSON object of the form {{\"approved\": [\"<url>\", ...]}} listing only the approved URLs (verbatim), nothing else. If none qualify, return {{\"approved\": []}}."
+    );
+    librarian_decide(&app, prompt, "approved").await
+}
+
+// Converte o tópico do turno em 1-2 queries bibliográficas canônicas para o
+// Crossref (termos-chave, sem sintaxe de pergunta). Retorna as queries.
+#[tauri::command]
+async fn librarian_academic_query(
+    app: AppHandle,
+    question: String,
+    current_date: String,
+) -> Result<Vec<String>, String> {
+    let prompt = format!(
+        "Current date: {current_date}\n\nYou turn a user's question into bibliographic search queries for the Crossref scholarly database. Produce concise queries made of key terms and canonical terminology only — NO question phrasing, NO punctuation of a question.\n\nUser question: {question}\n\nRules:\n1. Capture BOTH the broad subject AND the specific angle of the question — the particular author, concept, relation, or claim the user is actually asking about. Do NOT reduce the query to the single most prominent noun; a query that keeps only the general topic and drops the specific angle is wrong.\n2. If the question relates two or more entities (e.g. one author's treatment of another, one concept applied to another), the query must anchor on ALL of them together, not just the dominant one.\n3. Return at most 2 concise bibliographic search queries (keywords/terminology only, no question phrasing). Prefer terms that would appear in a paper title/abstract.\n4. If the question is not a research topic, return an empty list.\n\nReturn a JSON object of the form {{\"queries\": [\"...\", \"...\"]}}, nothing else. If nothing qualifies, return {{\"queries\": []}}."
+    );
+    librarian_decide(&app, prompt, "queries").await
+}
+
+// Filtro de relevância acadêmica: dado título/ano/abstract de cada candidato do
+// Crossref, aprova apenas os DOIs genuinamente on-topic e substanciais, com barra
+// conservadora e barra extra quando falta abstract. Retorna os DOIs aprovados
+// (o TS filtra contra o conjunto de candidatos e aplica o cap de 3).
+#[tauri::command]
+async fn librarian_academic_relevance(
+    app: AppHandle,
+    question: String,
+    candidates_block: String,
+    current_date: String,
+) -> Result<Vec<String>, String> {
+    let prompt = format!(
+        "Current date: {current_date}\n\nYou are a conservative curator selecting scholarly papers to save permanently to a personal knowledge base. For each candidate you are given its DOI, Title, Year, and Abstract (Abstract may be '(none)').\n\nUser question: {question}\n\nCandidates:\n{candidates_block}\n\nRules:\n1. Approve a paper ONLY if it addresses the SPECIFIC focus of the question — the particular author, concept, relation, or claim being asked about — not merely the broad subject area. A paper that shares only the general topic, or that matches just because a keyword happens to appear, does NOT qualify.\n2. If the question relates two or more entities, the paper must actually engage with that relation or with all of them together; treating only one of them is not enough.\n3. If a candidate has NO abstract and the title matches only the broad subject, or the match is ambiguous, reject it. With no abstract, approve only when the title unequivocally addresses the specific focus of the question.\n4. Set the bar HIGH and approve at most 3. When in doubt, reject. It is fine to approve nothing.\n\nReturn a JSON object of the form {{\"dois\": [\"<doi>\", ...]}} listing only the approved DOIs (verbatim from the list), nothing else. If none qualify, return {{\"dois\": []}}."
+    );
+    librarian_decide(&app, prompt, "dois").await
+}
+
 #[tauri::command]
 async fn deep_research_rerank(
     app: AppHandle,
@@ -1321,6 +1481,19 @@ pub fn run() {
             ",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 15,
+            description: "documents_origin",
+            // Distingue pastas de KB criadas automaticamente pela IA (watched-folder
+            // de web research por chat-folder) das pastas/arquivos escolhidos
+            // manualmente pelo usuário. Usado por documents_ensure_ai_folder,
+            // documents_delete_watched_folder (deleção física do diretório) e pelo
+            // KnowledgeBaseModal (badge "AI-generated").
+            sql: "
+                ALTER TABLE documents ADD COLUMN origin TEXT NOT NULL DEFAULT 'user';
+            ",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
@@ -1450,6 +1623,10 @@ pub fn run() {
             openrouter_stream_messages,
             openrouter_cancel,
             deep_research_generate_sub_queries,
+            librarian_triage,
+            librarian_judge,
+            librarian_academic_query,
+            librarian_academic_relevance,
             deep_research_rerank,
             web_search_route,
             extract_pdf_text,
@@ -1472,6 +1649,9 @@ pub fn run() {
             documents::documents_add_watched_folder,
             documents::documents_scan_watched_folder,
             documents::documents_delete_watched_folder,
+            documents::documents_ensure_ai_folder,
+            documents::documents_write_ai_source_file,
+            documents::librarian_fetch_and_save_pdf,
             documents::embed_text,
             books::books_import_file,
             books::books_read_file,

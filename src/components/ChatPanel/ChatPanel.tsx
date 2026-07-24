@@ -75,7 +75,9 @@ export function ChatPanel({
     setFolderVisibleDocuments,
     setFolderMemory,
     setFolderMemoryEnabled,
+    setFolderWebResearchEnabled,
     folderMemoryUpdatedAt,
+    webSourcesSaved,
     moveConversation,
     removeConversationFromFolder,
     reorderFolders,
@@ -95,6 +97,7 @@ export function ChatPanel({
   )
   const [memoryFolderId, setMemoryFolderId] = useState<string | null>(null)
   const [memoryToastVisible, setMemoryToastVisible] = useState(false)
+  const [webSourcesToast, setWebSourcesToast] = useState<{ count: number } | null>(null)
   const [folderDocsFolder, setFolderDocsFolder] = useState<ChatFolder | null>(null)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const historyRef = useRef<HTMLDivElement | null>(null)
@@ -218,6 +221,13 @@ export function ChatPanel({
     const id = window.setTimeout(() => setMemoryToastVisible(false), 4000)
     return () => window.clearTimeout(id)
   }, [folderMemoryUpdatedAt])
+
+  useEffect(() => {
+    if (webSourcesSaved === null) return
+    setWebSourcesToast({ count: webSourcesSaved.count })
+    const id = window.setTimeout(() => setWebSourcesToast(null), 4000)
+    return () => window.clearTimeout(id)
+  }, [webSourcesSaved])
 
   function handleSend() {
     if (!canSend) return
@@ -486,6 +496,14 @@ export function ChatPanel({
                 Folder memory updated
               </div>
             )}
+            {webSourcesToast && (
+              <div className={styles.webSearchProgress} role="status" aria-live="polite">
+                <span className={styles.webSearchDot} aria-hidden="true" />
+                {webSourcesToast.count === 1
+                  ? '1 source saved to the knowledge base'
+                  : `${webSourcesToast.count} sources saved to the knowledge base`}
+              </div>
+            )}
             {visionWarning && (
               <div className={styles.visionWarning} role="alert">
                 This model does not support images. Switch to a vision-capable model or remove the image.
@@ -568,6 +586,8 @@ export function ChatPanel({
                 onToggle={setTool}
                 folderMemory={activeFolder ? { enabled: activeFolder.memoryEnabled } : null}
                 onToggleFolderMemory={(v) => activeFolder && setFolderMemoryEnabled(activeFolder.id, v)}
+                folderWebResearch={activeFolder ? { enabled: activeFolder.webResearchEnabled } : null}
+                onToggleFolderWebResearch={(v) => activeFolder && setFolderWebResearchEnabled(activeFolder.id, v)}
               />
               {isStreaming ? (
                 <button

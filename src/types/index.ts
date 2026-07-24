@@ -42,6 +42,7 @@ export interface Document {
   parentFolderId?: string
   lastModifiedMs?: number
   isExternal: boolean
+  origin: 'user' | 'ai'
 }
 
 export interface Book {

@@ -129,10 +129,11 @@ export function KnowledgeBaseModal({ open, onClose }: KnowledgeBaseModalProps) {
   }
 
   async function handleRemoveFolder(folder: Document) {
-    const ok = await confirm(
-      `Remove folder "${folder.name}"? All indexed files from this folder will be removed from all notebooks.`,
-      { title: 'Remove folder' },
-    )
+    const message =
+      folder.origin === 'ai'
+        ? `Remove folder "${folder.name}"? This folder was created automatically by the AI and its files will be permanently deleted from disk.`
+        : `Remove folder "${folder.name}"? All indexed files from this folder will be removed from all notebooks.`
+    const ok = await confirm(message, { title: 'Remove folder' })
     if (!ok) return
     try {
       await removeFolder(folder.id)
@@ -224,6 +225,7 @@ export function KnowledgeBaseModal({ open, onClose }: KnowledgeBaseModalProps) {
                       <tr key={folder.id} className={styles.folderRow}>
                         <td className={styles.cellName} title={folder.originalPath ?? folder.name}>
                           {folder.name}
+                          {folder.origin === 'ai' && <span className={styles.aiBadge}>AI-generated</span>}
                         </td>
                         <td>
                           <StatusPill doc={folder} />

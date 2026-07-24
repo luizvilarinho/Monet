@@ -100,6 +100,18 @@ export async function documentsAddWatchedFolder(folderPath: string): Promise<str
   return invoke<string>('documents_add_watched_folder', { folderPath })
 }
 
+export async function documentsEnsureAiFolder(chatFolderId: string, folderName: string): Promise<string> {
+  return invoke<string>('documents_ensure_ai_folder', { chatFolderId, folderName })
+}
+
+export async function documentsWriteAiSourceFile(
+  folderId: string,
+  filename: string,
+  content: string,
+): Promise<void> {
+  await invoke('documents_write_ai_source_file', { folderId, filename, content })
+}
+
 export async function documentsScanWatchedFolder(folderId: string): Promise<void> {
   await invoke('documents_scan_watched_folder', { folderId })
 }

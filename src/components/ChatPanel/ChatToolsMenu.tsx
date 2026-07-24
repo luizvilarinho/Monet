@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Brain } from '@phosphor-icons/react'
+import { Brain, Globe } from '@phosphor-icons/react'
 import type { ChatTools } from '../../hooks/useChat'
 import styles from './ChatToolsMenu.module.css'
 
@@ -40,9 +40,18 @@ export interface ChatToolsMenuProps {
   onToggle: (key: keyof ChatTools, value: boolean) => void
   folderMemory: { enabled: boolean } | null
   onToggleFolderMemory: (value: boolean) => void
+  folderWebResearch?: { enabled: boolean } | null
+  onToggleFolderWebResearch?: (value: boolean) => void
 }
 
-export function ChatToolsMenu({ tools, onToggle, folderMemory, onToggleFolderMemory }: ChatToolsMenuProps) {
+export function ChatToolsMenu({
+  tools,
+  onToggle,
+  folderMemory,
+  onToggleFolderMemory,
+  folderWebResearch = null,
+  onToggleFolderWebResearch = () => {},
+}: ChatToolsMenuProps) {
   const [open, setOpen] = useState(false)
   const wrapRef = useRef<HTMLDivElement | null>(null)
 
@@ -57,7 +66,9 @@ export function ChatToolsMenu({ tools, onToggle, folderMemory, onToggleFolderMem
   }, [open])
 
   const activeCount =
-    TOOLS.filter((t) => tools[t.key]).length + (folderMemory?.enabled ? 1 : 0)
+    TOOLS.filter((t) => tools[t.key]).length +
+    (folderMemory?.enabled ? 1 : 0) +
+    (folderWebResearch?.enabled ? 1 : 0)
 
   return (
     <div className={styles.wrap} ref={wrapRef}>
@@ -135,6 +146,29 @@ export function ChatToolsMenu({ tools, onToggle, folderMemory, onToggleFolderMem
                   aria-label="toggle folder memory"
                   className={folderMemory.enabled ? styles.toggleOn : styles.toggleOff}
                   onClick={() => onToggleFolderMemory(!folderMemory.enabled)}
+                >
+                  <span className={styles.toggleKnob} aria-hidden="true" />
+                </button>
+              </div>
+            )}
+            {folderWebResearch && (
+              <div className={styles.toolRow}>
+                <span className={styles.toolIcon}>
+                  <Globe size={16} />
+                </span>
+                <div className={styles.toolText}>
+                  <span className={styles.toolName}>Web research</span>
+                  <span className={styles.toolDescription}>
+                    Lets the AI save web sources it finds into this folder&apos;s permanent knowledge base, so future conversations don&apos;t need to re-search them.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={folderWebResearch.enabled}
+                  aria-label="toggle web research"
+                  className={folderWebResearch.enabled ? styles.toggleOn : styles.toggleOff}
+                  onClick={() => onToggleFolderWebResearch(!folderWebResearch.enabled)}
                 >
                   <span className={styles.toggleKnob} aria-hidden="true" />
                 </button>

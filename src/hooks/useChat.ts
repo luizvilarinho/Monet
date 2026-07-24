@@ -15,8 +15,9 @@ import {
   type StreamToolCallPayload,
 } from '../lib/openrouter'
 import type { AiModel } from '../types'
-import { formatSearchResults, hasTavilyKey, webSearch } from '../lib/search'
+import { formatSearchResults, hasTavilyKey, webSearch, type SearchResult } from '../lib/search'
 import { runDeepResearch, type DeepResearchPhase } from '../lib/deepResearch'
+import { enqueueLibrarian } from '../lib/librarian'
 
 // ─── System prompt do chat ───────────────────────────────────────────────────
 // Edite aqui para ajustar o comportamento do modelo no modo chat.
@@ -183,6 +184,7 @@ export interface ChatFolder {
   systemPromptMode: SystemPromptMode
   memory: string
   memoryEnabled: boolean
+  webResearchEnabled: boolean
   createdAt: string
   updatedAt: string
 }
@@ -274,7 +276,8 @@ function normalizeFolder(f: ChatFolder): ChatFolder {
     : []
   const memory = typeof raw.memory === 'string' ? raw.memory : ''
   const memoryEnabled = raw.memoryEnabled === true
-  return { ...f, systemPrompt: sp, systemPromptMode: mode, visibleDocumentIds, memory, memoryEnabled }
+  const webResearchEnabled = raw.webResearchEnabled === true
+  return { ...f, systemPrompt: sp, systemPromptMode: mode, visibleDocumentIds, memory, memoryEnabled, webResearchEnabled }
 }
 
 function deriveTitle(messages: ChatMessage[]): string {
@@ -636,6 +639,7 @@ function makeNewFolder(name = 'New folder'): ChatFolder {
     systemPromptMode: 'replace',
     memory: '',
     memoryEnabled: false,
+    webResearchEnabled: false,
     createdAt: now,
     updatedAt: now,
   }
@@ -857,7 +861,9 @@ export interface UseChatResult {
   setFolderVisibleDocuments: (folderId: string, visibleDocumentIds: string[]) => void
   setFolderMemory: (folderId: string, text: string) => void
   setFolderMemoryEnabled: (folderId: string, enabled: boolean) => void
+  setFolderWebResearchEnabled: (folderId: string, enabled: boolean) => void
   folderMemoryUpdatedAt: number | null
+  webSourcesSaved: { count: number; at: number } | null
   moveConversation: (
     convId: string,
     target: { type: 'loose'; index?: number } | { type: 'folder'; folderId: string; index?: number }
@@ -917,8 +923,20 @@ export function useChat(
   const [deepResearchPhase, setDeepResearchPhase] = useState<DeepResearchPhase | null>(null)
   const [webSearchActive, setWebSearchActive] = useState<boolean>(false)
   const [folderMemoryUpdatedAt, setFolderMemoryUpdatedAt] = useState<number | null>(null)
+  const [webSourcesSaved, setWebSourcesSaved] = useState<{ count: number; at: number } | null>(null)
   const toolCallHandlerRef = useRef<((p: StreamToolCallPayload) => void) | null>(null)
   const toolCancelledRef = useRef<boolean>(false)
+  // Contexto do bibliotecário capturado por turno (nos dois caminhos de busca),
+  // consumido em onOpenRouterDone para disparar o pipeline em background.
+  // Vive num ref por hook (o estado in-flight/serialização mora no singleton
+  // src/lib/librarian.ts). Resetado no início de send() e em error/cancel.
+  const librarianContextRef = useRef<{
+    chatFolderId: string
+    folderName: string
+    webResearchEnabled: boolean
+    question: string
+    searchResults: SearchResult[]
+  } | null>(null)
   const [thinkingEnabled, setThinkingEnabled] = useState<boolean>(false)
   const [error, setError] = useState<string | null>(null)
   const activeStreamRef = useRef<{
@@ -1433,6 +1451,19 @@ export function useChat(
     [setFolders]
   )
 
+  const setFolderWebResearchEnabled = useCallback(
+    (folderId: string, enabled: boolean) => {
+      setFolders((prev) =>
+        prev.map((f) =>
+          f.id === folderId
+            ? { ...f, webResearchEnabled: enabled, updatedAt: new Date().toISOString() }
+            : f
+        )
+      )
+    },
+    [setFolders]
+  )
+
   const moveConversation = useCallback(
     (
       convId: string,
@@ -1634,7 +1665,15 @@ export function useChat(
         updateMessages(stream.convId, (msgs) =>
           msgs.map((m) =>
             m.id === stream.assistantId
-              ? { ...m, model: doneModel ?? stream.model, tokensPerSecond: tps }
+              ? {
+                  ...m,
+                  model: doneModel ?? stream.model,
+                  tokensPerSecond: tps,
+                  content:
+                    m.content === ''
+                      ? "The model didn't return a response. Please try again."
+                      : m.content,
+                }
               : m
           )
         )
@@ -1643,6 +1682,47 @@ export function useChat(
         setIsStreaming(false)
         setDeepResearchPhase(null)
         setWebSearchActive(false)
+
+        // Bibliotecário: dispara o pipeline em background no fim do turno,
+        // fire-and-forget (serializado internamente pelo singleton). Consome o
+        // contexto capturado durante a busca (dois caminhos), uma vez por turno.
+        const ctx = librarianContextRef.current
+        librarianContextRef.current = null
+        if (ctx && ctx.webResearchEnabled && ctx.searchResults.length > 0) {
+          // Prioridade-por-citação é best-effort: lê o texto final do assistant
+          // de conversationsRef. Numa rara corrida last-chunk/done o texto pode
+          // estar 1 render atrás — a pior consequência é uma URL citada não
+          // ganhar prioridade na barra conservadora de triagem, nunca um erro de
+          // correção.
+          const finalText =
+            conversationsRef.current
+              .find((c) => c.id === stream.convId)
+              ?.messages.find((m) => m.id === stream.assistantId)?.content ?? ''
+          const citedUrls = ctx.searchResults
+            .map((r) => r.url)
+            .filter((url) => finalText.includes(url))
+          enqueueLibrarian({
+            chatFolderId: ctx.chatFolderId,
+            folderName: ctx.folderName,
+            question: ctx.question,
+            searchResults: ctx.searchResults,
+            citedUrls,
+            onSaved: (count) => setWebSourcesSaved({ count, at: Date.now() }),
+            onFolderRegistered: (aiFolderId) => {
+              setFolders((prev) =>
+                prev.map((f) =>
+                  f.id === ctx.chatFolderId && !f.visibleDocumentIds.includes(aiFolderId)
+                    ? {
+                        ...f,
+                        visibleDocumentIds: [...f.visibleDocumentIds, aiFolderId],
+                        updatedAt: new Date().toISOString(),
+                      }
+                    : f
+                )
+              )
+            },
+          })
+        }
       })
       const err = await onOpenRouterError(({ requestId, message }) => {
         const stream = activeStreamRef.current
@@ -1660,6 +1740,7 @@ export function useChat(
         setIsStreaming(false)
         setDeepResearchPhase(null)
         setWebSearchActive(false)
+        librarianContextRef.current = null
       })
       const toolCall = await onOpenRouterToolCall((p) => toolCallHandlerRef.current?.(p))
       if (cancelled) {
@@ -1694,6 +1775,7 @@ export function useChat(
       }
       setError(null)
       toolCancelledRef.current = false
+      librarianContextRef.current = null
 
       // Garante uma conversa ativa
       let convId = activeId
@@ -1859,6 +1941,7 @@ export function useChat(
           )
         )
         setError(message)
+        librarianContextRef.current = null
         activeStreamRef.current = null
         setIsStreaming(false)
         setDeepResearchPhase(null)
@@ -1870,6 +1953,9 @@ export function useChat(
       const selectedModelInfo = models.find((m) => m.id === model)
       const supportsTools = selectedModelInfo?.supportsTools ?? false
       let searchSystemMessage: ChatMessageInput | null = null
+      // Resultados da busca pré-turno (modelos SEM tools) para o bibliotecário;
+      // consumidos abaixo, depois que containingFolder for resolvido.
+      let preTurnSearchResults: SearchResult[] | null = null
       if (toolsRef.current.deepResearch) {
         const tavilyOk = await hasTavilyKey()
         if (!tavilyOk) {
@@ -1934,6 +2020,7 @@ export function useChat(
                 seen.add(r.url)
                 return true
               })
+              preTurnSearchResults = deduplicated
               const formatted = formatSearchResults(deduplicated)
               if (formatted) {
                 searchSystemMessage = {
@@ -1971,6 +2058,19 @@ export function useChat(
             ? materializedFolder
             : undefined)
         : undefined
+      // Bibliotecário (caminho SEM tools): com containingFolder resolvido,
+      // captura os resultados da busca pré-turno se a pasta tiver web research
+      // ligado. (Deep research não alimenta o bibliotecário: preTurnSearchResults
+      // só é preenchido no branch de webSearch.)
+      if (preTurnSearchResults && containingFolder?.webResearchEnabled) {
+        librarianContextRef.current = {
+          chatFolderId: containingFolder.id,
+          folderName: containingFolder.name,
+          webResearchEnabled: true,
+          question: trimmed,
+          searchResults: preTurnSearchResults,
+        }
+      }
       const folderPrompt = containingFolder?.systemPrompt.trim() ?? ''
       let systemMessages: ChatMessageInput[]
       if (containingFolder && folderPrompt.length > 0) {
@@ -2012,22 +2112,48 @@ export function useChat(
           ? { role: 'system', content: opts.ephemeralContext }
           : null
 
-      // RAG context for folder documents
+      // RAG context for folder documents. visibleDocumentIds pode conter tanto ids
+      // de arquivo individuais (selecao antiga/pontual) quanto ids de pasta
+      // (watched-folder inteira, selecionada via FolderDocumentSelectorModal ou
+      // criada automaticamente pelo pipeline do bibliotecario). Pastas sao expandidas
+      // DINAMICAMENTE para os filhos atuais a cada busca — nao existe mais
+      // snapshot estatico, entao arquivos novos aparecem sem o usuario reabrir o
+      // modal. Pastas com origin === 'ai' so entram quando webResearchEnabled
+      // estiver ligado, mesmo que os arquivos continuem existindo em disco.
       let ragSystemMessage: ChatMessageInput | null = null
-      const folderDocIds = containingFolder?.visibleDocumentIds ?? []
-      if (folderDocIds.length > 0 && trimmed.trim()) {
+      const rawFolderDocIds = containingFolder?.visibleDocumentIds ?? []
+      if (rawFolderDocIds.length > 0 && trimmed.trim()) {
         try {
-          const { embedText, documentsSearchByIds } = await import('../lib/documents')
-          const embedding = await embedText(trimmed)
-          const topK = 5
-          const chunks = await documentsSearchByIds(folderDocIds, embedding, topK)
-          if (chunks.length > 0) {
-            const formatted = chunks
-              .map((c) => `[${c.documentName}]\n${c.snippet}`)
-              .join('\n\n---\n\n')
-            ragSystemMessage = {
-              role: 'system',
-              content: `The following excerpts from your knowledge base documents are relevant to this conversation:\n\n${formatted}`,
+          const { embedText, documentsSearchByIds, documentsListGlobal } = await import('../lib/documents')
+          const allDocs = await documentsListGlobal()
+          const docById = new Map(allDocs.map((d) => [d.id, d]))
+          const expandedIds = new Set<string>()
+          for (const id of rawFolderDocIds) {
+            const doc = docById.get(id)
+            if (doc?.docType === 'folder') {
+              if (doc.origin === 'ai' && !containingFolder?.webResearchEnabled) continue
+              for (const child of allDocs) {
+                if (child.parentFolderId === id && child.docType === 'file' && child.status === 'available') {
+                  expandedIds.add(child.id)
+                }
+              }
+            } else {
+              expandedIds.add(id)
+            }
+          }
+          const folderDocIds = Array.from(expandedIds)
+          if (folderDocIds.length > 0) {
+            const embedding = await embedText(trimmed)
+            const topK = 5
+            const chunks = await documentsSearchByIds(folderDocIds, embedding, topK)
+            if (chunks.length > 0) {
+              const formatted = chunks
+                .map((c) => `[${c.documentName}]\n${c.snippet}`)
+                .join('\n\n---\n\n')
+              ragSystemMessage = {
+                role: 'system',
+                content: `The following excerpts from your knowledge base documents are relevant to this conversation:\n\n${formatted}`,
+              }
             }
           }
         } catch (err) {
@@ -2139,15 +2265,21 @@ export function useChat(
       }
       const toolsPayload: object[] | undefined = toolDefs.length > 0 ? toolDefs : undefined
 
-      // Register tool call handler for this turn
+      // Register tool call handler for this turn. Single round: the tool runs,
+      // then a 2nd request WITHOUT tools is dispatched to force the final text
+      // answer. Persisting web sources is no longer the model's job — it runs
+      // out of band via the librarian pipeline (see librarianContextRef +
+      // onOpenRouterDone).
       if (toolsPayload) {
         toolCallHandlerRef.current = async (p: StreamToolCallPayload) => {
           if (p.requestId !== requestId) return
           if (!activeStreamRef.current) return
 
-          // Clear streaming state while tool executes
-          activeStreamRef.current = null
-          setIsStreaming(false)
+          // NÃO zera activeStreamRef/isStreaming aqui: zerar cedo destrava
+          // `canSend` (ChatPanel) durante a execução da tool, permitindo que um
+          // send() novo sobrescreva os refs únicos e orfã este turno (bug #3).
+          // Só done/error/failOnAssistant/cancel (fim real) zeram esses dois; a
+          // 2ª rodada os reatribui logo abaixo.
 
           try {
             let toolSearchMessage: ChatMessageInput | null = null
@@ -2195,6 +2327,19 @@ export function useChat(
                   seen.add(r.url)
                   return true
                 })
+                // Captura os resultados para o pipeline do bibliotecário (disparo
+                // no fim do turno, em onOpenRouterDone) — só quando a pasta tem
+                // web research ligado. Sobrescrever é aceitável: o pipeline roda
+                // uma vez por turno com o último conjunto.
+                if (containingFolder?.webResearchEnabled) {
+                  librarianContextRef.current = {
+                    chatFolderId: containingFolder.id,
+                    folderName: containingFolder.name,
+                    webResearchEnabled: true,
+                    question: trimmed,
+                    searchResults: deduplicated,
+                  }
+                }
                 const formatted = formatSearchResults(deduplicated)
                 if (formatted) {
                   toolSearchMessage = {
@@ -2281,6 +2426,7 @@ export function useChat(
     toolCallHandlerRef.current = null
     setDeepResearchPhase(null)
     setWebSearchActive(false)
+    librarianContextRef.current = null
 
     const stream = activeStreamRef.current
     if (!stream) return
@@ -2341,7 +2487,9 @@ export function useChat(
     setFolderVisibleDocuments,
     setFolderMemory,
     setFolderMemoryEnabled,
+    setFolderWebResearchEnabled,
     folderMemoryUpdatedAt,
+    webSourcesSaved,
     moveConversation,
     removeConversationFromFolder,
     reorderFolders,

@@ -88,6 +88,55 @@ export async function webSearch(query: string, maxResults = 5, includeRawContent
   })
 }
 
+export async function tavilyExtract(url: string): Promise<{ url: string; rawContent: string } | null> {
+  const key = await getTavilyKey()
+  if (!key) throw new Error('Tavily key not configured')
+
+  const res = await fetch('https://api.tavily.com/extract', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${key}`,
+    },
+    body: JSON.stringify({
+      urls: [url],
+      format: 'markdown',
+    }),
+  })
+
+  if (!res.ok) {
+    throw new Error(`Tavily error ${res.status}`)
+  }
+
+  const data: unknown = await res.json()
+  if (
+    !data ||
+    typeof data !== 'object' ||
+    !Array.isArray((data as { results?: unknown }).results)
+  ) {
+    throw new Error('Tavily: unexpected response format')
+  }
+
+  const results = (data as { results: unknown[] }).results
+  const first = results[0]
+  if (!first || typeof first !== 'object') return null
+  const r = first as Record<string, unknown>
+  const rawContent = typeof r.raw_content === 'string' ? r.raw_content : ''
+  if (!rawContent) return null
+  return {
+    url: typeof r.url === 'string' ? r.url : url,
+    rawContent,
+  }
+}
+
+export async function hashUrlToFilename(url: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(url))
+  const hex = Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')
+  return `${hex}.md`
+}
+
 export function formatSearchResults(results: SearchResult[]): string {
   if (!results.length) return ''
   const lines = results.map((r, i) => {

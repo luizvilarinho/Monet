@@ -110,15 +110,11 @@ export function FolderDocumentSelectorModal({
       (d) => d.parentFolderId === kbFolder.id && d.docType === 'file' && d.status === 'available',
     )
     if (children.length === 0) return
-    const allSelected = children.every((c) => selectedIds.has(c.id))
-    const next = !allSelected
     setSelectedIds((prev) => {
-      const updated = new Set(prev)
-      for (const c of children) {
-        if (next) updated.add(c.id)
-        else updated.delete(c.id)
-      }
-      return updated
+      const next = new Set(prev)
+      if (next.has(kbFolder.id)) next.delete(kbFolder.id)
+      else next.add(kbFolder.id)
+      return next
     })
   }
 
@@ -170,15 +166,13 @@ export function FolderDocumentSelectorModal({
                 const children = documents.filter(
                   (d) => d.parentFolderId === kbFolder.id && d.docType === 'file' && d.status === 'available',
                 )
-                const allSelected = children.length > 0 && children.every((c) => selectedIds.has(c.id))
-                const someSelected = children.some((c) => selectedIds.has(c.id))
-                const indeterminate = someSelected && !allSelected
+                const checked = selectedIds.has(kbFolder.id)
                 return (
                   <FolderItem
                     key={kbFolder.id}
                     folder={kbFolder}
-                    checked={allSelected}
-                    indeterminate={indeterminate}
+                    checked={checked}
+                    indeterminate={false}
                     disabled={children.length === 0}
                     onToggle={() => toggleKbFolder(kbFolder)}
                   />

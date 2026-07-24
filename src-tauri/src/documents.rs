@@ -47,6 +47,9 @@ const CHUNK_OVERLAP_CHARS: usize = 400;
 const EMBED_MODEL: &str = "openai/text-embedding-3-small";
 const EMBED_URL: &str = "https://openrouter.ai/api/v1/embeddings";
 const MAX_FILE_BYTES: u64 = 50 * 1024 * 1024;
+// Teto específico do auto-save do bibliotecário (PDFs de acesso aberto). Separado
+// e mais estrito que MAX_FILE_BYTES (usado por uploads do usuário).
+const LIBRARIAN_MAX_PDF_BYTES: u64 = 10 * 1024 * 1024;
 
 pub struct DocDb(Mutex<Option<Connection>>);
 
@@ -80,6 +83,7 @@ pub struct DocumentInfo {
     parent_folder_id: Option<String>,
     last_modified_ms: Option<i64>,
     is_external: bool,
+    origin: String,
 }
 
 #[derive(Serialize)]
@@ -120,6 +124,16 @@ fn documents_dir(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|e| format!("app_data_dir unavailable: {}", e))?
         .join("documents");
     fs::create_dir_all(&dir).map_err(|e| format!("failed to create documents folder: {}", e))?;
+    Ok(dir)
+}
+
+fn ai_web_folder_dir(app: &AppHandle, safe_chat_folder_id: &str) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir unavailable: {}", e))?
+        .join("web-research")
+        .join(safe_chat_folder_id);
     Ok(dir)
 }
 
@@ -782,7 +796,7 @@ pub async fn documents_list_global(
         let mut stmt = conn
             .prepare(
                 "SELECT id, name, original_path, mime, size, status, error_message, created_at, updated_at,
-                        type, parent_folder_id, last_modified_ms, is_external
+                        type, parent_folder_id, last_modified_ms, is_external, origin
                  FROM documents ORDER BY created_at DESC",
             )
             .map_err(|e| format!("failed to prepare listing: {}", e))?;
@@ -802,6 +816,7 @@ pub async fn documents_list_global(
                     parent_folder_id: r.get(10)?,
                     last_modified_ms: r.get(11)?,
                     is_external: r.get::<_, i64>(12).map(|v| v != 0).unwrap_or(false),
+                    origin: r.get(13)?,
                 })
             })
             .map_err(|e| format!("failed to list: {}", e))?;
@@ -1013,6 +1028,199 @@ pub async fn documents_add_watched_folder(
     });
 
     Ok(id)
+}
+
+#[tauri::command]
+pub async fn documents_ensure_ai_folder(
+    app: AppHandle,
+    state: State<'_, DocDb>,
+    chat_folder_id: String,
+    folder_name: String,
+) -> Result<String, String> {
+    // Sanitiza chat_folder_id com o mesmo padrão de save_chat_doc (lib.rs):
+    // file_name() extrai apenas o último componente; se o resultado diferir
+    // do input, há tentativa de escapar do diretório web-research.
+    let safe_id = Path::new(&chat_folder_id)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| "Invalid chat folder id".to_string())?;
+    if safe_id != chat_folder_id {
+        return Err("Invalid chat folder id".into());
+    }
+
+    let dir = ai_web_folder_dir(&app, safe_id)?;
+    let path_str = dir.to_string_lossy().to_string();
+
+    let existing_id: Option<String> = with_doc_db(&app, &state, |conn| {
+        match conn.query_row(
+            "SELECT id FROM documents WHERE type = 'folder' AND original_path = ?1",
+            params![path_str],
+            |r| r.get::<_, String>(0),
+        ) {
+            Ok(id) => Ok(Some(id)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(format!("failed to query folder: {}", e)),
+        }
+    })?;
+
+    if let Some(id) = existing_id {
+        return Ok(id);
+    }
+
+    fs::create_dir_all(&dir).map_err(|e| format!("failed to create folder: {}", e))?;
+
+    let id = Uuid::new_v4().to_string();
+    let name = format!("Web research — {}", folder_name);
+    let now = now_ms();
+
+    with_doc_db(&app, &state, |conn| {
+        conn.execute(
+            "INSERT INTO documents (id, name, original_path, mime, size, status, error_message,
+                                    created_at, updated_at, type, parent_folder_id,
+                                    last_modified_ms, is_external, origin)
+             VALUES (?1, ?2, ?3, 'inode/directory', 0, 'available', NULL,
+                     ?4, ?4, 'folder', NULL, NULL, 1, 'ai')",
+            params![id, name, path_str, now],
+        )
+        .map_err(|e| format!("failed to insert folder: {}", e))?;
+        Ok(())
+    })?;
+
+    Ok(id)
+}
+
+#[tauri::command]
+pub async fn documents_write_ai_source_file(
+    app: AppHandle,
+    state: State<'_, DocDb>,
+    folder_id: String,
+    filename: String,
+    content: String,
+) -> Result<(), String> {
+    if content.trim().is_empty() {
+        return Err("Empty file".into());
+    }
+    if content.len() as u64 > MAX_FILE_BYTES {
+        return Err(format!(
+            "Content too large ({:.1} MB). Limit: {} MB.",
+            content.len() as f64 / (1024.0 * 1024.0),
+            MAX_FILE_BYTES / (1024 * 1024)
+        ));
+    }
+
+    let (original_path, origin): (String, String) = with_doc_db(&app, &state, |conn| {
+        conn.query_row(
+            "SELECT original_path, origin FROM documents WHERE id = ?1 AND type = 'folder'",
+            params![folder_id],
+            |r| Ok((r.get::<_, Option<String>>(0)?.unwrap_or_default(), r.get::<_, String>(1)?)),
+        )
+        .map_err(|e| format!("folder not found: {}", e))
+    })?;
+
+    if origin != "ai" {
+        return Err("Target folder is not AI-managed".into());
+    }
+
+    let safe_name = Path::new(&filename)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| "Invalid filename".to_string())?;
+    if safe_name != filename || !safe_name.ends_with(".md") {
+        return Err("Invalid filename".into());
+    }
+
+    write_bytes_atomic(&original_path, safe_name, content.as_bytes())?;
+    Ok(())
+}
+
+// Escrita atômica: grava num arquivo temporário no MESMO diretório e faz
+// rename para o nome final. O sufixo `.tmp` não é reconhecido pelo scan
+// (detect_mime retorna None), então o arquivo parcial nunca é indexado se o
+// app fechar no meio. No Windows, std::fs::rename usa MOVEFILE_REPLACE_EXISTING,
+// substituindo o destino existente atomicamente no mesmo volume.
+fn write_bytes_atomic(dir: &str, safe_name: &str, bytes: &[u8]) -> Result<(), String> {
+    let final_path = Path::new(dir).join(safe_name);
+    let tmp_path = Path::new(dir).join(format!("{}.tmp", safe_name));
+    fs::write(&tmp_path, bytes).map_err(|e| format!("failed to write file: {}", e))?;
+    if let Err(e) = fs::rename(&tmp_path, &final_path) {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(format!("failed to write file: {}", e));
+    }
+    Ok(())
+}
+
+// Baixa um PDF de acesso aberto, valida a assinatura %PDF e o grava atômico na
+// pasta de KB da IA. Os bytes nunca cruzam o IPC — o download acontece aqui e o
+// arquivo é escrito direto no disco. Espelha o cabeçalho de resolução/gate/
+// sanitização de documents_write_ai_source_file, com extensão `.pdf`.
+#[tauri::command]
+pub async fn librarian_fetch_and_save_pdf(
+    app: AppHandle,
+    state: State<'_, DocDb>,
+    folder_id: String,
+    url: String,
+    filename: String,
+) -> Result<(), String> {
+    let (original_path, origin): (String, String) = with_doc_db(&app, &state, |conn| {
+        conn.query_row(
+            "SELECT original_path, origin FROM documents WHERE id = ?1 AND type = 'folder'",
+            params![folder_id],
+            |r| Ok((r.get::<_, Option<String>>(0)?.unwrap_or_default(), r.get::<_, String>(1)?)),
+        )
+        .map_err(|e| format!("folder not found: {}", e))
+    })?;
+
+    if origin != "ai" {
+        return Err("Target folder is not AI-managed".into());
+    }
+
+    let safe_name = Path::new(&filename)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| "Invalid filename".to_string())?;
+    if safe_name != filename || !safe_name.ends_with(".pdf") {
+        return Err("Invalid filename".into());
+    }
+
+    let client = reqwest::Client::builder()
+        .user_agent("Monet/0.1 (mailto:luizvilarinho@gmail.com)")
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("http client: {}", e))?;
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("download failed: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("download failed: HTTP {}", resp.status()));
+    }
+    // Descarta cedo, sem baixar, se o Content-Length já ultrapassa o teto.
+    if let Some(len) = resp.content_length() {
+        if len > LIBRARIAN_MAX_PDF_BYTES {
+            return Err(format!(
+                "PDF too large ({:.1} MB). Limit: {} MB.",
+                len as f64 / (1024.0 * 1024.0),
+                LIBRARIAN_MAX_PDF_BYTES / (1024 * 1024)
+            ));
+        }
+    }
+    let bytes = resp.bytes().await.map_err(|e| format!("read body: {}", e))?;
+
+    // Sempre valida o tamanho real (Content-Length pode faltar ou mentir).
+    if bytes.len() as u64 > LIBRARIAN_MAX_PDF_BYTES {
+        return Err(format!(
+            "PDF too large ({:.1} MB). Limit: {} MB.",
+            bytes.len() as f64 / (1024.0 * 1024.0),
+            LIBRARIAN_MAX_PDF_BYTES / (1024 * 1024)
+        ));
+    }
+    if !bytes.starts_with(b"%PDF") {
+        return Err("Downloaded content is not a PDF".into());
+    }
+
+    write_bytes_atomic(&original_path, safe_name, &bytes)?;
+    Ok(())
 }
 
 fn delete_folder_child(app: &AppHandle, doc_id: &str) -> Result<(), String> {
@@ -1286,6 +1494,18 @@ pub async fn documents_delete_watched_folder(
     state: State<'_, DocDb>,
     folder_id: String,
 ) -> Result<(), String> {
+    let (folder_path, folder_origin): (Option<String>, String) = with_doc_db(&app, &state, |conn| {
+        match conn.query_row(
+            "SELECT original_path, origin FROM documents WHERE id = ?1 AND type = 'folder'",
+            params![folder_id],
+            |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, String>(1)?)),
+        ) {
+            Ok(v) => Ok(v),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok((None, "user".to_string())),
+            Err(e) => Err(format!("failed to query folder: {}", e)),
+        }
+    })?;
+
     // Fetch all children
     let children: Vec<String> = with_doc_db(&app, &state, |conn| {
         let mut stmt = conn
@@ -1319,7 +1539,15 @@ pub async fn documents_delete_watched_folder(
         )
         .map_err(|e| format!("failed to delete folder: {}", e))?;
         Ok(())
-    })
+    })?;
+
+    if folder_origin == "ai" {
+        if let Some(path) = folder_path {
+            let _ = fs::remove_dir_all(PathBuf::from(path));
+        }
+    }
+
+    Ok(())
 }
 
 pub async fn scan_all_watched_folders_on_startup(app: AppHandle) {
