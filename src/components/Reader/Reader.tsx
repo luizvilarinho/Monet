@@ -18,20 +18,16 @@ import type {
   Book,
   BookHighlight,
   BookHighlightRect,
-  BookQuote,
   Note,
   Notebook,
 } from '../../types'
 import { storage } from '../../storage'
 import { booksReadFile } from '../../lib/books'
 import { openPdf, TextLayer, type PDFDocumentProxy } from '../../lib/pdf'
+import { useBookQuotes } from '../../hooks/useBookQuotes'
 import { useConfirm } from '../../hooks/useConfirm'
-import { getReaderNoteLink } from '../../lib/readerNoteLink'
-import {
-  appendQuoteToContent,
-  buildQuoteBlock,
-  QuoteToNoteModal,
-} from './QuoteToNoteModal'
+import { useHighlights } from '../../hooks/useHighlights'
+import { QuoteToNoteModal } from './QuoteToNoteModal'
 import { ReaderChatPanel } from './ReaderChatPanel'
 import { ReaderNotesPanel } from './ReaderNotesPanel'
 import styles from './Reader.module.css'
@@ -69,7 +65,6 @@ const HIGHLIGHT_COLOR_NAMES: Record<string, string> = {
   '#F48FB1': 'pink',
 }
 const DEFAULT_HIGHLIGHT_COLOR = HIGHLIGHT_COLORS[0]
-const SAVE_TOAST_MS = 2500
 
 // Estado do toggle da coluna lateral (Chat/Notes), persistido entre sessões.
 // Mesma chave/valor de antes (CHAT_OPEN_KEY) — preserva a preferência já
@@ -401,13 +396,21 @@ export function Reader({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const [highlights, setHighlights] = useState<BookHighlight[]>([])
+  const {
+    highlights,
+    orderedHighlights,
+    filteredHighlights,
+    colorFilter,
+    setColorFilter,
+    persistHighlight,
+    removeHighlight,
+    changeColor,
+  } = useHighlights(book.id)
   const [selection, setSelection] = useState<SelectionState | null>(null)
   const [activeColor, setActiveColor] = useState<string>(DEFAULT_HIGHLIGHT_COLOR)
   const [removalCandidate, setRemovalCandidate] = useState<RemovalCandidate | null>(
     null,
   )
-  const [colorFilter, setColorFilter] = useState<string | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchIndexReady, setSearchIndexReady] = useState(false)
@@ -435,13 +438,17 @@ export function Reader({
     text: string
     page: number
   } | null>(null)
-  const [quoteModalOpen, setQuoteModalOpen] = useState(false)
-  const [quoteContext, setQuoteContext] = useState<{
-    text: string
-    page: number
-  } | null>(null)
-  const [saveToast, setSaveToast] = useState<string | null>(null)
-  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const {
+    copyCitationAbout,
+    modal: quoteModal,
+    toast: saveToast,
+  } = useBookQuotes({
+    bookId: book.id,
+    bookTitle: book.title,
+    notes,
+    notebooks,
+    onSaveNote,
+  })
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const textLayerRef = useRef<HTMLDivElement>(null)
@@ -492,10 +499,6 @@ export function Reader({
   onBookChangeRef.current = onBookChange
   const onLoadErrorRef = useRef(onLoadError)
   onLoadErrorRef.current = onLoadError
-  const notebooksRef = useRef(notebooks)
-  notebooksRef.current = notebooks
-  const notesRef = useRef(notes)
-  notesRef.current = notes
 
   // Carga do documento (uma vez por livro) + last_opened_at.
   useEffect(() => {
@@ -538,27 +541,17 @@ export function Reader({
     }
   }, [])
 
-  // Carga de grifos do livro ao abrir; limpa ao trocar de livro (id diferente
-  // não ocorre aqui — o Reader é desmontado/remontado pelo Library — mas a
-  // limpeza protege contra casos de borda como React.StrictMode em dev).
+  // Estado de leitura específico do PDF, zerado ao trocar de livro. A carga
+  // dos grifos e a limpeza de `colorFilter` ficam no useHighlights, que roda
+  // no mesmo `book.id` (id diferente não ocorre aqui — o Reader é
+  // desmontado/remontado pelo Library — mas a limpeza protege contra casos de
+  // borda como React.StrictMode em dev).
   useEffect(() => {
-    let cancelled = false
-    setHighlights([])
     setSelection(null)
     setRemovalCandidate(null)
-    setColorFilter(null)
     setSearchOpen(false)
     setSearchQuery('')
     setActiveMatchIndex(-1)
-    void storage
-      .getHighlights(book.id)
-      .then((list) => {
-        if (!cancelled) setHighlights(list)
-      })
-      .catch((err) => console.error('failed to load highlights', err))
-    return () => {
-      cancelled = true
-    }
   }, [book.id])
 
   // Persistência do toggle e da aba ativa da coluna lateral.
@@ -1122,19 +1115,6 @@ export function Reader({
     [highlights, pageNum],
   )
 
-  const orderedHighlights = useMemo(() => {
-    // Ordem fixa: página asc, depois mais recente primeiro dentro da página.
-    return [...highlights].sort((a, b) => {
-      if (a.page !== b.page) return a.page - b.page
-      return b.createdAt - a.createdAt
-    })
-  }, [highlights])
-
-  const filteredHighlights = useMemo(
-    () => (colorFilter ? orderedHighlights.filter((h) => h.color === colorFilter) : orderedHighlights),
-    [orderedHighlights, colorFilter],
-  )
-
   const normalizedQuery = searchQuery.trim().toLowerCase()
 
   const matchesByPage = useMemo<PageMatchCount[]>(() => {
@@ -1177,53 +1157,12 @@ export function Reader({
     el?.scrollIntoView({ block: 'center', inline: 'nearest' })
   }, [currentMatch, pageMatchRects, pageNum])
 
-  // ─── Helpers de persistência de grifos ─────────────────────────────────
-  async function persistHighlight(h: BookHighlight) {
-    setHighlights((prev) => {
-      const i = prev.findIndex((x) => x.id === h.id)
-      if (i >= 0) {
-        const next = prev.slice()
-        next[i] = h
-        return next
-      }
-      return [...prev, h]
-    })
-    try {
-      await storage.saveHighlight(h)
-    } catch (err) {
-      console.error('failed to save highlight', err)
-    }
-  }
-
-  async function removeHighlight(id: string) {
-    setHighlights((prev) => prev.filter((h) => h.id !== id))
-    try {
-      await storage.deleteHighlight(id)
-    } catch (err) {
-      console.error('failed to delete highlight', err)
-    }
-  }
-
+  // Trocar a cor pelo popover fecha o popover antes de qualquer coisa —
+  // inclusive quando a cor clicada é a que o grifo já tem.
   function handleChangeHighlightColor(h: BookHighlight, color: string) {
     setRemovalCandidate(null)
-    if (color === h.color) return
-    void persistHighlight({ ...h, color })
+    changeColor(h, color)
   }
-
-  function showSaveToast(message: string) {
-    if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
-    setSaveToast(message)
-    toastTimerRef.current = setTimeout(() => {
-      setSaveToast(null)
-      toastTimerRef.current = null
-    }, SAVE_TOAST_MS)
-  }
-
-  useEffect(() => {
-    return () => {
-      if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
-    }
-  }, [])
 
   // ─── Retângulos de destaque das ocorrências de busca ──────────────────
   const computeSearchMatchRects = useCallback(() => {
@@ -1383,43 +1322,6 @@ export function Reader({
     }
   }
 
-  // Anexa a citação direto na nota já vinculada ao livro (aba "Notes"),
-  // sem passar pelo QuoteToNoteModal. Reaproveita as mesmas funções de
-  // montagem de bloco/conteúdo do modal e o mesmo fluxo de persistência
-  // (onSaveNote + handleSavedQuote) para manter paridade de comportamento
-  // (toast, registro do BookQuote) com o salvamento via modal.
-  async function appendQuoteDirectlyToNote(note: Note, text: string, page: number) {
-    const { content: block } = buildQuoteBlock(text, book.title, page)
-    const newContent = appendQuoteToContent(note.content, block)
-    await onSaveNote({ ...note, content: newContent, updatedAt: Date.now() })
-    const quote: BookQuote = {
-      id: crypto.randomUUID(),
-      bookId: book.id,
-      page,
-      text,
-      targetNoteId: note.id,
-      createdAt: Date.now(),
-    }
-    await handleSavedQuote(quote)
-  }
-
-  function copyCitationAbout(text: string, page: number) {
-    const link = getReaderNoteLink(book.id)
-    const note = link?.noteId
-      ? notesRef.current.find((n) => n.id === link.noteId)
-      : undefined
-    if (note) {
-      appendQuoteDirectlyToNote(note, text, page).catch((err) => {
-        console.error('failed to append quote to linked note', err)
-        setQuoteContext({ text, page })
-        setQuoteModalOpen(true)
-      })
-      return
-    }
-    setQuoteContext({ text, page })
-    setQuoteModalOpen(true)
-  }
-
   function handleCopyCitation() {
     if (!selection) return
     copyCitationAbout(selection.text, pageNum)
@@ -1521,28 +1423,6 @@ export function Reader({
     })
     if (!ok) return
     await removeHighlight(h.id)
-  }
-
-  // ─── Citação salva ────────────────────────────────────────────────────
-  async function handleSavedQuote(quote: BookQuote) {
-    try {
-      await storage.saveQuote(quote)
-    } catch (err) {
-      console.error('failed to save quote', err)
-    }
-    const note = notesRef.current.find((n) => n.id === quote.targetNoteId)
-    const notebookId = note?.notebookId ?? null
-    if (notebookId) {
-      const notebook = notebooksRef.current.find((x) => x.id === notebookId)
-      const noteTitle = note?.title.trim() || 'note'
-      const nbName = notebook?.name ?? 'notebook'
-      showSaveToast(`Saved to ${nbName} / ${noteTitle}`)
-    }
-  }
-
-  function handleCloseQuoteModal() {
-    setQuoteModalOpen(false)
-    setQuoteContext(null)
   }
 
   // ─── Posicionamento da toolbar e popover ──────────────────────────────
@@ -2197,20 +2077,20 @@ export function Reader({
         />
       </div>
 
-      {quoteContext && quoteModalOpen && (
+      {quoteModal && (
         <QuoteToNoteModal
-          open={quoteModalOpen}
+          open={quoteModal.open}
           notebooks={notebooks}
           notes={notes}
           onCreateNotebook={onCreateNotebook}
           onCreateNote={onCreateNote}
           onSaveNote={onSaveNote}
-          quoteText={quoteContext.text}
+          quoteText={quoteModal.quoteText}
           bookTitle={book.title}
-          page={quoteContext.page}
+          page={quoteModal.page}
           bookId={book.id}
-          onSaved={handleSavedQuote}
-          onClose={handleCloseQuoteModal}
+          onSaved={quoteModal.onSaved}
+          onClose={quoteModal.onClose}
         />
       )}
 
