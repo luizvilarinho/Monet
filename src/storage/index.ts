@@ -36,7 +36,6 @@ export interface StorageAdapter {
   deleteHighlight(id: string): Promise<void>
   deleteHighlightsByBook(bookId: string): Promise<void>
 
-  getQuotes(bookId: string): Promise<BookQuote[]>
   saveQuote(quote: BookQuote): Promise<void>
   deleteQuotesByBook(bookId: string): Promise<void>
 

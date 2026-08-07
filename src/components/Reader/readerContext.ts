@@ -1,13 +1,12 @@
-import type { BookHighlight, BookQuote } from '../../types'
+import type { BookHighlight } from '../../types'
 
 // ─── Builder do bloco de contexto de leitura ────────────────────────────────
 // Função pura (sem I/O): monta o bloco EFEMERO anexado a cada envio do chat
 // do leitor. Orçamentos garantem que o bloco nunca estoura tokens; seções
-// vazias (sem grifos/cópias) são omitidas.
+// vazias (sem grifos) são omitidas.
 
 const PAGE_TEXT_BUDGET = 6000
-const MAX_HIGHLIGHTS = 20
-const MAX_QUOTES = 20
+const MAX_HIGHLIGHTS = 10
 const ITEM_TEXT_BUDGET = 300
 
 export interface ReaderContextInput {
@@ -19,8 +18,6 @@ export interface ReaderContextInput {
   pageText: string | null
   // Como vêm do estado do Reader (todas as páginas, ordem indefinida)
   highlights: BookHighlight[]
-  // Como vêm de storage.getQuotes (created_at DESC)
-  quotes: BookQuote[]
 }
 
 function normalizeWhitespace(s: string): string {
@@ -70,19 +67,6 @@ export function buildReaderContext(input: ReaderContextInput): string {
     for (const h of shown) {
       const text = truncateWithMarker(normalizeWhitespace(h.text), ITEM_TEXT_BUDGET)
       lines.push(`- [p. ${h.page}, ${formatDate(h.createdAt)}] "${text}"`)
-    }
-  }
-
-  if (input.quotes.length > 0) {
-    // Já vêm em created_at DESC do storage; aplica só o teto.
-    const shown = input.quotes.slice(0, MAX_QUOTES)
-    lines.push('')
-    lines.push(
-      `Copied passages (most recent first, ${shown.length} of ${input.quotes.length}):`
-    )
-    for (const q of shown) {
-      const text = truncateWithMarker(normalizeWhitespace(q.text), ITEM_TEXT_BUDGET)
-      lines.push(`- [p. ${q.page}, ${formatDate(q.createdAt)}] "${text}"`)
     }
   }
 

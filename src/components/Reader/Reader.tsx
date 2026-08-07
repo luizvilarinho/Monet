@@ -1334,47 +1334,6 @@ export function Reader({
     return () => document.removeEventListener('mousedown', onDocMouseDown)
   }, [])
 
-  // Registra uma cópia feita DENTRO do leitor como BookQuote sem nota alvo
-  // (contexto do chat). Fire-and-forget: não bloqueia nem degrada a UX de
-  // copiar; falha é apenas logada. NUNCA lê o clipboard do sistema — só
-  // eventos de cópia originados no leitor.
-  const recordCopiedText = useCallback(
-    (text: string) => {
-      void storage
-        .saveQuote({
-          id: crypto.randomUUID(),
-          bookId: book.id,
-          page: pageNum,
-          text,
-          targetNoteId: null,
-          createdAt: Date.now(),
-        })
-        .catch((err) => console.error('failed to record copy as quote', err))
-    },
-    [book.id, pageNum],
-  )
-
-  // Ctrl+C / cópia nativa sobre seleção DENTRO da text layer também vira
-  // BookQuote (contexto do chat). Não chama preventDefault — a cópia nativa
-  // segue normal — e NUNCA lê o clipboard do SO. O botão Copy da toolbar usa
-  // navigator.clipboard.writeText, que NÃO dispara o evento 'copy', então não
-  // há registro duplicado entre os dois caminhos.
-  useEffect(() => {
-    function onCopy() {
-      const textContainer = textLayerRef.current
-      if (!textContainer) return
-      const sel = window.getSelection()
-      if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return
-      const range = sel.getRangeAt(0)
-      if (!textContainer.contains(range.commonAncestorContainer)) return
-      const text = sel.toString().trim()
-      if (!text) return
-      recordCopiedText(text)
-    }
-    document.addEventListener('copy', onCopy)
-    return () => document.removeEventListener('copy', onCopy)
-  }, [recordCopiedText])
-
   // ─── Ações da toolbar ─────────────────────────────────────────────────
   async function handleHighlight(color: string) {
     if (!selection) return
@@ -1400,7 +1359,6 @@ export function Reader({
     } catch (err) {
       console.error('clipboard write failed', err)
     }
-    recordCopiedText(text)
     setSelection(null)
     window.getSelection()?.removeAllRanges()
   }

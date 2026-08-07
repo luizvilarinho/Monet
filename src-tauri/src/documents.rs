@@ -262,7 +262,13 @@ fn chunk_text(text: &str) -> Vec<String> {
     let push_with_overlap = |chunks: &mut Vec<String>, current: &mut String| {
         let chunk = current.trim().to_string();
         if !chunk.is_empty() {
-            let overlap = take_tail_chars(&chunk, CHUNK_OVERLAP_CHARS);
+            // Overlap proporcional ao tamanho do chunk (max 1/4 dele), nao um
+            // valor fixo: em regioes de paragrafos curtos (ex.: sumario do
+            // livro, quebrado linha a linha), CHUNK_OVERLAP_CHARS fixo podia
+            // ser 60-90% de um chunk pequeno, gerando chunks quase-duplicados
+            // que dominavam o top-k da busca vetorial.
+            let overlap_len = CHUNK_OVERLAP_CHARS.min(chunk.chars().count() / 4);
+            let overlap = take_tail_chars(&chunk, overlap_len);
             chunks.push(chunk);
             *current = overlap;
             if !current.is_empty() {
@@ -946,7 +952,7 @@ pub async fn documents_search_by_ids(
         .prepare(&sql)
         .map_err(|e| format!("failed to prepare search: {}", e))?;
 
-    // Monta lista de parâmetros: [embedding_bytes, scan_k, doc_ids..., target_k]
+    // Monta lista de parâmetros: [embedding_bytes, scan_k, doc_ids..., scan_k]
     let embedding_bytes = query_embedding.as_bytes().to_vec();
     let mut binders: Vec<Box<dyn rusqlite::ToSql>> = Vec::with_capacity(3 + document_ids.len());
     binders.push(Box::new(embedding_bytes));
@@ -954,7 +960,9 @@ pub async fn documents_search_by_ids(
     for id in &document_ids {
         binders.push(Box::new(id.clone()));
     }
-    binders.push(Box::new(target_k as i64));
+    // Traz ate scan_k candidatos (nao so target_k) para sobrar pool suficiente
+    // pro filtro de vizinhanca abaixo escolher substitutos quando descarta um.
+    binders.push(Box::new(scan_k));
 
     let rows = stmt
         .query_map(params_from_iter(binders.iter().map(|b| b.as_ref())), |r| {
@@ -968,11 +976,43 @@ pub async fn documents_search_by_ids(
         })
         .map_err(|e| format!("search failed: {}", e))?;
 
-    let mut out = Vec::new();
+    let mut candidates = Vec::new();
     for r in rows {
-        out.push(r.map_err(|e| format!("invalid row: {}", e))?);
+        candidates.push(r.map_err(|e| format!("invalid row: {}", e))?);
     }
-    Ok(out)
+
+    // Chunks vizinhos (chunk_index a +-1) do mesmo documento carregam texto
+    // quase identico por causa do overlap do chunking — sem esse filtro, o
+    // top-k tendia a incluir pares quase-duplicados em vez de diversificar.
+    // Candidatos ja vem ordenados por distancia (mais relevante primeiro);
+    // o fallback preenche o restante caso o filtro deixe menos que target_k.
+    let mut selected: Vec<ChunkResult> = Vec::with_capacity(target_k);
+    let mut fallback: Vec<ChunkResult> = Vec::new();
+    for r in candidates {
+        let is_adjacent = selected.iter().any(|s: &ChunkResult| {
+            s.document_id == r.document_id && (s.chunk_index - r.chunk_index).abs() <= 1
+        });
+        if is_adjacent {
+            fallback.push(r);
+        } else {
+            selected.push(r);
+        }
+        if selected.len() >= target_k {
+            break;
+        }
+    }
+    if selected.len() < target_k {
+        selected.extend(fallback.into_iter().take(target_k - selected.len()));
+    }
+    // O fallback e anexado no fim, entao reordena para manter a promessa de
+    // "mais relevante primeiro" que o consumidor (prompt do chat) pressupoe.
+    selected.sort_by(|a, b| {
+        a.distance
+            .partial_cmp(&b.distance)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    Ok(selected)
 }
 
 #[tauri::command]

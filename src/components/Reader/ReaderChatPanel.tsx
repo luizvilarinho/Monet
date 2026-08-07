@@ -11,8 +11,7 @@ import {
   listOpenRouterModels,
   OPENROUTER_KEY_MISSING,
 } from '../../lib/openrouter'
-import type { AiModel, Book, BookHighlight, BookQuote } from '../../types'
-import { storage } from '../../storage'
+import type { AiModel, Book, BookHighlight } from '../../types'
 import { ModelSelector } from '../AiPanel/ModelSelector'
 import { ChatToolsMenu } from '../ChatPanel/ChatToolsMenu'
 import { FolderSystemPromptModal } from '../ChatPanel/FolderSystemPromptModal'
@@ -27,7 +26,7 @@ import styles from './ReaderChatPanel.module.css'
 // bookId → folderId em `monet:reader-book-folder-link`), com várias conversas
 // dentro dela; a pasta dá de graça o gerenciamento existente (system prompt,
 // documentos/RAG e memória por livro, via os modais de pasta). A cada envio,
-// o contexto de leitura atual (página, grifos, cópias) é anexado como bloco
+// o contexto de leitura atual (página, últimos grifos) é anexado como bloco
 // EFÊMERO (nunca persistido). O painel fica SEMPRE montado (escondido via CSS
 // quando `open` é false): desmontar o useChat cancelaria um stream ativo.
 
@@ -315,10 +314,9 @@ export function ReaderChatPanel({
     ensureReaderBookFolder({ id: book.id, title: book.title })
     const text = draft
     setDraft('')
-    // Contexto montado NO MOMENTO do envio: cada envio usa a página, grifos e
-    // cópias atuais; navegação posterior não afeta a resposta em streaming.
+    // Contexto montado NO MOMENTO do envio: cada envio usa a página e os
+    // grifos atuais; navegação posterior não afeta a resposta em streaming.
     const pageText = await getPageText(pageNum).catch(() => null)
-    const quotes: BookQuote[] = await storage.getQuotes(book.id).catch(() => [])
     const ephemeralContext = buildReaderContext({
       bookTitle: book.title,
       bookAuthor: book.author,
@@ -326,7 +324,6 @@ export function ReaderChatPanel({
       totalPages,
       pageText,
       highlights,
-      quotes,
     })
     void send(text, undefined, undefined, { ephemeralContext })
   }
@@ -444,8 +441,8 @@ export function ReaderChatPanel({
       <div className={styles.history} ref={historyRef}>
         {messages.length === 0 ? (
           <p className={styles.empty}>
-            Ask about this book — the AI sees your current page, highlights and
-            copied passages.
+            Ask about this book — the AI sees your current page and your most
+            recent highlights.
           </p>
         ) : (
           messages.map((m) => (
