@@ -45,7 +45,14 @@ export interface Document {
   origin: 'user' | 'ai'
 }
 
-export interface Book {
+// PDF e EPUB dividem a MESMA tabela `books`; `format` é o discriminante que
+// obriga o compilador a fazer cada consumidor dizer com qual dos dois está
+// lidando (é isso que substitui a separação em tabelas).
+//
+// `totalPages`/`lastPage` são o ordinal de leitura nos dois formatos: número
+// de página no PDF, índice de *location* no EPUB. `zoom` é a escala de
+// visualização persistida, comum aos dois.
+interface BookBase {
   id: string
   title: string
   author: string | null
@@ -56,6 +63,22 @@ export interface Book {
   lastOpenedAt: number | null
   zoom: number
 }
+
+export interface PdfBook extends BookBase {
+  format: 'pdf'
+}
+
+export interface EpubBook extends BookBase {
+  format: 'epub'
+  // Posição exata de retomada. `lastPage` é só o ordinal aproximado; é o CFI
+  // que devolve o leitor ao ponto certo dentro da location.
+  cfi: string | null
+  // Cache do `locations.save()` do epubjs — regerar as locations a cada
+  // abertura custa tempo proporcional ao tamanho do livro.
+  locationsJson: string | null
+}
+
+export type Book = PdfBook | EpubBook
 
 export interface BookHighlightRect {
   x: number
@@ -71,6 +94,9 @@ export interface BookHighlight {
   text: string
   color: string
   rects: BookHighlightRect[]
+  // Âncora real do grifo no EPUB (CFI range; `rects` vai vazio nesse formato).
+  // Ausente/null no PDF, onde a âncora é `page` + `rects`.
+  cfi?: string | null
   createdAt: number
 }
 

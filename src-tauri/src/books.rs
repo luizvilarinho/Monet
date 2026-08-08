@@ -33,7 +33,7 @@ fn books_dir(app: &AppHandle) -> Result<PathBuf, String> {
 pub async fn books_import_file(app: AppHandle) -> Result<Option<BookImportResult>, String> {
     let picked = spawn_blocking(|| {
         rfd::FileDialog::new()
-            .add_filter("PDF", &["pdf"])
+            .add_filter("Books", &["pdf", "epub"])
             .pick_file()
     })
     .await
@@ -44,13 +44,16 @@ pub async fn books_import_file(app: AppHandle) -> Result<Option<BookImportResult
         Some(p) => p,
     };
 
-    let is_pdf = src
+    // Extensao normalizada em minusculas: aceita `.EPUB`/`.PDF` (mesma
+    // tolerancia do eq_ignore_ascii_case anterior) e e reusada abaixo para
+    // nomear o destino, que precisa preservar o formato original.
+    let ext = src
         .extension()
         .and_then(|e| e.to_str())
-        .map(|e| e.eq_ignore_ascii_case("pdf"))
-        .unwrap_or(false);
-    if !is_pdf {
-        return Err("Only PDF files can be imported".into());
+        .map(|e| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    if ext != "pdf" && ext != "epub" {
+        return Err("Only PDF and EPUB files can be imported".into());
     }
 
     let size = fs::metadata(&src)
@@ -66,7 +69,7 @@ pub async fn books_import_file(app: AppHandle) -> Result<Option<BookImportResult
         .unwrap_or("Untitled")
         .to_string();
 
-    let dest = books_dir(&app)?.join(format!("{}.pdf", Uuid::new_v4()));
+    let dest = books_dir(&app)?.join(format!("{}.{}", Uuid::new_v4(), ext));
     fs::copy(&src, &dest).map_err(|e| format!("failed to copy file: {}", e))?;
 
     Ok(Some(BookImportResult {

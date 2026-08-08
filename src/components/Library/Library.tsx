@@ -9,6 +9,7 @@ import {
   unlinkBookFromReaderFolder,
 } from '../../hooks/useChat'
 import { unlinkBookFromReaderNote } from '../../lib/readerNoteLink'
+import { EpubReader } from '../Reader/EpubReader'
 import { Reader } from '../Reader/Reader'
 import styles from './Library.module.css'
 
@@ -155,6 +156,24 @@ export function Library({
     setOpenBook(null)
   }
 
+  // Um leitor por formato: a união discriminada garante em tempo de compilação
+  // que cada um só recebe o livro que sabe abrir.
+  if (openBook?.format === 'epub') {
+    return (
+      <EpubReader
+        book={openBook}
+        onBack={closeReader}
+        onBookChange={handleBookChange}
+        onLoadError={() => localStorage.removeItem(OPEN_BOOK_KEY)}
+        notebooks={notebooks}
+        notes={notes}
+        onCreateNotebook={onCreateNotebook}
+        onCreateNote={onCreateNote}
+        onSaveNote={onSaveNote}
+      />
+    )
+  }
+
   if (openBook) {
     return (
       <Reader
@@ -182,7 +201,7 @@ export function Library({
           onClick={handleImport}
           disabled={importing}
         >
-          {importing ? 'Importing…' : '+ Import PDF'}
+          {importing ? 'Importing…' : '+ Import book'}
         </button>
       </header>
 
@@ -214,7 +233,9 @@ export function Library({
         ) : books.length === 0 ? (
           <div className={styles.empty}>
             <p className={styles.emptyTitle}>No books yet.</p>
-            <p className={styles.emptyHelp}>Import a PDF to start reading.</p>
+            <p className={styles.emptyHelp}>
+              Import a PDF or EPUB to start reading.
+            </p>
           </div>
         ) : (
           <table className={styles.table}>
@@ -255,7 +276,12 @@ export function Library({
                           autoFocus
                         />
                       ) : (
-                        book.title
+                        <>
+                          <span className={styles.formatBadge}>
+                            {book.format}
+                          </span>
+                          {book.title}
+                        </>
                       )}
                     </td>
                     <td className={styles.cellAuthor}>

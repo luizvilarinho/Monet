@@ -203,6 +203,19 @@
   max-width: 0;
 }
 
+.formatBadge {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 1px 5px;
+  border: 1px solid var(--border, #333340);
+  border-radius: 4px;
+  color: var(--text-muted, #7c7c93);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
 .cellAuthor {
   overflow: hidden;
   text-overflow: ellipsis;

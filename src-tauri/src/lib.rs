@@ -1494,6 +1494,26 @@ pub fn run() {
             ",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 16,
+            description: "books_epub_support",
+            // Suporte a EPUB na MESMA tabela `books` (só ADD COLUMN, sem
+            // rebuild): `format` discrimina os dois formatos, `cfi` guarda a
+            // posição exata de retomada no EPUB e `locations_json` o cache do
+            // `locations.save()` do epubjs. Em `book_highlights`, `cfi` é a
+            // âncora real do grifo no EPUB — no PDF a âncora continua sendo
+            // `page` + `rects_json`. O DEFAULT 'pdf' cobre os livros já
+            // gravados. As duas tabelas são de propriedade EXCLUSIVA do
+            // frontend (tauri-plugin-sql); o backend (books.rs) só mexe nos
+            // arquivos.
+            sql: "
+                ALTER TABLE books ADD COLUMN format TEXT NOT NULL DEFAULT 'pdf';
+                ALTER TABLE books ADD COLUMN cfi TEXT;
+                ALTER TABLE books ADD COLUMN locations_json TEXT;
+                ALTER TABLE book_highlights ADD COLUMN cfi TEXT;
+            ",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()

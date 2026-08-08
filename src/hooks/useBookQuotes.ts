@@ -23,6 +23,7 @@ export interface BookQuoteModalState {
   open: boolean
   quoteText: string
   page: number
+  positionLabel: string
   onSaved: (quote: BookQuote) => void
   onClose: () => void
 }
@@ -36,6 +37,7 @@ export function useBookQuotes(params: UseBookQuotesParams) {
   const [quoteContext, setQuoteContext] = useState<{
     text: string
     page: number
+    positionLabel: string
   } | null>(null)
 
   // Os parâmetros são lidos por ref dentro dos callbacks: capturá-los na
@@ -79,10 +81,13 @@ export function useBookQuotes(params: UseBookQuotesParams) {
     [buildDeps, showToast],
   )
 
-  const openQuoteModal = useCallback((text: string, page: number) => {
-    setQuoteContext({ text, page })
-    setQuoteModalOpen(true)
-  }, [])
+  const openQuoteModal = useCallback(
+    (text: string, page: number, positionLabel: string) => {
+      setQuoteContext({ text, page, positionLabel })
+      setQuoteModalOpen(true)
+    },
+    [],
+  )
 
   const closeQuoteModal = useCallback(() => {
     setQuoteModalOpen(false)
@@ -91,22 +96,23 @@ export function useBookQuotes(params: UseBookQuotesParams) {
 
   // Livro com nota vinculada recebe a citação direto nela; sem vínculo — ou
   // se a gravação falhar — cai no modal de escolha de notebook/nota.
+  // `positionLabel` vem pronto do leitor: cada formato monta o seu rótulo.
   const copyCitationAbout = useCallback(
-    (text: string, page: number) => {
+    (text: string, page: number, positionLabel: string) => {
       const p = paramsRef.current
       const note = resolveLinkedNote(p.bookId, p.notes)
       if (note) {
-        appendQuoteToNote(buildDeps(), note, { text, page })
+        appendQuoteToNote(buildDeps(), note, { text, page, positionLabel })
           .then(({ toastMessage }) => {
             if (toastMessage) showToast(toastMessage)
           })
           .catch((err) => {
             console.error('failed to append quote to linked note', err)
-            openQuoteModal(text, page)
+            openQuoteModal(text, page, positionLabel)
           })
         return
       }
-      openQuoteModal(text, page)
+      openQuoteModal(text, page, positionLabel)
     },
     [buildDeps, openQuoteModal, showToast],
   )
@@ -120,6 +126,7 @@ export function useBookQuotes(params: UseBookQuotesParams) {
           open: quoteModalOpen,
           quoteText: quoteContext.text,
           page: quoteContext.page,
+          positionLabel: quoteContext.positionLabel,
           onSaved: (quote) => void handleSavedQuote(quote),
           onClose: closeQuoteModal,
         }

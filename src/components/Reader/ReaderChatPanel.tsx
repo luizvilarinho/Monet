@@ -44,11 +44,15 @@ interface ReaderChatPanelProps {
   totalPages: number
   highlights: BookHighlight[]
   getPageText: (pageNum: number) => Promise<string | null>
+  // Rótulos de posição por formato (ver readerContext.ts). Ausentes = PDF
+  // ("page N of M" / "p. N") — o leitor de EPUB passa os seus.
+  positionLabel?: string
+  highlightLabel?: (h: BookHighlight) => string
   // Visual apenas — o painel permanece montado quando fechado.
   open: boolean
   onClose: () => void
   // Trecho vindo do "Ask AI" da toolbar de seleção do Reader.
-  pendingQuote: { text: string; page: number } | null
+  pendingQuote: { text: string; page: number; positionLabel?: string } | null
   onPendingQuoteConsumed: () => void
 }
 
@@ -58,6 +62,8 @@ export function ReaderChatPanel({
   totalPages,
   highlights,
   getPageText,
+  positionLabel,
+  highlightLabel,
   open,
   onClose,
   pendingQuote,
@@ -279,7 +285,9 @@ export function ReaderChatPanel({
       pendingQuote.text.length > ASK_AI_QUOTE_BUDGET
         ? pendingQuote.text.slice(0, ASK_AI_QUOTE_BUDGET).trimEnd() + '…'
         : pendingQuote.text
-    setDraft(`> "${text}"\n> — p. ${pendingQuote.page}\n\n`)
+    setDraft(
+      `> "${text}"\n> — ${pendingQuote.positionLabel ?? `p. ${pendingQuote.page}`}\n\n`,
+    )
     inputRef.current?.focus()
     onPendingQuoteConsumed()
   }, [pendingQuote, onPendingQuoteConsumed])
@@ -324,6 +332,8 @@ export function ReaderChatPanel({
       totalPages,
       pageText,
       highlights,
+      positionLabel,
+      highlightLabel,
     })
     void send(text, undefined, undefined, { ephemeralContext })
   }

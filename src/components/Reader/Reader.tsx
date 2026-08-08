@@ -20,6 +20,7 @@ import type {
   BookHighlightRect,
   Note,
   Notebook,
+  PdfBook,
 } from '../../types'
 import { storage } from '../../storage'
 import { booksReadFile } from '../../lib/books'
@@ -33,7 +34,8 @@ import { ReaderNotesPanel } from './ReaderNotesPanel'
 import styles from './Reader.module.css'
 
 export interface ReaderProps {
-  book: Book
+  // Este é o leitor de PDF: o tipo impede que um EPUB chegue aqui por engano.
+  book: PdfBook
   onBack: () => void
   onBookChange: (book: Book) => void
   // Chamado quando o documento não pôde ser carregado (arquivo ausente/ilegível).
@@ -47,6 +49,12 @@ export interface ReaderProps {
     content: string,
   ) => Promise<Note>
   onSaveNote: (note: Note) => Promise<void>
+}
+
+// Rótulo de posição da citação no PDF. Fica aqui porque cada formato monta o
+// seu — o leitor de EPUB usará capítulo + porcentagem.
+function pdfPositionLabel(page: number): string {
+  return `p. ${page}`
 }
 
 const MIN_SCALE = 0.5
@@ -1324,7 +1332,7 @@ export function Reader({
 
   function handleCopyCitation() {
     if (!selection) return
-    copyCitationAbout(selection.text, pageNum)
+    copyCitationAbout(selection.text, pageNum, pdfPositionLabel(pageNum))
     setSelection(null)
     window.getSelection()?.removeAllRanges()
   }
@@ -1785,7 +1793,11 @@ export function Reader({
                               className={styles.highlightsPanelItemAction}
                               onClick={(e) => {
                                 e.stopPropagation()
-                                copyCitationAbout(h.text, h.page)
+                                copyCitationAbout(
+                                  h.text,
+                                  h.page,
+                                  pdfPositionLabel(h.page),
+                                )
                               }}
                               aria-label="Copy citation"
                               title="Copy citation"
@@ -1980,6 +1992,7 @@ export function Reader({
                         copyCitationAbout(
                           removalCandidate.highlight.text,
                           removalCandidate.highlight.page,
+                          pdfPositionLabel(removalCandidate.highlight.page),
                         )
                         setRemovalCandidate(null)
                       }}
@@ -2088,6 +2101,7 @@ export function Reader({
           quoteText={quoteModal.quoteText}
           bookTitle={book.title}
           page={quoteModal.page}
+          positionLabel={quoteModal.positionLabel}
           bookId={book.id}
           onSaved={quoteModal.onSaved}
           onClose={quoteModal.onClose}

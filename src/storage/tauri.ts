@@ -55,6 +55,10 @@ interface BookRow {
   added_at: number
   last_opened_at: number | null
   zoom: number | null
+  // Colunas da v16 (EPUB). Nulas em livros gravados antes da migration.
+  format: string | null
+  cfi: string | null
+  locations_json: string | null
 }
 
 interface AiResponseRow {
@@ -158,7 +162,7 @@ function clampZoom(z: number | null | undefined): number {
 }
 
 function rowToBook(r: BookRow): Book {
-  return {
+  const common = {
     id: r.id,
     title: r.title,
     author: r.author,
@@ -171,6 +175,17 @@ function rowToBook(r: BookRow): Book {
     lastOpenedAt: r.last_opened_at,
     zoom: clampZoom(r.zoom),
   }
+  if (r.format === 'epub') {
+    return {
+      ...common,
+      format: 'epub',
+      cfi: r.cfi ?? null,
+      locationsJson: r.locations_json ?? null,
+    }
+  }
+  // Qualquer outro valor — inclusive NULL/ausente em livros anteriores à v16
+  // — é PDF: é o DEFAULT da migration e o único formato que existia antes.
+  return { ...common, format: 'pdf' }
 }
 
 function rowToSubject(r: SubjectRow): Subject {
@@ -191,6 +206,7 @@ interface BookHighlightRow {
   text: string
   color: string
   rects_json: string
+  cfi: string | null
   created_at: number
 }
 
@@ -235,6 +251,7 @@ function rowToHighlight(r: BookHighlightRow): BookHighlight {
     text: r.text,
     color: r.color,
     rects: parseHighlightRects(r.rects_json),
+    cfi: r.cfi ?? null,
     createdAt: r.created_at,
   }
 }
@@ -523,15 +540,21 @@ export class TauriStorage implements StorageAdapter {
 
   async saveBook(b: Book): Promise<void> {
     const db = await this.db()
+    // COALESCE só no `locations_json`: o leitor de EPUB chama saveBook a cada
+    // troca de posição e nem sempre carrega o cache de locations junto — sem
+    // ele, cada movimento apagaria o cache. O `cfi` continua sobrescrevendo
+    // normalmente; ele É a posição que está sendo salva.
     await db.execute(
-      `INSERT INTO books (id, title, author, file_path, total_pages, last_page, added_at, last_opened_at, zoom)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `INSERT INTO books (id, title, author, file_path, total_pages, last_page, added_at, last_opened_at, zoom, format, cfi, locations_json)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        ON CONFLICT(id) DO UPDATE SET
          title = excluded.title,
          author = excluded.author,
          last_page = excluded.last_page,
          last_opened_at = excluded.last_opened_at,
-         zoom = excluded.zoom`,
+         zoom = excluded.zoom,
+         cfi = excluded.cfi,
+         locations_json = COALESCE(excluded.locations_json, locations_json)`,
       [
         b.id,
         b.title,
@@ -542,6 +565,10 @@ export class TauriStorage implements StorageAdapter {
         b.addedAt,
         b.lastOpenedAt,
         clampZoom(b.zoom),
+        // `format` fica fora do DO UPDATE: o formato de um livro não muda.
+        b.format,
+        b.format === 'epub' ? b.cfi : null,
+        b.format === 'epub' ? b.locationsJson : null,
       ]
     )
     this.scheduleCheckpoint()
@@ -572,13 +599,14 @@ export class TauriStorage implements StorageAdapter {
   async saveHighlight(h: BookHighlight): Promise<void> {
     const db = await this.db()
     await db.execute(
-      `INSERT INTO book_highlights (id, book_id, page, text, color, rects_json, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO book_highlights (id, book_id, page, text, color, rects_json, cfi, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT(id) DO UPDATE SET
          page = excluded.page,
          text = excluded.text,
          color = excluded.color,
-         rects_json = excluded.rects_json`,
+         rects_json = excluded.rects_json,
+         cfi = excluded.cfi`,
       [
         h.id,
         h.bookId,
@@ -586,6 +614,7 @@ export class TauriStorage implements StorageAdapter {
         h.text,
         h.color,
         JSON.stringify(h.rects),
+        h.cfi ?? null,
         h.createdAt,
       ]
     )

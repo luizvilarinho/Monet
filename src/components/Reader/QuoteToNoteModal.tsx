@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { BookQuote, Note, Notebook } from '../../types'
+import { appendQuoteToContent, buildQuoteBlock } from '../../lib/bookQuotes'
 import styles from './QuoteToNoteModal.module.css'
 
 const LAST_NOTEBOOK_KEY = 'monet:quote-save-last-notebook-id'
-const QUOTE_BLOCKQUOTE_LIMIT = 2000
 
 export interface QuoteToNoteModalProps {
   open: boolean
@@ -15,7 +15,10 @@ export interface QuoteToNoteModalProps {
   onSaveNote: (note: Note) => Promise<void>
   quoteText: string
   bookTitle: string
+  // Ordinal de leitura gravado no BookQuote (página no PDF, location no EPUB).
   page: number
+  // Rótulo de posição exibido na citação, já formatado pelo leitor.
+  positionLabel: string
   bookId: string
   onSaved: (quote: BookQuote) => void
   onClose: () => void
@@ -58,25 +61,6 @@ function saveLastNotebookId(id: string): void {
   }
 }
 
-export function buildQuoteBlock(rawText: string, bookTitle: string, page: number): {
-  content: string
-  truncated: boolean
-} {
-  const text = rawText.trim()
-  const truncated = text.length > QUOTE_BLOCKQUOTE_LIMIT
-  const quote = truncated
-    ? text.slice(0, QUOTE_BLOCKQUOTE_LIMIT).trimEnd() + '…'
-    : text
-  const content = `> ${quote}\n\n— *${bookTitle}*, p. ${page}`
-  return { content, truncated }
-}
-
-export function appendQuoteToContent(existing: string, block: string): string {
-  if (!existing.trim()) return block
-  const trimmedEnd = existing.replace(/\n+$/, '')
-  return `${trimmedEnd}\n\n${block}`
-}
-
 export function QuoteToNoteModal({
   open,
   notebooks,
@@ -87,6 +71,7 @@ export function QuoteToNoteModal({
   quoteText,
   bookTitle,
   page,
+  positionLabel,
   bookId,
   onSaved,
   onClose,
@@ -184,7 +169,11 @@ export function QuoteToNoteModal({
 
   async function appendToExistingNote(notebookId: string, note: Note) {
     setStage({ kind: 'saving', notebookId })
-    const { content: block, truncated } = buildQuoteBlock(quoteText, bookTitle, page)
+    const { content: block, truncated } = buildQuoteBlock(
+      quoteText,
+      bookTitle,
+      positionLabel,
+    )
     const newContent = appendQuoteToContent(note.content, block)
     try {
       await onSaveNote({
@@ -224,7 +213,11 @@ export function QuoteToNoteModal({
 
   async function createAndSaveNewNote(notebookId: string, title: string) {
     setStage({ kind: 'saving', notebookId })
-    const { content: block, truncated } = buildQuoteBlock(quoteText, bookTitle, page)
+    const { content: block, truncated } = buildQuoteBlock(
+      quoteText,
+      bookTitle,
+      positionLabel,
+    )
     try {
       const note = await onCreateNote(notebookId, title, block)
       const quote: BookQuote = {

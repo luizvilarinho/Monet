@@ -88,7 +88,17 @@ Efeito no dimensionamento: a tarefa geral de suporte a EPUB caiu de **ALTA** par
 
 Consolidadas aqui para quem retomar:
 
-1. **Formato da citação em EPUB.** `buildQuoteBlock` hardcoda `p. ${page}` (`QuoteToNoteModal.tsx:70`) e tem 3 chamadores. Sugestão em discussão: `"trecho" — Título, cap. 3 (34%)`. Resolver isto destrava também a inversão `lib → components`.
-2. **Busca full-text entra na v1 do EPUB?** É a parte mais cara e a que menos se aproveita do que existe (a implementação atual indexa por página varrendo spans da text layer do pdf.js).
-3. **EPUBs com DRM.** Não abrem por nenhuma biblioteca open source. Definir se basta mensagem de erro clara no import.
-4. **Spike do `epub.ts` antes de escrever o `EpubReader`** — verificar em livros reais: render com imagens/estilo sob a CSP ajustada (`blob:`), `annotations.highlight` + callback de clique, tempo de `locations.generate()` num livro grande, e sandbox do iframe bloqueando script embutido.
+1. ~~**Formato da citação em EPUB.**~~ **DECIDIDO pelo Coordenador em 07-08-2026: capítulo + porcentagem.**
+
+   Consequências a implementar:
+   - `buildQuoteBlock` (`QuoteToNoteModal.tsx:70`) troca o parâmetro `page: number` por um `label: string` já formatado. Os 3 chamadores (`Reader.tsx`, e `QuoteToNoteModal.tsx:187` e `:227`) passam a montar o rótulo; no PDF continua `p. ${page}`, mantendo a saída atual byte a byte.
+   - **Isto destrava a inversão `lib → components`** apontada pelo `codereviewAgent`: como os 3 chamadores serão tocados de qualquer forma, `buildQuoteBlock` e `appendQuoteToContent` (funções puras de string) devem ser movidas para `src/lib` na MESMA alteração, invertendo a seta de dependência de `lib/bookQuotes.ts`. Uma edição em vez de duas, sem shim de re-export.
+   - **Fallback obrigatório:** EPUB sem TOC utilizável cai em só porcentagem.
+   - **Ponto em aberto de menor porte** (recomendação do Orquestrador, sujeito a correção do Coordenador): usar o **título do capítulo vindo do TOC**, não um número gerado por nós. O TOC inclui capa, colofão e outros itens de pré-textual, então numerar as entradas nós mesmos faria "cap. 3" cair em coisa que não é o capítulo 3 do livro. Título é o que a própria obra chama aquela seção, e é verificável contra a edição impressa.
+   - Custo de runtime é desprezível: as âncoras do TOC são resolvidas uma vez na abertura e cacheadas; "em que capítulo estou" vira busca binária num array (64 entradas no arquivo de teste).
+
+2. **Busca full-text entra na v1 do EPUB?** — AINDA EM ABERTO. Recomendação do Orquestrador: **ficar para a v2**. Não é questão de processamento (no EPUB a extração de texto é mais barata que no PDF); é que nada da implementação atual se aproveita — ela é colada na text layer do pdf.js (`buildJoinedPageText:312`, `findAllOccurrenceRanges:363`, `computeSearchMatchRects:1229`) e a navegação entre ocorrências é por número de página. No EPUB seria busca no DOM real + destaque por CFI: subsistema novo, reaproveitando só a barra de busca.
+
+3. **EPUBs com DRM.** Não abrem por nenhuma biblioteca open source. Definir se basta mensagem de erro clara no import. O arquivo de teste do Coordenador não tem DRM (sem `META-INF/encryption.xml`).
+
+4. ~~**Spike do epubjs.**~~ **CONCLUÍDO em 07-08-2026** — ver `DOCS/reports/07-08-2026/explorerreport_20260807202000.md`. Veredicto: viável. Mudança obrigatória identificada: `blob:` na CSP (sem ela as imagens do EPUB são bloqueadas; o texto renderiza normalmente).

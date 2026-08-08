@@ -18,6 +18,12 @@ export interface ReaderContextInput {
   pageText: string | null
   // Como vêm do estado do Reader (todas as páginas, ordem indefinida)
   highlights: BookHighlight[]
+  // Rótulo da posição atual, montado por cada formato. Ausente = PDF
+  // ("page N of M"). O leitor de EPUB passa capítulo/% + location.
+  positionLabel?: string
+  // Rótulo de posição de cada grifo. Ausente = PDF ("p. N"); o EPUB passa o
+  // percentual da location do grifo.
+  highlightLabel?: (h: BookHighlight) => string
 }
 
 function normalizeWhitespace(s: string): string {
@@ -45,7 +51,9 @@ export function buildReaderContext(input: ReaderContextInput): string {
   lines.push(
     `Book: "${input.bookTitle}"${input.bookAuthor ? ` by ${input.bookAuthor}` : ''}`
   )
-  lines.push(`Position: page ${input.pageNum} of ${input.totalPages}`)
+  lines.push(
+    `Position: ${input.positionLabel ?? `page ${input.pageNum} of ${input.totalPages}`}`
+  )
   lines.push('')
 
   const pageText = normalizeWhitespace(input.pageText ?? '')
@@ -66,7 +74,8 @@ export function buildReaderContext(input: ReaderContextInput): string {
     )
     for (const h of shown) {
       const text = truncateWithMarker(normalizeWhitespace(h.text), ITEM_TEXT_BUDGET)
-      lines.push(`- [p. ${h.page}, ${formatDate(h.createdAt)}] "${text}"`)
+      const label = input.highlightLabel ? input.highlightLabel(h) : `p. ${h.page}`
+      lines.push(`- [${label}, ${formatDate(h.createdAt)}] "${text}"`)
     }
   }
 

@@ -4,11 +4,9 @@
 // exibi-la é o chamador.
 import type { BookQuote, Note, Notebook } from '../types'
 import { storage } from '../storage'
-import {
-  appendQuoteToContent,
-  buildQuoteBlock,
-} from '../components/Reader/QuoteToNoteModal'
 import { getReaderNoteLink } from './readerNoteLink'
+
+const QUOTE_BLOCKQUOTE_LIMIT = 2000
 
 export interface BookQuoteDeps {
   bookId: string
@@ -24,6 +22,30 @@ export interface BookQuoteDeps {
 export interface QuoteTarget {
   text: string
   page: number
+  // Rótulo de posição já formatado ("p. 47" no PDF). Vem pronto do leitor
+  // porque cada formato monta o seu — no EPUB será capítulo + porcentagem.
+  positionLabel: string
+}
+
+// Monta o bloco markdown da citação. `label` chega formatado pelo leitor:
+// aqui não se sabe (nem se decide) o formato do livro.
+export function buildQuoteBlock(rawText: string, bookTitle: string, label: string): {
+  content: string
+  truncated: boolean
+} {
+  const text = rawText.trim()
+  const truncated = text.length > QUOTE_BLOCKQUOTE_LIMIT
+  const quote = truncated
+    ? text.slice(0, QUOTE_BLOCKQUOTE_LIMIT).trimEnd() + '…'
+    : text
+  const content = `> ${quote}\n\n— *${bookTitle}*, ${label}`
+  return { content, truncated }
+}
+
+export function appendQuoteToContent(existing: string, block: string): string {
+  if (!existing.trim()) return block
+  const trimmedEnd = existing.replace(/\n+$/, '')
+  return `${trimmedEnd}\n\n${block}`
 }
 
 // Nota vinculada ao livro pela aba "Notes" do leitor, se o vínculo ainda
@@ -57,15 +79,15 @@ export async function registerSavedQuote(
 }
 
 // Anexa a citação direto numa nota já existente, sem passar pelo
-// QuoteToNoteModal. Reaproveita as mesmas funções de montagem de
-// bloco/conteúdo do modal e o mesmo registro de BookQuote para manter
-// paridade de comportamento entre os dois caminhos.
+// QuoteToNoteModal. Usa as mesmas funções de montagem de bloco/conteúdo deste
+// arquivo — as mesmas que o modal importa daqui — e o mesmo registro de
+// BookQuote, para manter paridade de comportamento entre os dois caminhos.
 export async function appendQuoteToNote(
   deps: BookQuoteDeps,
   note: Note,
-  { text, page }: QuoteTarget,
+  { text, page, positionLabel }: QuoteTarget,
 ): Promise<{ toastMessage: string | null }> {
-  const { content: block } = buildQuoteBlock(text, deps.bookTitle, page)
+  const { content: block } = buildQuoteBlock(text, deps.bookTitle, positionLabel)
   const newContent = appendQuoteToContent(note.content, block)
   await deps.onSaveNote({ ...note, content: newContent, updatedAt: Date.now() })
   const quote: BookQuote = {
