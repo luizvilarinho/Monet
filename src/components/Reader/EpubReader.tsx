@@ -108,6 +108,11 @@ const SIDE_TAB_KEY = 'monet:reader-side-tab'
 // leitura (como a do painel lateral), não estado do livro — por isso
 // localStorage e não uma coluna nova no banco.
 const SPREAD_MODE_KEY = 'monet:epub-reader-spread'
+const MARGIN_KEY = 'monet:epub-reader-margin'
+const MIN_MARGIN_PX = 0
+const MAX_MARGIN_PX = 160
+const MARGIN_STEP_PX = 16
+const DEFAULT_MARGIN_PX = 0
 
 type SidePanelTab = 'contents' | 'highlights'
 type SideTab = 'chat' | 'notes'
@@ -166,6 +171,11 @@ function clampFontScale(value: number): number {
   // Arredonda para o passo: evita 0.7999999 vindo de somas de float e mantém
   // o rótulo em porcentagem inteira.
   return Math.round(clamped * 100) / 100
+}
+
+function clampMargin(raw: number): number {
+  const clamped = Math.min(MAX_MARGIN_PX, Math.max(MIN_MARGIN_PX, raw))
+  return Math.round(clamped / MARGIN_STEP_PX) * MARGIN_STEP_PX
 }
 
 function fontSizeCss(scale: number): string {
@@ -261,6 +271,16 @@ export function EpubReader({
   const [spreadMode, setSpreadMode] = useState<EpubSpreadMode>(() =>
     localStorage.getItem(SPREAD_MODE_KEY) === 'none' ? 'none' : 'auto',
   )
+  const [marginPx, setMarginPx] = useState<number>(() => {
+    try {
+      const raw = localStorage.getItem(MARGIN_KEY)
+      if (raw == null) return DEFAULT_MARGIN_PX
+      const n = Number(raw)
+      return Number.isFinite(n) ? clampMargin(n) : DEFAULT_MARGIN_PX
+    } catch {
+      return DEFAULT_MARGIN_PX
+    }
+  })
   // Ordinal de location 1-based (o "page" do EPUB) e CFI da posição atual —
   // alimentam chat, grifos e o jump-back.
   const [pageNum, setPageNum] = useState(book.lastPage)
@@ -684,6 +704,14 @@ export function EpubReader({
     }
   }, [spreadMode])
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(MARGIN_KEY, String(marginPx))
+    } catch (err) {
+      console.error('failed to persist epub reader margin', err)
+    }
+  }, [marginPx])
+
   // Capítulo da posição atual, resolvido a cada mudança de posição ou quando
   // o sumário termina de carregar (a resolução precisa dos dois prontos).
   useEffect(() => {
@@ -974,6 +1002,12 @@ export function EpubReader({
     }
   }
 
+  function changeMargin(next: number) {
+    const margin = clampMargin(next)
+    if (margin === marginPx) return
+    setMarginPx(margin)
+  }
+
   // ─── Tamanho da fonte ───────────────────────────────────────────────────
   function changeFontScale(next: number) {
     const scale = clampFontScale(next)
@@ -1061,6 +1095,28 @@ export function EpubReader({
             onClick={() => changeFontScale(fontScale + FONT_SCALE_STEP)}
             disabled={fontScale >= MAX_FONT_SCALE}
             aria-label="Increase text size"
+          >
+            +
+          </button>
+        </div>
+
+        <div className={styles.fontControls}>
+          <button
+            type="button"
+            className={styles.navButton}
+            onClick={() => changeMargin(marginPx - MARGIN_STEP_PX)}
+            disabled={marginPx <= MIN_MARGIN_PX}
+            aria-label="Decrease margin"
+          >
+            −
+          </button>
+          <span className={styles.fontLabel}>{marginPx}px</span>
+          <button
+            type="button"
+            className={styles.navButton}
+            onClick={() => changeMargin(marginPx + MARGIN_STEP_PX)}
+            disabled={marginPx >= MAX_MARGIN_PX}
+            aria-label="Increase margin"
           >
             +
           </button>
@@ -1380,7 +1436,10 @@ export function EpubReader({
         </aside>
 
         <div className={styles.pageArea} ref={pageAreaRef}>
-          <div className={styles.viewerSurface}>
+          <div
+            className={styles.viewerSurface}
+            style={{ paddingLeft: 20 + marginPx, paddingRight: 20 + marginPx }}
+          >
             <div ref={viewerRef} className={styles.viewer} />
           </div>
           {loading && <p className={styles.loadingText}>Loading book…</p>}
