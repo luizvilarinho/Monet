@@ -17,7 +17,13 @@ import { findClosestHeading, parseHeadings, type Heading } from '../../lib/headi
 import { attachSpellCheckEnforcer } from '../../lib/spellcheck'
 import { HeadingNavigator } from '../HeadingNavigator/HeadingNavigator'
 import styles from './Editor.module.css'
+import contextMenuStyles from './ContextMenu.module.css'
 import { FormattingToolbar } from './FormattingToolbar'
+import {
+  FORMATTING_GROUPS,
+  insertNewFormattedLine,
+  type FormatId,
+} from './formattingActions'
 import { CommandAutocomplete, type AutocompleteState } from './CommandAutocomplete'
 import {
   CommandExtension,
@@ -25,6 +31,7 @@ import {
   getCurrentCommandLine,
 } from './CommandExtension'
 import { buildBaseExtensions } from './extensions'
+import { PreviewMode, setPreviewMode } from './PreviewMode'
 import { EditorResponsesProvider } from './EditorResponsesContext'
 import { EditorNotesProvider } from './EditorNotesContext'
 import { NotePicker } from './NotePicker'
@@ -53,6 +60,7 @@ export interface EditorProps {
   onNavigateToNote?: (noteId: string) => void
   isCalendarNote?: boolean
   disableSlashCommands?: boolean
+  previewMode?: boolean
 }
 
 function getMarkdown(editor: TiptapEditor): string {
@@ -115,6 +123,7 @@ export function Editor({
   onNavigateToNote,
   isCalendarNote = false,
   disableSlashCommands,
+  previewMode = false,
 }: EditorProps) {
   const [adding, setAdding] = useState(false)
   const [draft, setDraft] = useState('')
@@ -150,6 +159,8 @@ export function Editor({
   isCalendarNoteRef.current = isCalendarNote
   const disableSlashCommandsRef = useRef(disableSlashCommands)
   disableSlashCommandsRef.current = disableSlashCommands
+  const previewModeRef = useRef(previewMode)
+  previewModeRef.current = previewMode
 
   const contextValue = useMemo(
     () => ({ responses: responses ?? [] }),
@@ -160,6 +171,7 @@ export function Editor({
     immediatelyRender: false,
     extensions: [
       ...buildBaseExtensions('Capture your thoughts...'),
+      PreviewMode,
       ...(disableSlashCommands
         ? []
         : [
@@ -281,7 +293,7 @@ export function Editor({
         }
 
         if (event.key === 'Enter' && !event.shiftKey) {
-          if (disableSlashCommandsRef.current) return false
+          if (disableSlashCommandsRef.current || previewModeRef.current) return false
           const info = getCurrentCommandLine(view.state, isCalendarNoteRef.current)
           if (!info) return false
           const { selection } = view.state
@@ -345,6 +357,17 @@ export function Editor({
     },
   })
 
+  // Sincroniza o estado de preview (ocultar slash commands) com o plugin.
+  useEffect(() => {
+    if (!editor) return
+    setPreviewMode(editor as TiptapEditor, previewMode)
+    // Ao ativar o preview, fecha o autocomplete de slash commands que
+    // estivesse aberto — os comandos não funcionam nesse modo.
+    if (previewMode && autocompleteRef.current.visible) {
+      setAutocomplete(HIDDEN_AUTOCOMPLETE)
+    }
+  }, [editor, previewMode])
+
   acceptSuggestionRef.current = (suggestion: string) => {
     if (!editor) return
     const info = getCurrentCommandLine(editor.state, isCalendarNoteRef.current)
@@ -365,7 +388,7 @@ export function Editor({
 
   const updateAutocomplete = useCallback(() => {
     if (!editor) return
-    if (disableSlashCommands) return
+    if (disableSlashCommands || previewMode) return
     const info = getCurrentCommandLine(editor.state, isCalendarNoteRef.current)
     if (!info) {
       dismissedFingerprintRef.current = null
@@ -420,7 +443,7 @@ export function Editor({
         left: nextLeft,
       }
     })
-  }, [editor, disableSlashCommands])
+  }, [editor, disableSlashCommands, previewMode])
 
   useEffect(() => {
     if (!editor) return
@@ -751,46 +774,65 @@ export function Editor({
       )}
       {contextMenuPos && (
         <div
+          className={contextMenuStyles.menu}
           style={{
             position: 'fixed',
-            top: contextMenuPos.y,
-            left: contextMenuPos.x,
-            background: 'var(--surface-1)',
-            border: '1px solid var(--border)',
-            borderRadius: 6,
+            // Se não houver espaço suficiente abaixo do cursor, ancora no
+            // fundo da viewport e deixa o menu crescer para cima.
+            ...(contextMenuPos.y > window.innerHeight - 120
+              ? { bottom: window.innerHeight - contextMenuPos.y, top: 'auto' as const }
+              : { top: contextMenuPos.y }),
+            // Garante que o menu não ultrapasse a borda direita.
+            left: Math.min(contextMenuPos.x, window.innerWidth - 290),
             zIndex: 300,
-            minWidth: 140,
-            boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
           }}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          <button
-            style={{
-              display: 'block',
-              width: '100%',
-              padding: '8px 14px',
-              background: 'transparent',
-              border: 'none',
-              color: 'var(--text-primary)',
-              textAlign: 'left',
-              fontSize: 13,
-              cursor: 'pointer',
-            }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface-2)')}
-            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-            onMouseDown={() => {
-              if (!editor) return
-              const { from } = editor.state.selection
-              notePickerInsertPosRef.current = from
-              const coords = editor.view.coordsAtPos(from)
-              setNotePickerPos({ top: coords.bottom + 4, left: coords.left })
-              setNotePickerVisible(true)
-              setContextMenuPos(null)
-            }}
-            type="button"
-          >
-            Link note
-          </button>
+          {/* Inserir link de nota */}
+          <div className={contextMenuStyles.group}>
+            <button
+              className={contextMenuStyles.btn}
+              title="Link note"
+              onMouseDown={() => {
+                if (!editor) return
+                const { from } = editor.state.selection
+                notePickerInsertPosRef.current = from
+                const coords = editor.view.coordsAtPos(from)
+                setNotePickerPos({ top: coords.bottom + 4, left: coords.left })
+                setNotePickerVisible(true)
+                setContextMenuPos(null)
+              }}
+              type="button"
+            >
+              📎
+            </button>
+          </div>
+          <div className={contextMenuStyles.sep} />
+          {/* Formatação: mesmos ícones da BubbleMenu, layout horizontal compacto */}
+          {FORMATTING_GROUPS.map((group, gi) => (
+            <div key={`grp-${gi}`} className={contextMenuStyles.group}>
+              {gi > 0 && <div className={contextMenuStyles.sep} />}
+              {group.map(({ id, label, title, cls }) => (
+                <button
+                  key={id}
+                  className={[
+                    contextMenuStyles.btn,
+                    cls === 'bold' ? contextMenuStyles.bold : '',
+                    cls === 'italic' ? contextMenuStyles.italic : '',
+                  ].join(' ')}
+                  title={title}
+                  onMouseDown={() => {
+                    if (!editor) return
+                    insertNewFormattedLine(editor as TiptapEditor, id as FormatId)
+                    setContextMenuPos(null)
+                  }}
+                  type="button"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          ))}
         </div>
       )}
       {relatedContent}

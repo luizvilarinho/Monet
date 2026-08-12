@@ -1,6 +1,7 @@
 import { CaretLeft, CaretRight, SidebarSimple } from '@phosphor-icons/react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Note } from '../../types'
+import { CALENDAR_NOTEBOOK_ID } from '../../lib/calendar'
 import styles from './CalendarView.module.css'
 
 function toDateKey(y: number, m: number, d: number): string {
@@ -27,6 +28,9 @@ const MAX_WIDTH = 400
 interface CalendarViewProps {
   notes: Note[]
   datedNotes: Note[]
+  /** Todas as notas — usadas para destacar no dia selecionado as que foram
+   *  criadas ou editadas nesse dia. */
+  recentlyActiveNotes?: Note[]
   onDayClick: (date: Date) => void
   onNoteClick: (noteId: string) => void
   width?: number
@@ -38,6 +42,7 @@ interface CalendarViewProps {
 export function CalendarView({
   notes,
   datedNotes,
+  recentlyActiveNotes = [],
   onDayClick,
   onNoteClick,
   width = 220,
@@ -115,10 +120,53 @@ export function CalendarView({
     return map
   }, [notes, datedNotes])
 
+  const todayKey = useMemo(
+    () => toDateKey(today.getFullYear(), today.getMonth(), today.getDate()),
+    [today]
+  )
+
+  // Cards abaixo do calendário:
+  // - Notas "dated" (com note.date === selectedDay) → linha roxa
+  // - Notas criadas/editadas no dia selecionado → linha verde
+  // Notas do próprio notebook Calendar (notas diárias) não aparecem aqui.
+  // Sem duplicação: se uma nota for tanto dated quanto active, conta como dated.
   const dayCards = useMemo(() => {
-    if (!selectedDay) return []
-    return datedNotes.filter((n) => n.date === selectedDay)
-  }, [selectedDay, datedNotes])
+    if (!selectedDay) return [] as Array<{ note: Note; dated: boolean }>
+    const seen = new Set<string>()
+    const cards: Array<{ note: Note; dated: boolean }> = []
+    // Primeiro as dated (roxa) — têm prioridade
+    for (const n of datedNotes) {
+      if (n.date !== selectedDay) continue
+      if (n.notebookId === CALENDAR_NOTEBOOK_ID) continue
+      cards.push({ note: n, dated: true })
+      seen.add(n.id)
+    }
+    // Depois as active (verde) — sem duplicar
+    for (const n of recentlyActiveNotes) {
+      if (seen.has(n.id)) continue
+      if (n.notebookId === CALENDAR_NOTEBOOK_ID) continue
+      const created = new Date(n.createdAt)
+      const updated = new Date(n.updatedAt)
+      const createdKey = toDateKey(created.getFullYear(), created.getMonth(), created.getDate())
+      const updatedKey = toDateKey(updated.getFullYear(), updated.getMonth(), updated.getDate())
+      if (createdKey === selectedDay || updatedKey === selectedDay) {
+        cards.push({ note: n, dated: false })
+      }
+    }
+    return cards
+  }, [selectedDay, datedNotes, recentlyActiveNotes])
+
+  // Indica se houve notas criadas ou editadas hoje (para destacar o dia atual).
+  const hasActivityToday = useMemo(() => {
+    return recentlyActiveNotes.some((n) => {
+      if (n.notebookId === CALENDAR_NOTEBOOK_ID) return false
+      const created = new Date(n.createdAt)
+      const updated = new Date(n.updatedAt)
+      const createdKey = toDateKey(created.getFullYear(), created.getMonth(), created.getDate())
+      const updatedKey = toDateKey(updated.getFullYear(), updated.getMonth(), updated.getDate())
+      return createdKey === todayKey || updatedKey === todayKey
+    })
+  }, [recentlyActiveNotes, todayKey])
 
   const cells = useMemo(() => {
     const firstWeekday = new Date(year, month, 1).getDay()
@@ -269,6 +317,9 @@ export function CalendarView({
                 >
                   <span className={styles.dayNumber}>{cell.day}</span>
                   {dotType && <span className={`${styles.dot} ${dotType === 'todo' ? styles.dotPurple : ''}`} aria-hidden />}
+                  {today_ && hasActivityToday && !dotType && (
+                    <span className={`${styles.dot} ${styles.dotOrange}`} aria-hidden />
+                  )}
                 </div>
               )
             })}
@@ -276,10 +327,10 @@ export function CalendarView({
 
           {dayCards.length > 0 && (
             <div className={styles.cards}>
-              {dayCards.map((note) => (
+              {dayCards.map(({ note, dated }) => (
                 <div
                   key={note.id}
-                  className={styles.noteCard}
+                  className={`${styles.noteCard} ${dated ? '' : styles.noteCardActive}`}
                   onClick={() => onNoteClick(note.id)}
                   role="button"
                   tabIndex={0}

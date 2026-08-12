@@ -109,7 +109,7 @@ export function buildBaseExtensions(placeholder: string): AnyExtension[] {
     InlineCode,
     ParagraphWithBlankLines,
     TaskList,
-    TaskItem.configure({ nested: false }),
+    TaskItem.configure({ nested: true }),
     Table.configure({ resizable: true }),
     TableRow,
     TableHeader,

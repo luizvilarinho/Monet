@@ -162,6 +162,15 @@ export function useAi(activeNoteId: string | null) {
         [noteId]: [response, ...(prev[noteId] ?? [])],
       }))
       try {
+        // Rastreio dos prompts enviados ao modelo ao acionar slash commands.
+        // Útil para depuração e auditoria do que está sendo enviado.
+        if (import.meta.env.DEV) console.log('[Monet AI] Slash command dispatch', {
+          command,
+          query,
+          model,
+          systemPrompt,
+          userMessage,
+        })
         await startOpenRouterStream({
           requestId: id,
           model,

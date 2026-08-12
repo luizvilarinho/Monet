@@ -1,11 +1,11 @@
 {
-  "version": "1.4.1",
-  "notes": "Monet v1.4.1 — Nova aba Notes na coluna lateral do leitor de ebook: selecione um notebook e uma anotação (ou crie uma nova ali mesmo) e escreva enquanto lê, com o editor completo. \"Copy citation\" agora grava direto na anotação selecionada. Leitor também ganhou busca no texto do livro, filtro de cor e troca de cor de grifos, e botões flutuantes de navegação de página. Correção de bug de barra de rolagem intermitente na Library/Reader.",
-  "pub_date": "2026-07-15T00:00:00Z",
+  "version": "1.4.3",
+  "notes": "Monet v1.4.3 — Novo controle de margem lateral no leitor de EPUB: aumenta ou diminui o espaçamento das laterais para ajustar o comprimento da linha ao que for mais confortável para leitura, ao lado do zoom e da diagramação em uma ou duas colunas. Configuração persistida entre sessões.",
+  "pub_date": "2026-08-09T13:13:49Z",
   "platforms": {
     "windows-x86_64": {
-      "url": "https://github.com/luizvilarinho/Monet/releases/download/v1.4.1/monet_1.4.1_x64_en-US.msi",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRlFHSkpLWXhzck93Y1J0UFUrK01ZWWZkUTRPeVNWdWdIMzhQRTNDTTh6bU8wZEhJRG9sNVpFOGFYVE9GMUZ4MWRlYUFkVDYyakxzdWI3VnpwdTg1d0JwSXZqRW5vcFFFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0MTQyNTc1CWZpbGU6bW9uZXRfMS40LjFfeDY0X2VuLVVTLm1zaQpZLzdrV1ZuOWpwQVU2d0dSaTZDMG1DYXUzRXhWdGJFVFFlSnF3L1RPRXFLQ2hCTHgwdmcxc0FIOVJwR0FtRWl4dUhJYXk5N0JpbEdPVWFtUVphSTBDZz09Cg=="
+      "url": "https://github.com/luizvilarinho/Monet/releases/download/v1.4.3/monet_1.4.3_x64_en-US.msi",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRlFHSkpLWXhzckJiczkyVHBwd2RvOXQ1b0NuendRZHgwRW83QTdYUC9PYUYwOVJEbjZlRHRMYVdGMTlUVmhnc0pEQXhtMi90YUxtNVQ5NUhFL253L0Q5MkNwMjd2d3dnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2MjkyMDE3CWZpbGU6bW9uZXRfMS40LjNfeDY0X2VuLVVTLm1zaQpkdGNLRGJIVXNhLzN1eTNsVnBHaWgxcWgvUWdrNFk4OTdMR2RyYmNaNFgxVU85SS85VUZkZ1lUQ215M0Q2dllhUk9iQ2YzbUEvaXM0NUJlWmt4U0REdz09Cg=="
     }
   }
 }

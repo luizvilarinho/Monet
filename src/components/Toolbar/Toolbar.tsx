@@ -15,6 +15,8 @@ export interface ToolbarProps {
   onToggleAi: () => void
   focusMode?: boolean
   onToggleFocus?: () => void
+  previewMode?: boolean
+  onTogglePreview?: () => void
 }
 
 export function Toolbar({
@@ -29,6 +31,8 @@ export function Toolbar({
   onToggleAi,
   focusMode = false,
   onToggleFocus,
+  previewMode = false,
+  onTogglePreview,
 }: ToolbarProps) {
   return (
     <header className={styles.toolbar}>
@@ -69,6 +73,16 @@ export function Toolbar({
               title="Export note as .md"
             >
               {exportSuccess ? 'saved!' : 'export .md'}
+            </button>
+            <button
+              type="button"
+              onClick={onTogglePreview}
+              disabled={!hasNote}
+              aria-pressed={previewMode}
+              className={styles.actionBtn}
+              title="Preview (hide slash commands)"
+            >
+              preview
             </button>
             <button
               type="button"

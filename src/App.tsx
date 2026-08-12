@@ -314,6 +314,7 @@ function App() {
     () => localStorage.getItem('monet:sidebar-collapsed') === '1'
   )
   const [focusMode, setFocusMode] = useState(false)
+  const [previewMode, setPreviewMode] = useState(false)
   const [searchPaletteOpen, setSearchPaletteOpen] = useState(false)
   const [exportSuccess, setExportSuccess] = useState(false)
   const exportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -862,6 +863,20 @@ function App() {
           ? buildUserMessage(cmd, def.description, query, '', searchContext, ragContext, weekContext, datedNotesContext)
           : buildUserMessage(cmd, def.description, query, noteContent, searchContext, ragContext, undefined, datedNotesContext)
 
+      // Log dos contextos montados para o slash command (complementa o log
+      // do payload final em useAi.ts).
+      if (import.meta.env.DEV) console.log('[Monet AI] Command contexts', {
+        cmd,
+        query,
+        model: modelId,
+        systemPrompt: SYSTEM_PROMPT,
+        searchContext,
+        ragContext,
+        weekContext,
+        datedNotesContext,
+        userMessage,
+      })
+
       await start({
         noteId: activeId,
         model: modelId,
@@ -1132,6 +1147,8 @@ function App() {
         onToggleAi={() => setAiOpen((v) => !v)}
         focusMode={focusMode}
         onToggleFocus={() => setFocusMode((v) => !v)}
+        previewMode={previewMode}
+        onTogglePreview={() => setPreviewMode((v) => !v)}
       />
       {(noteSaveError || notebookSaveError || subjectSaveError) && (
         <div className="saveErrorBanner" role="alert">
@@ -1212,6 +1229,7 @@ function App() {
           <CalendarView
             notes={notes.filter((n) => n.notebookId === calendarNotebookId)}
             datedNotes={notes.filter((n) => !!n.date)}
+            recentlyActiveNotes={notes}
             onDayClick={handleCalendarDayClick}
             onNoteClick={(noteId) => {
               const note = notes.find((n) => n.id === noteId)
@@ -1275,6 +1293,7 @@ function App() {
                 : undefined
             }
             isCalendarNote={activeNote.notebookId === calendarNotebookId}
+            previewMode={previewMode}
           />
           </RemindersProvider>
         ) : (

@@ -302,12 +302,14 @@
 .proseEditor :global(ul[data-type="taskList"] li) {
   position: relative;
   display: flex;
-  align-items: center;
+  flex-wrap: wrap;
+  align-items: flex-start;
   gap: 8px;
   margin: 0.15em 0;
 }
+/* label (checkbox) fica fixo na primeira posição */
 .proseEditor :global(ul[data-type="taskList"] li > label) {
-  flex: 0 0 auto;
+  flex: 0 0 14px;
   display: flex;
   align-items: center;
   user-select: none;
@@ -328,6 +330,7 @@
   position: relative;
   vertical-align: middle;
   margin: 0;
+  margin-top: 3px;
   flex-shrink: 0;
 }
 .proseEditor :global(ul[data-type="taskList"] li > label > input[type="checkbox"]:checked) {
@@ -346,12 +349,28 @@
   transform: rotate(45deg);
 }
 .proseEditor :global(ul[data-type="taskList"] li > div) {
-  flex: 1 1 auto;
+  flex: 1 1 calc(100% - 22px);
   min-width: 0;
+  padding-top: 1px;
+}
+/* Parágrafos dentro de task item: sem margem para alinhar com o checkbox */
+.proseEditor :global(ul[data-type="taskList"] li > div > p) {
+  margin: -2px 0;
+}
+/* A ul aninhada (subtasks) ocupa toda a largura e quebra para a próxima
+   linha, mantendo o alinhamento do checkbox com o texto da task pai. */
+.proseEditor :global(ul[data-type="taskList"] li > ul[data-type="taskList"]) {
+  flex-basis: 100%;
 }
 .proseEditor :global(ul[data-type="taskList"] li[data-checked="true"] > div) {
   text-decoration: line-through;
   color: var(--text-muted, #606070);
+}
+
+/* Subtasks aninhadas — indentação visual para hierarquia */
+.proseEditor :global(ul[data-type="taskList"] ul[data-type="taskList"]) {
+  padding-left: 0.5em;
+  margin: 0.1em 0;
 }
 
 /* Placeholder (Tiptap Placeholder extension) */
@@ -366,6 +385,11 @@
 /* /comandos — linha em digitação (reconhecida como /comando) */
 .proseEditor :global(p.monetCmdDraft) {
   color: var(--accent, #7c6af5);
+}
+
+/* Modo preview: oculta as linhas de slash command do editor */
+.proseEditor :global(p.monetCmdHidden) {
+  display: none;
 }
 
 /* /comando executado com sucesso */

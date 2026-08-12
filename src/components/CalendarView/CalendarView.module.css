@@ -214,6 +214,10 @@
   background: #9370db;
 }
 
+.dotOrange {
+  background: #ef9f27;
+}
+
 .selected {
   background: var(--surface-3, #2e2e36) !important;
 }
@@ -227,8 +231,6 @@
   flex-direction: column;
   gap: 6px;
   padding: 8px 0 4px;
-  overflow-y: auto;
-  max-height: 200px;
 }
 
 .noteCard {
@@ -238,6 +240,10 @@
   padding: 7px 10px;
   cursor: pointer;
   outline: none;
+}
+
+.noteCardActive {
+  border-right-color: var(--accent-ai, #5dcaa5);
 }
 
 .noteCard:hover {
