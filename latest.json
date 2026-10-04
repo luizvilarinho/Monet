@@ -1,11 +1,11 @@
 {
-  "version": "1.4.4",
-  "notes": "Monet v1.4.4 — Ajustes no Notebook: hierarquia de tasks com Tab (subtasks aninhadas com alinhamento corrigido do checkbox); botão Preview que oculta temporariamente as linhas de slash command e desativa os comandos enquanto ativo; menu de contexto (botão direito) com opções de formatação que criam novas linhas já formatadas, com layout compacto e posicionamento inteligente; calendário agora mostra notas criadas ou editadas no dia selecionado (linha verde) além das notas com data atribuída (linha roxa), sem duplicação; logs de system prompts no console para depuração; estudo de usabilidade de tabelas com propostas de melhoria.",
-  "pub_date": "2026-08-12T04:50:07Z",
+  "version": "1.4.5",
+  "notes": "Monet v1.4.5 — Organização de notas e cadernos: mover uma nota para outro caderno pelo novo ícone ao lado do nome da nota (a nota vai para a raiz do caderno escolhido); mover um caderno inteiro para dentro de outro pelo novo ícone ao lado do nome do caderno (o caderno de origem vira um subject no destino e todas as suas notas passam para ele, mesclando se já existir subject com o mesmo nome); tool de chat renomeada de Web research para Save web sources, para não confundir com a web search já existente; Calendar exibe o nome do caderno acima das notas alteradas no dia.",
+  "pub_date": "2026-10-04T06:04:46Z",
   "platforms": {
     "windows-x86_64": {
-      "url": "https://github.com/luizvilarinho/Monet/releases/download/v1.4.4/monet_1.4.4_x64_en-US.msi",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRlFHSkpLWXhzck1WWG9OdzVtc1N4L1ZGdzV0dTVoMTQ5aSszWG56OFR5TDNhTXkrb0laTXFqVzFEOWI1NFBJSDQ2ZDhhUmd4ajdNVEkwcVg1S1hiamtxMlE3WHM2NEFJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NTEwMTk3CWZpbGU6bW9uZXRfMS40LjRfeDY0X2VuLVVTLm1zaQpKYU1ZT1BQRjdjeGM0QWo4ZzFxWHpCZUE3TDllRGppUmxUeXhhWUVzdi9uclE3bnU0VlRDV2haQkljOVZBejNXRDdiSmhJSXdQWThjV05sSVBpY2ZDQT09Cg=="
+      "url": "https://github.com/luizvilarinho/Monet/releases/download/v1.4.5/monet_1.4.5_x64_en-US.msi",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRlFHSkpLWXhzckZCazR1NnRCV0ZKWjBZN01VaUFVaXR3MWxBUDhSd3BEdVJTMldIMUZkYkZMQTJyQUJBbXFzaGFiMnVPZldZS3dCNHlmNmUvUC9ESDFRdGFNYm85QWd3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMDkzODg2CWZpbGU6bW9uZXRfMS40LjVfeDY0X2VuLVVTLm1zaQpwQVdoeXJ6bFZ4bExUTnNqYnpFbHdvSWhNUnArV2VQenNxMnBoVXV5UHRvMTVjTkRrb1dVSWtvNlhoMnNoTWRYYS9WWWxFWTdtRUhUaDAwYU8rZFJCQT09Cg=="
     }
   }
 }

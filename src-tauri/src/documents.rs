@@ -1110,7 +1110,7 @@ pub async fn documents_ensure_ai_folder(
     fs::create_dir_all(&dir).map_err(|e| format!("failed to create folder: {}", e))?;
 
     let id = Uuid::new_v4().to_string();
-    let name = format!("Web research — {}", folder_name);
+    let name = format!("Save web sources — {}", folder_name);
     let now = now_ms();
 
     with_doc_db(&app, &state, |conn| {

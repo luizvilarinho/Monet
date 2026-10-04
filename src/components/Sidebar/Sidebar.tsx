@@ -2,6 +2,7 @@ import {
   ArrowsMerge,
   DotsSixVertical,
   FolderSimple,
+  Notebook as NotebookIcon,
   PlusCircle,
   SidebarSimple,
   X,
@@ -22,9 +23,11 @@ import {
   arrayMove,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import type { Note, Subject } from '../../types'
+import type { Note, Notebook, Subject } from '../../types'
 import { useConfirm } from '../../hooks/useConfirm'
+import { CALENDAR_NOTEBOOK_ID } from '../../lib/calendar'
 import { MergeNoteModal } from './MergeNoteModal'
+import { NotebookPickerModal } from '../NotebookPickerModal/NotebookPickerModal'
 import styles from './Sidebar.module.css'
 
 const MIN_WIDTH = 160
@@ -36,12 +39,13 @@ interface SortableNoteItemProps {
   onSelect: (id: string) => void
   onDelete: (id: string) => void
   onMerge?: (id: string) => void
+  onMoveNote?: (id: string) => void
   subjects?: Subject[]
   onAssignSubject?: (noteId: string, subjectId: string | null) => void
   currentSubjectId?: string | null
 }
 
-function SortableNoteItem({ note, isActive, onSelect, onDelete, onMerge, subjects, onAssignSubject, currentSubjectId }: SortableNoteItemProps) {
+function SortableNoteItem({ note, isActive, onSelect, onDelete, onMerge, onMoveNote, subjects, onAssignSubject, currentSubjectId }: SortableNoteItemProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: note.id,
   })
@@ -118,6 +122,18 @@ function SortableNoteItem({ note, isActive, onSelect, onDelete, onMerge, subject
           )}
         </div>
       )}
+      {onMoveNote && (
+        <button
+          className={styles.rowMove}
+          onClick={(e) => { e.stopPropagation(); onMoveNote(note.id) }}
+          onDoubleClick={(e) => e.stopPropagation()}
+          aria-label={`move note ${note.title || 'untitled'} to another notebook`}
+          type="button"
+          title="move to another notebook"
+        >
+          <NotebookIcon size={11} aria-hidden />
+        </button>
+      )}
       <button
         className={styles.rowDelete}
         onClick={(e) => { e.stopPropagation(); onDelete(note.id) }}
@@ -139,6 +155,8 @@ export interface SidebarProps {
   onDelete: (id: string) => void
   onReorder: (newOrder: string[]) => void
   onMerge?: (sourceId: string, targetId: string) => void
+  notebooks: Notebook[]
+  onMoveNote?: (noteId: string, destNotebookId: string) => void
   width?: number
   collapsed?: boolean
   onToggleCollapsed?: () => void
@@ -156,6 +174,8 @@ export function Sidebar({
   onDelete,
   onReorder,
   onMerge,
+  notebooks,
+  onMoveNote,
   width = 220,
   collapsed = false,
   onToggleCollapsed,
@@ -168,6 +188,7 @@ export function Sidebar({
   )
   const { confirm, modal } = useConfirm()
   const [mergeSourceId, setMergeSourceId] = useState<string | null>(null)
+  const [moveNoteId, setMoveNoteId] = useState<string | null>(null)
   const dragging = useRef(false)
   const startX = useRef(0)
   const startWidth = useRef(0)
@@ -229,6 +250,24 @@ export function Sidebar({
   return (
     <aside className={`${styles.sidebar} ${collapsed ? styles.collapsed : ''}`} style={{ width }}>
       {modal}
+      {moveNoteId !== null && (() => {
+        const moveNote = notes.find((n) => n.id === moveNoteId)
+        if (!moveNote) return null
+        return (
+          <NotebookPickerModal
+            title={`Move \u201C${moveNote.title || 'untitled'}\u201D to:`}
+            confirmLabel="Move"
+            notebooks={notebooks.filter(
+              (nb) => nb.id !== moveNote.notebookId && nb.id !== CALENDAR_NOTEBOOK_ID
+            )}
+            onConfirm={(destNotebookId) => {
+              onMoveNote?.(moveNoteId, destNotebookId)
+              setMoveNoteId(null)
+            }}
+            onClose={() => setMoveNoteId(null)}
+          />
+        )
+      })()}
       {mergeSourceId !== null && (() => {
         const sourceNote = notes.find((n) => n.id === mergeSourceId)
         if (!sourceNote) return null
@@ -296,6 +335,7 @@ export function Sidebar({
                       onSelect={onSelect}
                       onDelete={(id) => handleDeleteNote(id, n.title)}
                       onMerge={onMerge ? setMergeSourceId : undefined}
+                      onMoveNote={onMoveNote ? setMoveNoteId : undefined}
                       subjects={subjects}
                       onAssignSubject={onAssignSubject}
                       currentSubjectId={n.subjectId}

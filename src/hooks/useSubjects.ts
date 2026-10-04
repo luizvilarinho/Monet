@@ -18,6 +18,18 @@ export function useSubjects(notebookId: string | null) {
       .catch((err) => console.error('failed to load subjects', err))
   }, [notebookId])
 
+  // Relê os subjects do caderno ativo no banco — usado quando um caderno
+  // recebe um subject novo por fora (ex.: mover caderno para dentro dele).
+  const refresh = useCallback(async () => {
+    if (!notebookId) {
+      setSubjects([])
+      return []
+    }
+    const list = await storage.getSubjects(notebookId)
+    setSubjects(list)
+    return list
+  }, [notebookId])
+
   const save = useCallback(async (subject: Subject) => {
     setSubjects((prev) => {
       const i = prev.findIndex((s) => s.id === subject.id)
@@ -87,5 +99,5 @@ export function useSubjects(notebookId: string | null) {
     [subjects]
   )
 
-  return { subjects, save, remove, create, reorder, saveError }
+  return { subjects, save, remove, create, reorder, refresh, saveError }
 }

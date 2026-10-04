@@ -1,6 +1,6 @@
 import { CaretLeft, CaretRight, SidebarSimple } from '@phosphor-icons/react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Note } from '../../types'
+import type { Note, Notebook } from '../../types'
 import { CALENDAR_NOTEBOOK_ID } from '../../lib/calendar'
 import styles from './CalendarView.module.css'
 
@@ -28,6 +28,7 @@ const MAX_WIDTH = 400
 interface CalendarViewProps {
   notes: Note[]
   datedNotes: Note[]
+  notebooks: Notebook[]
   /** Todas as notas — usadas para destacar no dia selecionado as que foram
    *  criadas ou editadas nesse dia. */
   recentlyActiveNotes?: Note[]
@@ -42,6 +43,7 @@ interface CalendarViewProps {
 export function CalendarView({
   notes,
   datedNotes,
+  notebooks,
   recentlyActiveNotes = [],
   onDayClick,
   onNoteClick,
@@ -123,6 +125,11 @@ export function CalendarView({
   const todayKey = useMemo(
     () => toDateKey(today.getFullYear(), today.getMonth(), today.getDate()),
     [today]
+  )
+
+  const notebookNameById = useMemo(
+    () => new Map(notebooks.map((nb) => [nb.id, nb.name])),
+    [notebooks]
   )
 
   // Cards abaixo do calendário:
@@ -327,18 +334,24 @@ export function CalendarView({
 
           {dayCards.length > 0 && (
             <div className={styles.cards}>
-              {dayCards.map(({ note, dated }) => (
-                <div
-                  key={note.id}
-                  className={`${styles.noteCard} ${dated ? '' : styles.noteCardActive}`}
-                  onClick={() => onNoteClick(note.id)}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onNoteClick(note.id) }}
-                >
-                  <span className={styles.noteCardTitle}>{note.title || 'untitled'}</span>
-                </div>
-              ))}
+              {dayCards.map(({ note, dated }) => {
+                const nbName = note.notebookId
+                  ? notebookNameById.get(note.notebookId)
+                  : undefined
+                return (
+                  <div
+                    key={note.id}
+                    className={`${styles.noteCard} ${dated ? '' : styles.noteCardActive}`}
+                    onClick={() => onNoteClick(note.id)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onNoteClick(note.id) }}
+                  >
+                    {nbName && <span className={styles.noteCardNotebook}>{nbName}</span>}
+                    <span className={styles.noteCardTitle}>{note.title || 'untitled'}</span>
+                  </div>
+                )
+              })}
             </div>
           )}
         </div>

@@ -157,7 +157,7 @@ export function ChatToolsMenu({
                   <Globe size={16} />
                 </span>
                 <div className={styles.toolText}>
-                  <span className={styles.toolName}>Web research</span>
+                  <span className={styles.toolName}>Save web sources</span>
                   <span className={styles.toolDescription}>
                     Lets the AI save web sources it finds into this folder&apos;s permanent knowledge base, so future conversations don&apos;t need to re-search them.
                   </span>
@@ -166,7 +166,7 @@ export function ChatToolsMenu({
                   type="button"
                   role="switch"
                   aria-checked={folderWebResearch.enabled}
-                  aria-label="toggle web research"
+                  aria-label="toggle save web sources"
                   className={folderWebResearch.enabled ? styles.toggleOn : styles.toggleOff}
                   onClick={() => onToggleFolderWebResearch(!folderWebResearch.enabled)}
                 >

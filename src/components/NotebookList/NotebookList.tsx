@@ -14,6 +14,7 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import {
+  ArrowRight,
   Books,
   CalendarBlank,
   DotsSixVertical,
@@ -28,6 +29,7 @@ import {
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { useConfirm } from '../../hooks/useConfirm'
 import type { Notebook, Subject } from '../../types'
+import { NotebookPickerModal } from '../NotebookPickerModal/NotebookPickerModal'
 import styles from './NotebookList.module.css'
 
 const MIN_WIDTH = 140
@@ -40,6 +42,7 @@ interface SortableNotebookItemProps {
   editing: { id: string; value: string } | null
   onSelect: (id: string) => void
   onDelete: (id: string) => void
+  onMoveNotebook: (id: string) => void
   onOpenDocuments: (id: string) => void
   onStartEdit: (id: string, value: string) => void
   onCommitEdit: () => void
@@ -55,6 +58,7 @@ function SortableNotebookItem({
   editing,
   onSelect,
   onDelete,
+  onMoveNotebook,
   onOpenDocuments,
   onStartEdit,
   onCommitEdit,
@@ -126,6 +130,16 @@ function SortableNotebookItem({
             type="button"
           >
             <FileText size={13} aria-hidden />
+          </button>
+          <button
+            className={styles.rowMove}
+            onClick={(e) => { e.stopPropagation(); onMoveNotebook(nb.id) }}
+            onDoubleClick={(e) => e.stopPropagation()}
+            aria-label={`move notebook ${nb.name || 'unnamed'} to another notebook`}
+            title="move to another notebook"
+            type="button"
+          >
+            <ArrowRight size={13} aria-hidden />
           </button>
           <button
             className={styles.rowDelete}
@@ -244,6 +258,7 @@ export interface NotebookListProps {
   onSelect: (id: string | null) => void
   onCreate: () => void
   onDelete: (id: string) => void
+  onMoveNotebook: (sourceId: string, destNotebookId: string) => void
   onRename: (id: string, name: string) => void
   onOpenDocuments: (id: string) => void
   onOpenKnowledgeBase: () => void
@@ -273,6 +288,7 @@ export function NotebookList({
   onSelect,
   onCreate,
   onDelete,
+  onMoveNotebook,
   onRename,
   onOpenDocuments,
   onOpenKnowledgeBase,
@@ -297,6 +313,7 @@ export function NotebookList({
 }: NotebookListProps) {
   const [editing, setEditing] = useState<{ id: string; value: string } | null>(null)
   const [subjectEditing, setSubjectEditing] = useState<{ id: string; value: string } | null>(null)
+  const [moveNotebookId, setMoveNotebookId] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const subjectInputRef = useRef<HTMLInputElement>(null)
   const { confirm, modal } = useConfirm()
@@ -396,6 +413,24 @@ export function NotebookList({
   return (
     <aside className={`${styles.notebooks} ${collapsed ? styles.collapsed : ''}`} style={{ width }}>
       {modal}
+      {moveNotebookId !== null && (() => {
+        const moveNotebook = notebooks.find((n) => n.id === moveNotebookId)
+        if (!moveNotebook) return null
+        return (
+          <NotebookPickerModal
+            title={`Move \u201C${moveNotebook.name || 'unnamed'}\u201D to:`}
+            confirmLabel="Move"
+            notebooks={notebooks.filter(
+              (n) => n.id !== moveNotebookId && n.id !== calendarNotebookId
+            )}
+            onConfirm={(destNotebookId) => {
+              onMoveNotebook(moveNotebookId, destNotebookId)
+              setMoveNotebookId(null)
+            }}
+            onClose={() => setMoveNotebookId(null)}
+          />
+        )
+      })()}
       {!collapsed && <div className={styles.resizeHandle} onMouseDown={onMouseDown} />}
       {collapsed ? (
         <div className={styles.collapsedTop}>
@@ -481,6 +516,7 @@ export function NotebookList({
                           editing={editing}
                           onSelect={onSelect}
                           onDelete={(id) => handleDeleteNotebook(id, nb.name)}
+                          onMoveNotebook={setMoveNotebookId}
                           onOpenDocuments={onOpenDocuments}
                           onStartEdit={(id, value) => setEditing({ id, value })}
                           onCommitEdit={commitEdit}
@@ -564,7 +600,7 @@ export function NotebookList({
       )}
 
       <div className={`${styles.footer} ${collapsed ? styles.footerCollapsed : ''}`}>
-        {!collapsed && <span className={styles.version}>v1.4.4</span>}
+        {!collapsed && <span className={styles.version}>v1.4.5</span>}
         <button
           className={styles.settings}
           onClick={onOpenKnowledgeBase}

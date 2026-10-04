@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { check } from '@tauri-apps/plugin-updater'
 import type { Update } from '@tauri-apps/plugin-updater'
+import { nanoid } from 'nanoid'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import { AiPanel } from './components/AiPanel/AiPanel'
@@ -274,6 +275,7 @@ function App() {
     remove: removeSubject,
     create: createSubject,
     reorder: reorderSubjects,
+    refresh: refreshSubjects,
     saveError: subjectSaveError,
   } = useSubjects(activeNotebookId)
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -1034,6 +1036,64 @@ function App() {
     [notes, saveNote]
   )
 
+  const handleMoveNote = useCallback(
+    async (noteId: string, destNotebookId: string) => {
+      const note = notes.find((n) => n.id === noteId)
+      if (!note) return
+      if (note.notebookId === destNotebookId) return
+      await saveNote({ ...note, notebookId: destNotebookId, subjectId: null, updatedAt: Date.now() })
+    },
+    [notes, saveNote]
+  )
+
+  // Mover caderno inteiro: a origem vira um subject no destino (mesclando se
+  // já houver subject com o mesmo nome), todas as notas da origem são
+  // achatadas nesse subject e o caderno de origem deixa de existir. As notas
+  // são re-salvas no destino ANTES do deleteNotebook, que cascade-deleta
+  // notes/subjects da origem.
+  const handleMoveNotebook = useCallback(
+    async (sourceId: string, destId: string) => {
+      if (sourceId === destId) return
+      const source = notebooks.find((n) => n.id === sourceId)
+      if (!source) return
+      const destSubjects = await storage.getSubjects(destId)
+      let target = destSubjects.find((s) => s.name === source.name)
+      if (!target) {
+        const now = Date.now()
+        const maxOrder = destSubjects.reduce((max, s) => Math.max(max, s.sortOrder), -1)
+        target = {
+          id: nanoid(),
+          notebookId: destId,
+          name: source.name,
+          sortOrder: maxOrder + 1,
+          createdAt: now,
+          updatedAt: now,
+        }
+        await storage.saveSubject(target)
+      }
+      const childNotes = notes.filter((n) => n.notebookId === sourceId)
+      await Promise.all(
+        childNotes.map((n) =>
+          saveNote({ ...n, notebookId: destId, subjectId: target.id, updatedAt: Date.now() })
+        )
+      )
+      await removeNotebook(sourceId)
+      if (activeNotebookId === sourceId) {
+        setActiveNotebookId(null)
+        setActiveSubjectId(null)
+        setActiveId(null)
+      } else if (activeNotebookId === destId) {
+        void refreshSubjects()
+      }
+      setNotebookOrder((prev) => {
+        const next = prev.filter((x) => x !== sourceId)
+        saveOrder('monet:notebook-order', next)
+        return next
+      })
+    },
+    [notebooks, notes, saveNote, removeNotebook, activeNotebookId, refreshSubjects]
+  )
+
   const handleCreateNotebookFromChat = useCallback(
     async (name: string) => {
       const nb = await createNotebook(name)
@@ -1200,6 +1260,7 @@ function App() {
           }}
           onCreate={handleCreateNotebook}
           onDelete={handleDeleteNotebook}
+          onMoveNotebook={handleMoveNotebook}
           onRename={handleRenameNotebook}
           onOpenDocuments={(id) => {
             setActiveNotebookId(id)
@@ -1229,6 +1290,7 @@ function App() {
           <CalendarView
             notes={notes.filter((n) => n.notebookId === calendarNotebookId)}
             datedNotes={notes.filter((n) => !!n.date)}
+            notebooks={notebooks}
             recentlyActiveNotes={notes}
             onDayClick={handleCalendarDayClick}
             onNoteClick={(noteId) => {
@@ -1252,6 +1314,8 @@ function App() {
             onDelete={handleDeleteNote}
             onReorder={handleReorder}
             onMerge={handleMergeNotes}
+            notebooks={orderedNotebooks}
+            onMoveNote={handleMoveNote}
             width={effectiveSidebarWidth}
             collapsed={sidebarCollapsed}
             onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}

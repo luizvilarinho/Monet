@@ -255,6 +255,17 @@
   outline-offset: -1px;
 }
 
+.noteCardNotebook {
+  display: block;
+  font-size: 10px;
+  color: var(--text-muted, #606070);
+  line-height: 1.2;
+  margin-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .noteCardTitle {
   font-size: 12px;
   color: var(--text-secondary, #a0a0b8);
