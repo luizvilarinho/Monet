@@ -1,11 +1,11 @@
 {
-  "version": "1.4.3",
-  "notes": "Monet v1.4.3 — Novo controle de margem lateral no leitor de EPUB: aumenta ou diminui o espaçamento das laterais para ajustar o comprimento da linha ao que for mais confortável para leitura, ao lado do zoom e da diagramação em uma ou duas colunas. Configuração persistida entre sessões.",
-  "pub_date": "2026-08-09T13:13:49Z",
+  "version": "1.4.4",
+  "notes": "Monet v1.4.4 — Ajustes no Notebook: hierarquia de tasks com Tab (subtasks aninhadas com alinhamento corrigido do checkbox); botão Preview que oculta temporariamente as linhas de slash command e desativa os comandos enquanto ativo; menu de contexto (botão direito) com opções de formatação que criam novas linhas já formatadas, com layout compacto e posicionamento inteligente; calendário agora mostra notas criadas ou editadas no dia selecionado (linha verde) além das notas com data atribuída (linha roxa), sem duplicação; logs de system prompts no console para depuração; estudo de usabilidade de tabelas com propostas de melhoria.",
+  "pub_date": "2026-08-12T04:50:07Z",
   "platforms": {
     "windows-x86_64": {
-      "url": "https://github.com/luizvilarinho/Monet/releases/download/v1.4.3/monet_1.4.3_x64_en-US.msi",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRlFHSkpLWXhzckJiczkyVHBwd2RvOXQ1b0NuendRZHgwRW83QTdYUC9PYUYwOVJEbjZlRHRMYVdGMTlUVmhnc0pEQXhtMi90YUxtNVQ5NUhFL253L0Q5MkNwMjd2d3dnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2MjkyMDE3CWZpbGU6bW9uZXRfMS40LjNfeDY0X2VuLVVTLm1zaQpkdGNLRGJIVXNhLzN1eTNsVnBHaWgxcWgvUWdrNFk4OTdMR2RyYmNaNFgxVU85SS85VUZkZ1lUQ215M0Q2dllhUk9iQ2YzbUEvaXM0NUJlWmt4U0REdz09Cg=="
+      "url": "https://github.com/luizvilarinho/Monet/releases/download/v1.4.4/monet_1.4.4_x64_en-US.msi",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRlFHSkpLWXhzck1WWG9OdzVtc1N4L1ZGdzV0dTVoMTQ5aSszWG56OFR5TDNhTXkrb0laTXFqVzFEOWI1NFBJSDQ2ZDhhUmd4ajdNVEkwcVg1S1hiamtxMlE3WHM2NEFJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NTEwMTk3CWZpbGU6bW9uZXRfMS40LjRfeDY0X2VuLVVTLm1zaQpKYU1ZT1BQRjdjeGM0QWo4ZzFxWHpCZUE3TDllRGppUmxUeXhhWUVzdi9uclE3bnU0VlRDV2haQkljOVZBejNXRDdiSmhJSXdQWThjV05sSVBpY2ZDQT09Cg=="
     }
   }
 }
