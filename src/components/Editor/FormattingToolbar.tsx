@@ -10,11 +10,14 @@ import {
   runAction,
   type ButtonDef,
 } from './formattingActions'
+import { findEligibleTaskItems } from './TaskStatus'
 
 interface Props {
   editor: Editor
   // "Ask AI": envia o trecho selecionado para o chat do caderno.
   onAskAi?: (text: string) => void
+  // "Add to Tasks": promove os itens de checklist selecionados a tasks.
+  onAddToTasks?: () => void
 }
 
 const PLUGIN_KEY = 'monetFormattingMenu'
@@ -50,7 +53,7 @@ function renderGroups(
   ))
 }
 
-export function FormattingToolbar({ editor, onAskAi }: Props) {
+export function FormattingToolbar({ editor, onAskAi, onAddToTasks }: Props) {
   const [hiddenByEscape, setHiddenByEscape] = useState(false)
 
   useEffect(() => {
@@ -72,16 +75,19 @@ export function FormattingToolbar({ editor, onAskAi }: Props) {
     }
   }, [editor, hiddenByEscape])
 
-  const { inTable, hasSelection } = useEditorState({
+  const { inTable, hasSelection, eligibleCount } = useEditorState({
     editor,
     selector: ({ editor: ed }) => {
       const { from, to } = ed.state.selection
       return {
         inTable: ed.isActive('table'),
         hasSelection: from !== to,
+        eligibleCount: from !== to ? findEligibleTaskItems(ed.state).length : 0,
       }
     },
   })
+
+  const showAddToTasks = Boolean(onAddToTasks) && eligibleCount > 0
 
   const formattingGroups = inTable
     ? FORMATTING_GROUPS.map((g) => g.filter((b) => b.id !== 'table'))
@@ -107,21 +113,36 @@ export function FormattingToolbar({ editor, onAskAi }: Props) {
         {hasSelection && renderGroups(editor, formattingGroups, 'fmt')}
         {inTable && hasSelection && <div className={styles.sep} />}
         {inTable && renderGroups(editor, TABLE_GROUPS, 'tbl')}
-        {hasSelection && onAskAi && (
+        {hasSelection && (onAskAi || showAddToTasks) && (
           <div className={styles.group}>
             <div className={styles.sep} />
-            <button
-              className={`${styles.btn} ${styles.askAi}`}
-              title="Ask AI about the selection"
-              onMouseDown={(e) => {
-                e.preventDefault()
-                const { from, to } = editor.state.selection
-                onAskAi(editor.state.doc.textBetween(from, to, '\n'))
-              }}
-              type="button"
-            >
-              Ask AI
-            </button>
+            {showAddToTasks && (
+              <button
+                className={`${styles.btn} ${styles.addTask}`}
+                title="Add the selected checklist items to Tasks"
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  onAddToTasks?.()
+                }}
+                type="button"
+              >
+                Add to Tasks
+              </button>
+            )}
+            {onAskAi && (
+              <button
+                className={`${styles.btn} ${styles.askAi}`}
+                title="Ask AI about the selection"
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  const { from, to } = editor.state.selection
+                  onAskAi(editor.state.doc.textBetween(from, to, '\n'))
+                }}
+                type="button"
+              >
+                Ask AI
+              </button>
+            )}
           </div>
         )}
       </div>

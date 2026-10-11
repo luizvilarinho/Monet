@@ -6,6 +6,7 @@ import type {
   Note,
   Notebook,
   Subject,
+  Task,
 } from '../types'
 import type { StorageAdapter } from './index'
 
@@ -96,6 +97,16 @@ export class BrowserStorage implements StorageAdapter {
     const current = await this.getFiredReminderIds(noteId)
     const next = Array.from(new Set([...current, ...ids]))
     localStorage.setItem(this.firedKey(noteId), JSON.stringify(next))
+  }
+
+  async getTasks(): Promise<Task[]> {
+    throw new Error('BrowserStorage.getTasks not implemented')
+  }
+  async saveTask(_task: Task): Promise<void> {
+    throw new Error('BrowserStorage.saveTask not implemented')
+  }
+  async deleteTask(_id: string): Promise<void> {
+    throw new Error('BrowserStorage.deleteTask not implemented')
   }
 
   async getResponses(_noteId: string): Promise<AiResponse[]> {

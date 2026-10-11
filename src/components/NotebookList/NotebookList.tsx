@@ -21,6 +21,7 @@ import {
   FileText,
   Folder,
   Gear,
+  ListChecks,
   Plus,
   PlusCircle,
   SidebarSimple,
@@ -28,6 +29,7 @@ import {
 } from '@phosphor-icons/react'
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { useConfirm } from '../../hooks/useConfirm'
+import { INBOX_NOTEBOOK_ID, isTasksSubject } from '../../lib/tasks'
 import type { Notebook, Subject } from '../../types'
 import { NotebookPickerModal } from '../NotebookPickerModal/NotebookPickerModal'
 import styles from './NotebookList.module.css'
@@ -75,6 +77,10 @@ function SortableNotebookItem({
     transition,
     opacity: isDragging ? 0.4 : undefined,
   }
+
+  // Inbox recebe as tasks sem projeto (e as de cadernos excluídos): não pode
+  // ser excluído nem movido para dentro de outro caderno.
+  const isInbox = nb.id === INBOX_NOTEBOOK_ID
 
   return (
     <li
@@ -131,25 +137,29 @@ function SortableNotebookItem({
           >
             <FileText size={13} aria-hidden />
           </button>
-          <button
-            className={styles.rowMove}
-            onClick={(e) => { e.stopPropagation(); onMoveNotebook(nb.id) }}
-            onDoubleClick={(e) => e.stopPropagation()}
-            aria-label={`move notebook ${nb.name || 'unnamed'} to another notebook`}
-            title="move to another notebook"
-            type="button"
-          >
-            <ArrowRight size={13} aria-hidden />
-          </button>
-          <button
-            className={styles.rowDelete}
-            onClick={(e) => { e.stopPropagation(); onDelete(nb.id) }}
-            onDoubleClick={(e) => e.stopPropagation()}
-            aria-label={`delete notebook ${nb.name}`}
-            type="button"
-          >
-            <X size={12} weight="bold" aria-hidden />
-          </button>
+          {!isInbox && (
+            <>
+              <button
+                className={styles.rowMove}
+                onClick={(e) => { e.stopPropagation(); onMoveNotebook(nb.id) }}
+                onDoubleClick={(e) => e.stopPropagation()}
+                aria-label={`move notebook ${nb.name || 'unnamed'} to another notebook`}
+                title="move to another notebook"
+                type="button"
+              >
+                <ArrowRight size={13} aria-hidden />
+              </button>
+              <button
+                className={styles.rowDelete}
+                onClick={(e) => { e.stopPropagation(); onDelete(nb.id) }}
+                onDoubleClick={(e) => e.stopPropagation()}
+                aria-label={`delete notebook ${nb.name}`}
+                type="button"
+              >
+                <X size={12} weight="bold" aria-hidden />
+              </button>
+            </>
+          )}
         </>
       )}
     </li>
@@ -191,6 +201,11 @@ function SortableSubjectItem({
     opacity: isDragging ? 0.4 : undefined,
   }
 
+  // Subject "Tasks" (notas-corpo das tasks do caderno): abre a TasksView
+  // filtrada; sem rename/delete, porque é recriado pelo id e apagá-lo
+  // apagaria as notas-corpo.
+  const isTasks = isTasksSubject(subject)
+
   return (
     <li
       ref={setNodeRef}
@@ -201,7 +216,7 @@ function SortableSubjectItem({
         onSelect(subject.id)
       }}
       onDoubleClick={(e) => {
-        if ((e.target as HTMLElement).closest('button')) return
+        if (isTasks || (e.target as HTMLElement).closest('button')) return
         onStartEdit(subject.id, subject.name)
       }}
     >
@@ -216,8 +231,8 @@ function SortableSubjectItem({
           <DotsSixVertical size={10} weight="bold" aria-hidden />
         </span>
       )}
-      <span className={styles.subjectIcon}>
-        <Folder size={13} aria-hidden />
+      <span className={isTasks ? styles.tasksIcon : styles.subjectIcon}>
+        {isTasks ? <ListChecks size={13} aria-hidden /> : <Folder size={13} aria-hidden />}
       </span>
       {editing?.id === subject.id ? (
         <input
@@ -237,7 +252,7 @@ function SortableSubjectItem({
       ) : (
         <span className={styles.subjectLabel}>{subject.name || 'unnamed'}</span>
       )}
-      {editing?.id !== subject.id && (
+      {!isTasks && editing?.id !== subject.id && (
         <button
           className={styles.subjectDelete}
           onClick={(e) => { e.stopPropagation(); onDelete(subject.id) }}
@@ -268,6 +283,10 @@ export interface NotebookListProps {
   onSelectTag: (tag: string | null) => void
   onOpenSettings: () => void
   calendarNotebookId?: string | null
+  // Entrada virtual "Tasks" (não é linha em `notebooks`). Enquanto ativa,
+  // nenhuma outra linha aparece ativa.
+  tasksActive: boolean
+  onOpenTasks: () => void
   subjects: Subject[]
   activeSubjectId: string | null
   onSelectSubject: (id: string | null) => void
@@ -298,6 +317,8 @@ export function NotebookList({
   onSelectTag,
   onOpenSettings,
   calendarNotebookId,
+  tasksActive,
+  onOpenTasks,
   subjects,
   activeSubjectId,
   onSelectSubject,
@@ -466,7 +487,7 @@ export function NotebookList({
             </div>
             <ul className={styles.list}>
               <li
-                className={`${styles.row} ${activeId === null ? styles.active : ''}`}
+                className={`${styles.row} ${!tasksActive && activeId === null ? styles.active : ''}`}
                 onClick={() => onSelect(null)}
               >
                 <span className={`${styles.rowLabel} ${styles.allNotes}`}>all notes</span>
@@ -477,7 +498,7 @@ export function NotebookList({
                 if (!calNb) return null
                 return (
                   <li
-                    className={`${styles.row} ${calNb.id === activeId ? styles.active : ''}`}
+                    className={`${styles.row} ${!tasksActive && calNb.id === activeId ? styles.active : ''}`}
                     onClick={() => onSelect(calNb.id)}
                   >
                     <span className={styles.calendarIcon}>
@@ -498,6 +519,16 @@ export function NotebookList({
                 )
               })()}
 
+              <li
+                className={`${styles.row} ${tasksActive ? styles.active : ''}`}
+                onClick={onOpenTasks}
+              >
+                <span className={styles.tasksIcon}>
+                  <ListChecks size={16} aria-hidden />
+                </span>
+                <span className={styles.rowLabel}>Tasks</span>
+              </li>
+
               {notebooks.filter((n) => n.id !== calendarNotebookId).length === 0 &&
                !calendarNotebookId ? (
                 <li className={styles.empty}>no notebooks</li>
@@ -511,7 +542,7 @@ export function NotebookList({
                       <Fragment key={nb.id}>
                         <SortableNotebookItem
                           nb={nb}
-                          isActive={nb.id === activeId}
+                          isActive={!tasksActive && nb.id === activeId}
                           hasVisibleDocs={notebooksWithDocs.has(nb.id)}
                           editing={editing}
                           onSelect={onSelect}
@@ -600,7 +631,7 @@ export function NotebookList({
       )}
 
       <div className={`${styles.footer} ${collapsed ? styles.footerCollapsed : ''}`}>
-        {!collapsed && <span className={styles.version}>v1.4.5</span>}
+        {!collapsed && <span className={styles.version}>v1.4.6</span>}
         <button
           className={styles.settings}
           onClick={onOpenKnowledgeBase}

@@ -12,7 +12,7 @@ import {
   listOpenRouterModels,
   OPENROUTER_KEY_MISSING,
 } from '../../lib/openrouter'
-import type { AiModel, Note } from '../../types'
+import type { AiModel, Note, Task } from '../../types'
 import { ModelSelector } from '../AiPanel/ModelSelector'
 import { ChatToolsMenu } from '../ChatPanel/ChatToolsMenu'
 import { FolderSystemPromptModal } from '../ChatPanel/FolderSystemPromptModal'
@@ -39,6 +39,8 @@ interface NotesChatPanelProps {
   activeNote: Note | null
   resolveNoteTitle: (noteId: string) => string | undefined
   getSelectionText: () => string
+  // Tasks do caderno-projeto, anexadas ao contexto efêmero (nota de task aberta).
+  projectTasks?: Task[]
   // Visual apenas — o painel permanece montado quando escondido.
   visible: boolean
   // Trecho vindo do "Ask AI" da toolbar de seleção do editor.
@@ -53,6 +55,7 @@ export function NotesChatPanel({
   activeNote,
   resolveNoteTitle,
   getSelectionText,
+  projectTasks,
   visible,
   pendingQuote,
   onPendingQuoteConsumed,
@@ -324,6 +327,7 @@ export function NotesChatPanel({
       note: activeNote,
       selectionText: getSelectionText(),
       resolveNoteTitle,
+      projectTasks,
     })
     void send(text, undefined, undefined, {
       ephemeralContext,

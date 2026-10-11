@@ -6,6 +6,7 @@ import type {
   Note,
   Notebook,
   Subject,
+  Task,
 } from '../types'
 import { TauriStorage } from './tauri'
 import { BrowserStorage } from './browser'
@@ -40,6 +41,10 @@ export interface StorageAdapter {
 
   getFiredReminderIds(noteId: string): Promise<string[]>
   markRemindersFired(ids: string[], noteId: string): Promise<void>
+
+  getTasks(): Promise<Task[]>
+  saveTask(task: Task): Promise<void>
+  deleteTask(id: string): Promise<void>
 
   getResponses(noteId: string): Promise<AiResponse[]>
   saveResponse(response: AiResponse): Promise<void>

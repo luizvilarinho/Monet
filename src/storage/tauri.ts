@@ -10,6 +10,8 @@ import type {
   Note,
   Notebook,
   Subject,
+  Task,
+  TaskStatus,
 } from '../types'
 import type { StorageAdapter } from './index'
 
@@ -256,6 +258,67 @@ function rowToHighlight(r: BookHighlightRow): BookHighlight {
 }
 
 
+interface TaskRow {
+  id: string
+  title: string
+  status: string
+  notebook_id: string
+  note_id: string | null
+  due_date: string | null
+  created_at: number
+  updated_at: number
+  completed_at: number | null
+  source_note_id: string | null
+  reschedule_count: number
+  sort_order: number
+}
+
+function normalizeTaskStatus(s: string): TaskStatus {
+  if (s === 'todo' || s === 'doing' || s === 'done' || s === 'dropped') return s
+  return 'todo'
+}
+
+function rowToTask(r: TaskRow): Task {
+  return {
+    id: r.id,
+    title: r.title,
+    status: normalizeTaskStatus(r.status),
+    notebookId: r.notebook_id,
+    noteId: r.note_id,
+    dueDate: r.due_date,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    completedAt: r.completed_at,
+    sourceNoteId: r.source_note_id,
+    rescheduleCount: r.reschedule_count ?? 0,
+    sortOrder: r.sort_order ?? 0,
+  }
+}
+
+// Mesmo schema da migration v18 (src-tauri/src/lib.rs), sem os DROPs das
+// tabelas da v17, um statement por execute.
+// A coluna `description` não é mais usada (o corpo da task é a nota-corpo);
+// fica no schema para não editar a migration já aplicada.
+const TASKS_TABLES_SQL = [
+  `CREATE TABLE IF NOT EXISTS notebook_tasks (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'todo',
+    notebook_id TEXT NOT NULL,
+    note_id TEXT,
+    due_date TEXT,
+    description TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    completed_at INTEGER,
+    source_note_id TEXT,
+    reschedule_count INTEGER NOT NULL DEFAULT 0,
+    sort_order INTEGER NOT NULL DEFAULT 0
+  )`,
+  'CREATE INDEX IF NOT EXISTS idx_notebook_tasks_notebook ON notebook_tasks(notebook_id)',
+  'CREATE INDEX IF NOT EXISTS idx_notebook_tasks_source_note ON notebook_tasks(source_note_id)',
+]
+
 // O banco roda em modo WAL (default do SQLite). Com o pool de múltiplas
 // conexões do tauri-plugin-sql, o autocheckpoint PASSIVE quase nunca
 // completa (sempre há um leitor segurando o lock), então o WAL cresce e o
@@ -278,6 +341,7 @@ export class TauriStorage implements StorageAdapter {
   private dbPromise?: Promise<Database>
   private checkpointTimer?: ReturnType<typeof setTimeout>
   private lastCheckpoint = 0
+  private tasksTablesReady: Promise<void> | null = null
 
   private db(): Promise<Database> {
     if (!this.dbPromise) {
@@ -510,6 +574,73 @@ export class TauriStorage implements StorageAdapter {
         fired_at INTEGER NOT NULL
       )`
     )
+  }
+
+  // Mesmo motivo do ensureReminderStateTable: não depender do estado das
+  // migrations (v18) para as tabelas de tasks existirem. Memoizado; se falhar,
+  // zera para tentar de novo na próxima chamada.
+  private ensureTasksTables(db: Database): Promise<void> {
+    if (!this.tasksTablesReady) {
+      const p = (async () => {
+        for (const sql of TASKS_TABLES_SQL) await db.execute(sql)
+      })()
+      this.tasksTablesReady = p
+      p.catch(() => {
+        if (this.tasksTablesReady === p) this.tasksTablesReady = null
+      })
+    }
+    return this.tasksTablesReady
+  }
+
+  async getTasks(): Promise<Task[]> {
+    const db = await this.db()
+    await this.ensureTasksTables(db)
+    const rows = await db.select<TaskRow[]>(
+      'SELECT * FROM notebook_tasks ORDER BY sort_order ASC'
+    )
+    return rows.map(rowToTask)
+  }
+
+  async saveTask(t: Task): Promise<void> {
+    const db = await this.db()
+    await this.ensureTasksTables(db)
+    await db.execute(
+      `INSERT INTO notebook_tasks (id, title, status, notebook_id, note_id, due_date, created_at, updated_at, completed_at, source_note_id, reschedule_count, sort_order)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       ON CONFLICT(id) DO UPDATE SET
+         title = excluded.title,
+         status = excluded.status,
+         notebook_id = excluded.notebook_id,
+         note_id = excluded.note_id,
+         due_date = excluded.due_date,
+         updated_at = excluded.updated_at,
+         completed_at = excluded.completed_at,
+         source_note_id = excluded.source_note_id,
+         reschedule_count = excluded.reschedule_count,
+         sort_order = excluded.sort_order`,
+      [
+        t.id,
+        t.title,
+        t.status,
+        t.notebookId,
+        t.noteId,
+        t.dueDate,
+        t.createdAt,
+        t.updatedAt,
+        t.completedAt,
+        t.sourceNoteId,
+        t.rescheduleCount,
+        t.sortOrder,
+      ]
+    )
+    this.scheduleCheckpoint()
+  }
+
+  async deleteTask(id: string): Promise<void> {
+    const db = await this.db()
+    await this.ensureTasksTables(db)
+    await db.execute('DELETE FROM notebook_tasks WHERE id = $1', [id])
+    this.scheduleCheckpoint()
   }
 
   async getBooks(): Promise<Book[]> {

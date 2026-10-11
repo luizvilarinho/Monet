@@ -1,0 +1,33 @@
+.pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent-task) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-task) 45%, transparent);
+  color: var(--accent-task);
+  font-size: 0.8em;
+  line-height: 1.5;
+  white-space: nowrap;
+  vertical-align: baseline;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.overdue {
+  background: color-mix(in srgb, var(--accent-danger) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent-danger) 45%, transparent);
+  color: var(--accent-danger);
+}
+
+.closed {
+  color: var(--text-muted);
+  border-color: var(--border);
+  background: transparent;
+  text-decoration: line-through;
+}
+
+.selected {
+  outline: 2px solid color-mix(in srgb, var(--accent-task) 60%, transparent);
+}

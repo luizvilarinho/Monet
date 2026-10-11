@@ -12,6 +12,7 @@ import { CalendarBlank } from '@phosphor-icons/react'
 import { nanoid } from 'nanoid'
 import type { Editor as TiptapEditor } from '@tiptap/core'
 import { TextSelection } from '@tiptap/pm/state'
+import { Mapping } from '@tiptap/pm/transform'
 import { getWeekdayName, parseCalendarTitle } from '../../lib/calendar'
 import { findClosestHeading, parseHeadings, type Heading } from '../../lib/headingParser'
 import { attachSpellCheckEnforcer } from '../../lib/spellcheck'
@@ -36,9 +37,24 @@ import { EditorResponsesProvider } from './EditorResponsesContext'
 import { EditorNotesProvider } from './EditorNotesContext'
 import { NotePicker } from './NotePicker'
 import { TimePicker } from './TimePicker'
+import { AddTaskPopover } from './AddTaskPopover'
+import {
+  findEligibleTaskItems,
+  taskStatusPluginKey,
+  type EligibleTaskItem,
+  type TaskStatusStorage,
+} from './TaskStatus'
 import { SearchInNote } from './SearchInNote'
 import { getCommandSuggestions } from './commandParser'
-import type { AiResponse, CommandExecutionRequest, Note } from '../../types'
+import type {
+  AiResponse,
+  CommandExecutionRequest,
+  Note,
+  Notebook,
+  Task,
+  TaskStatus,
+} from '../../types'
+import type { ProjectChoice } from '../../lib/tasks'
 
 export interface EditorProps {
   notebookName?: string
@@ -66,6 +82,19 @@ export interface EditorProps {
   // Expõe a instância do Tiptap ao App (inserir resposta do chat na nota);
   // chamado com null quando o editor é destruído.
   onEditorReady?: (editor: TiptapEditor | null) => void
+  // Tasks: status das tasks vinculadas (alimenta o checkbox dos itens com
+  // task-ref), cadernos (projetos) para o "Add to Tasks" e callbacks de
+  // criação/toggle.
+  taskStatuses?: Map<string, TaskStatus>
+  taskNotebooks?: Notebook[]
+  suggestedTaskNotebookId?: string
+  onCreateTasks?: (
+    inputs: Array<{ title: string; checked: boolean }>,
+    opts: { dueDate: string | null; project: ProjectChoice }
+  ) => Promise<Task[]>
+  // Barra de propriedades da task (nota-corpo de task aberta).
+  taskBar?: ReactNode
+  onToggleLinkedTask?: (taskId: string, checked: boolean) => void
 }
 
 function getMarkdown(editor: TiptapEditor): string {
@@ -131,6 +160,12 @@ export function Editor({
   previewMode = false,
   onAskAi,
   onEditorReady,
+  taskStatuses,
+  taskNotebooks = [],
+  suggestedTaskNotebookId = '',
+  onCreateTasks,
+  onToggleLinkedTask,
+  taskBar,
 }: EditorProps) {
   const [adding, setAdding] = useState(false)
   const [draft, setDraft] = useState('')
@@ -142,6 +177,8 @@ export function Editor({
   const notePickerInsertPosRef = useRef<number>(0)
   const [timePickerPos, setTimePickerPos] = useState<{ top: number; left: number } | null>(null)
   const timePickerInsertPosRef = useRef<number>(0)
+  const [addTaskPos, setAddTaskPos] = useState<{ top: number; left: number } | null>(null)
+  const addTaskItemsRef = useRef<EligibleTaskItem[]>([])
   const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const titleRef = useRef<HTMLInputElement>(null)
@@ -485,6 +522,23 @@ export function Editor({
     )
   }, [editor, responses])
 
+  // Transação só de meta: não altera o doc, então não dispara onUpdate/autosave
+  // (mesmo precedente do bumpResponses acima).
+  useEffect(() => {
+    if (!editor) return
+    editor.view.dispatch(
+      editor.state.tr
+        .setMeta(taskStatusPluginKey, taskStatuses ?? new Map())
+        .setMeta('addToHistory', false)
+    )
+  }, [editor, taskStatuses])
+
+  useEffect(() => {
+    if (!editor) return
+    const storage = editor.storage as unknown as { taskStatus: TaskStatusStorage }
+    storage.taskStatus.onToggleLinked = onToggleLinkedTask ?? null
+  }, [editor, onToggleLinkedTask])
+
   useEffect(() => {
     if (!editor) return
     const current = getMarkdown(editor)
@@ -578,6 +632,79 @@ export function Editor({
     // Cancelou o seletor: recupera o "@" literal na posição do cursor.
     const pos = timePickerInsertPosRef.current
     editor.chain().focus().insertContentAt(pos, '@').run()
+  }
+
+  function handleAddToTasks() {
+    if (!editor) return
+    addTaskItemsRef.current = findEligibleTaskItems(editor.state)
+    if (addTaskItemsRef.current.length === 0) return
+    const coords = editor.view.coordsAtPos(editor.state.selection.to)
+    setAddTaskPos({ top: coords.bottom + 4, left: coords.left })
+  }
+
+  function handleAddTaskCancel() {
+    setAddTaskPos(null)
+    editor?.commands.focus()
+  }
+
+  async function handleAddTaskConfirm(opts: { dueDate: string | null; project: ProjectChoice }) {
+    setAddTaskPos(null)
+    const items = addTaskItemsRef.current
+    addTaskItemsRef.current = []
+    if (!editor || !onCreateTasks || items.length === 0) return
+    // O doc pode mudar durante a criação (edição, setContent vindo da keep):
+    // acumula o mapping para levar as posições capturadas ao doc atual.
+    const mapping = new Mapping()
+    const onTransaction = ({ transaction }: { transaction: { mapping: Mapping } }) => {
+      mapping.appendMapping(transaction.mapping)
+    }
+    editor.on('transaction', onTransaction)
+    let created: Task[]
+    try {
+      created = await onCreateTasks(
+        items.map((i) => ({ title: i.title, checked: i.checked })),
+        opts
+      )
+    } finally {
+      editor.off('transaction', onTransaction)
+    }
+    if (editor.isDestroyed) return
+    // Insere a pill no fim do primeiro parágrafo de cada item, numa única
+    // transação, do último item para o primeiro (posições anteriores não mudam).
+    const { tr, schema } = editor.state
+    const taskRefType = schema.nodes['taskRef']
+    const order = items
+      .map((item, i) => ({ mapped: mapping.mapResult(item.pos, 1), task: created[i] }))
+      .sort((a, b) => b.mapped.pos - a.mapped.pos)
+    for (const { mapped, task } of order) {
+      const node = tr.doc.nodeAt(mapped.pos)
+      if (!task || mapped.deleted || node?.type.name !== 'taskItem' || !node.firstChild) continue
+      const para = node.firstChild
+      const paraStart = mapped.pos + 1
+      let paraEnd = paraStart + para.nodeSize
+      // Pill de task que não existe mais: é substituída.
+      let staleOffset = -1
+      let staleSize = 0
+      para.forEach((child, offset) => {
+        if (staleOffset < 0 && child.type.name === 'taskRef') {
+          staleOffset = offset
+          staleSize = child.nodeSize
+        }
+      })
+      if (staleOffset >= 0) {
+        const stalePos = paraStart + 1 + staleOffset
+        tr.delete(stalePos, stalePos + staleSize)
+        paraEnd -= staleSize
+      }
+      const insertAt = paraEnd - 1
+      const before = tr.doc.textBetween(Math.max(mapped.pos + 2, insertAt - 1), insertAt)
+      const nodes = before === ' '
+        ? [taskRefType.create({ id: task.id })]
+        : [schema.text(' '), taskRefType.create({ id: task.id })]
+      tr.insert(insertAt, nodes)
+    }
+    editor.view.dispatch(tr)
+    editor.commands.focus()
   }
 
   function handleNotePickerSelect(note: Note) {
@@ -685,6 +812,7 @@ export function Editor({
         />
         {weekdayLabel && <span className={styles.weekday}>— {weekdayLabel}</span>}
       </div>
+      {taskBar}
       <div className={styles.tagsRow}>
         {onDateChange && (
           <span className={styles.dateWrapper} onClick={() => dateInputRef.current?.showPicker()}>
@@ -779,6 +907,16 @@ export function Editor({
           onCancel={handleTimePickerCancel}
         />
       )}
+      {addTaskPos && (
+        <AddTaskPopover
+          position={addTaskPos}
+          count={addTaskItemsRef.current.length}
+          notebooks={taskNotebooks}
+          suggestedNotebookId={suggestedTaskNotebookId}
+          onConfirm={(opts) => void handleAddTaskConfirm(opts)}
+          onCancel={handleAddTaskCancel}
+        />
+      )}
       {notePickerVisible && (
         <NotePicker
           notes={notebookNotes}
@@ -851,7 +989,11 @@ export function Editor({
         </div>
       )}
       {relatedContent}
-      {editor && <FormattingToolbar editor={editor as TiptapEditor} onAskAi={onAskAi} />}
+      {editor && <FormattingToolbar
+          editor={editor as TiptapEditor}
+          onAskAi={onAskAi}
+          onAddToTasks={onCreateTasks ? handleAddToTasks : undefined}
+        />}
       <CommandAutocomplete
         state={autocomplete}
         onSelect={(s) => acceptSuggestionRef.current(s)}

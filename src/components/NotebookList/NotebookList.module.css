@@ -262,6 +262,15 @@
   padding: 2px;
 }
 
+.tasksIcon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-task);
+  padding: 2px;
+}
+
 .renameInput {
   flex: 1;
   min-width: 0;

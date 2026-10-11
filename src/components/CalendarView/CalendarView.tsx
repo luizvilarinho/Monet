@@ -1,19 +1,33 @@
 import { CaretLeft, CaretRight, SidebarSimple } from '@phosphor-icons/react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Note, Notebook } from '../../types'
-import { CALENDAR_NOTEBOOK_ID } from '../../lib/calendar'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { Note, Notebook, Task } from '../../types'
+import { CALENDAR_NOTEBOOK_ID, dateKeyFromMs, toDateKey } from '../../lib/calendar'
+import {
+  formatDueShort,
+  INBOX_NOTEBOOK_ID,
+  isOverdue,
+  taskSpan,
+  type ProjectChoice,
+} from '../../lib/tasks'
+import { ProjectPicker } from '../TasksView/ProjectPicker'
+import { useSidebarResize } from '../../hooks/useSidebarResize'
 import styles from './CalendarView.module.css'
-
-function toDateKey(y: number, m: number, d: number): string {
-  return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
-}
 
 function noteHasContent(content: string): boolean {
   return content.trim().length > 0
 }
 
+// Itens vinculados a tasks (com <task-ref>) não contam: são representados
+// pelos marcadores de task, e o [ ] da nota pode estar defasado.
 function noteHasUnfinishedTodos(content: string): boolean {
-  return /^- \[ \] .+/m.test(content)
+  return content
+    .split(/\r?\n/)
+    .some((line) => /^- \[ \] .+/.test(line) && !line.includes('<task-ref'))
+}
+
+function parseDateKey(key: string): { y: number; m: number; d: number } {
+  const [y, m, d] = key.split('-').map(Number)
+  return { y, m: m - 1, d }
 }
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -21,9 +35,6 @@ const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
 ]
-
-const MIN_WIDTH = 160
-const MAX_WIDTH = 400
 
 interface CalendarViewProps {
   notes: Note[]
@@ -38,6 +49,11 @@ interface CalendarViewProps {
   collapsed?: boolean
   onToggleCollapsed?: () => void
   onWidthChange?: (w: number) => void
+  tasks: Task[]
+  todayKey: string
+  onToggleTaskDone: (id: string, done: boolean) => void
+  onCreateTask: (dueDate: string, title: string, project: ProjectChoice) => void
+  onOpenTask: (id: string) => void
 }
 
 export function CalendarView({
@@ -51,56 +67,32 @@ export function CalendarView({
   collapsed = false,
   onToggleCollapsed,
   onWidthChange,
+  tasks,
+  todayKey,
+  onToggleTaskDone,
+  onCreateTask,
+  onOpenTask,
 }: CalendarViewProps) {
-  const today = useMemo(() => new Date(), [])
-  const [year, setYear] = useState(today.getFullYear())
-  const [month, setMonth] = useState(today.getMonth())
-  const [yearInput, setYearInput] = useState(String(today.getFullYear()))
+  const [year, setYear] = useState(() => parseDateKey(todayKey).y)
+  const [month, setMonth] = useState(() => parseDateKey(todayKey).m)
+  const [yearInput, setYearInput] = useState(() => String(parseDateKey(todayKey).y))
 
-  const [selectedDay, setSelectedDay] = useState<string | null>(
-    () => toDateKey(today.getFullYear(), today.getMonth(), today.getDate())
-  )
+  const [selectedDay, setSelectedDay] = useState<string | null>(todayKey)
+  const [addingTask, setAddingTask] = useState(false)
+  const [taskDraft, setTaskDraft] = useState('')
+  const [taskProject, setTaskProject] = useState<ProjectChoice>({ notebookId: INBOX_NOTEBOOK_ID })
 
-  const dragging = useRef(false)
-  const startX = useRef(0)
-  const startWidth = useRef(0)
-  const currentWidthRef = useRef(width)
-
+  // Virada do dia com o app aberto: se o dia selecionado era o "hoje"
+  // anterior, acompanha o novo hoje.
+  const prevTodayRef = useRef(todayKey)
   useEffect(() => {
-    currentWidthRef.current = width
-  }, [width])
+    const prev = prevTodayRef.current
+    prevTodayRef.current = todayKey
+    if (prev === todayKey) return
+    setSelectedDay((sel) => (sel === prev ? todayKey : sel))
+  }, [todayKey])
 
-  const onMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault()
-    dragging.current = true
-    startX.current = e.clientX
-    startWidth.current = width
-    document.body.style.cursor = 'col-resize'
-    document.body.style.userSelect = 'none'
-  }, [width])
-
-  useEffect(() => {
-    const onMouseMove = (e: MouseEvent) => {
-      if (!dragging.current) return
-      const delta = e.clientX - startX.current
-      const next = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startWidth.current + delta))
-      currentWidthRef.current = next
-      onWidthChange?.(next)
-    }
-    const onMouseUp = () => {
-      if (!dragging.current) return
-      dragging.current = false
-      document.body.style.cursor = ''
-      document.body.style.userSelect = ''
-      localStorage.setItem('monet:sidebar-width', String(currentWidthRef.current))
-    }
-    document.addEventListener('mousemove', onMouseMove)
-    document.addEventListener('mouseup', onMouseUp)
-    return () => {
-      document.removeEventListener('mousemove', onMouseMove)
-      document.removeEventListener('mouseup', onMouseUp)
-    }
-  }, [onWidthChange])
+  const onMouseDown = useSidebarResize(width, onWidthChange)
 
   const dayDotMap = useMemo(() => {
     const map = new Map<string, 'todo' | 'content'>()
@@ -121,11 +113,6 @@ export function CalendarView({
     }
     return map
   }, [notes, datedNotes])
-
-  const todayKey = useMemo(
-    () => toDateKey(today.getFullYear(), today.getMonth(), today.getDate()),
-    [today]
-  )
 
   const notebookNameById = useMemo(
     () => new Map(notebooks.map((nb) => [nb.id, nb.name])),
@@ -152,10 +139,8 @@ export function CalendarView({
     for (const n of recentlyActiveNotes) {
       if (seen.has(n.id)) continue
       if (n.notebookId === CALENDAR_NOTEBOOK_ID) continue
-      const created = new Date(n.createdAt)
-      const updated = new Date(n.updatedAt)
-      const createdKey = toDateKey(created.getFullYear(), created.getMonth(), created.getDate())
-      const updatedKey = toDateKey(updated.getFullYear(), updated.getMonth(), updated.getDate())
+      const createdKey = dateKeyFromMs(n.createdAt)
+      const updatedKey = dateKeyFromMs(n.updatedAt)
       if (createdKey === selectedDay || updatedKey === selectedDay) {
         cards.push({ note: n, dated: false })
       }
@@ -167,13 +152,53 @@ export function CalendarView({
   const hasActivityToday = useMemo(() => {
     return recentlyActiveNotes.some((n) => {
       if (n.notebookId === CALENDAR_NOTEBOOK_ID) return false
-      const created = new Date(n.createdAt)
-      const updated = new Date(n.updatedAt)
-      const createdKey = toDateKey(created.getFullYear(), created.getMonth(), created.getDate())
-      const updatedKey = toDateKey(updated.getFullYear(), updated.getMonth(), updated.getDate())
+      const createdKey = dateKeyFromMs(n.createdAt)
+      const updatedKey = dateKeyFromMs(n.updatedAt)
       return createdKey === todayKey || updatedKey === todayKey
     })
   }, [recentlyActiveNotes, todayKey])
+
+  // Marcadores de task por dia do mês visível: 'active' dentro do período da
+  // task, 'due' no dia do prazo (prevalece). Itera só os dias do mês visível.
+  const taskDayMap = useMemo(() => {
+    const map = new Map<string, 'active' | 'due'>()
+    const daysInMonth = new Date(year, month + 1, 0).getDate()
+    const spans: Array<{ start: string; end: string; hasDue: boolean }> = []
+    for (const t of tasks) {
+      const span = taskSpan(t, todayKey)
+      if (span) spans.push({ ...span, hasDue: t.dueDate !== null })
+    }
+    for (let d = 1; d <= daysInMonth; d++) {
+      const key = toDateKey(year, month, d)
+      for (const span of spans) {
+        if (key < span.start || key > span.end) continue
+        if (span.hasDue && key === span.end) {
+          map.set(key, 'due')
+          break
+        }
+        map.set(key, 'active')
+      }
+    }
+    return map
+  }, [tasks, todayKey, year, month])
+
+  const overdueTasks = useMemo(
+    () => (selectedDay === todayKey ? tasks.filter((t) => isOverdue(t, todayKey)) : []),
+    [tasks, selectedDay, todayKey]
+  )
+
+  // Tasks do dia selecionado: abertas cujo período contém o dia + concluídas
+  // naquele dia.
+  const dayTasks = useMemo(() => {
+    if (!selectedDay) return [] as Task[]
+    return tasks.filter((t) => {
+      if (t.status === 'done') {
+        return t.completedAt !== null && dateKeyFromMs(t.completedAt) === selectedDay
+      }
+      const span = taskSpan(t, todayKey)
+      return span !== null && span.start <= selectedDay && selectedDay <= span.end
+    })
+  }, [tasks, selectedDay, todayKey])
 
   const cells = useMemo(() => {
     const firstWeekday = new Date(year, month, 1).getDay()
@@ -233,10 +258,43 @@ export function CalendarView({
   }
 
   function isToday(day: number, current: boolean) {
-    return current &&
-      year === today.getFullYear() &&
-      month === today.getMonth() &&
-      day === today.getDate()
+    return current && toDateKey(year, month, day) === todayKey
+  }
+
+  function commitTaskDraft() {
+    const title = taskDraft.trim()
+    if (title && selectedDay) onCreateTask(selectedDay, title, taskProject)
+    cancelTaskDraft()
+  }
+
+  function cancelTaskDraft() {
+    setTaskDraft('')
+    setTaskProject({ notebookId: INBOX_NOTEBOOK_ID })
+    setAddingTask(false)
+  }
+
+  function renderTaskCard(t: Task, extraClass: string) {
+    return (
+      <div
+        key={t.id}
+        className={`${styles.taskCard} ${extraClass}`}
+        onClick={() => onOpenTask(t.id)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => { if (e.key === 'Enter') onOpenTask(t.id) }}
+      >
+        <input
+          type="checkbox"
+          className={styles.taskCheckbox}
+          checked={t.status === 'done'}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => onToggleTaskDone(t.id, e.target.checked)}
+          aria-label="done"
+        />
+        <span className={styles.taskCardTitle}>{t.title}</span>
+        {t.dueDate && <span className={styles.taskCardDue}>{formatDueShort(t.dueDate)}</span>}
+      </div>
+    )
   }
 
   return (
@@ -298,6 +356,7 @@ export function CalendarView({
               const title = cell.current ? dayTitle(cell.day) : ''
               const dateKey = cell.current ? toDateKey(year, month, cell.day) : ''
               const dotType = cell.current ? (dayDotMap.get(title) ?? dayDotMap.get(dateKey) ?? null) : null
+              const taskMark = cell.current ? taskDayMap.get(dateKey) : undefined
               const today_ = isToday(cell.day, cell.current)
               const isSelected = cell.current && selectedDay === dateKey
               return (
@@ -323,17 +382,71 @@ export function CalendarView({
                   } : undefined}
                 >
                   <span className={styles.dayNumber}>{cell.day}</span>
-                  {dotType && <span className={`${styles.dot} ${dotType === 'todo' ? styles.dotPurple : ''}`} aria-hidden />}
+                  {dotType && <span className={`${styles.dot} ${dotType === 'todo' ? styles.dotTodo : ''}`} aria-hidden />}
                   {today_ && hasActivityToday && !dotType && (
-                    <span className={`${styles.dot} ${styles.dotOrange}`} aria-hidden />
+                    <span className={`${styles.dot} ${styles.dotActivity}`} aria-hidden />
+                  )}
+                  {taskMark && (
+                    <span
+                      className={`${styles.taskBar} ${taskMark === 'due' ? styles.taskBarDue : ''}`}
+                      aria-hidden
+                    />
                   )}
                 </div>
               )
             })}
           </div>
 
-          {dayCards.length > 0 && (
+          {selectedDay && (
             <div className={styles.cards}>
+              {overdueTasks.length > 0 && (
+                <div className={styles.overdueBlock}>
+                  <div className={styles.sectionTitle}>Overdue</div>
+                  {overdueTasks.map((t) => renderTaskCard(t, styles.taskCardOverdue))}
+                </div>
+              )}
+              <div className={styles.sectionTitle}>
+                <span>Tasks</span>
+                <button
+                  type="button"
+                  className={styles.addTaskBtn}
+                  onClick={() => setAddingTask(true)}
+                >
+                  + task
+                </button>
+              </div>
+              {addingTask && (
+                <div
+                  className={styles.addTaskForm}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') commitTaskDraft()
+                    if (e.key === 'Escape') cancelTaskDraft()
+                  }}
+                  onBlur={(e) => {
+                    // Fecha só quando o foco sai do formulário (input + projeto).
+                    // Checagem adiada: o seletor troca de select para input ao
+                    // escolher "+ New notebook…", e o foco só chega no novo
+                    // elemento depois do blur.
+                    const form = e.currentTarget
+                    setTimeout(() => {
+                      if (!form.contains(document.activeElement)) cancelTaskDraft()
+                    }, 0)
+                  }}
+                >
+                  <input
+                    autoFocus
+                    className={styles.addTaskInput}
+                    value={taskDraft}
+                    onChange={(e) => setTaskDraft(e.target.value)}
+                    placeholder="New task…"
+                    aria-label="new task"
+                  />
+                  <ProjectPicker notebooks={notebooks} value={taskProject} onChange={setTaskProject} />
+                </div>
+              )}
+              {dayTasks.map((t) =>
+                renderTaskCard(t, t.status === 'done' ? styles.taskCardDone : '')
+              )}
               {dayCards.map(({ note, dated }) => {
                 const nbName = note.notebookId
                   ? notebookNameById.get(note.notebookId)

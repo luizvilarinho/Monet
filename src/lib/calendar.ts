@@ -30,3 +30,13 @@ export function parseCalendarTitle(title: string): Date | null {
 export function getWeekdayName(date: Date): string {
   return date.toLocaleDateString('en-US', { weekday: 'long' })
 }
+
+// Chave de dia local `YYYY-MM-DD` (m0 = mês 0-based, como em Date).
+export function toDateKey(y: number, m0: number, d: number): string {
+  return `${y}-${String(m0 + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+}
+
+export function dateKeyFromMs(ms: number): string {
+  const d = new Date(ms)
+  return toDateKey(d.getFullYear(), d.getMonth(), d.getDate())
+}

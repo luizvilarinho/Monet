@@ -1514,6 +1514,75 @@ pub fn run() {
             ",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 17,
+            description: "tasks",
+            // Tasks e projetos de tasks. Tabelas de propriedade EXCLUSIVA do
+            // frontend (tauri-plugin-sql); o backend nao mexe nelas. O
+            // storage (ensureTasksTables em storage/tauri.ts) replica este SQL
+            // de forma idempotente por causa do historico de migrations
+            // travadas em producao (v11). Sem FK: a task sobrevive a nota.
+            sql: "
+                CREATE TABLE IF NOT EXISTS task_projects (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    color TEXT,
+                    notebook_id TEXT,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS tasks (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'todo',
+                    project_id TEXT,
+                    due_date TEXT,
+                    description TEXT,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    completed_at INTEGER,
+                    source_note_id TEXT,
+                    reschedule_count INTEGER NOT NULL DEFAULT 0,
+                    sort_order INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+                CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date);
+                CREATE INDEX IF NOT EXISTS idx_tasks_source_note ON tasks(source_note_id);
+            ",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 18,
+            description: "notebook_tasks",
+            // Projeto de task passa a ser um caderno: a task referencia o
+            // caderno (notebook_id) e a nota-corpo (note_id). As tabelas da v17
+            // (pre-lancamento, sem dados a preservar) sao descartadas; a nova
+            // tabela tem outro nome para que esta migration nunca apague dados
+            // gravados pelo ensureTasksTables (storage/tauri.ts), que replica
+            // este SQL de forma idempotente.
+            sql: "
+                DROP TABLE IF EXISTS task_projects;
+                DROP TABLE IF EXISTS tasks;
+                CREATE TABLE IF NOT EXISTS notebook_tasks (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'todo',
+                    notebook_id TEXT NOT NULL,
+                    note_id TEXT,
+                    due_date TEXT,
+                    description TEXT,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    completed_at INTEGER,
+                    source_note_id TEXT,
+                    reschedule_count INTEGER NOT NULL DEFAULT 0,
+                    sort_order INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE INDEX IF NOT EXISTS idx_notebook_tasks_notebook ON notebook_tasks(notebook_id);
+                CREATE INDEX IF NOT EXISTS idx_notebook_tasks_source_note ON notebook_tasks(source_note_id);
+            ",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()

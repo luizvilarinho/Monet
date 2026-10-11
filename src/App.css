@@ -10,6 +10,14 @@
   --accent: #7b6ed4;
   --accent-ai: #5dcaa5;
   --accent-warn: #ef9f27;
+  --accent-task: #ef9f27;
+  --accent-danger: #e05555;
+  --status-todo: #9a9aae;
+  --status-doing: #5b9cf0;
+  --status-done: #5cc185;
+  --status-dropped: #f26b55;
+  --dot-content: var(--accent);
+  --dot-activity: var(--accent-ai);
   --border: #2e2f2cb3;
 
   font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;

@@ -1,0 +1,183 @@
+.tasksView {
+  flex-shrink: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  min-height: 0;
+  background: var(--bg-app);
+  border-right: 1px solid var(--border);
+  position: relative;
+}
+
+.resizeHandle {
+  position: absolute;
+  right: -3px;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 10;
+}
+
+.resizeHandle:hover {
+  background: var(--accent, #7c6af5);
+  opacity: 0.4;
+}
+
+.listHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.heading {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.select,
+.newTask {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: inherit;
+  padding: 5px 7px;
+  outline: none;
+}
+
+.select:focus,
+.newTask:focus {
+  border-color: var(--accent-task);
+}
+
+.groups {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.groupHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  padding: 2px 4px;
+  font-family: inherit;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.groupHeader:disabled {
+  cursor: default;
+}
+
+.groupOverdue {
+  color: var(--accent-danger);
+}
+
+.caret {
+  font-size: 10px;
+}
+
+.count {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border-left: 2px solid transparent;
+  cursor: pointer;
+  outline: none;
+}
+
+.row:hover {
+  background: var(--surface-1);
+}
+
+.rowSelected {
+  background: var(--surface-1);
+  border-left-color: var(--accent-task);
+}
+
+.checkbox {
+  flex-shrink: 0;
+  accent-color: var(--accent-task);
+  cursor: pointer;
+  margin: 0;
+}
+
+.rowTitle {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rowTitleClosed {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.doingBadge {
+  flex-shrink: 0;
+  font-size: 10px;
+  padding: 0 5px;
+  border-radius: 8px;
+  border: 1px solid var(--status-doing);
+  color: var(--status-doing);
+}
+
+.rowProject {
+  flex-shrink: 0;
+  max-width: 80px;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rowDue {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.rowDueOverdue {
+  color: var(--accent-danger);
+}
+
+.newTaskRow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}

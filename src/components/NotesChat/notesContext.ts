@@ -1,5 +1,5 @@
 import { cleanNoteContentForAi, noteDate } from '../../lib/noteFileText'
-import type { Note } from '../../types'
+import type { Note, Task } from '../../types'
 
 // ─── Builder do bloco de contexto das Anotações ─────────────────────────────
 // Função pura (sem I/O), espelho de readerContext.ts: monta o bloco EFEMERO
@@ -8,6 +8,7 @@ import type { Note } from '../../types'
 
 const NOTE_TEXT_BUDGET = 8000
 const SELECTION_BUDGET = 2000
+const PROJECT_TASKS_LIMIT = 100
 
 export interface NotesContextInput {
   notebookName: string
@@ -15,6 +16,8 @@ export interface NotesContextInput {
   // '' = sem seleção
   selectionText: string
   resolveNoteTitle: (noteId: string) => string | undefined
+  // Tasks do caderno-projeto (nota-corpo de task aberta no editor).
+  projectTasks?: Task[]
 }
 
 function truncateWithMarker(s: string, budget: number): string {
@@ -47,6 +50,16 @@ export function buildNotesContext(input: NotesContextInput): string {
     lines.push(
       `Selected text in the note: "${truncateWithMarker(selection, SELECTION_BUDGET)}"`
     )
+  }
+
+  const projectTasks = input.projectTasks ?? []
+  if (projectTasks.length > 0) {
+    lines.push('')
+    lines.push(`Tasks of this project (${projectTasks.length}):`)
+    for (const t of projectTasks.slice(0, PROJECT_TASKS_LIMIT)) {
+      lines.push(`- [${t.status}] ${t.title}${t.dueDate ? ` (due ${t.dueDate})` : ''}`)
+    }
+    if (projectTasks.length > PROJECT_TASKS_LIMIT) lines.push('- [truncated]')
   }
 
   // Instrução do bloco inserível: vale em todo envio do modo `notes`,

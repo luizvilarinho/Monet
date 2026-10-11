@@ -1,5 +1,4 @@
 import { Placeholder } from '@tiptap/extensions'
-import TaskItem from '@tiptap/extension-task-item'
 import TaskList from '@tiptap/extension-task-list'
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table'
 import Image from '@tiptap/extension-image'
@@ -15,6 +14,9 @@ import { EmbedBlock } from './EmbedBlock'
 import { ToggleBlock } from './ToggleBlock'
 import { LinkedNoteBlock } from './LinkedNoteBlock'
 import { ReminderChip } from './ReminderChip'
+import { LinkedTaskItem } from './LinkedTaskItem'
+import { TaskRef } from './TaskRef'
+import { TaskStatus } from './TaskStatus'
 
 // Custom inline-code mark — força serialização com um único backtick
 // (defaultMarkdownSerializer.marks.code usa `backticksFor` que adiciona mais
@@ -95,7 +97,7 @@ const ParagraphWithBlankLines = Paragraph.extend({
 
 // Conjunto base de extensões compartilhado entre o Editor principal e a
 // janela keep. CRÍTICO: os dois editores precisam registrar os MESMOS nodes
-// custom (embed/toggle/linked-note/reminder-chip) — um editor sem eles
+// custom (embed/toggle/linked-note/reminder-chip/task-ref) — um editor sem eles
 // descartaria esses nodes no parse e o autosave destruiria o conteúdo.
 // Qualquer node novo deve entrar aqui, não inline em um dos editores.
 export function buildBaseExtensions(placeholder: string): AnyExtension[] {
@@ -109,7 +111,7 @@ export function buildBaseExtensions(placeholder: string): AnyExtension[] {
     InlineCode,
     ParagraphWithBlankLines,
     TaskList,
-    TaskItem.configure({ nested: true }),
+    LinkedTaskItem.configure({ nested: true }),
     Table.configure({ resizable: true }),
     TableRow,
     TableHeader,
@@ -131,5 +133,7 @@ export function buildBaseExtensions(placeholder: string): AnyExtension[] {
     ToggleBlock,
     LinkedNoteBlock,
     ReminderChip,
+    TaskRef,
+    TaskStatus,
   ]
 }

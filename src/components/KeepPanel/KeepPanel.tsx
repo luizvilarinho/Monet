@@ -13,8 +13,12 @@ import {
 } from '../../lib/calendar'
 import { storage } from '../../storage'
 import type { Note } from '../../types'
+import { useTasks } from '../../hooks/useTasks'
+import { useToday } from '../../hooks/useToday'
 import { buildBaseExtensions } from '../Editor/extensions'
 import { RemindersProvider } from '../Editor/RemindersContext'
+import { TasksProvider } from '../Editor/TasksContext'
+import { taskStatusPluginKey, type TaskStatusStorage } from '../Editor/TaskStatus'
 import { TimePicker } from '../Editor/TimePicker'
 import styles from './KeepPanel.module.css'
 
@@ -33,6 +37,10 @@ export function KeepPanel() {
   const timePickerInsertPosRef = useRef<number>(0)
   const noteRef = useRef<Note | null>(null)
   noteRef.current = note
+  const todayKey = useToday()
+  const { tasks, tasksById, updateTask, reload: reloadTasks } = useTasks()
+  const reloadTasksRef = useRef(reloadTasks)
+  reloadTasksRef.current = reloadTasks
 
   const editor = useEditor({
     immediatelyRender: false,
@@ -133,6 +141,7 @@ export function KeepPanel() {
     let unlisten: (() => void) | undefined
     void listen('keep-shown', () => {
       loadOrCreateTodayNote()
+      void reloadTasksRef.current()
       editorRef.current?.commands.focus()
     }).then((fn) => {
       if (cancelled) fn()
@@ -167,6 +176,25 @@ export function KeepPanel() {
     }
   }, [])
 
+  // Status das tasks vinculadas → checkbox dos itens com task-ref (transação
+  // só de meta, não dispara o autosave) e clique no checkbox → tabela.
+  useEffect(() => {
+    if (!editor) return
+    editor.view.dispatch(
+      editor.state.tr
+        .setMeta(taskStatusPluginKey, new Map(tasks.map((t) => [t.id, t.status])))
+        .setMeta('addToHistory', false)
+    )
+  }, [editor, tasks])
+
+  useEffect(() => {
+    if (!editor) return
+    const storage = editor.storage as unknown as { taskStatus: TaskStatusStorage }
+    storage.taskStatus.onToggleLinked = (id, checked) => {
+      void updateTask(id, { status: checked ? 'done' : 'todo' })
+    }
+  }, [editor, updateTask])
+
   function handleTimePickerConfirm(time: string) {
     setTimePickerPos(null)
     const ed = editorRef.current
@@ -191,6 +219,7 @@ export function KeepPanel() {
   }
 
   const remindersValue = useMemo(() => ({ firedIds }), [firedIds])
+  const tasksValue = useMemo(() => ({ tasksById, todayKey }), [tasksById, todayKey])
   const headerDate = note?.title ?? formatCalendarTitle(new Date())
   const headerWeekday = getWeekdayName(parseCalendarTitle(headerDate) ?? new Date())
 
@@ -226,7 +255,9 @@ export function KeepPanel() {
       </div>
       <div className={styles.body}>
         <RemindersProvider value={remindersValue}>
-          <EditorContent editor={editor} />
+          <TasksProvider value={tasksValue}>
+            <EditorContent editor={editor} />
+          </TasksProvider>
         </RemindersProvider>
       </div>
       {timePickerPos && (

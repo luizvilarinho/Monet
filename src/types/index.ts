@@ -26,6 +26,26 @@ export interface Note {
   updatedAt: number
 }
 
+export type TaskStatus = 'todo' | 'doing' | 'done' | 'dropped'
+
+// `dueDate` é chave de dia local `YYYY-MM-DD`; os timestamps são epoch ms.
+export interface Task {
+  id: string
+  title: string
+  status: TaskStatus
+  // Projeto = caderno. `noteId` é a nota-corpo da task (no subject "Tasks"
+  // desse caderno).
+  notebookId: string
+  noteId: string | null
+  dueDate: string | null
+  createdAt: number
+  updatedAt: number
+  completedAt: number | null
+  sourceNoteId: string | null
+  rescheduleCount: number
+  sortOrder: number
+}
+
 export type DocumentStatus = 'indexing' | 'available' | 'error'
 
 export interface Document {

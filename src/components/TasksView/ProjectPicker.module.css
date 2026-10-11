@@ -1,0 +1,16 @@
+.control {
+  background: var(--surface-2, #26262c);
+  border: 1px solid var(--border, #333340);
+  border-radius: 4px;
+  color: var(--text-primary, #e8e8f0);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 4px 6px;
+  outline: none;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.control:focus {
+  border-color: var(--accent-task);
+}

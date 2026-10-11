@@ -1,0 +1,53 @@
+.popup {
+  position: fixed;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--surface-1, #1e1e22);
+  border: 1px solid var(--border, #333340);
+  border-radius: 6px;
+  z-index: 200;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.label {
+  color: var(--text-muted, #606070);
+  font-size: 11px;
+}
+
+.input {
+  background: var(--surface-2, #26262c);
+  border: 1px solid var(--border, #333340);
+  border-radius: 4px;
+  color: var(--text-primary, #e8e8f0);
+  font-size: 13px;
+  font-family: inherit;
+  padding: 4px 6px;
+  outline: none;
+}
+
+.input:focus {
+  border-color: var(--accent-task);
+}
+
+.confirm {
+  background: color-mix(in srgb, var(--accent-task) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-task) 45%, transparent);
+  border-radius: 4px;
+  color: var(--text-primary, #e8e8f0);
+  font-size: 12px;
+  padding: 5px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.confirm:hover {
+  background: color-mix(in srgb, var(--accent-task) 28%, transparent);
+}

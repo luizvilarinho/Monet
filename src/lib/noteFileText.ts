@@ -1,5 +1,6 @@
-import type { Note } from '../types'
-import { getWeekdayName, parseCalendarTitle } from './calendar'
+import type { Note, Task } from '../types'
+import { dateKeyFromMs, getWeekdayName, parseCalendarTitle } from './calendar'
+import { TASK_STATUS_LABEL } from './tasks'
 
 export const COMMAND_LINE_RE = /^\/[a-zA-Z]/
 export const EMBED_BLOCK_RE = /<!--monet-embed:[a-zA-Z0-9_-]+-->[\s\S]*?<!--monet-embed-end:[a-zA-Z0-9_-]+-->/g
@@ -10,6 +11,8 @@ const HTML_DATA_IMAGE_RE = /<img\b[^>]*\bsrc=["']data:[^"']*["'][^>]*>/gi
 const DATA_URL_RE = /data:[a-z]+\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/gi
 const LINKED_NOTE_RE = /<linked-note\b[^>]*\bdata-note-id="([^"]*)"[^>]*>\s*<\/linked-note>/g
 const REMINDER_CHIP_RE = /<reminder-chip\b[^>]*\bdata-time="([^"]*)"[^>]*>\s*<\/reminder-chip>/g
+// O [ ]/[x] do item pode estar defasado: o status real vive na task vinculada.
+const TASK_REF_RE = /<task-ref\b[^>]*>\s*<\/task-ref>/g
 const TOGGLE_BLOCK_RE = /<div data-type="toggle-block"[^>]*\bdata-title="([^"]*)"[^>]*>([\s\S]*?)<\/div>/g
 const BR_RE = /<br\s*\/?>/gi
 const BLOCK_END_RE = /<\/(p|li|h[1-6]|blockquote|pre)>/gi
@@ -38,6 +41,7 @@ export function cleanNoteContentForAi(
     .replace(DATA_URL_RE, '[image]')
     .replace(LINKED_NOTE_RE, (_, id: string) => `[Linked note: ${resolveNoteTitle(id)?.trim() || 'untitled'}]`)
     .replace(REMINDER_CHIP_RE, (_, time: string) => `⏰ ${time}`)
+    .replace(TASK_REF_RE, '[task]')
     .replace(TOGGLE_BLOCK_RE, (_, title: string, inner: string) => {
       const text = inner.replace(BR_RE, '\n').replace(BLOCK_END_RE, '\n').replace(TAG_RE, '')
       return `${decodeEntities(title)}\n${decodeEntities(text).trim()}`
@@ -64,18 +68,71 @@ export function noteDate(note: Note): string | null {
   return `${y}-${m}-${d} (${getWeekdayName(parsed)})`
 }
 
+// Metadados de uma task para a IA, um por linha (Project, Status, Due date
+// primeiro).
+function taskMetadataLines(
+  task: Task,
+  projectName: string,
+  resolveNoteTitle: (noteId: string) => string | undefined,
+): string[] {
+  const lines = [
+    `Project: ${projectName}`,
+    `Status: ${TASK_STATUS_LABEL[task.status]}`,
+    `Due date: ${task.dueDate ?? 'none'}`,
+    `Created: ${dateKeyFromMs(task.createdAt)}`,
+  ]
+  if (task.status === 'done' && task.completedAt !== null) {
+    lines.push(`Completed: ${dateKeyFromMs(task.completedAt)}`)
+  }
+  const source = task.sourceNoteId ? resolveNoteTitle(task.sourceNoteId)?.trim() : undefined
+  if (source) lines.push(`Source note: ${source}`)
+  return lines
+}
+
 // Texto do arquivo .md espelhado no RAG. Retorna '' para nota sem título e
-// sem corpo (o backend remove o documento nesse caso).
+// sem corpo (o backend remove o documento nesse caso). Nota-corpo de task
+// recebe os metadados da task logo abaixo do título.
 export function buildNoteFileText(
   note: Note,
   resolveNoteTitle: (noteId: string) => string | undefined,
+  taskContext?: { task: Task; projectName: string },
 ): string {
   const title = note.title.trim()
   const body = cleanNoteContentForAi(note.content, resolveNoteTitle)
-  if (!title && !body) return ''
+  if (!title && !body && !taskContext) return ''
   const header = [`# ${title || 'Untitled'}`]
+  if (taskContext) {
+    header.push(...taskMetadataLines(taskContext.task, taskContext.projectName, resolveNoteTitle))
+  }
   const date = noteDate(note)
   if (date) header.push(`Date: ${date}`)
   if (note.tags.length > 0) header.push(`Tags: ${note.tags.join(', ')}`)
   return body ? `${header.join('\n')}\n\n${body}` : header.join('\n')
+}
+
+const SUMMARY_STATUS_ORDER: Task['status'][] = ['doing', 'todo', 'done', 'dropped']
+
+// Documento-resumo das tasks de um caderno-projeto, agrupado por status, para
+// perguntas de agregação ("o que está pendente no projeto X?").
+export function buildTasksSummaryText(
+  projectName: string,
+  tasks: Task[],
+  resolveNoteTitle: (noteId: string) => string | undefined,
+): string {
+  const sections = [`# Tasks — ${projectName}\nAll tasks of the project "${projectName}", grouped by status.`]
+  for (const status of SUMMARY_STATUS_ORDER) {
+    const group = tasks
+      .filter((t) => t.status === status)
+      .sort(
+        (a, b) =>
+          (a.dueDate ?? '9999').localeCompare(b.dueDate ?? '9999') || a.sortOrder - b.sortOrder,
+      )
+    if (group.length === 0) continue
+    sections.push(`## ${TASK_STATUS_LABEL[status]} (${group.length})`)
+    for (const t of group) {
+      const lines = [`### ${t.title.trim() || 'Untitled'}`, ...taskMetadataLines(t, projectName, resolveNoteTitle)]
+      sections.push(lines.join('\n'))
+    }
+  }
+  return sections.join('\n\n')
 }
