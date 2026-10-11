@@ -36,3 +36,5 @@ latest.json
 
 # pdfjs assets copiados de node_modules pelo vite.config.ts (derivado)
 public/pdfjs
+
+DOCS/prints/
