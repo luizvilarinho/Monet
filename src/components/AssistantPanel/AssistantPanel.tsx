@@ -48,6 +48,7 @@ export function AssistantPanel() {
     ensureAssistantFolder,
     setFolderSystemPrompt,
     setFolderVisibleDocuments,
+    getFolderVisibleDocumentIds,
     setFolderMemory,
     setFolderMemoryEnabled,
   } = useChat(models, { mode: 'assistant' })
@@ -308,6 +309,7 @@ export function AssistantPanel() {
       <FolderDocumentSelectorModal
         open={docsOpen}
         folder={assistantFolder}
+        initialSelectedIds={assistantFolder ? getFolderVisibleDocumentIds(assistantFolder.id) : []}
         onConfirm={(folderId, visibleDocumentIds) =>
           setFolderVisibleDocuments(folderId, visibleDocumentIds)
         }

@@ -5,6 +5,8 @@ import { check } from '@tauri-apps/plugin-updater'
 import type { Update } from '@tauri-apps/plugin-updater'
 import { nanoid } from 'nanoid'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createNodeFromContent, type Editor as TiptapEditor } from '@tiptap/core'
+import { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import './App.css'
 import { AiPanel } from './components/AiPanel/AiPanel'
 import { CalendarView } from './components/CalendarView/CalendarView'
@@ -15,6 +17,9 @@ import { KnowledgeBaseModal } from './components/KnowledgeBaseModal/KnowledgeBas
 import { Editor } from './components/Editor/Editor'
 import { EmptyEditor } from './components/Editor/EmptyEditor'
 import { NotebookList } from './components/NotebookList/NotebookList'
+import { NotesChatPanel } from './components/NotesChat/NotesChatPanel'
+import { codeFence, type NoteInsert } from './components/NotesChat/noteBlocks'
+import { insertAsListContinuation } from './components/Editor/listContinuation'
 import { Onboarding } from './components/Onboarding/Onboarding'
 import { RelatedContent } from './components/RelatedContent/RelatedContent'
 import { SettingsModal } from './components/Settings/SettingsModal'
@@ -29,10 +34,12 @@ import {
   createPreloadedChatConversation,
   getLinkedChatConversationId,
   linkResponseToChatConversation,
+  unlinkNotebookFromChatFolder,
   unlinkResponseFromChat,
 } from './hooks/useChat'
 import { useNotebooks } from './hooks/useNotebooks'
 import { useNotes } from './hooks/useNotes'
+import { useNotesIndexSync } from './hooks/useNotesIndexSync'
 import { useReminders } from './hooks/useReminders'
 import { useSubjects } from './hooks/useSubjects'
 import { findCommand } from './lib/commands'
@@ -44,7 +51,7 @@ import {
   isMandatory,
   setSkippedVersion,
 } from './lib/updater'
-import { getToggleTitle } from './components/Editor/commandParser'
+import { getToggleTitle, isPotentialCommandLine } from './components/Editor/commandParser'
 import { RemindersProvider } from './components/Editor/RemindersContext'
 import {
   CALENDAR_NOTEBOOK_ID,
@@ -57,6 +64,7 @@ import {
   embedText,
   getNotebookVisibleDocumentIds,
   getNotebooksWithVisibleDocs,
+  resolveSearchableIds,
   type ChunkResult,
 } from './lib/documents'
 import { applyOrder, loadNoteOrder, loadOrder, mergeOrder, saveNoteOrder, saveOrder } from './lib/noteOrder'
@@ -249,6 +257,7 @@ function App() {
   const {
     notebooks,
     loaded: notebooksLoaded,
+    loadFailed: notebooksLoadFailed,
     save: saveNotebook,
     create: createNotebook,
     remove: removeNotebook,
@@ -256,6 +265,8 @@ function App() {
   } = useNotebooks()
   const {
     notes,
+    loaded: notesLoaded,
+    loadFailed: notesLoadFailed,
     save: saveNote,
     create: createNote,
     remove: removeNote,
@@ -288,6 +299,27 @@ function App() {
   const [search, setSearch] = useState('')
   const [activeTag, setActiveTag] = useState<string | null>(null)
   const [aiOpen, setAiOpen] = useState(true)
+  // Aba da coluna direita (AI = cards dos slash commands; Chat = chat do caderno).
+  const [rightTab, setRightTabState] = useState<'ai' | 'chat'>(() => {
+    try {
+      return localStorage.getItem('monet:notes-right-tab') === 'chat' ? 'chat' : 'ai'
+    } catch {
+      return 'ai'
+    }
+  })
+  const setRightTab = useCallback((tab: 'ai' | 'chat') => {
+    setRightTabState(tab)
+    try {
+      localStorage.setItem('monet:notes-right-tab', tab)
+    } catch {
+      /* ignorar */
+    }
+  }, [])
+  // Trecho do "Ask AI" da toolbar de seleção, consumido pelo NotesChatPanel.
+  const [pendingNotesQuote, setPendingNotesQuote] = useState<string | null>(null)
+  // Instância do Tiptap da nota aberta (inserir resposta do chat na nota).
+  const notesEditorRef = useRef<TiptapEditor | null>(null)
+  const [hasEditor, setHasEditor] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [documentsModalNotebookId, setDocumentsModalNotebookId] = useState<string | null>(null)
   const [notebooksWithDocs, setNotebooksWithDocs] = useState<Set<string>>(new Set())
@@ -298,6 +330,15 @@ function App() {
     () => localStorage.getItem('onboarding_completed') !== '1'
   )
   const [models, setModels] = useState<AiModel[]>([])
+  const { disabledNotebookIds, setNotebookIndexEnabled } = useNotesIndexSync({
+    notes,
+    notesLoaded,
+    notebooks,
+    notebooksLoaded,
+    loadFailed: notesLoadFailed || notebooksLoadFailed,
+    hasApiKey,
+    activeNoteId: activeId,
+  })
   const [modelsLoading, setModelsLoading] = useState<boolean>(false)
   const [modelsError, setModelsError] = useState<string | null>(null)
   const [modelId, setModelId] = useState<string | null>(null)
@@ -705,6 +746,8 @@ function App() {
       if (def.takesQuery && query.trim().length === 0) {
         return false
       }
+      // O card nasce na aba AI; se o Chat estiver aberto, troca para ela.
+      setRightTab('ai')
       const present = await hasOpenRouterKey()
       setHasApiKey(present)
       setApiKeyChecked(true)
@@ -756,7 +799,12 @@ function App() {
       let docsListFailed = false
       if (notebookId) {
         try {
-          visibleDocIds = await getNotebookVisibleDocumentIds(notebookId)
+          const rawIds = await getNotebookVisibleDocumentIds(notebookId)
+          visibleDocIds = await resolveSearchableIds(rawIds, {
+            notebookId,
+            excludeNoteId: activeNote?.id ?? null,
+            includeAiFolders: true,
+          })
         } catch (err) {
           docsListFailed = true
           console.warn('getNotebookVisibleDocumentIds failed:', err)
@@ -891,7 +939,7 @@ function App() {
       })
       return true
     },
-    [activeId, activeNote, modelId, models.length, start, addErrorCard, notes]
+    [activeId, activeNote, modelId, models.length, start, addErrorCard, notes, setRightTab]
   )
 
   const effectiveNotebookWidth = notebookCollapsed ? COLLAPSED_PANEL_WIDTH : notebookWidth
@@ -928,6 +976,8 @@ function App() {
 
   async function handleDeleteNotebook(id: string) {
     await removeNotebook(id)
+    // Desfaz o vínculo caderno → pasta de chat; as conversas ficam numa pasta comum.
+    unlinkNotebookFromChatFolder(id)
     const childNotes = notes.filter((n) => n.notebookId === id)
     childNotes.forEach((n) => removeNote(n.id))
     if (activeNotebookId === id) {
@@ -1078,6 +1128,8 @@ function App() {
         )
       )
       await removeNotebook(sourceId)
+      // Desfaz o vínculo caderno → pasta de chat; as conversas ficam numa pasta comum.
+      unlinkNotebookFromChatFolder(sourceId)
       if (activeNotebookId === sourceId) {
         setActiveNotebookId(null)
         setActiveSubjectId(null)
@@ -1165,6 +1217,98 @@ function App() {
     }
     setActiveMode('chat')
   }, [])
+
+  // ─── Chat das Anotações (aba Chat da coluna direita) ─────────────────────
+  // Caderno do chat: o da nota aberta (também em "All Notes"); sem nota, o
+  // caderno ativo. Sempre um caderno existente (ou null).
+  const chatNotebookId = activeNote?.notebookId ?? activeNotebookId
+  const chatNotebook = useMemo(
+    () => notebooks.find((n) => n.id === chatNotebookId) ?? null,
+    [notebooks, chatNotebookId]
+  )
+
+  const resolveNoteTitle = useCallback(
+    (noteId: string) => notes.find((n) => n.id === noteId)?.title,
+    [notes]
+  )
+
+  const handleEditorReady = useCallback((editor: TiptapEditor | null) => {
+    notesEditorRef.current = editor
+    setHasEditor(!!editor)
+  }, [])
+
+  const getNotesSelectionText = useCallback(() => {
+    const editor = notesEditorRef.current
+    if (!editor || editor.isDestroyed) return ''
+    const { from, to } = editor.state.selection
+    return from !== to ? editor.state.doc.textBetween(from, to, '\n') : ''
+  }, [])
+
+  const handleAskAi = useCallback(
+    (text: string) => {
+      setAiOpen(true)
+      setRightTab('chat')
+      setPendingNotesQuote(text)
+    },
+    [setRightTab]
+  )
+
+  const handleNotesQuoteConsumed = useCallback(() => setPendingNotesQuote(null), [])
+
+  // Insere conteúdo do chat na nota (o tiptap-markdown converte o markdown
+  // no insertContentAt). Linhas que começam com "/" ganham um zero-width space
+  // na frente para não virarem slash command (fora de blocos de código).
+  // Bloco de código entra como fence (sem o prefixo: o slash command só olha
+  // parágrafos). Seleção da resposta chega como HTML e vira markdown pelo
+  // serializer do editor; se falhar, vai como texto simples. Uma lista
+  // inserida no fim de um item de lista do mesmo tipo continua essa lista.
+  const handleInsertIntoNote = useCallback(
+    (content: NoteInsert, where: 'cursor' | 'end') => {
+      const editor = notesEditorRef.current
+      if (!editor || editor.isDestroyed) return
+      const md = (
+        editor.storage as unknown as {
+          markdown: {
+            parser: { parse(markdown: string): string }
+            serializer: { serialize(node: ProseMirrorNode): string }
+          }
+        }
+      ).markdown
+      let markdown: string
+      if ('code' in content) {
+        markdown = codeFence(content.code, content.language)
+      } else {
+        let source = 'html' in content ? content.text : content.markdown
+        if ('html' in content) {
+          try {
+            const doc = createNodeFromContent(content.html, editor.schema, { slice: false })
+            const out = doc instanceof ProseMirrorNode ? md.serializer.serialize(doc).trim() : ''
+            if (out) source = out
+          } catch {
+            // texto simples
+          }
+        }
+        let inFence = false
+        markdown = source
+          .split('\n')
+          .map((line) => {
+            if (/^\s*(```|~~~)/.test(line)) {
+              inFence = !inFence
+              return line
+            }
+            if (inFence || !isPotentialCommandLine(line)) return line
+            return line.replace(/^(\s*)\//, '$1​/')
+          })
+          .join('\n')
+        if (insertAsListContinuation(editor, md.parser.parse(markdown), where)) return
+      }
+      const pos = where === 'end' ? editor.state.doc.content.size : editor.state.selection.to
+      editor.chain().focus().insertContentAt(pos, markdown).run()
+    },
+    []
+  )
+
+  const canInsertIntoNote = !!activeNote && hasEditor && !previewMode
 
   const handleCompleteOnboarding = useCallback(() => {
     localStorage.setItem('onboarding_completed', '1')
@@ -1358,6 +1502,8 @@ function App() {
             }
             isCalendarNote={activeNote.notebookId === calendarNotebookId}
             previewMode={previewMode}
+            onAskAi={handleAskAi}
+            onEditorReady={handleEditorReady}
           />
           </RemindersProvider>
         ) : (
@@ -1384,6 +1530,21 @@ function App() {
             unlinkResponseFromChat(id)
           }}
           onOpenInChat={handleOpenResponseInChat}
+          activeTab={rightTab}
+          onTabChange={setRightTab}
+          chatPanel={
+            <NotesChatPanel
+              notebook={chatNotebook}
+              activeNote={activeNote}
+              resolveNoteTitle={resolveNoteTitle}
+              getSelectionText={getNotesSelectionText}
+              visible={aiOpen && rightTab === 'chat'}
+              pendingQuote={pendingNotesQuote}
+              onPendingQuoteConsumed={handleNotesQuoteConsumed}
+              canInsert={canInsertIntoNote}
+              onInsertIntoNote={handleInsertIntoNote}
+            />
+          }
         />
       </div>
       )}
@@ -1411,6 +1572,12 @@ function App() {
         }
         onClose={() => { setDocumentsModalNotebookId(null); void refreshNotebooksWithDocs() }}
         onOpenKnowledgeBase={() => { setDocumentsModalNotebookId(null); setKbOpen(true) }}
+        notesIndexEnabled={
+          documentsModalNotebookId !== null && !disabledNotebookIds.has(documentsModalNotebookId)
+        }
+        onToggleNotesIndex={async (enabled) => {
+          if (documentsModalNotebookId) await setNotebookIndexEnabled(documentsModalNotebookId, enabled)
+        }}
       />
       <KnowledgeBaseModal open={kbOpen} onClose={() => setKbOpen(false)} />
       {onboardingActive && (

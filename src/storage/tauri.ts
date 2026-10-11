@@ -7,7 +7,6 @@ import type {
   BookHighlight,
   BookHighlightRect,
   BookQuote,
-  DocumentStatus,
   Note,
   Notebook,
   Subject,
@@ -495,23 +494,6 @@ export class TauriStorage implements StorageAdapter {
       [q]
     )
     return rows.map(rowToNote)
-  }
-
-  async updateDocumentStatus(
-    id: string,
-    status: DocumentStatus,
-    errorMessage?: string | null,
-  ): Promise<void> {
-    const db = await this.db()
-    await db.execute(
-      `UPDATE documents
-          SET status = $1,
-              error_message = $2,
-              updated_at = $3
-        WHERE id = $4`,
-      [status, errorMessage ?? null, Date.now(), id],
-    )
-    this.scheduleCheckpoint()
   }
 
   // Garante idempotente que reminder_state existe. Ela é criada pela migration

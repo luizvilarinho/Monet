@@ -1,7 +1,9 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { Document } from '../../types'
+import { useConfirm } from '../../hooks/useConfirm'
 import { useKnowledgeBase, useNotebookVisibility } from '../../hooks/useDocuments'
+import { notesFolderDocId } from '../../lib/documents'
 import styles from './DocumentsModal.module.css'
 
 export interface DocumentsModalProps {
@@ -10,6 +12,8 @@ export interface DocumentsModalProps {
   notebookName: string
   onClose: () => void
   onOpenKnowledgeBase: () => void
+  notesIndexEnabled: boolean
+  onToggleNotesIndex: (enabled: boolean) => Promise<void>
 }
 
 function statusLabel(status: Document['status']): string {
@@ -38,24 +42,17 @@ function StatusPill({ doc }: { doc: Document }) {
 interface FolderRowProps {
   folder: Document
   checked: boolean
-  indeterminate: boolean
   disabled: boolean
+  alwaysOn?: boolean
   onToggle: () => void
 }
 
-function FolderRow({ folder, checked, indeterminate, disabled, onToggle }: FolderRowProps) {
-  const checkboxRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    if (checkboxRef.current) {
-      checkboxRef.current.indeterminate = indeterminate
-    }
-  }, [indeterminate])
-
+function FolderRow({ folder, checked, disabled, alwaysOn, onToggle }: FolderRowProps) {
   return (
     <tr>
       <td className={styles.cellName} title={folder.originalPath ?? folder.name}>
         {folder.name}
+        {alwaysOn && <span className={styles.alwaysOn}> (always on)</span>}
       </td>
       <td>📁 Folder</td>
       <td>
@@ -63,13 +60,16 @@ function FolderRow({ folder, checked, indeterminate, disabled, onToggle }: Folde
       </td>
       <td className={styles.cellVisible}>
         <input
-          ref={checkboxRef}
           type="checkbox"
           checked={checked}
           disabled={disabled}
           onChange={onToggle}
           aria-label={`toggle visibility for folder ${folder.name}`}
-          title={disabled ? 'No available files in this folder' : undefined}
+          title={
+            alwaysOn
+              ? "This notebook's notes are always searched"
+              : disabled ? 'No available files in this folder' : undefined
+          }
         />
       </td>
     </tr>
@@ -82,9 +82,13 @@ export function DocumentsModal({
   notebookName,
   onClose,
   onOpenKnowledgeBase,
+  notesIndexEnabled,
+  onToggleNotesIndex,
 }: DocumentsModalProps) {
-  const { documents, loading, error } = useKnowledgeBase()
+  const { documents: allDocuments, loading, error } = useKnowledgeBase()
   const { isVisible, toggle } = useNotebookVisibility(open ? notebookId : null)
+  const { confirm, modal: confirmModal } = useConfirm()
+  const [notesIndexPending, setNotesIndexPending] = useState(false)
 
   useEffect(() => {
     if (!open) return
@@ -96,6 +100,33 @@ export function DocumentsModal({
   }, [open, onClose])
 
   if (!open || !notebookId) return null
+
+  // A pasta de notas do próprio caderno é incluída implicitamente na busca:
+  // aparece no topo como "always on" (não alternável) quando a indexação está ligada.
+  const ownNotesFolderId = notesFolderDocId(notebookId)
+  const ownNotesFolder = notesIndexEnabled
+    ? allDocuments.find((d) => d.id === ownNotesFolderId) ?? null
+    : null
+  const documents = allDocuments.filter((d) => d.id !== ownNotesFolderId)
+
+  async function handleToggleNotesIndex() {
+    const next = !notesIndexEnabled
+    if (!next) {
+      const ok = await confirm(
+        "Turn off note indexing for this notebook? Its indexed copies will be deleted (your notes are not affected).",
+        { title: 'Turn off note indexing' },
+      )
+      if (!ok) return
+    }
+    setNotesIndexPending(true)
+    try {
+      await onToggleNotesIndex(next)
+    } catch (e) {
+      console.error('failed to toggle notes indexing', e)
+    } finally {
+      setNotesIndexPending(false)
+    }
+  }
 
   const folders = documents.filter((d) => d.docType === 'folder')
   const standaloneFiles = documents.filter((d) => d.docType === 'file' && !d.parentFolderId)
@@ -111,20 +142,16 @@ export function DocumentsModal({
   }
 
   async function handleToggleFolder(folder: Document) {
-    const children = documents.filter(
-      (d) => d.parentFolderId === folder.id && d.docType === 'file' && d.status === 'available',
-    )
-    if (children.length === 0) return
-    const allVisible = children.every((c) => isVisible(c.id))
-    const next = !allVisible
     try {
-      await Promise.all(children.map((c) => toggle(c.id, next)))
+      await toggle(folder.id, !isVisible(folder.id))
     } catch (e) {
       console.error('failed to toggle folder visibility', e)
     }
   }
 
   return createPortal(
+    <>
+    {confirmModal}
     <div
       className={styles.overlay}
       role="dialog"
@@ -150,7 +177,21 @@ export function DocumentsModal({
         </header>
 
         <div className={styles.body}>
-          {loading && documents.length === 0 ? (
+          <label className={styles.notesIndexRow}>
+            <input
+              type="checkbox"
+              checked={notesIndexEnabled}
+              disabled={notesIndexPending}
+              onChange={handleToggleNotesIndex}
+            />
+            <span className={styles.notesIndexText}>
+              <span className={styles.notesIndexTitle}>Index this notebook&apos;s notes for AI</span>
+              <span className={styles.notesIndexHelp}>
+                Notes are saved as Markdown in a hidden app folder and indexed for chat and /commands.
+              </span>
+            </span>
+          </label>
+          {loading && documents.length === 0 && !ownNotesFolder ? (
             <ul className={styles.skeletonList} aria-hidden="true">
               {[0, 1, 2].map((i) => (
                 <li key={i} className={styles.skeletonRow}>
@@ -162,7 +203,7 @@ export function DocumentsModal({
             </ul>
           ) : error ? (
             <p className={styles.errorText}>{error}</p>
-          ) : documents.length === 0 ? (
+          ) : documents.length === 0 && !ownNotesFolder ? (
             <div className={styles.empty}>
               <p className={styles.emptyTitle}>No documents in Knowledge Base.</p>
               <p className={styles.emptyHelp}>
@@ -187,20 +228,26 @@ export function DocumentsModal({
                 </tr>
               </thead>
               <tbody>
+                {ownNotesFolder && (
+                  <FolderRow
+                    folder={ownNotesFolder}
+                    checked
+                    disabled
+                    alwaysOn
+                    onToggle={() => {}}
+                  />
+                )}
                 {folders.map((folder) => {
-                  const children = documents.filter(
+                  const hasAvailableChildren = documents.some(
                     (d) => d.parentFolderId === folder.id && d.docType === 'file' && d.status === 'available',
                   )
-                  const allVisible = children.length > 0 && children.every((c) => isVisible(c.id))
-                  const someVisible = children.some((c) => isVisible(c.id))
-                  const indeterminate = someVisible && !allVisible
+                  const checked = isVisible(folder.id)
                   return (
                     <FolderRow
                       key={folder.id}
                       folder={folder}
-                      checked={allVisible}
-                      indeterminate={indeterminate}
-                      disabled={children.length === 0}
+                      checked={checked}
+                      disabled={!hasAvailableChildren && !checked}
                       onToggle={() => handleToggleFolder(folder)}
                     />
                   )
@@ -248,7 +295,8 @@ export function DocumentsModal({
           </button>
         </footer>
       </div>
-    </div>,
+    </div>
+    </>,
     document.body,
   )
 }

@@ -13,7 +13,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { loadOrder, saveOrder } from '../../lib/noteOrder'
 import type { AiModel, AiResponse } from '../../types'
 import { AiCard } from './AiCard'
@@ -93,6 +93,11 @@ export interface AiPanelProps {
   navigateToCard?: { index: number; ts: number } | null
   onDeleteResponse?: (id: string) => void
   onOpenInChat?: (response: AiResponse) => void
+  activeTab: 'ai' | 'chat'
+  onTabChange: (tab: 'ai' | 'chat') => void
+  // Sempre renderizado (escondido via CSS fora da aba Chat): desmontar o chat
+  // cancelaria um stream ativo.
+  chatPanel: ReactNode
 }
 
 export function AiPanel({
@@ -110,6 +115,9 @@ export function AiPanel({
   navigateToCard,
   onDeleteResponse,
   onOpenInChat,
+  activeTab,
+  onTabChange,
+  chatPanel,
 }: AiPanelProps) {
   const [width, setWidth] = useState(() => {
     const saved = parseInt(localStorage.getItem('monet:ai-width') ?? '', 10)
@@ -213,27 +221,50 @@ export function AiPanel({
     saveOrder(aiOrderKey(noteId), newIds)
   }
 
-  if (!open) return null
-
   const showMissingKeyBanner = apiKeyChecked && !hasApiKey
+  const isAiTab = activeTab === 'ai'
 
+  // O painel é sempre renderizado (escondido via CSS quando fechado) para
+  // manter o chat montado.
   return (
-    <aside className={styles.panel} style={{ width }}>
+    <aside
+      className={open ? styles.panel : `${styles.panel} ${styles.panelHidden}`}
+      style={{ width }}
+    >
       <div className={styles.resizeHandle} onMouseDown={onMouseDown} />
       <header className={styles.header}>
-        <span className={styles.title}>IA</span>
-        <ModelSelector
-          hasApiKey={hasApiKey}
-          apiKeyChecked={apiKeyChecked}
-          loading={modelsLoading}
-          error={modelsError}
-          models={models}
-          selectedId={modelId}
-          onSelect={onModelChange}
-          onOpenSettings={onOpenSettings}
-        />
+        <div className={styles.tabs} role="group" aria-label="Panel tabs">
+          <button
+            type="button"
+            className={styles.tab}
+            aria-pressed={isAiTab}
+            onClick={() => onTabChange('ai')}
+          >
+            AI
+          </button>
+          <button
+            type="button"
+            className={styles.tab}
+            aria-pressed={!isAiTab}
+            onClick={() => onTabChange('chat')}
+          >
+            Chat
+          </button>
+        </div>
+        {isAiTab && (
+          <ModelSelector
+            hasApiKey={hasApiKey}
+            apiKeyChecked={apiKeyChecked}
+            loading={modelsLoading}
+            error={modelsError}
+            models={models}
+            selectedId={modelId}
+            onSelect={onModelChange}
+            onOpenSettings={onOpenSettings}
+          />
+        )}
       </header>
-      {showMissingKeyBanner && (
+      {isAiTab && showMissingKeyBanner && (
         <div className={styles.keyBanner} role="alert">
           <span>
             Set up your OpenRouter key in Settings to enable AI features.
@@ -243,42 +274,45 @@ export function AiPanel({
           </button>
         </div>
       )}
-      <div className={styles.content} ref={contentRef}>
-        {orderedResponses.length > 0 && (
-          <div className={styles.cardsToolbar}>
-            <button
-              className={styles.expandToggle}
-              onClick={() => setExpandAll((v) => v === true ? false : true)}
-              title={expandAll === true ? 'collapse all' : 'expand all'}
-              type="button"
-            >
-              {expandAll === true ? '−' : '+'}
-            </button>
-          </div>
-        )}
-        {orderedResponses.length === 0 ? (
-          <p className={styles.empty}>
-            Use /commands in the editor to trigger the AI.
-          </p>
-        ) : (
-          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-            <SortableContext items={orderedResponses.map((r) => r.id)} strategy={verticalListSortingStrategy}>
-              {orderedResponses.map((r, i) => (
-                <SortableAiCard
-                  key={r.id}
-                  response={r}
-                  execIndex={i}
-                  forceOpen={forceOpenIndex === i}
-                  globalExpand={expandAll}
-                  onDelete={onDeleteResponse}
-                  hasApiKey={hasApiKey}
-                  onOpenInChat={onOpenInChat}
-                />
-              ))}
-            </SortableContext>
-          </DndContext>
-        )}
-      </div>
+      {isAiTab && (
+        <div className={styles.content} ref={contentRef}>
+          {orderedResponses.length > 0 && (
+            <div className={styles.cardsToolbar}>
+              <button
+                className={styles.expandToggle}
+                onClick={() => setExpandAll((v) => v === true ? false : true)}
+                title={expandAll === true ? 'collapse all' : 'expand all'}
+                type="button"
+              >
+                {expandAll === true ? '−' : '+'}
+              </button>
+            </div>
+          )}
+          {orderedResponses.length === 0 ? (
+            <p className={styles.empty}>
+              Use /commands in the editor to trigger the AI.
+            </p>
+          ) : (
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+              <SortableContext items={orderedResponses.map((r) => r.id)} strategy={verticalListSortingStrategy}>
+                {orderedResponses.map((r, i) => (
+                  <SortableAiCard
+                    key={r.id}
+                    response={r}
+                    execIndex={i}
+                    forceOpen={forceOpenIndex === i}
+                    globalExpand={expandAll}
+                    onDelete={onDeleteResponse}
+                    hasApiKey={hasApiKey}
+                    onOpenInChat={onOpenInChat}
+                  />
+                ))}
+              </SortableContext>
+            </DndContext>
+          )}
+        </div>
+      )}
+      <div className={isAiTab ? styles.chatTabHidden : styles.chatTab}>{chatPanel}</div>
     </aside>
   )
 }

@@ -9,6 +9,8 @@ import {
   documentsScanWatchedFolder,
   documentsUploadGlobal,
   getNotebookVisibleDocumentIds,
+  NOTEBOOK_VISIBILITY_CHANGED_EVENT,
+  NOTES_INDEX_CHANGED_EVENT,
   onDocumentStatus,
   setNotebookDocumentVisibility,
 } from '../lib/documents'
@@ -36,6 +38,14 @@ export function useKnowledgeBase() {
 
   useEffect(() => {
     void refresh()
+  }, [refresh])
+
+  // Remover ou desligar a pasta de notas de um caderno não emite
+  // documents://status; o sync de notas avisa por este evento.
+  useEffect(() => {
+    const onChanged = () => void refresh()
+    window.addEventListener(NOTES_INDEX_CHANGED_EVENT, onChanged)
+    return () => window.removeEventListener(NOTES_INDEX_CHANGED_EVENT, onChanged)
   }, [refresh])
 
   // Listen to global document status events (no notebookId filter)
@@ -142,13 +152,21 @@ export function useNotebookVisibility(notebookId: string | null) {
       return
     }
     let cancelled = false
-    getNotebookVisibleDocumentIds(notebookId)
-      .then((ids) => {
-        if (!cancelled) setVisibleIds(ids)
-      })
-      .catch((e) => console.error('getNotebookVisibleDocumentIds failed', e))
+    const load = () => {
+      getNotebookVisibleDocumentIds(notebookId)
+        .then((ids) => {
+          if (!cancelled) setVisibleIds(ids)
+        })
+        .catch((e) => console.error('getNotebookVisibleDocumentIds failed', e))
+    }
+    load()
+    const onChanged = (e: Event) => {
+      if ((e as CustomEvent<{ notebookId: string }>).detail?.notebookId === notebookId) load()
+    }
+    window.addEventListener(NOTEBOOK_VISIBILITY_CHANGED_EVENT, onChanged)
     return () => {
       cancelled = true
+      window.removeEventListener(NOTEBOOK_VISIBILITY_CHANGED_EVENT, onChanged)
     }
   }, [notebookId])
 

@@ -48,6 +48,7 @@ export interface ChatSidebarProps {
   onOpenFolderSystemPrompt: (folder: ChatFolder) => void
   onOpenFolderMemory: (folder: ChatFolder) => void
   onOpenFolderDocuments: (folder: ChatFolder) => void
+  getFolderVisibleDocumentCount: (folderId: string) => number
   width: number
   collapsed?: boolean
   onToggleCollapsed?: () => void
@@ -148,6 +149,7 @@ export function ChatSidebar({
   onOpenFolderSystemPrompt,
   onOpenFolderMemory,
   onOpenFolderDocuments,
+  getFolderVisibleDocumentCount,
   width,
   collapsed = false,
   onToggleCollapsed,
@@ -502,6 +504,7 @@ export function ChatSidebar({
                 onOpenSystemPrompt={() => onOpenFolderSystemPrompt(folder)}
                 onOpenFolderMemory={() => onOpenFolderMemory(folder)}
                 onOpenFolderDocuments={() => onOpenFolderDocuments(folder)}
+                visibleDocumentCount={getFolderVisibleDocumentCount(folder.id)}
                 isAnyConvDragging={activeDragKind === 'conv'}
                 editingConvId={editingConvId}
                 editingConvName={editingConvName}
@@ -582,6 +585,7 @@ interface SortableFolderProps {
   onOpenSystemPrompt: () => void
   onOpenFolderMemory: () => void
   onOpenFolderDocuments: () => void
+  visibleDocumentCount: number
   isAnyConvDragging: boolean
   editingConvId: string | null
   editingConvName: string
@@ -612,6 +616,7 @@ function SortableFolder({
   onOpenSystemPrompt,
   onOpenFolderMemory,
   onOpenFolderDocuments,
+  visibleDocumentCount,
   isAnyConvDragging,
   editingConvId,
   editingConvName,
@@ -701,7 +706,7 @@ function SortableFolder({
             <button
               type="button"
               className={`${styles.folderSysPromptBtn} ${
-                folder.visibleDocumentIds.length > 0
+                visibleDocumentCount > 0
                   ? styles.folderSysPromptBtnActive
                   : ''
               }`}
@@ -712,8 +717,8 @@ function SortableFolder({
               onPointerDown={(e) => e.stopPropagation()}
               aria-label={`configure documents for ${folder.name || 'folder'}`}
               title={
-                folder.visibleDocumentIds.length > 0
-                  ? `${folder.visibleDocumentIds.length} document(s) active (click to edit)`
+                visibleDocumentCount > 0
+                  ? `${visibleDocumentCount} document(s) active (click to edit)`
                   : 'select knowledge base documents for this folder'
               }
             >

@@ -42,7 +42,7 @@ export interface Document {
   parentFolderId?: string
   lastModifiedMs?: number
   isExternal: boolean
-  origin: 'user' | 'ai'
+  origin: 'user' | 'ai' | 'notes'
 }
 
 // PDF e EPUB dividem a MESMA tabela `books`; `format` é o discriminante que

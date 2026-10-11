@@ -18,6 +18,16 @@ import type { AiModel } from '../types'
 import { formatSearchResults, hasTavilyKey, webSearch, type SearchResult } from '../lib/search'
 import { runDeepResearch, type DeepResearchPhase } from '../lib/deepResearch'
 import { enqueueLibrarian } from '../lib/librarian'
+import {
+  documentsSearchByIds,
+  embedText,
+  getNotebookVisibleDocumentIds,
+  NOTEBOOK_VISIBILITY_CHANGED_EVENT,
+  notesFolderDocId,
+  replaceNotebookVisibility,
+  resolveSearchableIds,
+  setNotebookDocumentVisibility,
+} from '../lib/documents'
 
 // ─── System prompt do chat ───────────────────────────────────────────────────
 // Edite aqui para ajustar o comportamento do modelo no modo chat.
@@ -105,7 +115,7 @@ the information further. Don't be afraid to make mistakes.`
 
 // ─── System prompt do chat do leitor (pasta por livro) ───────────────────────
 // Gravado programaticamente como systemPrompt (modo `replace`) da pasta do
-// livro quando ela é CRIADA em `ensureReaderBookFolder`. Depois da criação o
+// livro quando ela é CRIADA em `ensureScopedFolder` (kind 'book'). Depois da criação o
 // prompt passa a ser do usuário (editável no modal de system prompt da
 // pasta), então o ensure não o regrava. Alinhado à visão de produto
 // (DOCS/specs/productVision.md): a IA como auxiliar de leitura, ancorada no
@@ -149,6 +159,7 @@ const TOOLS_KEY = 'monet:chat-tools'
 const LEGACY_HISTORY_KEY = 'monet:chat-history'
 const RESPONSE_LINK_KEY = 'monet:ai-response-chat-link'
 const READER_BOOK_FOLDER_LINK_KEY = 'monet:reader-book-folder-link'
+const NOTEBOOK_CHAT_FOLDER_LINK_KEY = 'monet:notes-notebook-folder-link'
 
 export interface ChatMessage {
   id: string
@@ -541,6 +552,67 @@ export function unlinkBookFromReaderFolder(bookId: string): void {
   saveReaderBookFolderLinks(links)
 }
 
+// ─── Vínculo caderno ↔ pasta de chat das Anotações ───────────────────────────
+// Record notebookId → folderId em localStorage, no mesmo padrão do vínculo do
+// Reader acima. Uma pasta vinculada NÃO usa `visibleDocumentIds`: a seleção de
+// documentos dela é a tabela durável `notebook_document_visibility` do caderno
+// (a mesma do DocumentsModal).
+type NotebookChatFolderLinks = Record<string, string>
+
+function loadNotebookChatFolderLinks(): NotebookChatFolderLinks {
+  try {
+    const raw = localStorage.getItem(NOTEBOOK_CHAT_FOLDER_LINK_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const out: NotebookChatFolderLinks = {}
+      for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+        if (typeof v === 'string') out[k] = v
+      }
+      return out
+    }
+  } catch {
+    /* ignore */
+  }
+  return {}
+}
+
+function saveNotebookChatFolderLinks(links: NotebookChatFolderLinks): void {
+  try {
+    localStorage.setItem(NOTEBOOK_CHAT_FOLDER_LINK_KEY, JSON.stringify(links))
+  } catch (err) {
+    console.error('failed to persist notebook chat-folder links', err)
+  }
+}
+
+export function getNotebookChatFolderId(notebookId: string): string | null {
+  const links = loadNotebookChatFolderLinks()
+  return links[notebookId] ?? null
+}
+
+// Busca reversa (pasta → caderno). Lê o localStorage a cada chamada, para
+// enxergar vínculos gravados por outra janela sem precisar de sync.
+export function getNotebookIdForChatFolder(folderId: string): string | null {
+  const links = loadNotebookChatFolderLinks()
+  for (const [notebookId, linkedFolderId] of Object.entries(links)) {
+    if (linkedFolderId === folderId) return notebookId
+  }
+  return null
+}
+
+export function linkNotebookToChatFolder(notebookId: string, folderId: string): void {
+  const links = loadNotebookChatFolderLinks()
+  links[notebookId] = folderId
+  saveNotebookChatFolderLinks(links)
+}
+
+export function unlinkNotebookFromChatFolder(notebookId: string): void {
+  const links = loadNotebookChatFolderLinks()
+  if (!(notebookId in links)) return
+  delete links[notebookId]
+  saveNotebookChatFolderLinks(links)
+}
+
 // Remove uma PASTA inteira diretamente do localStorage (pasta + conversas +
 // arquivos de documentos anexados + ordem solta). ATENÇÃO: este helper
 // manipula o localStorage diretamente e NÃO atualiza instâncias `useChat`
@@ -658,8 +730,8 @@ function makeNewFolder(name = 'New folder'): ChatFolder {
 // (a primeira por ordem), priorizando systemPrompt/visibleDocumentIds ja
 // configurados, e unindo os `conversationIds` de todas. Idempotente: sem
 // duplicatas, retorna o array inalterado (mesma referencia). As pastas por
-// livro do Reader NAO passam por aqui: sao resolvidas por folderId, entao
-// nomes duplicados (dois livros com o mesmo titulo) sao apenas cosmeticos.
+// escopo (livro/caderno) NAO passam por aqui: sao resolvidas por folderId, entao
+// nomes duplicados (dois livros/cadernos com o mesmo titulo) sao apenas cosmeticos.
 function dedupeAssistantFolders(folders: ChatFolder[]): ChatFolder[] {
   const assistantFolders = folders.filter((f) => f.name === ASSISTANT_FOLDER_NAME)
   if (assistantFolders.length <= 1) return folders
@@ -842,17 +914,17 @@ export interface UseChatResult {
     text: string,
     imageDataUrl?: string,
     documents?: Array<{ name: string; type: string; data: string }>,
-    opts?: { ephemeralContext?: string }
+    opts?: { ephemeralContext?: string; excludeNoteId?: string | null }
   ) => Promise<void>
   cancel: () => void
   selectConversation: (id: string) => void
   newConversation: () => void
   newConversationInFolder: (folderId: string) => void
   // Cria um rascunho de conversa (memoria) para instancias dedicadas;
-  // `folderId` fixa a pasta de destino da materializacao (modo reader).
+  // `folderId` fixa a pasta de destino da materializacao (modos reader/notes).
   startAssistantConversation: (folderId?: string) => void
   ensureAssistantFolder: () => void
-  ensureReaderBookFolder: (book: { id: string; title: string }) => string
+  ensureScopedFolder: (scope: ChatFolderScope) => string
   deleteConversation: (id: string) => void
   renameConversation: (id: string, title: string) => void
   createFolder: () => string
@@ -865,6 +937,10 @@ export interface UseChatResult {
     mode: SystemPromptMode
   ) => void
   setFolderVisibleDocuments: (folderId: string, visibleDocumentIds: string[]) => void
+  // Seleção de documentos da pasta: pasta vinculada a caderno → tabela do
+  // caderno; senão `folder.visibleDocumentIds`.
+  getFolderVisibleDocumentIds: (folderId: string) => string[]
+  getFolderNotebookId: (folderId: string) => string | null
   setFolderMemory: (folderId: string, text: string) => void
   setFolderMemoryEnabled: (folderId: string, enabled: boolean) => void
   setFolderWebResearchEnabled: (folderId: string, enabled: boolean) => void
@@ -880,18 +956,24 @@ export interface UseChatResult {
   reorderLoose: (newOrder: string[]) => void
 }
 
+// Escopo de uma pasta de chat dedicada: um livro (Reader) ou um caderno
+// (chat das Anotações). Ver `ensureScopedFolder`.
+export type ChatFolderScope = { kind: 'book' | 'notebook'; id: string; title: string }
+
 export function useChat(
   models: AiModel[] = [],
-  options?: { mode?: 'main' | 'assistant' | 'reader' }
+  options?: { mode?: 'main' | 'assistant' | 'reader' | 'notes' }
 ): UseChatResult {
   const mode = options?.mode ?? 'main'
-  // Instancias "detached" (assistant/reader) vivem fora do ChatPanel principal
+  // Instancias "detached" (assistant/reader/notes) vivem fora do ChatPanel principal
   // e nao leem/gravam o ACTIVE_ID_KEY compartilhado: "qual conversa esta
   // ativa" e per-instancia.
   const isDetached = mode !== 'main'
+  // Modos com pasta por escopo (uma pasta por livro/caderno).
+  const isScopedMode = mode === 'reader' || mode === 'notes'
   // Pasta dedicada por NOME (so o assistant): conversas dessa instancia sao
-  // materializadas dentro dela no 1o envio. O modo reader usa pasta por ID
-  // (uma pasta por livro — ver readerFolderIdRef/ensureReaderBookFolder).
+  // materializadas dentro dela no 1o envio. Os modos reader/notes usam pasta
+  // por ID (uma pasta por livro/caderno — ver scopedFolderIdRef/ensureScopedFolder).
   const dedicatedFolderName =
     mode === 'assistant' ? ASSISTANT_FOLDER_NAME : null
   // Estado inicial reconciliado entre conversas + folders + looseOrder
@@ -957,38 +1039,103 @@ export function useChat(
   foldersRef.current = folders
   const looseOrderRef = useRef<string[]>(looseOrder)
   looseOrderRef.current = looseOrder
-  // Modo reader: id da pasta do livro atual (setado por ensureReaderBookFolder).
-  // E ref (nao state) porque so o send() precisa dele, sem re-render.
-  const readerFolderIdRef = useRef<string | null>(null)
+  // Modos reader/notes: id da pasta do escopo atual (livro/caderno, setado por
+  // ensureScopedFolder). E ref (nao state) porque so o send() precisa dele,
+  // sem re-render.
+  const scopedFolderIdRef = useRef<string | null>(null)
 
-  // Mapa bookId → folderId para criacoes ainda nao commitadas no estado.
-  // O setTimeout do React pode fazer com que a pasta ainda nao esteja visivel
-  // em `folders` (efeito da linha 838) enquanto o recovery-effect do
-  // ReaderChatPanel ja chama ensureReaderBookFolder de novo. Este mapa
-  // impede a criacao de pastas duplicadas nessa janela.
-  const pendingBookFolderIds = useRef<Map<string, string>>(new Map())
+  // Mapa `${kind}:${id}` → folderId para criacoes ainda nao commitadas no
+  // estado. O setTimeout do React pode fazer com que a pasta ainda nao esteja
+  // visivel em `folders` enquanto o recovery-effect do painel (Reader/Notas)
+  // ja chama ensureScopedFolder de novo. Este mapa impede a criacao de pastas
+  // duplicadas nessa janela.
+  const pendingScopedFolderIds = useRef<Map<string, string>>(new Map())
 
-  // Se a pasta do livro for apagada (ex.: no ChatPanel de outra janela) e a
+  // Se a pasta do escopo for apagada (ex.: no ChatPanel de outra janela) e a
   // remocao ja estiver refletida no estado, limpa o ref para que o proximo
-  // ensureReaderBookFolder RECRIE a pasta em vez de devolver um id morto.
+  // ensureScopedFolder RECRIE a pasta em vez de devolver um id morto.
   // (Enquanto a criacao de uma pasta ainda nao foi commitada, `folders` nunca
   // e observado sem ela — ver a guarda de criacao pendente no ensure.)
   useEffect(() => {
-    if (mode !== 'reader') return
-    const rid = readerFolderIdRef.current
+    if (!isScopedMode) return
+    const rid = scopedFolderIdRef.current
     if (rid && !folders.some((f) => f.id === rid)) {
       // So limpa se nao ha criacao pendente que referencia este id.
-      // Se houver, o ensureReaderBookFolder cuida de reatribuir o ref
+      // Se houver, o ensureScopedFolder cuida de reatribuir o ref
       // quando a pasta aparecer no estado.
       let hasPending = false
-      for (const pid of pendingBookFolderIds.current.values()) {
+      for (const pid of pendingScopedFolderIds.current.values()) {
         if (pid === rid) { hasPending = true; break }
       }
       if (!hasPending) {
-        readerFolderIdRef.current = null
+        scopedFolderIdRef.current = null
       }
     }
-  }, [folders, mode])
+  }, [folders, isScopedMode])
+
+  // Seleção de documentos das pastas vinculadas a caderno (chatFolderId →
+  // ids), espelho da tabela `notebook_document_visibility`. Só serve à UI
+  // (badge/seletor); o send() relê a tabela a cada envio.
+  const [linkedVisibility, setLinkedVisibility] = useState<Record<string, string[]>>({})
+  const linkedVisibilitySeqRef = useRef(0)
+
+  // Recarrega da tabela as pastas vinculadas existentes. Com `notebookId`,
+  // só a entrada desse caderno (mesclada); sem, todas (substitui o mapa).
+  const reloadLinkedVisibility = useCallback(async (notebookId?: string) => {
+    const folderIds = new Set(foldersRef.current.map((f) => f.id))
+    const pairs = Object.entries(loadNotebookChatFolderLinks()).filter(
+      ([nb, folderId]) => folderIds.has(folderId) && (!notebookId || nb === notebookId)
+    )
+    // Só cargas completas entram na sequência (a mais recente vence).
+    const seq = notebookId ? linkedVisibilitySeqRef.current : ++linkedVisibilitySeqRef.current
+    try {
+      const loaded = await Promise.all(
+        pairs.map(async ([nb, folderId]) => [folderId, await getNotebookVisibleDocumentIds(nb)] as const)
+      )
+      if (!notebookId && seq !== linkedVisibilitySeqRef.current) return
+      const next = Object.fromEntries(loaded)
+      setLinkedVisibility((prev) => (notebookId ? { ...prev, ...next } : next))
+    } catch (err) {
+      console.warn('failed to load notebook visibility for linked chat folders', err)
+    }
+  }, [])
+
+  // Carga quando o conjunto de pastas vinculadas muda (não a cada update de
+  // `folders`, que muda a todo envio).
+  const linkedPairsKeyRef = useRef<string | null>(null)
+  useEffect(() => {
+    const folderIds = new Set(folders.map((f) => f.id))
+    const key = JSON.stringify(
+      Object.entries(loadNotebookChatFolderLinks()).filter(([, folderId]) => folderIds.has(folderId))
+    )
+    if (key === linkedPairsKeyRef.current) return
+    linkedPairsKeyRef.current = key
+    void reloadLinkedVisibility()
+  }, [folders, reloadLinkedVisibility])
+
+  // Recarga: o evento de visibilidade só dispara na janela que gravou; as
+  // outras janelas (ex.: a assistant oculta) recarregam no `focus` e quando o
+  // vínculo muda em outra janela (`storage`).
+  useEffect(() => {
+    function onVisibilityChanged(e: Event) {
+      const notebookId = (e as CustomEvent<{ notebookId?: string }>).detail?.notebookId
+      if (notebookId) void reloadLinkedVisibility(notebookId)
+    }
+    function onFocus() {
+      void reloadLinkedVisibility()
+    }
+    function onStorage(e: StorageEvent) {
+      if (e.key === NOTEBOOK_CHAT_FOLDER_LINK_KEY) void reloadLinkedVisibility()
+    }
+    window.addEventListener(NOTEBOOK_VISIBILITY_CHANGED_EVENT, onVisibilityChanged)
+    window.addEventListener('focus', onFocus)
+    window.addEventListener('storage', onStorage)
+    return () => {
+      window.removeEventListener(NOTEBOOK_VISIBILITY_CHANGED_EVENT, onVisibilityChanged)
+      window.removeEventListener('focus', onFocus)
+      window.removeEventListener('storage', onStorage)
+    }
+  }, [reloadLinkedVisibility])
 
   // Mescla a lista remota (vinda do `storage` da outra janela) preservando a
   // conversa que ESTA janela esta gerando agora. Durante o streaming, a outra
@@ -1229,50 +1376,71 @@ export function useChat(
     })
   }, [setFolders])
 
-  // Garante (idempotente) a PASTA DO LIVRO no modo reader e retorna o id
-  // dela. Resolve pelo vinculo bookId → folderId em localStorage; se o
-  // vinculo nao existe ou a pasta foi apagada, cria uma pasta nova (nome =
-  // "Library - <titulo>", cosmetico) com o system prompt do auxiliar de
-  // leitura (modo `replace`) e regrava o vinculo. O prompt e gravado SO na
-  // criacao: depois disso a pasta e do usuario (system prompt/documentos/
-  // memoria editaveis pelos modais de pasta no painel do Reader).
-  const ensureReaderBookFolder = useCallback(
-    (book: { id: string; title: string }): string => {
-      const linkedId = getReaderChatFolderId(book.id)
+  // Garante (idempotente) a PASTA DO ESCOPO (livro no Reader, caderno nas
+  // Anotações) e retorna o id dela. Resolve pelo vinculo escopo → folderId em
+  // localStorage; se o vinculo nao existe ou a pasta foi apagada, cria uma
+  // pasta nova e regrava o vinculo.
+  // - Livro: nome "Library - <titulo>" (cosmetico) com o system prompt do
+  //   auxiliar de leitura (modo `replace`), gravado SO na criacao — depois
+  //   disso a pasta e do usuario (modais de pasta no painel do Reader).
+  // - Caderno: nome "Notebook - <titulo>", sem system prompt proprio (o send
+  //   usa o prompt padrao).
+  // Seguro a cada troca de livro/caderno: so reaponta o ref do escopo atual,
+  // sem tocar em conversas nem no stream em andamento.
+  const ensureScopedFolder = useCallback(
+    (scope: ChatFolderScope): string => {
+      const isBook = scope.kind === 'book'
+      const pendingKey = `${scope.kind}:${scope.id}`
+      const linkedId = isBook
+        ? getReaderChatFolderId(scope.id)
+        : getNotebookChatFolderId(scope.id)
       if (linkedId) {
         const existing = foldersRef.current.find((f) => f.id === linkedId)
         if (existing) {
-          readerFolderIdRef.current = existing.id
-          pendingBookFolderIds.current.delete(book.id)
+          scopedFolderIdRef.current = existing.id
+          pendingScopedFolderIds.current.delete(pendingKey)
           return existing.id
         }
         // Criacao deste mesmo vinculo ainda pendente de commit (ex.: chamadas
         // duplicadas no mesmo tick / StrictMode): nao duplica a pasta.
-        if (readerFolderIdRef.current === linkedId) {
+        if (scopedFolderIdRef.current === linkedId) {
           return linkedId
         }
         // Guarda adicional: criacao pendente mapeada — cobre o cenario em que
-        // o efeito da linha 838 zerou readerFolderIdRef entre a criacao e o
+        // o efeito de limpeza zerou scopedFolderIdRef entre a criacao e o
         // commit do estado (causa dos bugs de pasta duplicada e chat fora da
-        // pasta).
-        const pendingId = pendingBookFolderIds.current.get(book.id)
-        if (pendingId === linkedId) return linkedId
-        if (pendingId) return pendingId
+        // pasta). Reaponta o ref: com troca de escopo (A → B → A) ele pode
+        // estar no escopo anterior.
+        const pendingId = pendingScopedFolderIds.current.get(pendingKey)
+        if (pendingId) {
+          scopedFolderIdRef.current = pendingId
+          return pendingId
+        }
       }
-      // Criacao pendente para este livro (fallback: linkedId pode ser null
+      // Criacao pendente para este escopo (fallback: linkedId pode ser null
       // na primeira chamada, mas uma chamada concorrente ja criou e mapeou).
-      const pendingFallback = pendingBookFolderIds.current.get(book.id)
-      if (pendingFallback) return pendingFallback
-      const language =
-        localStorage.getItem('monet:user-language') ?? navigator.language
-      const title = book.title.trim().slice(0, 90) || 'Untitled book'
-      const folder = makeNewFolder(`Library - ${title}`)
-      folder.systemPrompt = buildReaderSystemPrompt(language)
-      folder.systemPromptMode = 'replace'
-      pendingBookFolderIds.current.set(book.id, folder.id)
+      const pendingFallback = pendingScopedFolderIds.current.get(pendingKey)
+      if (pendingFallback) {
+        scopedFolderIdRef.current = pendingFallback
+        return pendingFallback
+      }
+      let folder: ChatFolder
+      if (isBook) {
+        const language =
+          localStorage.getItem('monet:user-language') ?? navigator.language
+        const title = scope.title.trim().slice(0, 90) || 'Untitled book'
+        folder = makeNewFolder(`Library - ${title}`)
+        folder.systemPrompt = buildReaderSystemPrompt(language)
+        folder.systemPromptMode = 'replace'
+      } else {
+        const title = scope.title.trim().slice(0, 90) || 'Untitled notebook'
+        folder = makeNewFolder(`Notebook - ${title}`)
+      }
+      pendingScopedFolderIds.current.set(pendingKey, folder.id)
       setFolders((prev) => [folder, ...prev])
-      linkBookToReaderFolder(book.id, folder.id)
-      readerFolderIdRef.current = folder.id
+      if (isBook) linkBookToReaderFolder(scope.id, folder.id)
+      else linkNotebookToChatFolder(scope.id, folder.id)
+      scopedFolderIdRef.current = folder.id
       return folder.id
     },
     [setFolders]
@@ -1416,6 +1584,18 @@ export function useChat(
 
   const setFolderVisibleDocuments = useCallback(
     (folderId: string, visibleDocumentIds: string[]) => {
+      // Pasta vinculada a caderno: grava na tabela do caderno (a pasta de
+      // notas dele é implícita e não é gravada), com atualização otimista.
+      const notebookId = getNotebookIdForChatFolder(folderId)
+      if (notebookId) {
+        const ids = visibleDocumentIds.filter((id) => id !== notesFolderDocId(notebookId))
+        setLinkedVisibility((prev) => ({ ...prev, [folderId]: ids }))
+        replaceNotebookVisibility(notebookId, ids).catch((err) => {
+          console.error('failed to save notebook visibility', err)
+          void reloadLinkedVisibility(notebookId)
+        })
+        return
+      }
       setFolders((prev) =>
         prev.map((f) =>
           f.id === folderId
@@ -1428,7 +1608,20 @@ export function useChat(
         )
       )
     },
-    [setFolders]
+    [setFolders, reloadLinkedVisibility]
+  )
+
+  const getFolderVisibleDocumentIds = useCallback(
+    (folderId: string): string[] => {
+      if (getNotebookIdForChatFolder(folderId)) return linkedVisibility[folderId] ?? []
+      return folders.find((f) => f.id === folderId)?.visibleDocumentIds ?? []
+    },
+    [linkedVisibility, folders]
+  )
+
+  const getFolderNotebookId = useCallback(
+    (folderId: string) => getNotebookIdForChatFolder(folderId),
+    []
   )
 
   const setFolderMemory = useCallback(
@@ -1715,6 +1908,14 @@ export function useChat(
             citedUrls,
             onSaved: (count) => setWebSourcesSaved({ count, at: Date.now() }),
             onFolderRegistered: (aiFolderId) => {
+              // Pasta vinculada a caderno: a seleção mora na tabela do caderno.
+              const linkedNotebookId = getNotebookIdForChatFolder(ctx.chatFolderId)
+              if (linkedNotebookId) {
+                setNotebookDocumentVisibility(linkedNotebookId, aiFolderId, true).catch((err) =>
+                  console.error('failed to add AI sources folder to notebook visibility', err)
+                )
+                return
+              }
               setFolders((prev) =>
                 prev.map((f) =>
                   f.id === ctx.chatFolderId && !f.visibleDocumentIds.includes(aiFolderId)
@@ -1770,7 +1971,7 @@ export function useChat(
       text: string,
       imageDataUrl?: string,
       documents?: Array<{ name: string; type: string; data: string }>,
-      opts?: { ephemeralContext?: string }
+      opts?: { ephemeralContext?: string; excludeNoteId?: string | null }
     ) => {
       const trimmed = text.trim()
       if (!trimmed && !imageDataUrl && (!documents || documents.length === 0)) return
@@ -1793,9 +1994,9 @@ export function useChat(
       // Pasta de destino da conversa materializada neste send (se houver).
       let materializedFolderId: string | null | undefined
       if (draft && draft.id === activeId && isDetached) {
-        // Materializa o rascunho da instancia dedicada (assistant/reader).
+        // Materializa o rascunho da instancia dedicada (assistant/reader/notes).
         // A pasta de destino ja esta gravada NO PROPRIO rascunho
-        // (draft.folderId, fixado na criacao — modo reader); o modo assistant
+        // (draft.folderId, fixado na criacao — modos reader/notes); o modo assistant
         // resolve a pasta dedicada por NOME aqui (lazy: abrir o assistant sem
         // enviar nada nao cria pasta). A vinculacao e persistida de forma
         // ATOMICA junto com a conversa (folderId); a insercao na lista de
@@ -1812,11 +2013,11 @@ export function useChat(
             materializedFolder = makeNewFolder(dedicatedFolderName)
             targetFolderId = materializedFolder.id
           }
-        } else if (mode === 'reader') {
-          // Fallback do reader: se a pasta do rascunho foi apagada/recriada
-          // entre a criacao do rascunho e o 1o envio, o ensure chamado pelo
-          // painel antes do send deixou o id fresco no ref.
-          const rid = readerFolderIdRef.current
+        } else if (isScopedMode) {
+          // Fallback dos modos com escopo: se a pasta do rascunho foi
+          // apagada/recriada entre a criacao do rascunho e o 1o envio, o
+          // ensure chamado pelo painel antes do send deixou o id fresco no ref.
+          const rid = scopedFolderIdRef.current
           if (
             targetFolderId &&
             !foldersRef.current.some((f) => f.id === targetFolderId) &&
@@ -2118,36 +2319,27 @@ export function useChat(
           ? { role: 'system', content: opts.ephemeralContext }
           : null
 
-      // RAG context for folder documents. visibleDocumentIds pode conter tanto ids
-      // de arquivo individuais (selecao antiga/pontual) quanto ids de pasta
-      // (watched-folder inteira, selecionada via FolderDocumentSelectorModal ou
-      // criada automaticamente pelo pipeline do bibliotecario). Pastas sao expandidas
-      // DINAMICAMENTE para os filhos atuais a cada busca — nao existe mais
-      // snapshot estatico, entao arquivos novos aparecem sem o usuario reabrir o
-      // modal. Pastas com origin === 'ai' so entram quando webResearchEnabled
-      // estiver ligado, mesmo que os arquivos continuem existindo em disco.
+      // RAG context for folder documents. A selecao (ids de arquivo e de pasta)
+      // vem da tabela do caderno quando a pasta de chat e vinculada a um caderno
+      // (com a pasta de notas dele implicita), senao de visibleDocumentIds.
+      // resolveSearchableIds expande pastas DINAMICAMENTE para os filhos atuais;
+      // pastas com origin === 'ai' so entram com webResearchEnabled ligado.
+      // `excludeNoteId` tira a nota aberta (ja enviada como contexto efemero).
       let ragSystemMessage: ChatMessageInput | null = null
-      const rawFolderDocIds = containingFolder?.visibleDocumentIds ?? []
-      if (rawFolderDocIds.length > 0 && trimmed.trim()) {
+      if (containingFolder && trimmed.trim()) {
         try {
-          const { embedText, documentsSearchByIds, documentsListGlobal } = await import('../lib/documents')
-          const allDocs = await documentsListGlobal()
-          const docById = new Map(allDocs.map((d) => [d.id, d]))
-          const expandedIds = new Set<string>()
-          for (const id of rawFolderDocIds) {
-            const doc = docById.get(id)
-            if (doc?.docType === 'folder') {
-              if (doc.origin === 'ai' && !containingFolder?.webResearchEnabled) continue
-              for (const child of allDocs) {
-                if (child.parentFolderId === id && child.docType === 'file' && child.status === 'available') {
-                  expandedIds.add(child.id)
-                }
-              }
-            } else {
-              expandedIds.add(id)
-            }
-          }
-          const folderDocIds = Array.from(expandedIds)
+          const linkedNotebookId = getNotebookIdForChatFolder(containingFolder.id)
+          const rawFolderDocIds = linkedNotebookId
+            ? await getNotebookVisibleDocumentIds(linkedNotebookId)
+            : containingFolder.visibleDocumentIds
+          const folderDocIds =
+            linkedNotebookId || rawFolderDocIds.length > 0
+              ? await resolveSearchableIds(rawFolderDocIds, {
+                  notebookId: linkedNotebookId,
+                  excludeNoteId: opts?.excludeNoteId ?? null,
+                  includeAiFolders: !!containingFolder.webResearchEnabled,
+                })
+              : []
           if (folderDocIds.length > 0) {
             const embedding = await embedText(trimmed)
             const topK = 5
@@ -2485,7 +2677,7 @@ export function useChat(
     newConversationInFolder,
     startAssistantConversation,
     ensureAssistantFolder,
-    ensureReaderBookFolder,
+    ensureScopedFolder,
     deleteConversation,
     renameConversation,
     createFolder,
@@ -2494,6 +2686,8 @@ export function useChat(
     setFolderExpanded,
     setFolderSystemPrompt,
     setFolderVisibleDocuments,
+    getFolderVisibleDocumentIds,
+    getFolderNotebookId,
     setFolderMemory,
     setFolderMemoryEnabled,
     setFolderWebResearchEnabled,

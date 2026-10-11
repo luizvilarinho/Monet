@@ -6,6 +6,7 @@ import deepGreenIcon from '../../assets/icons/deep-green.svg'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useChat, type ChatFolder, type ChatMessage } from '../../hooks/useChat'
 import { renderMarkdown } from '../../lib/markdown'
+import { notesFolderDocId } from '../../lib/documents'
 import type { AiModel, Note, Notebook } from '../../types'
 import { ModelSelector } from '../AiPanel/ModelSelector'
 import styles from './ChatPanel.module.css'
@@ -73,6 +74,8 @@ export function ChatPanel({
     setFolderExpanded,
     setFolderSystemPrompt,
     setFolderVisibleDocuments,
+    getFolderVisibleDocumentIds,
+    getFolderNotebookId,
     setFolderMemory,
     setFolderMemoryEnabled,
     setFolderWebResearchEnabled,
@@ -99,6 +102,7 @@ export function ChatPanel({
   const [memoryToastVisible, setMemoryToastVisible] = useState(false)
   const [webSourcesToast, setWebSourcesToast] = useState<{ count: number } | null>(null)
   const [folderDocsFolder, setFolderDocsFolder] = useState<ChatFolder | null>(null)
+  const folderDocsNotebookId = folderDocsFolder ? getFolderNotebookId(folderDocsFolder.id) : null
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const historyRef = useRef<HTMLDivElement | null>(null)
   const [atBottom, setAtBottom] = useState(true)
@@ -348,6 +352,7 @@ export function ChatPanel({
         }
         onOpenFolderMemory={(folder) => setMemoryFolderId(folder.id)}
         onOpenFolderDocuments={(folder) => setFolderDocsFolder(folder)}
+        getFolderVisibleDocumentCount={(id) => getFolderVisibleDocumentIds(id).length}
         width={sidebarCollapsed ? 48 : sidebarWidth}
         collapsed={sidebarCollapsed}
         onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
@@ -637,6 +642,8 @@ export function ChatPanel({
       <FolderDocumentSelectorModal
         open={folderDocsFolder !== null}
         folder={folderDocsFolder}
+        initialSelectedIds={folderDocsFolder ? getFolderVisibleDocumentIds(folderDocsFolder.id) : []}
+        implicitDocumentId={folderDocsNotebookId ? notesFolderDocId(folderDocsNotebookId) : null}
         onConfirm={(folderId, visibleDocumentIds) =>
           setFolderVisibleDocuments(folderId, visibleDocumentIds)
         }

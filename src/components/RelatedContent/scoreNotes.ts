@@ -1,4 +1,5 @@
 import type { Note } from '../../types'
+import { COMMAND_LINE_RE, EMBED_BLOCK_RE, MARKER_RE } from '../../lib/noteFileText'
 
 const STOPWORDS_PT = new Set([
   'a', 'o', 'e', 'de', 'da', 'do', 'das', 'dos', 'em', 'na', 'no', 'nas', 'nos',
@@ -10,10 +11,6 @@ const STOPWORDS_PT = new Set([
   'minha', 'seu', 'sua', 'nosso', 'nossa', 'aqui', 'ali', 'la', 'onde', 'quando',
   'the', 'and', 'for', 'with', 'this', 'that', 'are', 'was', 'has', 'have',
 ])
-
-const COMMAND_LINE_RE = /^\/[a-zA-Z]/
-const EMBED_BLOCK_RE = /<!--monet-embed:[a-zA-Z0-9_-]+-->[\s\S]*?<!--monet-embed-end:[a-zA-Z0-9_-]+-->/g
-const MARKER_RE = /<!--monet:[a-zA-Z0-9_-]+-->/g
 
 export function cleanContent(content: string): string {
   return content

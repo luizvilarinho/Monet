@@ -3,7 +3,6 @@ import type {
   Book,
   BookHighlight,
   BookQuote,
-  DocumentStatus,
   Note,
   Notebook,
   Subject,
@@ -46,12 +45,6 @@ export interface StorageAdapter {
   saveResponse(response: AiResponse): Promise<void>
   deleteResponse(id: string): Promise<void>
   deleteResponses(noteId: string): Promise<void>
-
-  updateDocumentStatus(
-    id: string,
-    status: DocumentStatus,
-    errorMessage?: string | null,
-  ): Promise<void>
 
   exportMarkdown(note: Note): Promise<void>
   importFile(accept: string): Promise<{ name: string; content: string }>

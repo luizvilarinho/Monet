@@ -85,3 +85,7 @@
   color: #e57368;
   border-color: rgba(192, 57, 43, 0.4);
 }
+
+.alwaysOn {
+  color: var(--text-muted, #606070);
+}

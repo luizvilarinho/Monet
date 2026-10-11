@@ -2,17 +2,22 @@ import { useCallback, useEffect, useState } from 'react'
 import { nanoid } from 'nanoid'
 import type { Notebook } from '../types'
 import { storage } from '../storage'
+import { notesIndexSetNotebookEnabled, replaceNotebookVisibility } from '../lib/documents'
 
 export function useNotebooks() {
   const [notebooks, setNotebooks] = useState<Notebook[]>([])
   const [loaded, setLoaded] = useState(false)
+  const [loadFailed, setLoadFailed] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
 
   useEffect(() => {
     storage
       .getNotebooks()
       .then((list) => setNotebooks(list))
-      .catch((err) => console.error('failed to load notebooks', err))
+      .catch((err) => {
+        console.error('failed to load notebooks', err)
+        setLoadFailed(true)
+      })
       .finally(() => setLoaded(true))
   }, [])
 
@@ -40,6 +45,12 @@ export function useNotebooks() {
     try {
       await storage.deleteNotebook(id)
       setSaveError(null)
+      // Limpa as linhas do caderno nas tabelas geridas pelo backend (visibilidade
+      // de documentos e toggle do índice de notas), para não deixar órfãos.
+      await Promise.all([
+        replaceNotebookVisibility(id, []),
+        notesIndexSetNotebookEnabled(id, true),
+      ]).catch((err) => console.warn('failed to clean up notebook settings', err))
     } catch (err) {
       console.error('failed to delete notebook', err)
       setSaveError('Failed to delete notebook.')
@@ -61,5 +72,5 @@ export function useNotebooks() {
     [save]
   )
 
-  return { notebooks, loaded, save, remove, create, saveError }
+  return { notebooks, loaded, loadFailed, save, remove, create, saveError }
 }

@@ -61,6 +61,11 @@ export interface EditorProps {
   isCalendarNote?: boolean
   disableSlashCommands?: boolean
   previewMode?: boolean
+  // "Ask AI" na toolbar de seleção (chat do caderno).
+  onAskAi?: (text: string) => void
+  // Expõe a instância do Tiptap ao App (inserir resposta do chat na nota);
+  // chamado com null quando o editor é destruído.
+  onEditorReady?: (editor: TiptapEditor | null) => void
 }
 
 function getMarkdown(editor: TiptapEditor): string {
@@ -124,6 +129,8 @@ export function Editor({
   isCalendarNote = false,
   disableSlashCommands,
   previewMode = false,
+  onAskAi,
+  onEditorReady,
 }: EditorProps) {
   const [adding, setAdding] = useState(false)
   const [draft, setDraft] = useState('')
@@ -161,6 +168,8 @@ export function Editor({
   disableSlashCommandsRef.current = disableSlashCommands
   const previewModeRef = useRef(previewMode)
   previewModeRef.current = previewMode
+  const onEditorReadyRef = useRef(onEditorReady)
+  onEditorReadyRef.current = onEditorReady
 
   const contextValue = useMemo(
     () => ({ responses: responses ?? [] }),
@@ -482,6 +491,12 @@ export function Editor({
     if (current === value) return
     editor.commands.setContent(value, { emitUpdate: false })
   }, [value, editor])
+
+  useEffect(() => {
+    if (!editor) return
+    onEditorReadyRef.current?.(editor as TiptapEditor)
+    return () => onEditorReadyRef.current?.(null)
+  }, [editor])
 
   useEffect(() => {
     if (!editor) return
@@ -836,7 +851,7 @@ export function Editor({
         </div>
       )}
       {relatedContent}
-      {editor && <FormattingToolbar editor={editor as TiptapEditor} />}
+      {editor && <FormattingToolbar editor={editor as TiptapEditor} onAskAi={onAskAi} />}
       <CommandAutocomplete
         state={autocomplete}
         onSelect={(s) => acceptSuggestionRef.current(s)}

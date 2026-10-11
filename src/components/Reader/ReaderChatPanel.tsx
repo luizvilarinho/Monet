@@ -91,9 +91,10 @@ export function ReaderChatPanel({
     cancel,
     startAssistantConversation,
     selectConversation,
-    ensureReaderBookFolder,
+    ensureScopedFolder,
     setFolderSystemPrompt,
     setFolderVisibleDocuments,
+    getFolderVisibleDocumentIds,
     setFolderMemory,
     setFolderMemoryEnabled,
   } = useChat(models, { mode: 'reader' })
@@ -212,7 +213,7 @@ export function ReaderChatPanel({
   useEffect(() => {
     if (startedRef.current) return
     startedRef.current = true
-    const folderId = ensureReaderBookFolder({ id: book.id, title: book.title })
+    const folderId = ensureScopedFolder({ kind: 'book', id: book.id, title: book.title })
     setBookFolderId(folderId)
     const folder = folders.find((f) => f.id === folderId)
     const convs = folder
@@ -231,7 +232,7 @@ export function ReaderChatPanel({
     book.title,
     conversations,
     folders,
-    ensureReaderBookFolder,
+    ensureScopedFolder,
     selectConversation,
     startAssistantConversation,
   ])
@@ -242,9 +243,9 @@ export function ReaderChatPanel({
   useEffect(() => {
     if (!startedRef.current) return
     if (bookFolderId && folders.some((f) => f.id === bookFolderId)) return
-    const folderId = ensureReaderBookFolder({ id: book.id, title: book.title })
+    const folderId = ensureScopedFolder({ kind: 'book', id: book.id, title: book.title })
     setBookFolderId(folderId)
-  }, [folders, bookFolderId, book.id, book.title, ensureReaderBookFolder])
+  }, [folders, bookFolderId, book.id, book.title, ensureScopedFolder])
 
   // Recuperação mid-session: apagar a pasta/conversa ativa derruba o activeId
   // para null (modo detached) — inicia um rascunho novo já apontando para a
@@ -256,14 +257,14 @@ export function ReaderChatPanel({
     }
     if (!hadConversationRef.current) return
     hadConversationRef.current = false
-    const folderId = ensureReaderBookFolder({ id: book.id, title: book.title })
+    const folderId = ensureScopedFolder({ kind: 'book', id: book.id, title: book.title })
     setBookFolderId(folderId)
     startAssistantConversation(folderId)
   }, [
     activeId,
     book.id,
     book.title,
-    ensureReaderBookFolder,
+    ensureScopedFolder,
     startAssistantConversation,
   ])
 
@@ -319,7 +320,7 @@ export function ReaderChatPanel({
     if (!canSend) return
     // Idempotente; recria a pasta (e refresca o ref usado pelo fallback do
     // send) caso ela tenha sido apagada em outra janela durante a sessão.
-    ensureReaderBookFolder({ id: book.id, title: book.title })
+    ensureScopedFolder({ kind: 'book', id: book.id, title: book.title })
     const text = draft
     setDraft('')
     // Contexto montado NO MOMENTO do envio: cada envio usa a página e os
@@ -430,7 +431,8 @@ export function ReaderChatPanel({
           onClick={() => {
             // Ensure devolve o id fresco (recria a pasta se foi apagada em
             // outra janela) e o rascunho nasce vinculado a ela.
-            const folderId = ensureReaderBookFolder({
+            const folderId = ensureScopedFolder({
+              kind: 'book',
               id: book.id,
               title: book.title,
             })
@@ -520,6 +522,7 @@ export function ReaderChatPanel({
       <FolderDocumentSelectorModal
         open={docsOpen}
         folder={bookFolder}
+        initialSelectedIds={bookFolder ? getFolderVisibleDocumentIds(bookFolder.id) : []}
         onConfirm={(folderId, visibleDocumentIds) =>
           setFolderVisibleDocuments(folderId, visibleDocumentIds)
         }

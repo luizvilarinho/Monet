@@ -226,6 +226,7 @@ export function KnowledgeBaseModal({ open, onClose }: KnowledgeBaseModalProps) {
                         <td className={styles.cellName} title={folder.originalPath ?? folder.name}>
                           {folder.name}
                           {folder.origin === 'ai' && <span className={styles.aiBadge}>AI-generated</span>}
+                          {folder.origin === 'notes' && <span className={styles.notesBadge}>Notes</span>}
                         </td>
                         <td>
                           <StatusPill doc={folder} />
@@ -235,22 +236,26 @@ export function KnowledgeBaseModal({ open, onClose }: KnowledgeBaseModalProps) {
                         </td>
                         <td className={styles.cellCount}>{childCount}</td>
                         <td className={styles.cellActions}>
-                          <button
-                            className={styles.secondary}
-                            type="button"
-                            onClick={() => handleRescanFolder(folder)}
-                            disabled={folder.status === 'indexing'}
-                          >
-                            {folder.status === 'indexing' ? 'scanning…' : 'rescan'}
-                          </button>
-                          <button
-                            className={styles.danger}
-                            type="button"
-                            onClick={() => handleRemoveFolder(folder)}
-                            aria-label={`remove folder ${folder.name}`}
-                          >
-                            remove
-                          </button>
+                          {folder.origin !== 'notes' && (
+                            <>
+                              <button
+                                className={styles.secondary}
+                                type="button"
+                                onClick={() => handleRescanFolder(folder)}
+                                disabled={folder.status === 'indexing'}
+                              >
+                                {folder.status === 'indexing' ? 'scanning…' : 'rescan'}
+                              </button>
+                              <button
+                                className={styles.danger}
+                                type="button"
+                                onClick={() => handleRemoveFolder(folder)}
+                                aria-label={`remove folder ${folder.name}`}
+                              >
+                                remove
+                              </button>
+                            </>
+                          )}
                         </td>
                       </tr>
                     )

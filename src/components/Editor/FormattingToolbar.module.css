@@ -63,3 +63,8 @@
 .btn.italic {
   font-style: italic;
 }
+
+.btn.askAi {
+  color: var(--accent-ai, #5dcaa5);
+  white-space: nowrap;
+}

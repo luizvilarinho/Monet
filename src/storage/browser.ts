@@ -3,7 +3,6 @@ import type {
   Book,
   BookHighlight,
   BookQuote,
-  DocumentStatus,
   Note,
   Notebook,
   Subject,
@@ -110,13 +109,6 @@ export class BrowserStorage implements StorageAdapter {
   }
   async deleteResponses(_noteId: string): Promise<void> {
     throw new Error('BrowserStorage.deleteResponses not implemented')
-  }
-  async updateDocumentStatus(
-    _id: string,
-    _status: DocumentStatus,
-    _errorMessage?: string | null,
-  ): Promise<void> {
-    throw new Error('BrowserStorage.updateDocumentStatus not implemented')
   }
   async exportMarkdown(_note: Note): Promise<void> {
     throw new Error('BrowserStorage.exportMarkdown not implemented')

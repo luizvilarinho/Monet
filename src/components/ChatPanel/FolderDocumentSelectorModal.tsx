@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { Document } from '../../types'
 import type { ChatFolder } from '../../hooks/useChat'
@@ -9,6 +9,11 @@ import docStyles from './FolderDocumentSelectorModal.module.css'
 export interface FolderDocumentSelectorModalProps {
   open: boolean
   folder: ChatFolder | null
+  // Única origem da seleção inicial (pasta vinculada a caderno → tabela do caderno).
+  initialSelectedIds: string[]
+  // Documento incluído sempre (pasta de notas do caderno vinculado): aparece
+  // marcado e desabilitado, e não entra no array do onConfirm.
+  implicitDocumentId?: string | null
   onConfirm: (folderId: string, visibleDocumentIds: string[]) => void
   onClose: () => void
 }
@@ -16,37 +21,33 @@ export interface FolderDocumentSelectorModalProps {
 interface FolderItemProps {
   folder: Document
   checked: boolean
-  indeterminate: boolean
   disabled: boolean
+  alwaysOn?: boolean
   onToggle: () => void
 }
 
-function FolderItem({ folder, checked, indeterminate, disabled, onToggle }: FolderItemProps) {
-  const checkboxRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    if (checkboxRef.current) {
-      checkboxRef.current.indeterminate = indeterminate
-    }
-  }, [indeterminate])
-
+function FolderItem({ folder, checked, disabled, alwaysOn, onToggle }: FolderItemProps) {
   return (
     <li
       className={`${docStyles.item} ${docStyles.itemFolder} ${disabled ? docStyles.itemDisabled : ''}`}
       onClick={disabled ? undefined : onToggle}
     >
       <input
-        ref={checkboxRef}
         type="checkbox"
         checked={checked}
         disabled={disabled}
         onChange={onToggle}
         onClick={(e) => e.stopPropagation()}
         aria-label={`toggle folder ${folder.name}`}
-        title={disabled ? 'No available files in this folder' : undefined}
+        title={
+          alwaysOn
+            ? "This notebook's notes are always searched"
+            : disabled ? 'No available files in this folder' : undefined
+        }
       />
       <span className={docStyles.docName} title={folder.originalPath ?? folder.name}>
         {folder.name}
+        {alwaysOn && <span className={docStyles.alwaysOn}> (always on)</span>}
       </span>
       <span className={docStyles.colType}>📁 Folder</span>
       <span
@@ -67,17 +68,21 @@ function FolderItem({ folder, checked, indeterminate, disabled, onToggle }: Fold
 export function FolderDocumentSelectorModal({
   open,
   folder,
+  initialSelectedIds,
+  implicitDocumentId,
   onConfirm,
   onClose,
 }: FolderDocumentSelectorModalProps) {
   const { documents, loading } = useKnowledgeBase()
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
 
-  // Sync selected IDs from folder when opening
+  // Sync selected IDs from the initial selection when opening (or when it changes)
+  const initialKey = initialSelectedIds.join('\n')
+  const folderId = folder?.id ?? null
   useEffect(() => {
-    if (!open || !folder) return
-    setSelectedIds(new Set(folder.visibleDocumentIds))
-  }, [open, folder])
+    if (!open || !folderId) return
+    setSelectedIds(new Set(initialKey ? initialKey.split('\n') : []))
+  }, [open, folderId, initialKey])
 
   // Close on Escape
   useEffect(() => {
@@ -90,10 +95,15 @@ export function FolderDocumentSelectorModal({
   }, [open, onClose])
 
   if (!open || !folder) return null
-  const folderId = folder.id
+  const targetFolderId = folder.id
 
-  const kbFolders = documents.filter((d) => d.docType === 'folder')
-  const standaloneFiles = documents.filter((d) => d.docType === 'file' && !d.parentFolderId)
+  const implicitDoc = implicitDocumentId
+    ? documents.find((d) => d.id === implicitDocumentId) ?? null
+    : null
+  const kbFolders = documents.filter((d) => d.docType === 'folder' && d.id !== implicitDocumentId)
+  const standaloneFiles = documents.filter(
+    (d) => d.docType === 'file' && !d.parentFolderId && d.id !== implicitDocumentId,
+  )
 
   function toggleDoc(docId: string, available: boolean) {
     if (!available) return
@@ -109,7 +119,8 @@ export function FolderDocumentSelectorModal({
     const children = documents.filter(
       (d) => d.parentFolderId === kbFolder.id && d.docType === 'file' && d.status === 'available',
     )
-    if (children.length === 0) return
+    // Pasta sem arquivos disponíveis ainda pode ser desmarcada (mesma regra do DocumentsModal).
+    if (children.length === 0 && !selectedIds.has(kbFolder.id)) return
     setSelectedIds((prev) => {
       const next = new Set(prev)
       if (next.has(kbFolder.id)) next.delete(kbFolder.id)
@@ -119,7 +130,10 @@ export function FolderDocumentSelectorModal({
   }
 
   function handleConfirm() {
-    onConfirm(folderId, Array.from(selectedIds))
+    onConfirm(
+      targetFolderId,
+      Array.from(selectedIds).filter((id) => id !== implicitDocumentId),
+    )
     onClose()
   }
 
@@ -162,6 +176,15 @@ export function FolderDocumentSelectorModal({
             </p>
           ) : (
             <ul className={docStyles.list}>
+              {implicitDoc && (
+                <FolderItem
+                  folder={implicitDoc}
+                  checked
+                  disabled
+                  alwaysOn
+                  onToggle={() => {}}
+                />
+              )}
               {kbFolders.map((kbFolder) => {
                 const children = documents.filter(
                   (d) => d.parentFolderId === kbFolder.id && d.docType === 'file' && d.status === 'available',
@@ -172,8 +195,7 @@ export function FolderDocumentSelectorModal({
                     key={kbFolder.id}
                     folder={kbFolder}
                     checked={checked}
-                    indeterminate={false}
-                    disabled={children.length === 0}
+                    disabled={children.length === 0 && !checked}
                     onToggle={() => toggleKbFolder(kbFolder)}
                   />
                 )

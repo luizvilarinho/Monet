@@ -137,6 +137,55 @@ fn ai_web_folder_dir(app: &AppHandle, safe_chat_folder_id: &str) -> Result<PathB
     Ok(dir)
 }
 
+// Sanitiza um id usado como componente de path com o mesmo padrão de
+// save_chat_doc (lib.rs): file_name() extrai apenas o último componente; se o
+// resultado diferir do input, há tentativa de escapar do diretório base.
+fn safe_path_component(id: &str) -> Result<&str, String> {
+    let safe = Path::new(id)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| "Invalid id".to_string())?;
+    if safe != id {
+        return Err("Invalid id".into());
+    }
+    Ok(safe)
+}
+
+fn notes_folder_dir(app: &AppHandle, safe_notebook_id: &str) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir unavailable: {}", e))?
+        .join("notes")
+        .join(safe_notebook_id);
+    Ok(dir)
+}
+
+// IDs determinísticos das linhas de `documents` geradas a partir das notas.
+fn notes_folder_doc_id(notebook_id: &str) -> String {
+    format!("notes-folder:{}", notebook_id)
+}
+
+fn note_doc_id(note_id: &str) -> String {
+    format!("note:{}", note_id)
+}
+
+const NOTES_FOLDER_READ_ONLY: &str = "Notes folders are managed by the app";
+
+// Pastas/arquivos com origin='notes' são espelhos gerenciados pelo app: scan,
+// reindex e delete genéricos são recusados.
+fn reject_notes_origin(conn: &Connection, document_id: &str) -> Result<(), String> {
+    match conn.query_row(
+        "SELECT origin FROM documents WHERE id = ?1",
+        params![document_id],
+        |r| r.get::<_, String>(0),
+    ) {
+        Ok(origin) if origin == "notes" => Err(NOTES_FOLDER_READ_ONLY.into()),
+        Ok(_) | Err(rusqlite::Error::QueryReturnedNoRows) => Ok(()),
+        Err(e) => Err(format!("failed to query document: {}", e)),
+    }
+}
+
 fn open_doc_db(app: &AppHandle) -> Result<Connection, String> {
     let path = doc_db_path(app)?;
     let conn = Connection::open(&path).map_err(|e| format!("failed to open monet.db: {}", e))?;
@@ -187,6 +236,13 @@ fn open_doc_db(app: &AppHandle) -> Result<Connection, String> {
         .map_err(|e| format!("failed to create visibility table: {}", e))?;
     }
 
+    // Toggle durável de indexação das notas por caderno: presença da linha =
+    // indexação desligada para aquele caderno.
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS notebook_notes_index_disabled (notebook_id TEXT PRIMARY KEY);",
+    )
+    .map_err(|e| format!("failed to create notes index toggle table: {}", e))?;
+
     // Reconcilia o estado de migrations do tauri-plugin-sql quando um build
     // antigo aplicou uma v11 diferente (notes_rag_doc_ids) no DB de produção.
     // O sqlx aborta o migrate por checksum mismatch na 1ª carga e o retry do
@@ -202,6 +258,21 @@ fn open_doc_db(app: &AppHandle) -> Result<Connection, String> {
              note_id TEXT NOT NULL,
              fired_at INTEGER NOT NULL
          );",
+    );
+
+    // A visibilidade por caderno passou a guardar ids de pasta (expandidos no
+    // front). Converte linhas legadas por arquivo-filho em linha da pasta-pai.
+    // Idempotente; erros ignorados porque no primeiro install `documents` pode
+    // ainda não existir (é criada pelas migrations do plugin).
+    // Roda a cada abertura da conexão. Invariante: a tabela nunca guarda
+    // arquivo-filho de pasta; um filho gravado aqui viraria a pasta inteira.
+    let _: std::result::Result<(), rusqlite::Error> = conn.execute_batch(
+        "INSERT OR IGNORE INTO notebook_document_visibility (notebook_id, document_id)
+           SELECT DISTINCT v.notebook_id, d.parent_folder_id
+           FROM notebook_document_visibility v JOIN documents d ON d.id = v.document_id
+           WHERE d.parent_folder_id IS NOT NULL;
+         DELETE FROM notebook_document_visibility
+           WHERE document_id IN (SELECT id FROM documents WHERE parent_folder_id IS NOT NULL);",
     );
 
     Ok(conn)
@@ -405,6 +476,14 @@ async fn embed_batch(key: &str, texts: &[String]) -> Result<Vec<Vec<f32>>, Strin
     }
 }
 
+async fn embed_chunks(key: &str, chunks: &[String]) -> Result<Vec<Vec<f32>>, String> {
+    let mut all_embeddings: Vec<Vec<f32>> = Vec::with_capacity(chunks.len());
+    for batch in chunks.chunks(EMBED_BATCH_SIZE) {
+        all_embeddings.extend(embed_batch(key, batch).await?);
+    }
+    Ok(all_embeddings)
+}
+
 fn store_chunks(
     app: &AppHandle,
     document_id: &str,
@@ -418,6 +497,53 @@ fn store_chunks(
         .transaction()
         .map_err(|e| format!("failed to start transaction: {}", e))?;
 
+    insert_chunks_tx(&tx, document_id, source_name, chunks, embeddings)?;
+
+    tx.commit()
+        .map_err(|e| format!("failed to commit transaction: {}", e))?;
+    Ok(())
+}
+
+// Troca os chunks de um documento numa única transação do vec db: o documento
+// nunca fica com chunks duplicados nem sem chunks no meio da troca.
+fn replace_chunks(
+    app: &AppHandle,
+    document_id: &str,
+    source_name: &str,
+    chunks: &[String],
+    embeddings: &[Vec<f32>],
+) -> Result<(), String> {
+    let state = app.state::<VecDb>();
+    let mut conn = state.0.lock().map_err(|e| e.to_string())?;
+    let tx = conn
+        .transaction()
+        .map_err(|e| format!("failed to start transaction: {}", e))?;
+
+    tx.execute(
+        "DELETE FROM vec_chunks WHERE rowid IN (SELECT rowid FROM chunks_meta WHERE document_id = ?1)",
+        params![document_id],
+    )
+    .map_err(|e| format!("failed to delete vectors: {}", e))?;
+    tx.execute(
+        "DELETE FROM chunks_meta WHERE document_id = ?1",
+        params![document_id],
+    )
+    .map_err(|e| format!("failed to delete chunks_meta: {}", e))?;
+
+    insert_chunks_tx(&tx, document_id, source_name, chunks, embeddings)?;
+
+    tx.commit()
+        .map_err(|e| format!("failed to commit transaction: {}", e))?;
+    Ok(())
+}
+
+fn insert_chunks_tx(
+    tx: &rusqlite::Transaction,
+    document_id: &str,
+    source_name: &str,
+    chunks: &[String],
+    embeddings: &[Vec<f32>],
+) -> Result<(), String> {
     for (idx, (chunk, emb)) in chunks.iter().zip(embeddings.iter()).enumerate() {
         if emb.len() != EMBEDDING_DIM {
             return Err(format!(
@@ -446,9 +572,6 @@ fn store_chunks(
         )
         .map_err(|e| format!("failed to insert vector {}: {}", idx, e))?;
     }
-
-    tx.commit()
-        .map_err(|e| format!("failed to commit transaction: {}", e))?;
     Ok(())
 }
 
@@ -588,18 +711,14 @@ async fn run_indexing(
         return;
     }
 
-    let mut all_embeddings: Vec<Vec<f32>> = Vec::with_capacity(chunks.len());
-    for batch in chunks.chunks(EMBED_BATCH_SIZE) {
-        let batch_vec: Vec<String> = batch.to_vec();
-        match embed_batch(&key, &batch_vec).await {
-            Ok(embs) => all_embeddings.extend(embs),
-            Err(e) => {
-                let _ = update_document_status(&app, &document_id, "error", Some(&e));
-                emit_status(&app, &document_id, "error", Some(&e));
-                return;
-            }
+    let all_embeddings = match embed_chunks(&key, &chunks).await {
+        Ok(embs) => embs,
+        Err(e) => {
+            let _ = update_document_status(&app, &document_id, "error", Some(&e));
+            emit_status(&app, &document_id, "error", Some(&e));
+            return;
         }
-    }
+    };
 
     if let Err(e) = store_chunks(
         &app,
@@ -696,6 +815,8 @@ pub async fn documents_reindex(
     // Lê metadados e marca status='indexing' atomicamente. Se já estava
     // 'indexing', retorna sem fazer nada (evita corrupção por duplo-clique
     // em "retentar").
+    with_doc_db(&app, &state, |conn| reject_notes_origin(conn, &document_id))?;
+
     let row: Option<(String, String, String)> =
         with_doc_db(&app, &state, |conn| {
             let tx = conn
@@ -756,6 +877,8 @@ pub async fn documents_delete(
     state: State<'_, DocDb>,
     document_id: String,
 ) -> Result<(), String> {
+    with_doc_db(&app, &state, |conn| reject_notes_origin(conn, &document_id))?;
+
     let (original_path, is_external): (Option<String>, bool) = with_doc_db(&app, &state, |conn| {
         match conn.query_row(
             "SELECT original_path, is_external FROM documents WHERE id = ?1",
@@ -859,6 +982,35 @@ pub async fn documents_set_notebook_visibility(
             .map_err(|e| format!("failed to clear visibility: {}", e))?;
         }
         Ok(())
+    })
+}
+
+#[tauri::command]
+pub async fn documents_replace_notebook_visibility(
+    app: AppHandle,
+    state: State<'_, DocDb>,
+    notebook_id: String,
+    document_ids: Vec<String>,
+) -> Result<(), String> {
+    with_doc_db(&app, &state, |conn| {
+        let tx = conn
+            .transaction()
+            .map_err(|e| format!("failed to begin transaction: {}", e))?;
+        tx.execute(
+            "DELETE FROM notebook_document_visibility WHERE notebook_id = ?1",
+            params![notebook_id],
+        )
+        .map_err(|e| format!("failed to clear visibility: {}", e))?;
+        for document_id in &document_ids {
+            tx.execute(
+                "INSERT OR IGNORE INTO notebook_document_visibility (notebook_id, document_id)
+                 VALUES (?1, ?2)",
+                params![notebook_id, document_id],
+            )
+            .map_err(|e| format!("failed to set visibility: {}", e))?;
+        }
+        tx.commit()
+            .map_err(|e| format!("failed to commit visibility: {}", e))
     })
 }
 
@@ -1077,16 +1229,8 @@ pub async fn documents_ensure_ai_folder(
     chat_folder_id: String,
     folder_name: String,
 ) -> Result<String, String> {
-    // Sanitiza chat_folder_id com o mesmo padrão de save_chat_doc (lib.rs):
-    // file_name() extrai apenas o último componente; se o resultado diferir
-    // do input, há tentativa de escapar do diretório web-research.
-    let safe_id = Path::new(&chat_folder_id)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or_else(|| "Invalid chat folder id".to_string())?;
-    if safe_id != chat_folder_id {
-        return Err("Invalid chat folder id".into());
-    }
+    let safe_id = safe_path_component(&chat_folder_id)
+        .map_err(|_| "Invalid chat folder id".to_string())?;
 
     let dir = ai_web_folder_dir(&app, safe_id)?;
     let path_str = dir.to_string_lossy().to_string();
@@ -1475,19 +1619,6 @@ async fn scan_watched_folder_async(app: AppHandle, folder_id: String) {
                     params![new_id_clone, name, path_str, mime, size, now, folder_id_clone, disk_ms],
                 )
                 .map_err(|e| format!("insert failed: {}", e))?;
-                // Propagate visibility: for each notebook that has any sibling file of
-                // this folder visible, also mark this new child file as visible.
-                // (Visibility is stored per-file, not per-folder, so we look at siblings.)
-                conn.execute(
-                    "INSERT OR IGNORE INTO notebook_document_visibility (notebook_id, document_id)
-                     SELECT DISTINCT notebook_id, ?2
-                     FROM notebook_document_visibility
-                     WHERE document_id IN (
-                         SELECT id FROM documents WHERE parent_folder_id = ?1 AND type = 'file'
-                     )",
-                    params![folder_id_clone, new_id_clone],
-                )
-                .map_err(|e| format!("failed to propagate visibility: {}", e))?;
                 Ok(())
             });
             if let Err(e) = insert_result {
@@ -1519,9 +1650,11 @@ async fn scan_watched_folder_async(app: AppHandle, folder_id: String) {
 #[tauri::command]
 pub async fn documents_scan_watched_folder(
     app: AppHandle,
-    _state: State<'_, DocDb>,
+    state: State<'_, DocDb>,
     folder_id: String,
 ) -> Result<(), String> {
+    with_doc_db(&app, &state, |conn| reject_notes_origin(conn, &folder_id))?;
+
     tauri::async_runtime::spawn(async move {
         scan_watched_folder_async(app, folder_id).await;
     });
@@ -1546,8 +1679,26 @@ pub async fn documents_delete_watched_folder(
         }
     })?;
 
-    // Fetch all children
-    let children: Vec<String> = with_doc_db(&app, &state, |conn| {
+    if folder_origin == "notes" {
+        return Err(NOTES_FOLDER_READ_ONLY.into());
+    }
+
+    remove_folder_rows(&app, &folder_id)?;
+
+    if folder_origin == "ai" {
+        if let Some(path) = folder_path {
+            let _ = fs::remove_dir_all(PathBuf::from(path));
+        }
+    }
+
+    Ok(())
+}
+
+// Remove do banco os filhos (chunks, visibilidade e linha), a visibilidade e a
+// linha da pasta. Não mexe em disco. Idempotente.
+fn remove_folder_rows(app: &AppHandle, folder_id: &str) -> Result<(), String> {
+    let state = app.state::<DocDb>();
+    let children: Vec<String> = with_doc_db(app, &state, |conn| {
         let mut stmt = conn
             .prepare("SELECT id FROM documents WHERE parent_folder_id = ?1")
             .map_err(|e| format!("prepare failed: {}", e))?;
@@ -1562,12 +1713,12 @@ pub async fn documents_delete_watched_folder(
     })?;
 
     for child_id in &children {
-        if let Err(e) = delete_folder_child(&app, child_id) {
+        if let Err(e) = delete_folder_child(app, child_id) {
             eprintln!("documents_delete_watched_folder child {}: {}", child_id, e);
         }
     }
 
-    with_doc_db(&app, &state, |conn| {
+    with_doc_db(app, &state, |conn| {
         conn.execute(
             "DELETE FROM notebook_document_visibility WHERE document_id = ?1",
             params![folder_id],
@@ -1579,15 +1730,374 @@ pub async fn documents_delete_watched_folder(
         )
         .map_err(|e| format!("failed to delete folder: {}", e))?;
         Ok(())
+    })
+}
+
+// Remove o documento de uma nota (chunks, visibilidade, linha) e seu arquivo.
+// Idempotente: sem linha, não faz nada.
+fn delete_note_doc(app: &AppHandle, state: &State<'_, DocDb>, doc_id: &str) -> Result<(), String> {
+    let original_path: Option<Option<String>> = with_doc_db(app, state, |conn| {
+        match conn.query_row(
+            "SELECT original_path FROM documents WHERE id = ?1",
+            params![doc_id],
+            |r| r.get::<_, Option<String>>(0),
+        ) {
+            Ok(p) => Ok(Some(p)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(format!("failed to query note document: {}", e)),
+        }
     })?;
 
-    if folder_origin == "ai" {
-        if let Some(path) = folder_path {
-            let _ = fs::remove_dir_all(PathBuf::from(path));
+    let Some(original_path) = original_path else {
+        return Ok(());
+    };
+
+    delete_folder_child(app, doc_id)?;
+    if let Some(path) = original_path {
+        let _ = fs::remove_file(PathBuf::from(path));
+    }
+    Ok(())
+}
+
+// Remove a pasta de notas de um caderno: linhas (filhos, visibilidade, pasta)
+// e o diretório em disco. Idempotente.
+fn remove_notes_folder(app: &AppHandle, safe_notebook_id: &str) -> Result<(), String> {
+    remove_folder_rows(app, &notes_folder_doc_id(safe_notebook_id))?;
+    if let Ok(dir) = notes_folder_dir(app, safe_notebook_id) {
+        let _ = fs::remove_dir_all(dir);
+    }
+    Ok(())
+}
+
+fn is_notes_index_disabled(conn: &Connection, notebook_id: &str) -> Result<bool, String> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM notebook_notes_index_disabled WHERE notebook_id = ?1)",
+        params![notebook_id],
+        |r| r.get::<_, bool>(0),
+    )
+    .map_err(|e| format!("failed to query notes index toggle: {}", e))
+}
+
+// Espelha uma nota em `app_data_dir()/notes/<notebookId>/<noteId>.md` e a
+// indexa no RAG. Retorna: "disabled" | "removed" | "no_key" | "unchanged" |
+// "moved" | "indexed". Não emite documents://status para os filhos, evitando
+// refresh em cascata do KB a cada nota.
+#[tauri::command]
+pub async fn notes_index_upsert(
+    app: AppHandle,
+    state: State<'_, DocDb>,
+    notebook_id: String,
+    notebook_name: String,
+    note_id: String,
+    title: String,
+    file_text: String,
+) -> Result<String, String> {
+    let safe_nb = safe_path_component(&notebook_id)?;
+    let safe_note = safe_path_component(&note_id)?;
+    let doc_id = note_doc_id(safe_note);
+    let folder_id = notes_folder_doc_id(safe_nb);
+
+    if with_doc_db(&app, &state, |conn| is_notes_index_disabled(conn, safe_nb))? {
+        delete_note_doc(&app, &state, &doc_id)?;
+        return Ok("disabled".into());
+    }
+
+    if file_text.trim().is_empty() {
+        delete_note_doc(&app, &state, &doc_id)?;
+        return Ok("removed".into());
+    }
+
+    let Some(key) = crate::read_key(&app, "openrouter_key") else {
+        return Ok("no_key".into());
+    };
+
+    // Garante a pasta (disco + linha) e mantém o nome em dia com o caderno.
+    let dir = notes_folder_dir(&app, safe_nb)?;
+    fs::create_dir_all(&dir).map_err(|e| format!("failed to create notes folder: {}", e))?;
+    let dir_str = dir.to_string_lossy().to_string();
+    let folder_name = format!("Notes — {}", notebook_name);
+    let folder_created = with_doc_db(&app, &state, |conn| {
+        let existing_name: Option<String> = match conn.query_row(
+            "SELECT name FROM documents WHERE id = ?1",
+            params![folder_id],
+            |r| r.get::<_, String>(0),
+        ) {
+            Ok(n) => Some(n),
+            Err(rusqlite::Error::QueryReturnedNoRows) => None,
+            Err(e) => return Err(format!("failed to query notes folder: {}", e)),
+        };
+        match existing_name {
+            None => {
+                conn.execute(
+                    "INSERT INTO documents (id, name, original_path, mime, size, status, error_message,
+                                            created_at, updated_at, type, parent_folder_id,
+                                            last_modified_ms, is_external, origin)
+                     VALUES (?1, ?2, ?3, 'inode/directory', 0, 'available', NULL,
+                             ?4, ?4, 'folder', NULL, NULL, 1, 'notes')",
+                    params![folder_id, folder_name, dir_str, now_ms()],
+                )
+                .map_err(|e| format!("failed to insert notes folder: {}", e))?;
+                Ok(true)
+            }
+            Some(name) => {
+                if name != folder_name {
+                    conn.execute(
+                        "UPDATE documents SET name = ?1, updated_at = ?2 WHERE id = ?3",
+                        params![folder_name, now_ms(), folder_id],
+                    )
+                    .map_err(|e| format!("failed to rename notes folder: {}", e))?;
+                }
+                Ok(false)
+            }
+        }
+    })?;
+    if folder_created {
+        emit_status(&app, &folder_id, "available", None);
+    }
+
+    let file_name = format!("{}.md", safe_note);
+    let target_str = dir.join(&file_name).to_string_lossy().to_string();
+
+    let existing: Option<(Option<String>, Option<String>, String)> =
+        with_doc_db(&app, &state, |conn| {
+            match conn.query_row(
+                "SELECT parent_folder_id, original_path, status FROM documents WHERE id = ?1",
+                params![doc_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            ) {
+                Ok(v) => Ok(Some(v)),
+                Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+                Err(e) => Err(format!("failed to query note document: {}", e)),
+            }
+        })?;
+
+    if let Some((parent, Some(old_path), status)) = &existing {
+        let same_content = fs::read_to_string(old_path)
+            .map(|c| c == file_text)
+            .unwrap_or(false);
+        if status == "available" && same_content {
+            if parent.as_deref() == Some(folder_id.as_str()) {
+                return Ok("unchanged".into());
+            }
+            // Move entre cadernos sem mudança de conteúdo: os chunks não
+            // guardam o caderno, então não há reembed.
+            write_bytes_atomic(&dir_str, &file_name, file_text.as_bytes())?;
+            if *old_path != target_str {
+                let _ = fs::remove_file(old_path);
+            }
+            with_doc_db(&app, &state, |conn| {
+                conn.execute(
+                    "UPDATE documents SET parent_folder_id = ?1, original_path = ?2, updated_at = ?3
+                     WHERE id = ?4",
+                    params![folder_id, target_str, now_ms(), doc_id],
+                )
+                .map_err(|e| format!("failed to move note document: {}", e))?;
+                Ok(())
+            })?;
+            return Ok("moved".into());
         }
     }
 
-    Ok(())
+    write_bytes_atomic(&dir_str, &file_name, file_text.as_bytes())?;
+    if let Some((_, Some(old_path), _)) = &existing {
+        if *old_path != target_str {
+            let _ = fs::remove_file(old_path);
+        }
+    }
+
+    let source_name = match title.trim() {
+        "" => "Untitled".to_string(),
+        t => t.to_string(),
+    };
+    let size = file_text.len() as i64;
+    with_doc_db(&app, &state, |conn| {
+        conn.execute(
+            "INSERT INTO documents (id, name, original_path, mime, size, status, error_message,
+                                    created_at, updated_at, type, parent_folder_id,
+                                    last_modified_ms, is_external, origin)
+             VALUES (?1, ?2, ?3, 'text/markdown', ?4, 'indexing', NULL,
+                     ?5, ?5, 'file', ?6, ?5, 1, 'notes')
+             ON CONFLICT(id) DO UPDATE SET
+                 name = excluded.name,
+                 original_path = excluded.original_path,
+                 mime = excluded.mime,
+                 size = excluded.size,
+                 status = 'indexing',
+                 error_message = NULL,
+                 updated_at = excluded.updated_at,
+                 type = 'file',
+                 parent_folder_id = excluded.parent_folder_id,
+                 last_modified_ms = excluded.last_modified_ms,
+                 is_external = 1,
+                 origin = 'notes'",
+            params![doc_id, source_name, target_str, size, now_ms(), folder_id],
+        )
+        .map_err(|e| format!("failed to upsert note document: {}", e))?;
+        Ok(())
+    })?;
+
+    let chunks = chunk_text(&file_text);
+    let embeddings = match embed_chunks(&key, &chunks).await {
+        Ok(e) => e,
+        Err(msg) => {
+            let _ = update_document_status(&app, &doc_id, "error", Some(&msg));
+            return Err(msg);
+        }
+    };
+
+    // Revalida antes de gravar: a nota pode ter sido apagada, movida ou o
+    // caderno desligado enquanto o embedding rodava.
+    let still_valid = with_doc_db(&app, &state, |conn| {
+        let parent: Option<Option<String>> = match conn.query_row(
+            "SELECT parent_folder_id FROM documents WHERE id = ?1",
+            params![doc_id],
+            |r| r.get::<_, Option<String>>(0),
+        ) {
+            Ok(p) => Some(p),
+            Err(rusqlite::Error::QueryReturnedNoRows) => None,
+            Err(e) => return Err(format!("failed to query note document: {}", e)),
+        };
+        let disabled = is_notes_index_disabled(conn, safe_nb)?;
+        Ok(!disabled && parent.flatten().as_deref() == Some(folder_id.as_str()))
+    })?;
+    if !still_valid {
+        return Ok("removed".into());
+    }
+
+    if let Err(e) = replace_chunks(&app, &doc_id, &source_name, &chunks, &embeddings) {
+        let _ = update_document_status(&app, &doc_id, "error", Some(&e));
+        return Err(e);
+    }
+    update_document_status(&app, &doc_id, "available", None)?;
+    Ok("indexed".into())
+}
+
+#[tauri::command]
+pub async fn notes_index_delete(
+    app: AppHandle,
+    state: State<'_, DocDb>,
+    note_id: String,
+) -> Result<(), String> {
+    delete_note_doc(&app, &state, &note_doc_id(&note_id))
+}
+
+#[tauri::command]
+pub async fn notes_index_remove_notebook(
+    app: AppHandle,
+    _state: State<'_, DocDb>,
+    notebook_id: String,
+) -> Result<(), String> {
+    let safe_nb = safe_path_component(&notebook_id)?;
+    remove_notes_folder(&app, safe_nb)
+}
+
+#[tauri::command]
+pub async fn notes_index_set_notebook_enabled(
+    app: AppHandle,
+    state: State<'_, DocDb>,
+    notebook_id: String,
+    enabled: bool,
+) -> Result<(), String> {
+    let safe_nb = safe_path_component(&notebook_id)?;
+    if enabled {
+        with_doc_db(&app, &state, |conn| {
+            conn.execute(
+                "DELETE FROM notebook_notes_index_disabled WHERE notebook_id = ?1",
+                params![safe_nb],
+            )
+            .map_err(|e| format!("failed to enable notes index: {}", e))?;
+            Ok(())
+        })
+    } else {
+        with_doc_db(&app, &state, |conn| {
+            conn.execute(
+                "INSERT OR IGNORE INTO notebook_notes_index_disabled (notebook_id) VALUES (?1)",
+                params![safe_nb],
+            )
+            .map_err(|e| format!("failed to disable notes index: {}", e))?;
+            Ok(())
+        })?;
+        remove_notes_folder(&app, safe_nb)
+    }
+}
+
+#[tauri::command]
+pub async fn notes_index_get_disabled_notebooks(
+    app: AppHandle,
+    state: State<'_, DocDb>,
+) -> Result<Vec<String>, String> {
+    with_doc_db(&app, &state, |conn| {
+        let mut stmt = conn
+            .prepare("SELECT notebook_id FROM notebook_notes_index_disabled")
+            .map_err(|e| format!("failed to prepare query: {}", e))?;
+        let rows = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| format!("failed to query: {}", e))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| format!("invalid row: {}", e))?);
+        }
+        Ok(out)
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotesIndexEntry {
+    note_id: String,
+    notebook_id: String,
+    status: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotesIndexState {
+    notebook_ids: Vec<String>,
+    notes: Vec<NotesIndexEntry>,
+}
+
+#[tauri::command]
+pub async fn notes_index_list_state(
+    app: AppHandle,
+    state: State<'_, DocDb>,
+) -> Result<NotesIndexState, String> {
+    let rows: Vec<(String, String, Option<String>, String)> = with_doc_db(&app, &state, |conn| {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, type, parent_folder_id, status FROM documents WHERE origin = 'notes'",
+            )
+            .map_err(|e| format!("failed to prepare query: {}", e))?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .map_err(|e| format!("failed to query: {}", e))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| format!("invalid row: {}", e))?);
+        }
+        Ok(out)
+    })?;
+
+    let mut result = NotesIndexState {
+        notebook_ids: Vec::new(),
+        notes: Vec::new(),
+    };
+    for (id, doc_type, parent, status) in rows {
+        if doc_type == "folder" {
+            if let Some(nb) = id.strip_prefix("notes-folder:") {
+                result.notebook_ids.push(nb.to_string());
+            }
+        } else if let (Some(note), Some(nb)) = (
+            id.strip_prefix("note:"),
+            parent.as_deref().and_then(|p| p.strip_prefix("notes-folder:")),
+        ) {
+            result.notes.push(NotesIndexEntry {
+                note_id: note.to_string(),
+                notebook_id: nb.to_string(),
+                status,
+            });
+        }
+    }
+    Ok(result)
 }
 
 pub async fn scan_all_watched_folders_on_startup(app: AppHandle) {
@@ -1602,7 +2112,7 @@ pub async fn scan_all_watched_folders_on_startup(app: AppHandle) {
     let state = app.state::<DocDb>();
     let folder_ids: Vec<String> = match with_doc_db(&app, &state, |conn| {
         let mut stmt = conn
-            .prepare("SELECT id FROM documents WHERE type = 'folder'")
+            .prepare("SELECT id FROM documents WHERE type = 'folder' AND origin != 'notes'")
             .map_err(|e| format!("prepare failed: {}", e))?;
         let rows = stmt
             .query_map([], |r| r.get::<_, String>(0))

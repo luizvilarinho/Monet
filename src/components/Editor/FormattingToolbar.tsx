@@ -13,6 +13,8 @@ import {
 
 interface Props {
   editor: Editor
+  // "Ask AI": envia o trecho selecionado para o chat do caderno.
+  onAskAi?: (text: string) => void
 }
 
 const PLUGIN_KEY = 'monetFormattingMenu'
@@ -48,7 +50,7 @@ function renderGroups(
   ))
 }
 
-export function FormattingToolbar({ editor }: Props) {
+export function FormattingToolbar({ editor, onAskAi }: Props) {
   const [hiddenByEscape, setHiddenByEscape] = useState(false)
 
   useEffect(() => {
@@ -105,6 +107,23 @@ export function FormattingToolbar({ editor }: Props) {
         {hasSelection && renderGroups(editor, formattingGroups, 'fmt')}
         {inTable && hasSelection && <div className={styles.sep} />}
         {inTable && renderGroups(editor, TABLE_GROUPS, 'tbl')}
+        {hasSelection && onAskAi && (
+          <div className={styles.group}>
+            <div className={styles.sep} />
+            <button
+              className={`${styles.btn} ${styles.askAi}`}
+              title="Ask AI about the selection"
+              onMouseDown={(e) => {
+                e.preventDefault()
+                const { from, to } = editor.state.selection
+                onAskAi(editor.state.doc.textBetween(from, to, '\n'))
+              }}
+              type="button"
+            >
+              Ask AI
+            </button>
+          </div>
+        )}
       </div>
     </BubbleMenu>
   )

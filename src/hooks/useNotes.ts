@@ -6,13 +6,17 @@ import { storage } from '../storage'
 export function useNotes() {
   const [notes, setNotes] = useState<Note[]>([])
   const [loaded, setLoaded] = useState(false)
+  const [loadFailed, setLoadFailed] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
 
   useEffect(() => {
     storage
       .getNotes()
       .then((list) => setNotes(list))
-      .catch((err) => console.error('failed to load notes', err))
+      .catch((err) => {
+        console.error('failed to load notes', err)
+        setLoadFailed(true)
+      })
       .finally(() => setLoaded(true))
   }, [])
 
@@ -55,7 +59,7 @@ export function useNotes() {
   }, [])
 
   const create = useCallback(
-    async (notebookId: string | null, subjectId?: string | null) => {
+    async (notebookId: string, subjectId?: string | null) => {
       const now = Date.now()
       const note: Note = {
         id: nanoid(),
@@ -73,5 +77,5 @@ export function useNotes() {
     [save]
   )
 
-  return { notes, loaded, save, remove, create, refresh, saveError }
+  return { notes, loaded, loadFailed, save, remove, create, refresh, saveError }
 }
