@@ -1,11 +1,11 @@
 {
-  "version": "1.4.5",
-  "notes": "Monet v1.4.5 — Organização de notas e cadernos: mover uma nota para outro caderno pelo novo ícone ao lado do nome da nota (a nota vai para a raiz do caderno escolhido); mover um caderno inteiro para dentro de outro pelo novo ícone ao lado do nome do caderno (o caderno de origem vira um subject no destino e todas as suas notas passam para ele, mesclando se já existir subject com o mesmo nome); tool de chat renomeada de Web research para Save web sources, para não confundir com a web search já existente; Calendar exibe o nome do caderno acima das notas alteradas no dia.",
-  "pub_date": "2026-10-04T06:04:46Z",
+  "version": "1.4.6",
+  "notes": "Monet v1.4.6 — New Tasks feature: special Tasks folder with status, project and due date; \"Add to Tasks\" from checklist items with synced checkbox; projects are notebooks (with an Inbox); each task is a note with a task properties bar; tasks shown on the Calendar (orange, overdue in red); task metadata and per-project task summaries indexed for AI (chat and slash commands).",
+  "pub_date": "2026-10-11T21:50:29Z",
   "platforms": {
     "windows-x86_64": {
-      "url": "https://github.com/luizvilarinho/Monet/releases/download/v1.4.5/monet_1.4.5_x64_en-US.msi",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRlFHSkpLWXhzckZCazR1NnRCV0ZKWjBZN01VaUFVaXR3MWxBUDhSd3BEdVJTMldIMUZkYkZMQTJyQUJBbXFzaGFiMnVPZldZS3dCNHlmNmUvUC9ESDFRdGFNYm85QWd3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMDkzODg2CWZpbGU6bW9uZXRfMS40LjVfeDY0X2VuLVVTLm1zaQpwQVdoeXJ6bFZ4bExUTnNqYnpFbHdvSWhNUnArV2VQenNxMnBoVXV5UHRvMTVjTkRrb1dVSWtvNlhoMnNoTWRYYS9WWWxFWTdtRUhUaDAwYU8rZFJCQT09Cg=="
+      "url": "https://github.com/luizvilarinho/Monet/releases/download/v1.4.6/monet_1.4.6_x64_en-US.msi",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRlFHSkpLWXhzckhMbXBuU0dWQ0VQZjlLbm9WMEdnSDBPbE5NNUVneENtR2ZCNkgxUmF2Z0cwelpqeE5lRWh5T1pRdWtaaWN6UzM1ak1JYWgrY3ZZVTdzbmdXNm42ZXcwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxNzU1NDI5CWZpbGU6bW9uZXRfMS40LjZfeDY0X2VuLVVTLm1zaQpVbzZpN0NYYjgrS1B4MHlxNjFBQ3A2cHpydlVXVnB5Qnc0TUFxbFduV3l6WlI5OEFheHJ0RzFEMC8wdjVRTWxrbTBkaWNIcDE1Tm1hUGlHQVYyTlZBZz09Cg=="
     }
   }
 }
