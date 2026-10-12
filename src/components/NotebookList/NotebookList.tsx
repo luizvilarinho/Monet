@@ -30,7 +30,7 @@ import {
 } from '@phosphor-icons/react'
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { useConfirm } from '../../hooks/useConfirm'
-import { INBOX_NOTEBOOK_ID, isTasksSubject } from '../../lib/tasks'
+import { INBOX_NOTEBOOK_ID, isTasksSubject, type NotebookTaskProgress } from '../../lib/tasks'
 import type { Notebook, Subject } from '../../types'
 import { NotebookPickerModal } from '../NotebookPickerModal/NotebookPickerModal'
 import styles from './NotebookList.module.css'
@@ -42,6 +42,7 @@ interface SortableNotebookItemProps {
   nb: Notebook
   isActive: boolean
   hasVisibleDocs: boolean
+  taskProgress?: NotebookTaskProgress
   editing: { id: string; value: string } | null
   onSelect: (id: string) => void
   onDelete: (id: string) => void
@@ -58,6 +59,7 @@ function SortableNotebookItem({
   nb,
   isActive,
   hasVisibleDocs,
+  taskProgress,
   editing,
   onSelect,
   onDelete,
@@ -125,6 +127,16 @@ function SortableNotebookItem({
         />
       ) : (
         <span className={styles.rowLabel}>{nb.name || 'unnamed'}</span>
+      )}
+      {editing?.id !== nb.id && taskProgress && (
+        <span
+          className={`${styles.taskProgress} ${taskProgress.overdue > 0 ? styles.taskProgressOverdue : ''}`}
+          title={`${taskProgress.done} of ${taskProgress.total} tasks done · ${taskProgress.open} open${
+            taskProgress.overdue > 0 ? ` · ${taskProgress.overdue} overdue` : ''
+          }`}
+        >
+          {taskProgress.done}/{taskProgress.total}
+        </span>
       )}
       {editing?.id !== nb.id && (
         <>
@@ -302,6 +314,8 @@ export interface NotebookListProps {
   // nenhuma outra linha aparece ativa.
   tasksActive: boolean
   onOpenTasks: () => void
+  // Progresso de tasks por caderno (só cadernos com tasks abertas).
+  taskProgress: Map<string, NotebookTaskProgress>
   subjects: Subject[]
   activeSubjectId: string | null
   onSelectSubject: (id: string | null) => void
@@ -335,6 +349,7 @@ export function NotebookList({
   calendarNotebookId,
   tasksActive,
   onOpenTasks,
+  taskProgress,
   subjects,
   activeSubjectId,
   onSelectSubject,
@@ -569,6 +584,7 @@ export function NotebookList({
                           nb={nb}
                           isActive={!tasksActive && nb.id === activeId}
                           hasVisibleDocs={notebooksWithDocs.has(nb.id)}
+                          taskProgress={taskProgress.get(nb.id)}
                           editing={editing}
                           onSelect={onSelect}
                           onDelete={(id) => handleDeleteNotebook(id, nb.name)}

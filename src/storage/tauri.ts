@@ -11,6 +11,7 @@ import type {
   Notebook,
   Subject,
   Task,
+  TaskRecurrence,
   TaskStatus,
 } from '../types'
 import type { StorageAdapter } from './index'
@@ -265,6 +266,11 @@ interface TaskRow {
   notebook_id: string
   note_id: string | null
   due_date: string | null
+  scheduled_date: string | null
+  task_group: string | null
+  important: number | null
+  recurrence: string | null
+  recurrence_next_id: string | null
   created_at: number
   updated_at: number
   completed_at: number | null
@@ -278,6 +284,24 @@ function normalizeTaskStatus(s: string): TaskStatus {
   return 'todo'
 }
 
+// Recorrência gravada como JSON; inválida ou ausente vira null.
+function parseRecurrence(raw: string | null): TaskRecurrence | null {
+  if (!raw) return null
+  try {
+    const r = JSON.parse(raw) as TaskRecurrence
+    if (r.freq === 'daily') return { freq: 'daily' }
+    if (r.freq === 'monthly') {
+      return typeof r.day === 'number' ? { freq: 'monthly', day: r.day } : { freq: 'monthly' }
+    }
+    if (r.freq === 'weekly' && Array.isArray(r.days) && r.days.length > 0) {
+      return { freq: 'weekly', days: [...r.days].sort((a, b) => a - b) }
+    }
+  } catch {
+    // ignora
+  }
+  return null
+}
+
 function rowToTask(r: TaskRow): Task {
   return {
     id: r.id,
@@ -286,6 +310,11 @@ function rowToTask(r: TaskRow): Task {
     notebookId: r.notebook_id,
     noteId: r.note_id,
     dueDate: r.due_date,
+    scheduledDate: r.scheduled_date ?? null,
+    group: r.task_group ?? null,
+    important: r.important === 1,
+    recurrence: parseRecurrence(r.recurrence),
+    recurrenceNextId: r.recurrence_next_id ?? null,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     completedAt: r.completed_at,
@@ -317,6 +346,18 @@ const TASKS_TABLES_SQL = [
   )`,
   'CREATE INDEX IF NOT EXISTS idx_notebook_tasks_notebook ON notebook_tasks(notebook_id)',
   'CREATE INDEX IF NOT EXISTS idx_notebook_tasks_source_note ON notebook_tasks(source_note_id)',
+]
+
+// Colunas de notebook_tasks posteriores à v18. Entram aqui, e não em
+// migrations, porque as migrations não rodam no DB de produção (checksum v11)
+// e ALTER TABLE ADD COLUMN não é idempotente: o ensureTasksTables só adiciona
+// as que faltam (PRAGMA table_info). Linhas existentes ficam com NULL.
+const TASKS_EXTRA_COLUMNS = [
+  { name: 'scheduled_date', ddl: 'scheduled_date TEXT' },
+  { name: 'task_group', ddl: 'task_group TEXT' },
+  { name: 'important', ddl: 'important INTEGER NOT NULL DEFAULT 0' },
+  { name: 'recurrence', ddl: 'recurrence TEXT' },
+  { name: 'recurrence_next_id', ddl: 'recurrence_next_id TEXT' },
 ]
 
 // O banco roda em modo WAL (default do SQLite). Com o pool de múltiplas
@@ -576,6 +617,21 @@ export class TauriStorage implements StorageAdapter {
     if (!this.tasksTablesReady) {
       const p = (async () => {
         for (const sql of TASKS_TABLES_SQL) await db.execute(sql)
+        const cols = await db.select<Array<{ name: string }>>(
+          'PRAGMA table_info(notebook_tasks)'
+        )
+        const existing = new Set(cols.map((c) => c.name))
+        for (const col of TASKS_EXTRA_COLUMNS) {
+          if (!existing.has(col.name)) {
+            try {
+              await db.execute(`ALTER TABLE notebook_tasks ADD COLUMN ${col.ddl}`)
+            } catch (e) {
+              // Outra janela (main/keep) pode ter adicionado a coluna entre o
+              // PRAGMA e o ALTER: "duplicate column name" conta como sucesso.
+              if (!String(e).toLowerCase().includes('duplicate column')) throw e
+            }
+          }
+        }
       })()
       this.tasksTablesReady = p
       p.catch(() => {
@@ -598,8 +654,8 @@ export class TauriStorage implements StorageAdapter {
     const db = await this.db()
     await this.ensureTasksTables(db)
     await db.execute(
-      `INSERT INTO notebook_tasks (id, title, status, notebook_id, note_id, due_date, created_at, updated_at, completed_at, source_note_id, reschedule_count, sort_order)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      `INSERT INTO notebook_tasks (id, title, status, notebook_id, note_id, due_date, created_at, updated_at, completed_at, source_note_id, reschedule_count, sort_order, scheduled_date, task_group, important, recurrence, recurrence_next_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
        ON CONFLICT(id) DO UPDATE SET
          title = excluded.title,
          status = excluded.status,
@@ -610,7 +666,12 @@ export class TauriStorage implements StorageAdapter {
          completed_at = excluded.completed_at,
          source_note_id = excluded.source_note_id,
          reschedule_count = excluded.reschedule_count,
-         sort_order = excluded.sort_order`,
+         sort_order = excluded.sort_order,
+         scheduled_date = excluded.scheduled_date,
+         task_group = excluded.task_group,
+         important = excluded.important,
+         recurrence = excluded.recurrence,
+         recurrence_next_id = excluded.recurrence_next_id`,
       [
         t.id,
         t.title,
@@ -624,6 +685,11 @@ export class TauriStorage implements StorageAdapter {
         t.sourceNoteId,
         t.rescheduleCount,
         t.sortOrder,
+        t.scheduledDate,
+        t.group,
+        t.important ? 1 : 0,
+        t.recurrence ? JSON.stringify(t.recurrence) : null,
+        t.recurrenceNextId,
       ]
     )
     this.scheduleCheckpoint()

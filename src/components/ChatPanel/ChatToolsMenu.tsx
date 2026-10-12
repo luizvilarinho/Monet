@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Brain, Globe } from '@phosphor-icons/react'
+import { Brain, Globe, ListChecks } from '@phosphor-icons/react'
 import type { ChatTools } from '../../hooks/useChat'
 import styles from './ChatToolsMenu.module.css'
 
@@ -42,6 +42,8 @@ export interface ChatToolsMenuProps {
   onToggleFolderMemory: (value: boolean) => void
   folderWebResearch?: { enabled: boolean } | null
   onToggleFolderWebResearch?: (value: boolean) => void
+  // Tool "Tasks": só no chat principal; `supported` = o modelo aceita tools.
+  tasksTool?: { supported: boolean } | null
 }
 
 export function ChatToolsMenu({
@@ -51,6 +53,7 @@ export function ChatToolsMenu({
   onToggleFolderMemory,
   folderWebResearch = null,
   onToggleFolderWebResearch = () => {},
+  tasksTool = null,
 }: ChatToolsMenuProps) {
   const [open, setOpen] = useState(false)
   const wrapRef = useRef<HTMLDivElement | null>(null)
@@ -68,7 +71,8 @@ export function ChatToolsMenu({
   const activeCount =
     TOOLS.filter((t) => tools[t.key]).length +
     (folderMemory?.enabled ? 1 : 0) +
-    (folderWebResearch?.enabled ? 1 : 0)
+    (folderWebResearch?.enabled ? 1 : 0) +
+    (tasksTool && tools.tasks ? 1 : 0)
 
   return (
     <div className={styles.wrap} ref={wrapRef}>
@@ -128,6 +132,33 @@ export function ChatToolsMenu({
                 </div>
               )
             })}
+            {tasksTool && (
+              <div
+                className={styles.toolRow}
+                title={tasksTool.supported ? undefined : 'This model does not support tools'}
+              >
+                <span className={styles.toolIcon}>
+                  <ListChecks size={16} />
+                </span>
+                <div className={styles.toolText}>
+                  <span className={styles.toolName}>Tasks</span>
+                  <span className={styles.toolDescription}>
+                    Lets the AI look up your tasks (by period, project or status) when you ask about them.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={tools.tasks}
+                  aria-label="toggle tasks"
+                  disabled={!tasksTool.supported}
+                  className={tools.tasks ? styles.toggleOn : styles.toggleOff}
+                  onClick={() => onToggle('tasks', !tools.tasks)}
+                >
+                  <span className={styles.toggleKnob} aria-hidden="true" />
+                </button>
+              </div>
+            )}
             {folderMemory && (
               <div className={styles.toolRow}>
                 <span className={styles.toolIcon}>

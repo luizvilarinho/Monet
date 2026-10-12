@@ -8,6 +8,7 @@ import {
 } from '../../hooks/useChat'
 import { renderMarkdown } from '../../lib/markdown'
 import { notesFolderDocId } from '../../lib/documents'
+import type { ChecklistProgress } from '../../lib/tasks'
 import {
   listOpenRouterModels,
   OPENROUTER_KEY_MISSING,
@@ -39,8 +40,11 @@ interface NotesChatPanelProps {
   activeNote: Note | null
   resolveNoteTitle: (noteId: string) => string | undefined
   getSelectionText: () => string
-  // Tasks do caderno-projeto, anexadas ao contexto efêmero (nota de task aberta).
+  // Tasks do caderno, anexadas ao contexto efêmero (vazio se o caderno está
+  // fora da IA).
   projectTasks?: Task[]
+  todayKey: string
+  taskChecklist: Map<string, ChecklistProgress>
   // Visual apenas — o painel permanece montado quando escondido.
   visible: boolean
   // Trecho vindo do "Ask AI" da toolbar de seleção do editor.
@@ -56,6 +60,8 @@ export function NotesChatPanel({
   resolveNoteTitle,
   getSelectionText,
   projectTasks,
+  todayKey,
+  taskChecklist,
   visible,
   pendingQuote,
   onPendingQuoteConsumed,
@@ -328,6 +334,8 @@ export function NotesChatPanel({
       selectionText: getSelectionText(),
       resolveNoteTitle,
       projectTasks,
+      todayKey,
+      checklist: taskChecklist,
     })
     void send(text, undefined, undefined, {
       ephemeralContext,

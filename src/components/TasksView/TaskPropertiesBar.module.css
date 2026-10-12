@@ -161,6 +161,10 @@
   color: var(--accent-task);
 }
 
+.warning {
+  color: var(--accent-late);
+}
+
 .spacer {
   flex: 1;
 }
@@ -194,4 +198,56 @@
 
 .delete:hover {
   color: var(--accent-danger);
+}
+
+.select {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--text-secondary, #a0a0b8);
+  font-size: 11px;
+  font-family: inherit;
+  padding: 2px 4px;
+  outline: none;
+  cursor: pointer;
+}
+
+.select:hover {
+  border-color: var(--border, #333340);
+}
+
+.select:focus {
+  border-color: var(--accent-task);
+}
+
+.select option {
+  background: var(--surface-2, #26262c);
+  color: var(--text-primary, #e8e8f0);
+}
+
+.dayPill {
+  padding: 2px 0;
+  width: 22px;
+  text-align: center;
+}
+
+.textInput {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--text-secondary, #a0a0b8);
+  font-size: 11px;
+  font-family: inherit;
+  padding: 2px 4px;
+  outline: none;
+  min-width: 240px;
+  max-width: 420px;
+}
+
+.textInput:hover {
+  border-color: var(--border, #333340);
+}
+
+.textInput:focus {
+  border-color: var(--accent-task);
 }

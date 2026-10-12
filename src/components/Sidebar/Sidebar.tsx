@@ -7,7 +7,7 @@ import {
   SidebarSimple,
   X,
 } from '@phosphor-icons/react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   DndContext,
   closestCenter,
@@ -161,6 +161,8 @@ export interface SidebarProps {
   onWidthChange?: (w: number) => void
   subjects?: Subject[]
   onAssignSubject?: (noteId: string, subjectId: string | null) => void
+  // Seção de tasks do caderno ativo, abaixo da lista de notas.
+  tasksSection?: ReactNode
 }
 
 export function Sidebar({
@@ -180,6 +182,7 @@ export function Sidebar({
   onWidthChange,
   subjects,
   onAssignSubject,
+  tasksSection,
 }: SidebarProps) {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
@@ -304,6 +307,7 @@ export function Sidebar({
               </DndContext>
             )}
           </ul>
+          {tasksSection}
         </>
       )}
     </aside>

@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
+import { emit, listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { check } from '@tauri-apps/plugin-updater'
 import type { Update } from '@tauri-apps/plugin-updater'
@@ -18,6 +18,7 @@ import { Editor } from './components/Editor/Editor'
 import { EmptyEditor } from './components/Editor/EmptyEditor'
 import { NotebookList } from './components/NotebookList/NotebookList'
 import { NotesChatPanel } from './components/NotesChat/NotesChatPanel'
+import { NotebookTasksSection } from './components/Sidebar/NotebookTasksSection'
 import { codeFence, type NoteInsert } from './components/NotesChat/noteBlocks'
 import { insertAsListContinuation } from './components/Editor/listContinuation'
 import { Onboarding } from './components/Onboarding/Onboarding'
@@ -27,6 +28,11 @@ import { UpdaterDialog } from './components/UpdaterDialog/UpdaterDialog'
 import { SearchPalette } from './components/SearchPalette/SearchPalette'
 import { Sidebar } from './components/Sidebar/Sidebar'
 import { TasksView } from './components/TasksView/TasksView'
+import type { NewTaskDraft, TasksMainView } from './components/TasksView/TasksHeader'
+import { WeekBoard } from './components/TasksView/WeekBoard'
+import { KanbanBoard } from './components/TasksView/KanbanBoard'
+import { DueTodayBlock } from './components/TasksView/DueTodayBlock'
+import { WeeklyReview } from './components/TasksView/WeeklyReview'
 import { TaskPropertiesBar } from './components/TasksView/TaskPropertiesBar'
 import { Toolbar, type ActiveMode } from './components/Toolbar/Toolbar'
 import { useAi } from './hooks/useAi'
@@ -59,19 +65,30 @@ import { getToggleTitle, isPotentialCommandLine } from './components/Editor/comm
 import { RemindersProvider } from './components/Editor/RemindersContext'
 import { TasksProvider } from './components/Editor/TasksContext'
 import {
+  checklistProgress,
+  compareTasks,
   extractTaskRefTitles,
+  groupsOfNotebook,
   INBOX_NOTEBOOK_ID,
+  isOpen,
   isTaskBodyNote,
   isTasksSubject,
+  splitPipeTitle,
+  summaryMatches,
+  stripGroupPrefix,
   TASKS_SUBJECT_NAME,
+  taskProgressByNotebook,
   tasksSubjectId,
   type ProjectChoice,
+  type TaskGroupBy,
   type TaskPatch,
+  type TaskSummaryKey,
 } from './lib/tasks'
 import {
   CALENDAR_NOTEBOOK_ID,
   formatCalendarTitle,
   parseCalendarTitle,
+  toDateKey,
 } from './lib/calendar'
 import { storage } from './storage'
 import {
@@ -378,6 +395,45 @@ function App() {
   const [tasksViewOpen, setTasksViewOpen] = useState(false)
   // Caderno-projeto filtrado na TasksView (null = todos).
   const [tasksFilter, setTasksFilter] = useState<string | null>(null)
+  // Filtro da faixa de resumo da TasksView (null = lista agrupada por data).
+  const [tasksSummaryFilter, setTasksSummaryFilter] = useState<TaskSummaryKey | null>(null)
+  // Visão da área principal das Tasks: lista (TasksView + nota-corpo) ou
+  // Week/Kanban board/Weekly review ocupando tudo à direita do NotebookList.
+  // O review nunca é lembrado.
+  const [tasksMainView, setTasksMainViewState] = useState<TasksMainView>(() => {
+    try {
+      const saved = localStorage.getItem('monet:tasks-main-view')
+      return saved === 'week' || saved === 'kanban' ? saved : 'list'
+    } catch {
+      return 'list'
+    }
+  })
+  const setTasksMainView = useCallback((view: TasksMainView) => {
+    setTasksMainViewState(view)
+    if (view === 'review') return
+    try {
+      localStorage.setItem('monet:tasks-main-view', view)
+    } catch {
+      /* ignorar */
+    }
+  }, [])
+  // Group by da lista de tasks.
+  const [tasksGroupBy, setTasksGroupByState] = useState<TaskGroupBy>(() => {
+    try {
+      const saved = localStorage.getItem('monet:tasks-group-by')
+      return saved === 'project' || saved === 'status' ? saved : 'date'
+    } catch {
+      return 'date'
+    }
+  })
+  const setTasksGroupBy = useCallback((mode: TaskGroupBy) => {
+    setTasksGroupByState(mode)
+    try {
+      localStorage.setItem('monet:tasks-group-by', mode)
+    } catch {
+      /* ignorar */
+    }
+  }, [])
   const [previewMode, setPreviewMode] = useState(false)
   const [searchPaletteOpen, setSearchPaletteOpen] = useState(false)
   const [exportSuccess, setExportSuccess] = useState(false)
@@ -402,6 +458,7 @@ function App() {
     loadFailed: tasksLoadFailed,
     createTasks,
     updateTask,
+    updateTasks,
     deleteTask,
     saveError: tasksSaveError,
   } = useTasks()
@@ -504,7 +561,14 @@ function App() {
   const [subjectConvertError, setSubjectConvertError] = useState<string | null>(null)
   const createProjectTasks = useCallback(
     async (
-      inputs: Array<{ title: string; status?: Task['status']; dueDate?: string | null; sourceNoteId?: string | null }>,
+      inputs: Array<{
+        title: string
+        status?: Task['status']
+        dueDate?: string | null
+        scheduledDate?: string | null
+        important?: boolean
+        sourceNoteId?: string | null
+      }>,
       project: ProjectChoice
     ): Promise<Task[]> => {
       try {
@@ -538,6 +602,26 @@ function App() {
       }
     },
     [tasksById, updateTask, saveNote]
+  )
+
+  // "group | título" → group + título, em lote (ação confirmada pelo
+  // usuário). O título da nota-corpo acompanha.
+  const convertPipeTitles = useCallback(
+    async (list: Task[]) => {
+      const changes = list.flatMap((t) => {
+        const split = splitPipeTitle(t.title)
+        return split ? [{ id: t.id, patch: { group: split.group, title: split.title } }] : []
+      })
+      await updateTasks(changes)
+      for (const { id, patch } of changes) {
+        const task = list.find((t) => t.id === id)
+        const note = task?.noteId ? notesRef.current.find((n) => n.id === task.noteId) : undefined
+        if (note && note.title !== patch.title) {
+          await saveNote({ ...note, title: patch.title, updatedAt: Date.now() })
+        }
+      }
+    },
+    [updateTasks, saveNote]
   )
 
   // Leva a task e a nota-corpo (para o subject "Tasks") para outro caderno.
@@ -619,16 +703,50 @@ function App() {
       const task = tasksById.get(id)
       if (!task) return
       setTasksFilter(null)
+      setTasksSummaryFilter(null)
+      setTasksMainView('list')
       setTasksViewOpen(true)
       void selectTask(task)
     },
-    [tasksById, selectTask]
+    [tasksById, selectTask, setTasksMainView]
   )
 
-  const tasksContextValue = useMemo(
-    () => ({ tasksById, todayKey: today, onOpenTask: openTask }),
-    [tasksById, today, openTask]
+  // "New task…" das Tasks (lista e Week board), com os campos do quick add.
+  const createNewTask = useCallback(
+    async (draft: NewTaskDraft): Promise<Task | undefined> => {
+      const [task] = await createProjectTasks(
+        [
+          {
+            title: draft.title,
+            status: draft.status ?? undefined,
+            scheduledDate: draft.scheduledDate,
+            dueDate: draft.dueDate,
+            important: draft.important,
+          },
+        ],
+        draft.project
+      )
+      return task
+    },
+    [createProjectTasks]
   )
+
+  // Week/Kanban board ocupa a área da lista e do editor (fora do modo foco).
+  const tasksBoardOpen = tasksViewOpen && tasksMainView !== 'list' && !focusMode
+
+  const taskProgress = useMemo(() => taskProgressByNotebook(tasks, today), [tasks, today])
+
+  // Progresso do checklist da nota-corpo de cada task (`2/5` nos cards).
+  const taskChecklist = useMemo(() => {
+    const noteById = new Map(notes.map((n) => [n.id, n]))
+    const map = new Map<string, { done: number; total: number }>()
+    for (const t of tasks) {
+      const note = t.noteId ? noteById.get(t.noteId) : undefined
+      const progress = note ? checklistProgress(note.content) : null
+      if (progress) map.set(t.id, progress)
+    }
+    return map
+  }, [tasks, notes])
 
   const handleToggleLinkedTask = useCallback(
     (id: string, checked: boolean) => {
@@ -662,8 +780,10 @@ function App() {
           if (!task || task.sourceNoteId !== note.id) continue
           const previous = seen.get(id)
           seen.set(id, title)
-          if (previous !== undefined && previous !== title && task.title !== title) {
-            void updateProjectTask(id, { title })
+          // Task com group: o prefixo "group | " do item não volta ao título.
+          const synced = stripGroupPrefix(title, task.group)
+          if (previous !== undefined && previous !== title && task.title !== synced) {
+            void updateProjectTask(id, { title: synced })
           }
         }
       }
@@ -891,6 +1011,18 @@ function App() {
     [notebooks, notebookOrder]
   )
 
+  const tasksContextValue = useMemo(
+    () => ({
+      tasksById,
+      todayKey: today,
+      onOpenTask: openTask,
+      notebooks: orderedNotebooks,
+      onToggleTask: handleToggleLinkedTask,
+      checklist: taskChecklist,
+    }),
+    [tasksById, today, openTask, orderedNotebooks, handleToggleLinkedTask, taskChecklist]
+  )
+
   const visibleNotes = useMemo(() => {
     const q = search.trim().toLowerCase()
     const filtered = subjectFilteredNotes.filter((n) => {
@@ -917,6 +1049,12 @@ function App() {
     () => (activeId ? tasks.find((t) => t.noteId === activeId) ?? null : null),
     [tasks, activeId]
   )
+  // Dia da nota diária do Calendar aberta (bloco "Due today").
+  const activeCalendarDay = useMemo(() => {
+    if (!activeNote || activeNote.notebookId !== CALENDAR_NOTEBOOK_ID) return null
+    const d = parseCalendarTitle(activeNote.title)
+    return d ? toDateKey(d.getFullYear(), d.getMonth(), d.getDate()) : null
+  }, [activeNote])
 
   // ─── Sincronização com a janela keep (Ctrl+K) ────────────────────────────
   // Ao ganhar foco com uma nota diária do Calendar ativa, relê as notas do
@@ -1023,7 +1161,7 @@ function App() {
   }, [])
 
   // Scheduler (tick de 30s) — roda somente nesta janela (main).
-  useReminders(notes, handleRemindersFired)
+  useReminders(notes, handleRemindersFired, tasks)
 
   const remindersContextValue = useMemo(
     () => ({ firedIds: firedReminderIds }),
@@ -1053,7 +1191,7 @@ function App() {
     async ({ cmd, query, commandId }: CommandExecutionRequest) => {
       if (!activeId) return false
       const def = findCommand(cmd)
-      if (!def) return false
+      if (!def || def.local) return false
       if (def.calendarOnly && activeNote?.notebookId !== CALENDAR_NOTEBOOK_ID) {
         return false
       }
@@ -1328,11 +1466,18 @@ function App() {
     await createSubject(name)
   }
 
+  // Visão Tasks filtrada por um caderno (subject "Tasks" e "Show all" da
+  // seção de tasks da coluna de notas).
+  function openNotebookTasks(notebookId: string) {
+    setTasksFilter(notebookId)
+    setTasksSummaryFilter(null)
+    setTasksViewOpen(true)
+  }
+
   function handleSelectSubject(id: string | null) {
     const subject = id ? subjects.find((s) => s.id === id) : undefined
     if (subject && isTasksSubject(subject)) {
-      setTasksFilter(subject.notebookId)
-      setTasksViewOpen(true)
+      openNotebookTasks(subject.notebookId)
       return
     }
     setActiveSubjectId(id)
@@ -1433,29 +1578,65 @@ function App() {
     void reorderSubjects(newOrder)
   }
 
-  const handleCalendarDayClick = useCallback(
-    async (date: Date) => {
-      if (!calendarNotebookId) return
+  // Nota diária do Calendar para `date` (criada se ainda não existir), sem
+  // navegar até ela.
+  const ensureCalendarNote = useCallback(
+    async (date: Date): Promise<Note | null> => {
+      if (!calendarNotebookId) return null
       const title = formatCalendarTitle(date)
       const existing = notes.find(
         (n) => n.notebookId === calendarNotebookId && n.title === title
       )
-      setActiveNotebookId(calendarNotebookId)
-      if (existing) {
-        setActiveId(existing.id)
-      } else {
-        const note = await createNote(calendarNotebookId)
-        const filled: Note = { ...note, title, updatedAt: Date.now() }
-        await saveNote(filled)
-        setActiveId(filled.id)
-        setNoteOrder((prev) => {
-          const next = [filled.id, ...prev]
-          saveNoteOrder(next)
-          return next
-        })
-      }
+      if (existing) return existing
+      const note = await createNote(calendarNotebookId)
+      const filled: Note = { ...note, title, updatedAt: Date.now() }
+      await saveNote(filled)
+      setNoteOrder((prev) => {
+        const next = [filled.id, ...prev]
+        saveNoteOrder(next)
+        return next
+      })
+      return filled
     },
     [calendarNotebookId, notes, createNote, saveNote]
+  )
+
+  const handleCalendarDayClick = useCallback(
+    async (date: Date) => {
+      if (!calendarNotebookId) return
+      setActiveNotebookId(calendarNotebookId)
+      const note = await ensureCalendarNote(date)
+      if (note) setActiveId(note.id)
+    },
+    [calendarNotebookId, ensureCalendarNote]
+  )
+
+  // Weekly review: acrescenta o markdown ao fim da nota diária de hoje (nunca
+  // sobrescreve). `askAi` acrescenta também uma linha `/week` e abre a nota
+  // para o usuário executá-la com Enter — a IA nunca roda sozinha.
+  const saveWeeklyReview = useCallback(
+    async (markdown: string, askAi: boolean) => {
+      const note = await ensureCalendarNote(new Date())
+      if (!note || !calendarNotebookId) return
+      // A keep salva a nota de hoje direto no banco sem passar pelo estado da
+      // main: parte da versão mais recente entre o banco e o estado local.
+      const local = notesRef.current.find((n) => n.id === note.id) ?? note
+      const stored = await storage.getNote(note.id).catch(() => null)
+      const current = stored && stored.updatedAt > local.updatedAt ? stored : local
+      const block = askAi
+        ? `${markdown}\n\n/week summarize what I completed and what slipped this week`
+        : markdown
+      const content = current.content.trim() ? `${current.content.trimEnd()}\n\n${block}` : block
+      await saveNote({ ...current, content, updatedAt: Date.now() })
+      // A keep recarrega a nota, senão o próximo autosave dela apagaria o review.
+      void emit('calendar-note-updated', { noteId: note.id })
+      if (askAi) {
+        setTasksViewOpen(false)
+        setActiveNotebookId(calendarNotebookId)
+        setActiveId(note.id)
+      }
+    },
+    [ensureCalendarNote, calendarNotebookId, saveNote]
   )
 
   const handleMergeNotes = useCallback(
@@ -1620,16 +1801,26 @@ function App() {
 
   // ─── Chat das Anotações (aba Chat da coluna direita) ─────────────────────
   // Caderno do chat: o da nota aberta (também em "All Notes"); sem nota, o
-  // caderno ativo. Sempre um caderno existente (ou null). Com uma nota-corpo
-  // de task aberta, as tasks do projeto (caderno) entram no contexto efêmero.
+  // caderno ativo. Sempre um caderno existente (ou null). As tasks do caderno
+  // (abertas + concluídas na semana) entram no contexto efêmero, salvo se o
+  // caderno estiver fora da IA.
   const chatNotebookId = activeNote?.notebookId ?? activeNotebookId
   const chatNotebook = useMemo(
     () => notebooks.find((n) => n.id === chatNotebookId) ?? null,
     [notebooks, chatNotebookId]
   )
   const chatProjectTasks = useMemo(
-    () => (activeTask ? tasks.filter((t) => t.notebookId === activeTask.notebookId) : undefined),
-    [activeTask, tasks]
+    () =>
+      chatNotebookId === null || disabledNotebookIds.has(chatNotebookId)
+        ? undefined
+        : tasks
+            .filter(
+              (t) =>
+                t.notebookId === chatNotebookId &&
+                (isOpen(t) || summaryMatches('doneWeek', t, today))
+            )
+            .sort(compareTasks),
+    [chatNotebookId, disabledNotebookIds, tasks, today]
   )
 
   const resolveNoteTitle = useCallback(
@@ -1787,6 +1978,9 @@ function App() {
             onCreateNote={handleCreateNoteFromChat}
             onSaveNote={saveNote}
             onNavigateToNote={handleNavigateToNote}
+            tasks={tasks}
+            todayKey={today}
+            taskChecklist={taskChecklist}
           />
         </div>
       ) : (
@@ -1824,8 +2018,10 @@ function App() {
           onOpenSettings={handleOpenSettings}
           calendarNotebookId={calendarNotebookId}
           tasksActive={tasksViewOpen}
+          taskProgress={taskProgress}
           onOpenTasks={() => {
             setTasksFilter(null)
+            setTasksSummaryFilter(null)
             setTasksViewOpen(true)
           }}
           width={effectiveNotebookWidth}
@@ -1842,22 +2038,108 @@ function App() {
           onRenameSubject={handleRenameSubject}
           onReorderSubjects={handleReorderSubjects}
         />}
-        {!focusMode && (tasksViewOpen ? (
+        {tasksBoardOpen && tasksMainView === 'review' ? (
+          <WeeklyReview
+            tasks={tasks}
+            notebooks={orderedNotebooks}
+            todayKey={today}
+            mainView={tasksMainView}
+            onMainViewChange={setTasksMainView}
+            filter={tasksFilter}
+            onFilterChange={setTasksFilter}
+            onSummaryFilterChange={(key) => {
+              setTasksSummaryFilter(key)
+              setTasksMainView('list')
+            }}
+            onCreateTask={async (draft) => {
+              await createNewTask(draft)
+            }}
+            onConvertPipeTitles={(list) => void convertPipeTitles(list)}
+            onOpenTask={(task) => {
+              setTasksMainView('list')
+              void selectTask(task)
+            }}
+            onToggleTask={handleToggleLinkedTask}
+            onUpdateTasks={(changes) => void updateTasks(changes)}
+            checklist={taskChecklist}
+            onSaveReview={saveWeeklyReview}
+          />
+        ) : tasksBoardOpen && tasksMainView === 'kanban' ? (
+          <KanbanBoard
+            tasks={tasks}
+            notebooks={orderedNotebooks}
+            todayKey={today}
+            mainView={tasksMainView}
+            onMainViewChange={setTasksMainView}
+            filter={tasksFilter}
+            onFilterChange={setTasksFilter}
+            onSummaryFilterChange={(key) => {
+              setTasksSummaryFilter(key)
+              setTasksMainView('list')
+            }}
+            onCreateTask={async (draft) => {
+              await createNewTask(draft)
+            }}
+            onOpenTask={(task) => {
+              setTasksMainView('list')
+              void selectTask(task)
+            }}
+            onToggleTask={handleToggleLinkedTask}
+            onUpdateTasks={(changes) => void updateTasks(changes)}
+            onConvertPipeTitles={(list) => void convertPipeTitles(list)}
+            checklist={taskChecklist}
+          />
+        ) : tasksBoardOpen ? (
+          <WeekBoard
+            tasks={tasks}
+            notebooks={orderedNotebooks}
+            todayKey={today}
+            mainView={tasksMainView}
+            onMainViewChange={setTasksMainView}
+            filter={tasksFilter}
+            onFilterChange={setTasksFilter}
+            onSummaryFilterChange={(key) => {
+              setTasksSummaryFilter(key)
+              setTasksMainView('list')
+            }}
+            onCreateTask={async (draft) => {
+              await createNewTask(draft)
+            }}
+            onOpenTask={(task) => {
+              setTasksMainView('list')
+              void selectTask(task)
+            }}
+            onToggleTask={handleToggleLinkedTask}
+            onSchedule={(id, scheduledDate) => void updateTask(id, { scheduledDate })}
+            onUpdateTasks={(changes) => void updateTasks(changes)}
+            onConvertPipeTitles={(list) => void convertPipeTitles(list)}
+            checklist={taskChecklist}
+          />
+        ) : !focusMode && (tasksViewOpen ? (
           <TasksView
             tasks={tasks}
             notebooks={orderedNotebooks}
             todayKey={today}
+            mainView={tasksMainView}
+            onMainViewChange={setTasksMainView}
             width={sidebarWidth}
             onWidthChange={setSidebarWidth}
             filter={tasksFilter}
             onFilterChange={setTasksFilter}
+            summaryFilter={tasksSummaryFilter}
+            onSummaryFilterChange={setTasksSummaryFilter}
+            groupBy={tasksGroupBy}
+            onGroupByChange={setTasksGroupBy}
+            onConvertPipeTitles={(list) => void convertPipeTitles(list)}
             selectedTaskId={activeTask?.id ?? null}
             onSelectTask={(task) => void selectTask(task)}
-            onCreateTask={async (title, project) => {
-              const [task] = await createProjectTasks([{ title }], project)
+            onCreateTask={async (draft) => {
+              const task = await createNewTask(draft)
               if (task?.noteId) showTaskNote(task.noteId)
             }}
             onToggleTask={handleToggleLinkedTask}
+            onUpdateTasks={(changes) => void updateTasks(changes)}
+            checklist={taskChecklist}
           />
         ) : activeNotebookId === calendarNotebookId ? (
           <CalendarView
@@ -1879,8 +2161,8 @@ function App() {
             tasks={tasks}
             todayKey={today}
             onToggleTaskDone={handleToggleLinkedTask}
-            onCreateTask={(dueDate, title, project) =>
-              void createProjectTasks([{ title, dueDate }], project).then(([task]) => {
+            onCreateTask={(scheduledDate, title, project) =>
+              void createProjectTasks([{ title, scheduledDate }], project).then(([task]) => {
                 if (task?.noteId) setActiveId(task.noteId)
               })
             }
@@ -1904,9 +2186,24 @@ function App() {
             onWidthChange={setSidebarWidth}
             subjects={effectiveSubjects.filter((s) => !isTasksSubject(s))}
             onAssignSubject={handleAssignNoteToSubject}
+            tasksSection={activeNotebookId !== null && tasksLoaded ? (
+              <NotebookTasksSection
+                notebookId={activeNotebookId}
+                tasks={tasks}
+                notebooks={orderedNotebooks}
+                todayKey={today}
+                checklist={taskChecklist}
+                onOpenTask={(task) => void selectTask(task)}
+                onToggleTask={handleToggleLinkedTask}
+                onCreateTask={async (draft) => {
+                  await createNewTask(draft)
+                }}
+                onShowAll={() => openNotebookTasks(activeNotebookId)}
+              />
+            ) : undefined}
           />
         ))}
-        {activeNote ? (
+        {tasksBoardOpen ? null : activeNote ? (
           <RemindersProvider value={remindersContextValue}>
           <TasksProvider value={tasksContextValue}>
           <Editor
@@ -1970,10 +2267,11 @@ function App() {
               ) : undefined
             }
             onToggleLinkedTask={handleToggleLinkedTask}
-            taskBar={activeTask && (
+            topSlot={activeTask ? (
               <TaskPropertiesBar
                 task={activeTask}
                 notebooks={orderedNotebooks}
+                groupSuggestions={groupsOfNotebook(tasks, activeTask.notebookId)}
                 sourceNoteExists={
                   activeTask.sourceNoteId !== null && notes.some((n) => n.id === activeTask.sourceNoteId)
                 }
@@ -1988,7 +2286,14 @@ function App() {
                   void deleteProjectTask(activeTask.id)
                 }}
               />
-            )}
+            ) : activeCalendarDay ? (
+              <DueTodayBlock
+                tasks={tasks}
+                dayKey={activeCalendarDay}
+                todayKey={today}
+                onOpenTask={openTask}
+              />
+            ) : null}
           />
           </TasksProvider>
           </RemindersProvider>
@@ -2023,6 +2328,8 @@ function App() {
               notebook={chatNotebook}
               activeNote={activeNote}
               projectTasks={chatProjectTasks}
+              todayKey={today}
+              taskChecklist={taskChecklist}
               resolveNoteTitle={resolveNoteTitle}
               getSelectionText={getNotesSelectionText}
               visible={aiOpen && rightTab === 'chat'}

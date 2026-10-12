@@ -3,6 +3,7 @@ import { Plugin, PluginKey, type Selection } from '@tiptap/pm/state'
 import { Fragment, Slice, type Node as ProseMirrorNode, type Schema } from '@tiptap/pm/model'
 import { CellSelection } from '@tiptap/pm/tables'
 import { isBlankParagraph } from './blankParagraph'
+import type { TasksQueryBlockStorage } from './TasksQueryBlock'
 
 // Texto copiado (text/plain) do editor. Substitui o serializer do
 // tiptap-markdown, que vazava `<br>` no texto: marcador de linha em branco do
@@ -65,10 +66,26 @@ function replaceHardBreaks(fragment: Fragment, schema: Schema): Fragment {
   return Fragment.fromArray(nodes)
 }
 
+const TASKS_QUERY_RE = /<tasks-query\b[^>]*\bdata-filter="([^"]*)"[^>]*><\/tasks-query>/g
+
+function decodeAttr(value: string): string {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+}
+
 function serializeBlocks(editor: Editor, fragment: Fragment): string {
   const { serializer } = (editor.storage as unknown as MarkdownStorage).markdown
+  const tasksQuery = (editor.storage as unknown as Record<string, TasksQueryBlockStorage | undefined>)
+    .tasksQueryBlock
   return serializer
     .serialize(replaceHardBreaks(fragment, editor.schema))
+    // Bloco `/tasks` sai como a lista legível (não como o filtro).
+    .replace(TASKS_QUERY_RE, (match, filter: string) =>
+      tasksQuery?.resolveText ? tasksQuery.resolveText(decodeAttr(filter)) : match
+    )
     // Marcador de linha em branco (`<br>` numa linha só, também dentro de
     // blockquote `> <br>`) vira linha vazia. Texto digitado `<br>` sai
     // escapado (&lt;br&gt;), então não colide.

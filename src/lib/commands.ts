@@ -15,6 +15,7 @@ export const COMMANDS: CommandDef[] = [
   { name: '/docs', description: 'Answer using only the notebook documents', example: '/docs which companies did the person work for?', takesQuery: true },
   { name: '/action', description: 'Perform an action on the current note text (edit, rewrite, organize, transform)', example: '/action rewrite this section more concisely', takesQuery: true },
   { name: '/week', description: 'Answers free-form questions using the last 7 days of calendar notes', example: '/week what were my activities this week?', takesQuery: true, calendarOnly: true },
+  { name: '/tasks', description: 'Live list of tasks (this week, today, overdue, all, #project)', example: '/tasks this week #PORTO', takesQuery: false, local: true },
 ]
 
 export function findCommand(name: string): CommandDef | undefined {

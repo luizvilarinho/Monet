@@ -1,4 +1,5 @@
 import { cleanNoteContentForAi, noteDate } from '../../lib/noteFileText'
+import { isOpen, taskLineForAi, type ChecklistProgress } from '../../lib/tasks'
 import type { Note, Task } from '../../types'
 
 // ─── Builder do bloco de contexto das Anotações ─────────────────────────────
@@ -16,8 +17,12 @@ export interface NotesContextInput {
   // '' = sem seleção
   selectionText: string
   resolveNoteTitle: (noteId: string) => string | undefined
-  // Tasks do caderno-projeto (nota-corpo de task aberta no editor).
+  // Tasks do caderno (abertas + concluídas na semana), já filtradas pela
+  // visibilidade de IA do caderno.
   projectTasks?: Task[]
+  todayKey: string
+  // Progresso do checklist da nota-corpo de cada task.
+  checklist: Map<string, ChecklistProgress>
 }
 
 function truncateWithMarker(s: string, budget: number): string {
@@ -55,9 +60,12 @@ export function buildNotesContext(input: NotesContextInput): string {
   const projectTasks = input.projectTasks ?? []
   if (projectTasks.length > 0) {
     lines.push('')
-    lines.push(`Tasks of this project (${projectTasks.length}):`)
+    const open = projectTasks.filter(isOpen).length
+    lines.push(
+      `Tasks of this notebook (${open} open, ${projectTasks.length - open} done this week; today is ${input.todayKey}; "do" = planned date, "deadline" = delivery date):`
+    )
     for (const t of projectTasks.slice(0, PROJECT_TASKS_LIMIT)) {
-      lines.push(`- [${t.status}] ${t.title}${t.dueDate ? ` (due ${t.dueDate})` : ''}`)
+      lines.push(taskLineForAi(t, input.todayKey, null, input.checklist.get(t.id) ?? null))
     }
     if (projectTasks.length > PROJECT_TASKS_LIMIT) lines.push('- [truncated]')
   }

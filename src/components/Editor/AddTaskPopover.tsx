@@ -73,14 +73,14 @@ export function AddTaskPopover({
       }}
     >
       <label className={styles.field}>
-        <span className={styles.label}>Due</span>
+        <span className={styles.label}>Deadline</span>
         <input
           ref={dateRef}
           className={styles.input}
           type="date"
           value={dueDate}
           onChange={(e) => setDueDate(e.target.value)}
-          aria-label="due date"
+          aria-label="deadline"
         />
       </label>
       <label className={styles.field}>

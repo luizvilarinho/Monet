@@ -150,6 +150,16 @@
   white-space: nowrap;
 }
 
+.taskProgress {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.taskProgressOverdue {
+  color: var(--accent-danger);
+}
+
 .rowDelete,
 .rowDocs {
   flex-shrink: 0;

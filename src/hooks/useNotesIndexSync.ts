@@ -10,7 +10,7 @@ import {
   notesIndexUpsert,
 } from '../lib/documents'
 import { buildNoteFileText, buildTasksSummaryText } from '../lib/noteFileText'
-import { tasksSummaryNoteId } from '../lib/tasks'
+import { checklistProgress, tasksSummaryNoteId } from '../lib/tasks'
 
 // Espelha as notas de cada caderno no RAG (pasta gerenciada `origin='notes'`).
 // O sync vai só do app para o disco: o hook compara o array de notas com o que
@@ -64,6 +64,11 @@ function taskSignature(task: Task, projectName: string | undefined): string {
     task.notebookId,
     task.noteId,
     task.dueDate,
+    task.scheduledDate,
+    task.group,
+    task.important,
+    task.recurrence,
+    task.rescheduleCount,
     task.createdAt,
     task.completedAt,
     task.sourceNoteId,
@@ -190,7 +195,10 @@ export function useNotesIndexSync({
             lastSyncedRef.current.delete(summaryId)
             return
           }
-          const fileText = buildTasksSummaryText(notebook.name, nbTasks, resolveNoteTitle)
+          const fileText = buildTasksSummaryText(notebook.name, nbTasks, resolveNoteTitle, (t) => {
+            const body = t.noteId ? notesRef.current.find((n) => n.id === t.noteId) : undefined
+            return body ? checklistProgress(body.content) : null
+          })
           const synced = lastSyncedRef.current.get(summaryId)
           if (synced && synced.notebookId === notebook.id && synced.fileText === fileText) return
           const result = await notesIndexUpsert({
@@ -443,6 +451,9 @@ export function useNotesIndexSync({
       }
       if (disabled.has(note.notebookId)) continue
       scheduleUpsert(note.id)
+      // Nota-corpo: o checklist dela aparece no resumo de tasks do caderno.
+      const task = tasksRef.current.find((t) => t.noteId === note.id)
+      if (task && !disabled.has(task.notebookId)) scheduleTasksSummary(task.notebookId)
     }
     for (const noteId of [...seen.keys()]) {
       if (currentIds.has(noteId)) continue
@@ -450,7 +461,7 @@ export function useNotesIndexSync({
       cancelDebounce(noteId)
       enqueue({ kind: 'delete', noteId })
     }
-  }, [notes, enqueue, enqueueUpsertNow, scheduleUpsert, cancelDebounce])
+  }, [notes, enqueue, enqueueUpsertNow, scheduleUpsert, scheduleTasksSummary, cancelDebounce])
 
   // Diff de tasks (inclui renomear o caderno-projeto): reindexa a nota-corpo
   // e o resumo dos cadernos afetados (origem e destino num move).

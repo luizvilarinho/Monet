@@ -12,7 +12,7 @@ import {
   parseCalendarTitle,
 } from '../../lib/calendar'
 import { storage } from '../../storage'
-import type { Note } from '../../types'
+import type { Note, Notebook } from '../../types'
 import { useTasks } from '../../hooks/useTasks'
 import { useToday } from '../../hooks/useToday'
 import { buildBaseExtensions } from '../Editor/extensions'
@@ -41,6 +41,16 @@ export function KeepPanel() {
   const { tasks, tasksById, updateTask, reload: reloadTasks } = useTasks()
   const reloadTasksRef = useRef(reloadTasks)
   reloadTasksRef.current = reloadTasks
+  // Cadernos para o `#Projeto` dos blocos `/tasks` da nota.
+  const [notebooks, setNotebooks] = useState<Notebook[]>([])
+  const loadNotebooks = () => {
+    storage
+      .getNotebooks()
+      .then(setNotebooks)
+      .catch((err) => console.error('keep: failed to load notebooks', err))
+  }
+  const loadNotebooksRef = useRef(loadNotebooks)
+  loadNotebooksRef.current = loadNotebooks
 
   const editor = useEditor({
     immediatelyRender: false,
@@ -137,10 +147,12 @@ export function KeepPanel() {
     }
 
     loadOrCreateTodayNote()
+    loadNotebooksRef.current()
 
     let unlisten: (() => void) | undefined
     void listen('keep-shown', () => {
       loadOrCreateTodayNote()
+      loadNotebooksRef.current()
       void reloadTasksRef.current()
       editorRef.current?.commands.focus()
     }).then((fn) => {
@@ -148,9 +160,20 @@ export function KeepPanel() {
       else unlisten = fn
     })
 
+    // A main escreveu na nota de hoje (Weekly review): recarrega para o
+    // autosave daqui não sobrescrever o texto novo.
+    let unlistenUpdated: (() => void) | undefined
+    void listen<{ noteId: string }>('calendar-note-updated', (event) => {
+      if (noteRef.current?.id === event.payload.noteId) loadOrCreateTodayNote()
+    }).then((fn) => {
+      if (cancelled) fn()
+      else unlistenUpdated = fn
+    })
+
     return () => {
       cancelled = true
       unlisten?.()
+      unlistenUpdated?.()
     }
   }, [editor])
 
@@ -219,7 +242,17 @@ export function KeepPanel() {
   }
 
   const remindersValue = useMemo(() => ({ firedIds }), [firedIds])
-  const tasksValue = useMemo(() => ({ tasksById, todayKey }), [tasksById, todayKey])
+  const tasksValue = useMemo(
+    () => ({
+      tasksById,
+      todayKey,
+      notebooks,
+      onToggleTask: (id: string, done: boolean) => {
+        void updateTask(id, { status: done ? 'done' : 'todo' })
+      },
+    }),
+    [tasksById, todayKey, notebooks, updateTask]
+  )
   const headerDate = note?.title ?? formatCalendarTitle(new Date())
   const headerWeekday = getWeekdayName(parseCalendarTitle(headerDate) ?? new Date())
 

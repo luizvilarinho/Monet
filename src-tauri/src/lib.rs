@@ -1583,6 +1583,9 @@ pub fn run() {
             ",
             kind: MigrationKind::Up,
         },
+        // Colunas posteriores de notebook_tasks sao adicionadas por
+        // ensureTasksTables (storage/tauri.ts) — ALTER TABLE nao e idempotente
+        // e as migrations nao rodam no DB de producao (checksum v11).
     ];
 
     tauri::Builder::default()

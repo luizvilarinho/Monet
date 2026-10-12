@@ -1,14 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { emit, listen } from '@tauri-apps/api/event'
 import { nanoid } from 'nanoid'
-import type { Task, TaskStatus } from '../types'
+import type { Task, TaskRecurrence, TaskStatus } from '../types'
 import { storage } from '../storage'
-import { applyTaskPatch, type TaskPatch } from '../lib/tasks'
+import { dateKeyFromMs } from '../lib/calendar'
+import { applyTaskPatch, buildNextOccurrence, normalizeGroup, type TaskPatch } from '../lib/tasks'
 
 export interface NewTaskInput {
   title: string
   status?: TaskStatus
   dueDate?: string | null
+  scheduledDate?: string | null
+  group?: string | null
+  important?: boolean
+  recurrence?: TaskRecurrence | null
   notebookId: string
   noteId: string | null
   sourceNoteId?: string | null
@@ -81,6 +86,11 @@ export function useTasks() {
           notebookId: i.notebookId,
           noteId: i.noteId,
           dueDate: i.dueDate ?? null,
+          scheduledDate: i.scheduledDate ?? null,
+          group: normalizeGroup(i.group ?? null),
+          important: i.important ?? false,
+          recurrence: i.recurrence ?? null,
+          recurrenceNextId: null,
           createdAt: now,
           updatedAt: now,
           completedAt: status === 'done' ? now : null,
@@ -98,15 +108,47 @@ export function useTasks() {
     [persist]
   )
 
-  const updateTask = useCallback(
-    async (id: string, patch: TaskPatch) => {
-      const prev = tasksRef.current.find((t) => t.id === id)
-      if (!prev) return
-      const next = applyTaskPatch(prev, patch, Date.now())
-      setTasks((list) => list.map((t) => (t.id === id ? next : t)))
-      await persist(() => storage.saveTask(next), 'save task')
+  // Lote: um único setTasks e um único `tasks-changed`; os saves são
+  // sequenciais (sem transação manual pelo plugin SQL).
+  // Recorrente que entra em `done` gera a próxima ocorrência uma única vez:
+  // `recurrenceNextId` aponta para ela, então desmarcar e remarcar não duplica.
+  const updateTasks = useCallback(
+    async (changes: Array<{ id: string; patch: TaskPatch }>) => {
+      const now = Date.now()
+      const current = tasksRef.current
+      const nextById = new Map<string, Task>()
+      const prevById = new Map<string, Task>()
+      for (const { id, patch } of changes) {
+        const original = current.find((t) => t.id === id)
+        if (!original) continue
+        if (!prevById.has(id)) prevById.set(id, original)
+        nextById.set(id, applyTaskPatch(nextById.get(id) ?? original, patch, now))
+      }
+      if (nextById.size === 0) return
+      const existing = new Set(current.map((t) => t.id))
+      const generated: Task[] = []
+      let order = current.reduce((m, t) => Math.max(m, t.sortOrder), 0)
+      for (const [id, next] of nextById) {
+        const becameDone = prevById.get(id)!.status !== 'done' && next.status === 'done'
+        const alreadyGenerated = next.recurrenceNextId !== null && existing.has(next.recurrenceNextId)
+        if (!becameDone || !next.recurrence || alreadyGenerated) continue
+        order += 1
+        const occurrence = buildNextOccurrence(next, nanoid(), order, dateKeyFromMs(now), now)
+        generated.push(occurrence)
+        nextById.set(id, { ...next, recurrenceNextId: occurrence.id })
+      }
+      setTasks((list) => [...list.map((t) => nextById.get(t.id) ?? t), ...generated])
+      await persist(async () => {
+        for (const t of nextById.values()) await storage.saveTask(t)
+        for (const t of generated) await storage.saveTask(t)
+      }, 'save tasks')
     },
     [persist]
+  )
+
+  const updateTask = useCallback(
+    (id: string, patch: TaskPatch) => updateTasks([{ id, patch }]),
+    [updateTasks]
   )
 
   const deleteTask = useCallback(
@@ -128,6 +170,7 @@ export function useTasks() {
     reload,
     createTasks,
     updateTask,
+    updateTasks,
     deleteTask,
   }
 }

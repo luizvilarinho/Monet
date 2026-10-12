@@ -4,10 +4,11 @@ import { Brain, Paperclip, Stop } from '@phosphor-icons/react'
 import deepGrayIcon from '../../assets/icons/deep-gray.svg'
 import deepGreenIcon from '../../assets/icons/deep-green.svg'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useChat, type ChatFolder, type ChatMessage } from '../../hooks/useChat'
+import { useChat, type ChatFolder, type ChatMessage, type TasksSnapshot } from '../../hooks/useChat'
 import { renderMarkdown } from '../../lib/markdown'
 import { notesFolderDocId } from '../../lib/documents'
-import type { AiModel, Note, Notebook } from '../../types'
+import type { ChecklistProgress } from '../../lib/tasks'
+import type { AiModel, Note, Notebook, Task } from '../../types'
 import { ModelSelector } from '../AiPanel/ModelSelector'
 import styles from './ChatPanel.module.css'
 import { ChatSidebar } from './ChatSidebar'
@@ -29,6 +30,10 @@ export interface ChatPanelProps {
   onCreateNote: (notebookId: string, title: string, content: string) => Promise<Note>
   onSaveNote: (note: Note) => Promise<void>
   onNavigateToNote: (notebookId: string, noteId: string) => void
+  // Tool "Tasks" (opt-in no menu de ferramentas).
+  tasks: Task[]
+  todayKey: string
+  taskChecklist: Map<string, ChecklistProgress>
 }
 
 export function ChatPanel({
@@ -42,7 +47,12 @@ export function ChatPanel({
   onCreateNote,
   onSaveNote,
   onNavigateToNote,
+  tasks,
+  todayKey,
+  taskChecklist,
 }: ChatPanelProps) {
+  const tasksSnapshotRef = useRef<TasksSnapshot>({ tasks, notebooks, todayKey, checklist: taskChecklist })
+  tasksSnapshotRef.current = { tasks, notebooks, todayKey, checklist: taskChecklist }
   const {
     conversations,
     folders,
@@ -86,7 +96,7 @@ export function ChatPanel({
     reorderFolders,
     reorderInFolder,
     reorderLoose,
-  } = useChat(models)
+  } = useChat(models, { getTasksSnapshot: () => tasksSnapshotRef.current })
 
   const [draft, setDraft] = useState('')
   const [draftImage, setDraftImage] = useState<string | null>(null)
@@ -593,6 +603,7 @@ export function ChatPanel({
                 onToggleFolderMemory={(v) => activeFolder && setFolderMemoryEnabled(activeFolder.id, v)}
                 folderWebResearch={activeFolder ? { enabled: activeFolder.webResearchEnabled } : null}
                 onToggleFolderWebResearch={(v) => activeFolder && setFolderWebResearchEnabled(activeFolder.id, v)}
+                tasksTool={{ supported: selectedModel?.supportsTools ?? false }}
               />
               {isStreaming ? (
                 <button

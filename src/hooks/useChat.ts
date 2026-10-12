@@ -14,7 +14,8 @@ import {
   type ContentBlock,
   type StreamToolCallPayload,
 } from '../lib/openrouter'
-import type { AiModel } from '../types'
+import type { AiModel, Notebook, Task } from '../types'
+import { queryTasksText, type ChecklistProgress, type TasksQuery } from '../lib/tasks'
 import { formatSearchResults, hasTavilyKey, webSearch, type SearchResult } from '../lib/search'
 import { runDeepResearch, type DeepResearchPhase } from '../lib/deepResearch'
 import { enqueueLibrarian } from '../lib/librarian'
@@ -24,6 +25,7 @@ import {
   getNotebookVisibleDocumentIds,
   NOTEBOOK_VISIBILITY_CHANGED_EVENT,
   notesFolderDocId,
+  notesIndexGetDisabledNotebooks,
   replaceNotebookVisibility,
   resolveSearchableIds,
   setNotebookDocumentVisibility,
@@ -209,13 +211,24 @@ export interface ChatFolder {
 export interface ChatTools {
   webSearch: boolean
   deepResearch: boolean
+  // Tool "Tasks" (consulta à tabela de tasks); só no chat principal.
+  tasks: boolean
+}
+
+// Estado atual das tasks para a tool `query_tasks` (fornecido pelo App).
+export interface TasksSnapshot {
+  tasks: Task[]
+  notebooks: Notebook[]
+  todayKey: string
+  // Progresso do checklist da nota-corpo de cada task.
+  checklist: Map<string, ChecklistProgress>
 }
 
 export type ConversationLocation =
   | { type: 'loose'; index: number }
   | { type: 'folder'; folderId: string; index: number }
 
-const DEFAULT_TOOLS: ChatTools = { webSearch: false, deepResearch: false }
+const DEFAULT_TOOLS: ChatTools = { webSearch: false, deepResearch: false, tasks: false }
 
 function loadTools(): ChatTools {
   try {
@@ -227,6 +240,7 @@ function loadTools(): ChatTools {
         return {
           webSearch: !!p.webSearch,
           deepResearch: !!p.deepResearch,
+          tasks: !!p.tasks,
         }
       }
     }
@@ -962,9 +976,15 @@ export type ChatFolderScope = { kind: 'book' | 'notebook'; id: string; title: st
 
 export function useChat(
   models: AiModel[] = [],
-  options?: { mode?: 'main' | 'assistant' | 'reader' | 'notes' }
+  options?: {
+    mode?: 'main' | 'assistant' | 'reader' | 'notes'
+    // Só o ChatPanel principal passa: habilita a tool "Tasks".
+    getTasksSnapshot?: () => TasksSnapshot
+  }
 ): UseChatResult {
   const mode = options?.mode ?? 'main'
+  const getTasksSnapshotRef = useRef(options?.getTasksSnapshot)
+  getTasksSnapshotRef.current = options?.getTasksSnapshot
   // Instancias "detached" (assistant/reader/notes) vivem fora do ChatPanel principal
   // e nao leem/gravam o ACTIVE_ID_KEY compartilhado: "qual conversa esta
   // ativa" e per-instancia.
@@ -2462,6 +2482,35 @@ export function useChat(
           },
         })
       }
+      // query_tasks: só com a tool "Tasks" ligada pelo usuário e no chat
+      // principal (único que fornece o snapshot das tasks).
+      if (supportsTools && toolsRef.current.tasks && getTasksSnapshotRef.current) {
+        toolDefs.push({
+          type: 'function',
+          function: {
+            name: 'query_tasks',
+            description: "Query the user's tasks (personal task list of Monet notes). Use it when the user asks about their tasks, deadlines, what is due, overdue or done. Dates are YYYY-MM-DD; 'do' is when the user plans to do it, 'deadline' is the delivery date. Weeks start on Sunday.",
+            parameters: {
+              type: 'object',
+              properties: {
+                period: {
+                  type: 'string',
+                  enum: ['overdue', 'today', 'this_week', 'next_week', 'open', 'done_this_week'],
+                  description: 'Time window. this_week includes overdue tasks. Omit to get all open tasks.',
+                },
+                project: {
+                  type: 'string',
+                  description: 'Project (notebook) name, without spaces or "#". Omit for all projects.',
+                },
+                status: {
+                  type: 'string',
+                  enum: ['todo', 'doing', 'done', 'dropped'],
+                },
+              },
+            },
+          },
+        })
+      }
       const toolsPayload: object[] | undefined = toolDefs.length > 0 ? toolDefs : undefined
 
       // Register tool call handler for this turn. Single round: the tool runs,
@@ -2482,6 +2531,8 @@ export function useChat(
 
           try {
             let toolSearchMessage: ChatMessageInput | null = null
+            // Resultados de query_tasks (uma entrada por chamada).
+            const taskResults: string[] = []
             for (const tc of p.toolCalls) {
               let parsedArgs: { query?: string; queries?: unknown; memory?: unknown } = {}
               try {
@@ -2547,6 +2598,34 @@ export function useChat(
                   }
                 }
                 setWebSearchActive(false)
+              } else if (tc.toolName === 'query_tasks') {
+                const snapshot = getTasksSnapshotRef.current?.()
+                if (snapshot) {
+                  let query: TasksQuery = {}
+                  try {
+                    query = JSON.parse(tc.argumentsJson) as TasksQuery
+                  } catch {
+                    /* sem argumentos: tasks abertas */
+                  }
+                  // Cadernos com a indexação de IA desligada ficam fora da tool.
+                  let result: string
+                  try {
+                    const disabled = new Set(await notesIndexGetDisabledNotebooks())
+                    result = queryTasksText(
+                      snapshot.tasks.filter((t) => !disabled.has(t.notebookId)),
+                      snapshot.notebooks.filter((n) => !disabled.has(n.id)),
+                      query,
+                      snapshot.todayKey,
+                      snapshot.checklist
+                    )
+                  } catch (err) {
+                    console.warn('notesIndexGetDisabledNotebooks failed:', err)
+                    result = 'Tasks are unavailable right now.'
+                  }
+                  taskResults.push(
+                    `query_tasks ${JSON.stringify(query)} (today is ${snapshot.todayKey}):\n${result}`
+                  )
+                }
               } else if (tc.toolName === 'update_folder_memory') {
                 const newMemory = typeof parsedArgs.memory === 'string' ? parsedArgs.memory : null
                 if (newMemory !== null && containingFolder) {
@@ -2560,12 +2639,20 @@ export function useChat(
               toolCallHandlerRef.current = null
               return
             }
+            const toolTasksMessage: ChatMessageInput | null =
+              taskResults.length > 0
+                ? {
+                    role: 'system',
+                    content: `You looked up the user's tasks. Answer from these results only; do not invent tasks.\n\n${taskResults.join('\n\n')}`,
+                  }
+                : null
 
             const toolApiMessages: ChatMessageInput[] = [
               ...systemMessages,
               ...(ephemeralSystemMessage ? [ephemeralSystemMessage] : []),
               ...(ragSystemMessage ? [ragSystemMessage] : []),
               ...(toolSearchMessage ? [toolSearchMessage] : []),
+              ...(toolTasksMessage ? [toolTasksMessage] : []),
               ...historyForApi,
               { role: 'user', content: userContent },
             ]

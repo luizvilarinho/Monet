@@ -46,6 +46,7 @@ import {
 } from './TaskStatus'
 import { SearchInNote } from './SearchInNote'
 import { getCommandSuggestions } from './commandParser'
+import { findCommand } from '../../lib/commands'
 import type {
   AiResponse,
   CommandExecutionRequest,
@@ -92,8 +93,9 @@ export interface EditorProps {
     inputs: Array<{ title: string; checked: boolean }>,
     opts: { dueDate: string | null; project: ProjectChoice }
   ) => Promise<Task[]>
-  // Barra de propriedades da task (nota-corpo de task aberta).
-  taskBar?: ReactNode
+  // Conteúdo acima das tags: barra de propriedades da task (nota-corpo de
+  // task) ou o bloco "Due today" (nota diária do Calendar).
+  topSlot?: ReactNode
   onToggleLinkedTask?: (taskId: string, checked: boolean) => void
 }
 
@@ -165,7 +167,7 @@ export function Editor({
   suggestedTaskNotebookId = '',
   onCreateTasks,
   onToggleLinkedTask,
-  taskBar,
+  topSlot,
 }: EditorProps) {
   const [adding, setAdding] = useState(false)
   const [draft, setDraft] = useState('')
@@ -355,6 +357,21 @@ export function Editor({
           if (!atEnd) return false
 
           if (info.status === 'idle') return false
+
+          // Comando local `/tasks [filtro]`: a linha vira um bloco vivo de
+          // tasks (só o filtro vai para o conteúdo) e a IA não é chamada.
+          if (info.status === 'valid' && findCommand(info.cmd)?.local) {
+            const { tasksQueryBlock, paragraph } = view.state.schema.nodes
+            if (!tasksQueryBlock) return false
+            const tr = view.state.tr.replaceWith(info.paragraphPos, info.paragraphEnd, [
+              tasksQueryBlock.create({ filter: info.query || 'this week' }),
+              paragraph.create(),
+            ])
+            // Cursor no parágrafo vazio logo após o bloco (atom = tamanho 1).
+            tr.setSelection(TextSelection.create(tr.doc, info.paragraphPos + 2))
+            view.dispatch(tr.scrollIntoView())
+            return true
+          }
 
           const pluginState = commandPluginKey.getState(view.state)
           const existingMark = pluginState?.marks.get(info.paragraphPos)
@@ -819,7 +836,7 @@ export function Editor({
         />
         {weekdayLabel && <span className={styles.weekday}>— {weekdayLabel}</span>}
       </div>
-      {taskBar}
+      {topSlot}
       <div className={styles.tagsRow}>
         {onDateChange && (
           <span className={styles.dateWrapper} onClick={() => dateInputRef.current?.showPicker()}>

@@ -1,11 +1,14 @@
-import { CaretLeft, CaretRight, SidebarSimple } from '@phosphor-icons/react'
+import { CaretLeft, CaretRight, SidebarSimple, Target } from '@phosphor-icons/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Note, Notebook, Task } from '../../types'
 import { CALENDAR_NOTEBOOK_ID, dateKeyFromMs, toDateKey } from '../../lib/calendar'
 import {
   formatDueShort,
   INBOX_NOTEBOOK_ID,
+  isOpen,
   isOverdue,
+  overdueKind,
+  planDate,
   taskSpan,
   type ProjectChoice,
 } from '../../lib/tasks'
@@ -52,7 +55,7 @@ interface CalendarViewProps {
   tasks: Task[]
   todayKey: string
   onToggleTaskDone: (id: string, done: boolean) => void
-  onCreateTask: (dueDate: string, title: string, project: ProjectChoice) => void
+  onCreateTask: (scheduledDate: string, title: string, project: ProjectChoice) => void
   onOpenTask: (id: string) => void
 }
 
@@ -159,25 +162,22 @@ export function CalendarView({
   }, [recentlyActiveNotes, todayKey])
 
   // Marcadores de task por dia do mês visível: 'active' dentro do período da
-  // task, 'due' no dia do prazo (prevalece). Itera só os dias do mês visível.
+  // task, 'due' no dia da entrega (deadline) de task aberta (prevalece).
+  // Itera só os dias do mês visível.
   const taskDayMap = useMemo(() => {
     const map = new Map<string, 'active' | 'due'>()
     const daysInMonth = new Date(year, month + 1, 0).getDate()
-    const spans: Array<{ start: string; end: string; hasDue: boolean }> = []
+    const spans: Array<{ start: string; end: string }> = []
+    const dues = new Set<string>()
     for (const t of tasks) {
       const span = taskSpan(t, todayKey)
-      if (span) spans.push({ ...span, hasDue: t.dueDate !== null })
+      if (span) spans.push(span)
+      if (isOpen(t) && t.dueDate !== null && t.dueDate >= todayKey) dues.add(t.dueDate)
     }
     for (let d = 1; d <= daysInMonth; d++) {
       const key = toDateKey(year, month, d)
-      for (const span of spans) {
-        if (key < span.start || key > span.end) continue
-        if (span.hasDue && key === span.end) {
-          map.set(key, 'due')
-          break
-        }
-        map.set(key, 'active')
-      }
+      if (dues.has(key)) map.set(key, 'due')
+      else if (spans.some((span) => span.start <= key && key <= span.end)) map.set(key, 'active')
     }
     return map
   }, [tasks, todayKey, year, month])
@@ -187,14 +187,15 @@ export function CalendarView({
     [tasks, selectedDay, todayKey]
   )
 
-  // Tasks do dia selecionado: abertas cujo período contém o dia + concluídas
-  // naquele dia.
+  // Tasks do dia selecionado: abertas cujo período contém o dia ou com
+  // entrega no dia + concluídas naquele dia.
   const dayTasks = useMemo(() => {
     if (!selectedDay) return [] as Task[]
     return tasks.filter((t) => {
       if (t.status === 'done') {
         return t.completedAt !== null && dateKeyFromMs(t.completedAt) === selectedDay
       }
+      if (isOpen(t) && t.dueDate === selectedDay) return true
       const span = taskSpan(t, todayKey)
       return span !== null && span.start <= selectedDay && selectedDay <= span.end
     })
@@ -274,6 +275,7 @@ export function CalendarView({
   }
 
   function renderTaskCard(t: Task, extraClass: string) {
+    const plan = planDate(t)
     return (
       <div
         key={t.id}
@@ -291,8 +293,14 @@ export function CalendarView({
           onChange={(e) => onToggleTaskDone(t.id, e.target.checked)}
           aria-label="done"
         />
-        <span className={styles.taskCardTitle}>{t.title}</span>
-        {t.dueDate && <span className={styles.taskCardDue}>{formatDueShort(t.dueDate)}</span>}
+        <span className={styles.taskCardTitle} title={t.title}>{t.title}</span>
+        {plan && <span className={styles.taskCardDue}>{formatDueShort(plan)}</span>}
+        {t.dueDate && t.dueDate !== plan && (
+          <span className={styles.taskCardDeadline} title="Deadline">
+            <Target size={10} aria-hidden />
+            {formatDueShort(t.dueDate)}
+          </span>
+        )}
       </div>
     )
   }
@@ -402,7 +410,14 @@ export function CalendarView({
               {overdueTasks.length > 0 && (
                 <div className={styles.overdueBlock}>
                   <div className={styles.sectionTitle}>Overdue</div>
-                  {overdueTasks.map((t) => renderTaskCard(t, styles.taskCardOverdue))}
+                  {overdueTasks.map((t) =>
+                    renderTaskCard(
+                      t,
+                      overdueKind(t, todayKey) === 'deadline'
+                        ? styles.taskCardOverdue
+                        : styles.taskCardLate
+                    )
+                  )}
                 </div>
               )}
               <div className={styles.sectionTitle}>

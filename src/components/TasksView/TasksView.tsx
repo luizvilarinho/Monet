@@ -1,15 +1,18 @@
+import { Warning } from '@phosphor-icons/react'
 import { useMemo, useState } from 'react'
 import {
-  formatDueShort,
-  groupTasks,
-  INBOX_NOTEBOOK_ID,
-  isOpen,
-  isOverdue,
-  type ProjectChoice,
-  type TaskGroups,
+  computeTaskSummary,
+  filterBySummary,
+  groupTasksBy,
+  type ChecklistProgress,
+  type TaskGroupBy,
+  type TaskSummaryKey,
 } from '../../lib/tasks'
 import type { Notebook, Task } from '../../types'
-import { ProjectPicker } from './ProjectPicker'
+import { SUMMARY_LABEL, TasksHeader, type NewTaskDraft, type TasksMainView } from './TasksHeader'
+import { TaskLine } from './TaskLine'
+import { TaskBatchBar } from './TaskBatchBar'
+import { useTaskKeyboard, type TaskChanges } from './useTaskKeyboard'
 import { useSidebarResize } from '../../hooks/useSidebarResize'
 import styles from './TasksView.module.css'
 
@@ -19,46 +22,56 @@ interface TasksViewProps {
   tasks: Task[]
   notebooks: Notebook[]
   todayKey: string
+  mainView: TasksMainView
+  onMainViewChange: (view: TasksMainView) => void
   width: number
   onWidthChange: (w: number) => void
   // Caderno-projeto filtrado (null = todos).
   filter: string | null
   onFilterChange: (notebookId: string | null) => void
+  // Filtro da faixa de resumo (null = lista agrupada por data).
+  summaryFilter: TaskSummaryKey | null
+  onSummaryFilterChange: (key: TaskSummaryKey | null) => void
+  groupBy: TaskGroupBy
+  onGroupByChange: (mode: TaskGroupBy) => void
+  onConvertPipeTitles: (tasks: Task[]) => void
   selectedTaskId: string | null
   onSelectTask: (task: Task) => void
   // Cria a task (com a nota-corpo) e a abre no editor.
-  onCreateTask: (title: string, project: ProjectChoice) => Promise<void>
+  onCreateTask: (draft: NewTaskDraft) => Promise<void>
   onToggleTask: (id: string, done: boolean) => void
+  onUpdateTasks: (changes: TaskChanges) => void
+  // Progresso do checklist da nota-corpo, por task.
+  checklist: Map<string, ChecklistProgress>
 }
 
-const GROUPS: Array<{ key: keyof TaskGroups; label: string }> = [
-  { key: 'overdue', label: 'Overdue' },
-  { key: 'today', label: 'Today' },
-  { key: 'thisWeek', label: 'This week' },
-  { key: 'later', label: 'Later' },
-  { key: 'noDate', label: 'No date' },
-  { key: 'done', label: 'Done' },
-]
-
-const ALL_PROJECTS = '__all__'
+// Acima disso o grupo "In progress" mostra um aviso discreto.
+const IN_PROGRESS_SOFT_LIMIT = 3
 
 export function TasksView({
   tasks,
   notebooks,
   todayKey,
+  mainView,
+  onMainViewChange,
   width,
   onWidthChange,
   filter,
   onFilterChange,
+  summaryFilter,
+  onSummaryFilterChange,
+  groupBy,
+  onGroupByChange,
+  onConvertPipeTitles,
   selectedTaskId,
   onSelectTask,
   onCreateTask,
   onToggleTask,
+  onUpdateTasks,
+  checklist,
 }: TasksViewProps) {
-  const [newTitle, setNewTitle] = useState('')
-  // null = projeto padrão (o filtrado, ou o Inbox).
-  const [newProject, setNewProject] = useState<ProjectChoice | null>(null)
-  const [doneOpen, setDoneOpen] = useState(false)
+  // Seções recolhíveis (Done/Dropped) abertas pelo usuário.
+  const [openSections, setOpenSections] = useState<Set<string>>(() => new Set())
   const onResizeMouseDown = useSidebarResize(width, onWidthChange)
 
   const notebookNameById = useMemo(
@@ -66,140 +79,145 @@ export function TasksView({
     [notebooks]
   )
 
-  // Filtro: cadernos que têm tasks (mais o filtrado, para o select não ficar
-  // sem opção quando o projeto ainda não tem tasks).
-  const filterNotebooks = useMemo(
-    () => notebooks.filter((nb) => nb.id === filter || tasks.some((t) => t.notebookId === nb.id)),
-    [notebooks, tasks, filter]
+  const projectTasks = useMemo(
+    () => (filter === null ? tasks : tasks.filter((t) => t.notebookId === filter)),
+    [tasks, filter]
   )
-
-  const groups = useMemo(
-    () => groupTasks(filter === null ? tasks : tasks.filter((t) => t.notebookId === filter), todayKey),
-    [tasks, filter, todayKey]
+  const summary = useMemo(() => computeTaskSummary(projectTasks, todayKey), [projectTasks, todayKey])
+  const sections = useMemo(
+    () => groupTasksBy(groupBy, projectTasks, todayKey, notebooks),
+    [groupBy, projectTasks, todayKey, notebooks]
   )
+  const filtered = useMemo(
+    () => (summaryFilter ? filterBySummary(projectTasks, summaryFilter, todayKey) : []),
+    [projectTasks, summaryFilter, todayKey]
+  )
+  const tasksById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks])
+  const orderedIds = useMemo(
+    () =>
+      (summaryFilter
+        ? filtered
+        : sections.flatMap((s) => (s.collapsible && !openSections.has(s.key) ? [] : s.tasks))
+      ).map((t) => t.id),
+    [summaryFilter, filtered, sections, openSections]
+  )
+  const kb = useTaskKeyboard({
+    orderedIds,
+    tasksById,
+    todayKey,
+    onOpen: onSelectTask,
+    onUpdateTasks,
+  })
 
-  const newProjectValue = newProject ?? { notebookId: filter ?? INBOX_NOTEBOOK_ID }
+  function renderTask(t: Task, showDoing: boolean) {
+    return (
+      <TaskLine
+        key={t.id}
+        task={t}
+        todayKey={todayKey}
+        projectName={filter === null && groupBy !== 'project' ? notebookNameById.get(t.notebookId) : undefined}
+        showDoing={showDoing}
+        showGroup={summaryFilter !== null || groupBy !== 'project'}
+        checklist={checklist.get(t.id)}
+        selected={t.id === selectedTaskId}
+        cursor={t.id === kb.cursorId}
+        inSelection={kb.selectedIds.has(t.id)}
+        onSelect={(e) => {
+          if (kb.handleClick(e, t.id)) onSelectTask(t)
+        }}
+        onToggle={(done) => onToggleTask(t.id, done)}
+      />
+    )
+  }
 
-  async function handleCreate() {
-    const title = newTitle.trim()
-    if (!title) return
-    setNewTitle('')
-    setNewProject(null)
-    await onCreateTask(title, newProjectValue)
+  function toggleSection(key: string) {
+    setOpenSections((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
   }
 
   return (
     <aside className={styles.tasksView} style={{ width }}>
       <div className={styles.resizeHandle} onMouseDown={onResizeMouseDown} />
-      <div className={styles.listHeader}>
-        <span className={styles.heading}>Tasks</span>
-        <select
-          className={styles.select}
-          value={filter ?? ALL_PROJECTS}
-          onChange={(e) => onFilterChange(e.target.value === ALL_PROJECTS ? null : e.target.value)}
-          aria-label="filter by project"
-        >
-          <option value={ALL_PROJECTS}>All projects</option>
-          {filterNotebooks.map((nb) => (
-            <option key={nb.id} value={nb.id}>
-              {nb.name || 'unnamed'}
-            </option>
-          ))}
-        </select>
-      </div>
+      <TasksHeader
+        tasks={tasks}
+        notebooks={notebooks}
+        todayKey={todayKey}
+        mainView={mainView}
+        onMainViewChange={onMainViewChange}
+        filter={filter}
+        onFilterChange={onFilterChange}
+        summary={summary}
+        summaryFilter={summaryFilter}
+        onSummaryFilterChange={onSummaryFilterChange}
+        onCreateTask={onCreateTask}
+        groupBy={groupBy}
+        onGroupByChange={onGroupByChange}
+        onConvertPipeTitles={onConvertPipeTitles}
+      />
       <div
-        className={styles.newTaskRow}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') void handleCreate()
-          if (e.key === 'Escape') setNewProject(null)
-        }}
+        className={styles.groups}
+        {...kb.containerProps}
+        aria-label="tasks"
       >
-        <input
-          className={styles.newTask}
-          value={newTitle}
-          onChange={(e) => setNewTitle(e.target.value)}
-          placeholder="New task…"
-          aria-label="new task"
-        />
-        <ProjectPicker notebooks={notebooks} value={newProjectValue} onChange={setNewProject} />
-      </div>
-      <div className={styles.groups}>
-        {GROUPS.map(({ key, label }) => {
-          const list = groups[key]
-          if (list.length === 0) return null
-          const isDone = key === 'done'
-          const collapsed = isDone && !doneOpen
-          return (
-            <section key={key} className={styles.group}>
-              <button
-                type="button"
-                className={`${styles.groupHeader} ${key === 'overdue' ? styles.groupOverdue : ''}`}
-                onClick={isDone ? () => setDoneOpen((v) => !v) : undefined}
-                disabled={!isDone}
-              >
-                {isDone && <span className={styles.caret}>{doneOpen ? '▾' : '▸'}</span>}
-                {label}
-                <span className={styles.count}>{list.length}</span>
-              </button>
-              {!collapsed &&
-                list.map((t) => (
-                  <TaskRow
-                    key={t.id}
-                    task={t}
-                    todayKey={todayKey}
-                    projectName={filter === null ? notebookNameById.get(t.notebookId) : undefined}
-                    selected={t.id === selectedTaskId}
-                    onSelect={() => onSelectTask(t)}
-                    onToggle={(done) => onToggleTask(t.id, done)}
-                  />
-                ))}
-            </section>
-          )
-        })}
+        {summaryFilter ? (
+          <section className={styles.group}>
+            <button type="button" className={styles.groupHeader} disabled>
+              {SUMMARY_LABEL[summaryFilter]}
+              <span className={styles.count}>{filtered.length}</span>
+            </button>
+            {filtered.length === 0 ? (
+              <span className={styles.empty}>no tasks</span>
+            ) : (
+              filtered.map((t) => renderTask(t, summaryFilter !== 'doing'))
+            )}
+          </section>
+        ) : (
+          sections.map((section) => {
+            const { key, label, tasks: list } = section
+            const collapsed = section.collapsible && !openSections.has(key)
+            return (
+              <section key={key} className={styles.group}>
+                <button
+                  type="button"
+                  className={`${styles.groupHeader} ${section.tone === 'overdue' ? styles.groupOverdue : ''}`}
+                  onClick={section.collapsible ? () => toggleSection(key) : undefined}
+                  disabled={!section.collapsible}
+                >
+                  {section.collapsible && <span className={styles.caret}>{collapsed ? '▸' : '▾'}</span>}
+                  {label}
+                  <span className={styles.count}>{list.length}</span>
+                  {key === 'inProgress' && list.length > IN_PROGRESS_SOFT_LIMIT && (
+                    <span
+                      className={styles.groupWarning}
+                      title="More than 3 in progress — consider finishing before starting more"
+                    >
+                      <Warning size={11} aria-hidden />
+                    </span>
+                  )}
+                </button>
+                {!collapsed &&
+                  (section.subgroups
+                    ? section.subgroups.map((g) => (
+                        <div key={g.label ?? ''} className={styles.subgroup}>
+                          {g.label !== null && (
+                            <span className={styles.subgroupLabel} title={g.label}>
+                              {g.label}
+                            </span>
+                          )}
+                          {g.tasks.map((t) => renderTask(t, true))}
+                        </div>
+                      ))
+                    : list.map((t) => renderTask(t, key !== 'inProgress' && key !== 'doing')))}
+              </section>
+            )
+          })
+        )}
+        <TaskBatchBar kb={kb} todayKey={todayKey} />
       </div>
     </aside>
-  )
-}
-
-interface TaskRowProps {
-  task: Task
-  todayKey: string
-  projectName?: string
-  selected: boolean
-  onSelect: () => void
-  onToggle: (done: boolean) => void
-}
-
-function TaskRow({ task, todayKey, projectName, selected, onSelect, onToggle }: TaskRowProps) {
-  const closed = !isOpen(task)
-  return (
-    <div
-      className={`${styles.row} ${selected ? styles.rowSelected : ''}`}
-      onClick={onSelect}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') onSelect()
-      }}
-    >
-      <input
-        type="checkbox"
-        className={styles.checkbox}
-        checked={task.status === 'done'}
-        onClick={(e) => e.stopPropagation()}
-        onChange={(e) => onToggle(e.target.checked)}
-        aria-label="done"
-      />
-      <span className={`${styles.rowTitle} ${closed ? styles.rowTitleClosed : ''}`}>
-        {task.title}
-      </span>
-      {task.status === 'doing' && <span className={styles.doingBadge}>doing</span>}
-      {projectName && <span className={styles.rowProject}>{projectName}</span>}
-      {task.dueDate && (
-        <span className={`${styles.rowDue} ${isOverdue(task, todayKey) ? styles.rowDueOverdue : ''}`}>
-          {formatDueShort(task.dueDate)}
-        </span>
-      )}
-    </div>
   )
 }

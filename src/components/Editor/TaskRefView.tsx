@@ -1,5 +1,5 @@
 import { NodeViewWrapper, type NodeViewProps } from '@tiptap/react'
-import { formatDueShort, isOpen, isOverdue } from '../../lib/tasks'
+import { formatDueShort, isOpen, overdueKind, planDate } from '../../lib/tasks'
 import { useTasksContext } from './TasksContext'
 import styles from './TaskRef.module.css'
 
@@ -11,9 +11,11 @@ export function TaskRefView({ node, selected }: NodeViewProps) {
   // Task inexistente (excluída): não renderiza nada; o item vira checkbox comum.
   if (!task) return <NodeViewWrapper as="span" />
 
+  const late = overdueKind(task, todayKey)
+  const plan = planDate(task)
   const className = [
     styles.pill,
-    isOverdue(task, todayKey) ? styles.overdue : '',
+    late === 'deadline' ? styles.overdue : late === 'plan' ? styles.late : '',
     isOpen(task) ? '' : styles.closed,
     selected ? styles.selected : '',
   ].join(' ')
@@ -26,7 +28,7 @@ export function TaskRefView({ node, selected }: NodeViewProps) {
       title={onOpenTask ? 'Open in Tasks' : undefined}
       onClick={() => onOpenTask?.(id)}
     >
-      {task.dueDate ? formatDueShort(task.dueDate) : 'task'}
+      {plan ? formatDueShort(plan) : 'task'}
     </NodeViewWrapper>
   )
 }

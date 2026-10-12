@@ -26,37 +26,6 @@
   opacity: 0.4;
 }
 
-.listHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.heading {
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
-
-.select,
-.newTask {
-  background: var(--surface-1);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  color: var(--text-primary);
-  font-size: 13px;
-  font-family: inherit;
-  padding: 5px 7px;
-  outline: none;
-}
-
-.select:focus,
-.newTask:focus {
-  border-color: var(--accent-task);
-}
-
 .groups {
   flex: 1;
   min-height: 0;
@@ -105,79 +74,33 @@
   font-size: 11px;
 }
 
-.row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  border-radius: 4px;
-  border-left: 2px solid transparent;
-  cursor: pointer;
+.groupWarning {
+  display: inline-flex;
+  color: var(--accent-late);
+}
+
+.empty {
+  padding: 2px 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.groups:focus {
   outline: none;
 }
 
-.row:hover {
-  background: var(--surface-1);
-}
-
-.rowSelected {
-  background: var(--surface-1);
-  border-left-color: var(--accent-task);
-}
-
-.checkbox {
-  flex-shrink: 0;
-  accent-color: var(--accent-task);
-  cursor: pointer;
-  margin: 0;
-}
-
-.rowTitle {
-  flex: 1;
-  min-width: 0;
-  font-size: 13px;
-  color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.rowTitleClosed {
-  color: var(--text-muted);
-  text-decoration: line-through;
-}
-
-.doingBadge {
-  flex-shrink: 0;
-  font-size: 10px;
-  padding: 0 5px;
-  border-radius: 8px;
-  border: 1px solid var(--status-doing);
-  color: var(--status-doing);
-}
-
-.rowProject {
-  flex-shrink: 0;
-  max-width: 80px;
-  font-size: 11px;
-  color: var(--text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.rowDue {
-  flex-shrink: 0;
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-
-.rowDueOverdue {
-  color: var(--accent-danger);
-}
-
-.newTaskRow {
+.subgroup {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
+}
+
+.subgroupLabel {
+  padding: 4px 8px 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

@@ -28,6 +28,11 @@ export interface Note {
 
 export type TaskStatus = 'todo' | 'doing' | 'done' | 'dropped'
 
+export type TaskRecurrence =
+  | { freq: 'daily' }
+  | { freq: 'weekly'; days: number[] } // 0 = domingo … 6 = sábado, ordenado, ≥ 1 dia
+  | { freq: 'monthly'; day?: number } // mesmo dia do mês da data-âncora; `day` guarda o dia original (31 → 28 → 31)
+
 // `dueDate` é chave de dia local `YYYY-MM-DD`; os timestamps são epoch ms.
 export interface Task {
   id: string
@@ -37,7 +42,16 @@ export interface Task {
   // desse caderno).
   notebookId: string
   noteId: string | null
+  // `dueDate` = deadline (entrega); `scheduledDate` = quando vou fazer.
   dueDate: string | null
+  scheduledDate: string | null
+  // Agrupamento livre dentro do projeto (ex.: o sistema em "sistema | ação").
+  group: string | null
+  // Prioridade leve: ordena primeiro dentro do grupo.
+  important: boolean
+  recurrence: TaskRecurrence | null
+  // Ocorrência já gerada ao concluir esta task (evita gerar outra).
+  recurrenceNextId: string | null
   createdAt: number
   updatedAt: number
   completedAt: number | null
@@ -170,6 +184,8 @@ export interface CommandDef {
   takesQuery: boolean
   usesSearch?: boolean
   calendarOnly?: boolean
+  // Tratado pelo próprio editor (não chama a IA).
+  local?: boolean
 }
 
 export interface CommandExecutionRequest {

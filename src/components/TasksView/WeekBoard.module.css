@@ -1,0 +1,148 @@
+.board {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  background: var(--bg-app);
+}
+
+.top {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 640px;
+}
+
+.weekNav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.navBtn,
+.thisWeek {
+  display: inline-flex;
+  align-items: center;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.navBtn:hover,
+.thisWeek:hover {
+  color: var(--text-primary);
+}
+
+.thisWeekActive {
+  border-color: var(--accent-task);
+}
+
+.range {
+  margin-left: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.columns {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  gap: 8px;
+  overflow-x: auto;
+}
+
+.column {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 6px;
+  background: var(--surface-1);
+  border: 1px solid transparent;
+}
+
+.columnToday {
+  border-color: var(--accent-task);
+}
+
+.columnOver {
+  background: var(--surface-2);
+  border-color: var(--accent-task);
+  border-style: dashed;
+}
+
+.columnHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.columnToday .columnHeader {
+  color: var(--accent-task);
+}
+
+.columnOverdue .columnHeader {
+  color: var(--accent-danger);
+}
+
+.columnCount {
+  color: var(--text-muted);
+}
+
+.rail {
+  padding: 6px 0;
+  align-items: center;
+}
+
+.rail .columnHeader {
+  writing-mode: vertical-rl;
+  padding: 4px 0;
+}
+
+.cards {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.card {
+  border-radius: 4px;
+  background: var(--bg-app);
+  cursor: grab;
+}
+
+.cardDragging {
+  opacity: 0.35;
+}
+
+.cardDone {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.board:focus {
+  outline: none;
+}
+
+/* Kanban: concluídas da semana esmaecidas, mas ainda arrastáveis. */
+.cardFaded {
+  opacity: 0.55;
+}

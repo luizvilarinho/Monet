@@ -13,6 +13,7 @@ import type { AnyExtension } from '@tiptap/core'
 import { EmbedBlock } from './EmbedBlock'
 import { ToggleBlock } from './ToggleBlock'
 import { LinkedNoteBlock } from './LinkedNoteBlock'
+import { TasksQueryBlock } from './TasksQueryBlock'
 import { ReminderChip } from './ReminderChip'
 import { LinkedTaskItem } from './LinkedTaskItem'
 import { TaskRef } from './TaskRef'
@@ -90,7 +91,7 @@ const ParagraphWithBlankLines = Paragraph.extend({
 
 // Conjunto base de extensões compartilhado entre o Editor principal e a
 // janela keep. CRÍTICO: os dois editores precisam registrar os MESMOS nodes
-// custom (embed/toggle/linked-note/reminder-chip/task-ref) — um editor sem eles
+// custom (embed/toggle/linked-note/reminder-chip/task-ref/tasks-query) — um editor sem eles
 // descartaria esses nodes no parse e o autosave destruiria o conteúdo.
 // Qualquer node novo deve entrar aqui, não inline em um dos editores.
 export function buildBaseExtensions(placeholder: string): AnyExtension[] {
@@ -125,6 +126,7 @@ export function buildBaseExtensions(placeholder: string): AnyExtension[] {
     EmbedBlock,
     ToggleBlock,
     LinkedNoteBlock,
+    TasksQueryBlock,
     ReminderChip,
     TaskRef,
     TaskStatus,
