@@ -5,6 +5,7 @@ interface ConfirmOptions {
   title?: string
   confirmLabel?: string
   cancelLabel?: string
+  destructive?: boolean
 }
 
 interface ConfirmState {
@@ -39,6 +40,7 @@ export function useConfirm() {
       message={state?.message ?? ''}
       confirmLabel={state?.options.confirmLabel}
       cancelLabel={state?.options.cancelLabel}
+      destructive={state?.options.destructive}
       onConfirm={handleConfirm}
       onCancel={handleCancel}
     />

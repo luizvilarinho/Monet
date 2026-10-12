@@ -405,7 +405,8 @@
   white-space: nowrap;
 }
 
-.subjectDelete {
+.subjectDelete,
+.subjectMove {
   flex-shrink: 0;
   width: 16px;
   height: 16px;
@@ -423,8 +424,15 @@
 }
 
 .subjectRow:hover .subjectDelete,
-.subjectDelete:focus-visible {
+.subjectDelete:focus-visible,
+.subjectRow:hover .subjectMove,
+.subjectMove:focus-visible {
   opacity: 1;
+}
+
+.subjectMove:hover {
+  color: var(--accent, #7c6af5);
+  background: rgba(124, 106, 245, 0.1);
 }
 
 .subjectDelete:hover {

@@ -629,6 +629,11 @@
   overflow-x: auto;
   margin: 0.7em 0;
 }
+/* Tabela como 1º bloco: reserva espaço para a barra de tabela (ancorada
+   acima do <table>) não ser cortada pelo topo do container de scroll. */
+.proseEditor > :global(.tableWrapper:first-child) {
+  margin-top: 32px;
+}
 .proseEditor :global(.resize-cursor) {
   cursor: col-resize;
 }

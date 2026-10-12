@@ -473,19 +473,12 @@ export class TauriStorage implements StorageAdapter {
 
   async deleteSubject(id: string): Promise<void> {
     const db = await this.db()
-    await db.execute('BEGIN')
-    try {
-      await db.execute(
-        'DELETE FROM ai_responses WHERE note_id IN (SELECT id FROM notes WHERE subject_id = $1)',
-        [id]
-      )
-      await db.execute('DELETE FROM notes WHERE subject_id = $1', [id])
-      await db.execute('DELETE FROM subjects WHERE id = $1', [id])
-      await db.execute('COMMIT')
-    } catch (err) {
-      await db.execute('ROLLBACK')
-      throw err
-    }
+    await db.execute(
+      'DELETE FROM ai_responses WHERE note_id IN (SELECT id FROM notes WHERE subject_id = $1)',
+      [id]
+    )
+    await db.execute('DELETE FROM notes WHERE subject_id = $1', [id])
+    await db.execute('DELETE FROM subjects WHERE id = $1', [id])
     this.scheduleCheckpoint()
   }
 

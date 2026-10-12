@@ -71,3 +71,18 @@
 .btnConfirm:hover {
   background: #e74c3c;
 }
+
+.btnPrimary {
+  background: var(--accent, #7c6af5);
+  border: 1px solid transparent;
+  color: #fff;
+  padding: 7px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.btnPrimary:hover {
+  opacity: 0.85;
+}

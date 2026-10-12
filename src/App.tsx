@@ -99,6 +99,7 @@ import type {
   AiSource,
   CommandExecutionRequest,
   Note,
+  Notebook,
   Task,
 } from './types'
 
@@ -269,6 +270,14 @@ function buildUserMessage(
   return parts.join('\n')
 }
 
+// Caderno de mesmo nome (sem diferenciar maiúsculas); o Calendar nunca conta.
+function findNotebookByName(notebooks: Notebook[], name: string): Notebook | undefined {
+  const key = name.trim().toLowerCase()
+  return notebooks.find(
+    (nb) => nb.id !== CALENDAR_NOTEBOOK_ID && nb.name.trim().toLowerCase() === key
+  )
+}
+
 function App() {
   const {
     notebooks,
@@ -435,10 +444,7 @@ function App() {
       }
       const name = choice.newName.trim()
       if (!name) return ensureInbox()
-      const existing = notebooksRef.current.find(
-        (nb) =>
-          nb.id !== CALENDAR_NOTEBOOK_ID && nb.name.trim().toLowerCase() === name.toLowerCase()
-      )
+      const existing = findNotebookByName(notebooksRef.current, name)
       if (existing) return existing.id
       const nb = await createNotebook(name)
       setNotebookOrder((prev) => {
@@ -495,6 +501,7 @@ function App() {
 
   // Falha na criação (caderno, subject ou nota-corpo) vira banner e `[]`.
   const [taskCreateError, setTaskCreateError] = useState<string | null>(null)
+  const [subjectConvertError, setSubjectConvertError] = useState<string | null>(null)
   const createProjectTasks = useCallback(
     async (
       inputs: Array<{ title: string; status?: Task['status']; dueDate?: string | null; sourceNoteId?: string | null }>,
@@ -1345,6 +1352,77 @@ function App() {
     if (childNotes.some((n) => n.id === activeId)) setActiveId(null)
   }
 
+  // Subject → caderno (inverso do handleMoveNotebook): as notas do subject vão
+  // para a raiz de um caderno com o nome dele — o de mesmo nome, se existir
+  // (mesma regra do resolveProject), ou um novo, que herda a visibilidade de
+  // RAG da origem. As notas são gravadas ANTES do deleteSubject, que
+  // cascade-deleta as notas do subject; falha em qualquer gravação aborta sem
+  // apagar o subject.
+  async function handleTurnSubjectIntoNotebook(id: string) {
+    const subject = subjects.find((s) => s.id === id)
+    if (!subject || isTasksSubject(subject)) return
+    const sourceId = subject.notebookId
+    if (sourceId === CALENDAR_NOTEBOOK_ID) return
+    const name = subject.name.trim() || 'unnamed'
+    let destId = findNotebookByName(notebooks, name)?.id
+    if (!destId) {
+      const nb = await createNotebook(name)
+      destId = nb.id
+      if (disabledNotebookIds.has(sourceId)) await setNotebookIndexEnabled(nb.id, false)
+      setNotebookOrder((prev) => {
+        const i = prev.indexOf(sourceId)
+        const next = i >= 0 ? [...prev.slice(0, i + 1), nb.id, ...prev.slice(i + 1)] : [nb.id, ...prev]
+        saveOrder('monet:notebook-order', next)
+        return next
+      })
+    }
+    const childNotes = notes.filter((n) => n.subjectId === id)
+    // Nota-corpo de task reatribuída a este subject volta ao subject "Tasks"
+    // do destino, junto com a task.
+    const taskByNoteId = new Map(tasks.flatMap((t) => (t.noteId ? [[t.noteId, t] as const] : [])))
+    const moved: Note[] = []
+    let failed = false
+    try {
+      for (const n of childNotes) {
+        const task = taskByNoteId.get(n.id)
+        if (task) {
+          await relocateTask(task, destId)
+          continue
+        }
+        const next = { ...n, notebookId: destId, subjectId: null, updatedAt: Date.now() }
+        await storage.saveNote(next)
+        moved.push(next)
+      }
+    } catch (err) {
+      console.error('failed to move subject notes', err)
+      failed = true
+    }
+    // Leva ao state o que já foi gravado (useNotes.save engole erro, por isso
+    // a gravação de verdade acima é feita direto no storage).
+    await Promise.all(moved.map((n) => saveNote(n)))
+    if (failed) {
+      setSubjectConvertError('Failed to turn subject into notebook. The subject was kept.')
+      return
+    }
+    setSubjectConvertError(null)
+    await removeSubject(id)
+    if (destId === sourceId) {
+      if (activeSubjectId === id) setActiveSubjectId(null)
+      return
+    }
+    setTasksViewOpen(false)
+    setActiveNotebookId(destId)
+    setActiveSubjectId(null)
+    if (!childNotes.some((n) => n.id === activeId)) {
+      const movedIds = new Set(moved.map((n) => n.id))
+      const destNotes = [
+        ...moved,
+        ...notes.filter((n) => n.notebookId === destId && !movedIds.has(n.id) && !isTaskBodyNote(n)),
+      ]
+      setActiveId(applyOrder(destNotes, noteOrder)[0]?.id ?? null)
+    }
+  }
+
   async function handleRenameSubject(id: string, name: string) {
     const subject = subjects.find((s) => s.id === id)
     if (!subject) return
@@ -1681,9 +1759,9 @@ function App() {
         previewMode={previewMode}
         onTogglePreview={() => setPreviewMode((v) => !v)}
       />
-      {(noteSaveError || notebookSaveError || subjectSaveError || tasksSaveError || taskCreateError) && (
+      {(noteSaveError || notebookSaveError || subjectSaveError || tasksSaveError || taskCreateError || subjectConvertError) && (
         <div className="saveErrorBanner" role="alert">
-          {noteSaveError || notebookSaveError || subjectSaveError || tasksSaveError || taskCreateError}
+          {noteSaveError || notebookSaveError || subjectSaveError || tasksSaveError || taskCreateError || subjectConvertError}
         </div>
       )}
       {activeMode === 'library' ? (
@@ -1760,6 +1838,7 @@ function App() {
           onSelectSubject={handleSelectSubject}
           onCreateSubject={handleCreateSubject}
           onDeleteSubject={handleDeleteSubject}
+          onTurnSubjectIntoNotebook={handleTurnSubjectIntoNotebook}
           onRenameSubject={handleRenameSubject}
           onReorderSubjects={handleReorderSubjects}
         />}

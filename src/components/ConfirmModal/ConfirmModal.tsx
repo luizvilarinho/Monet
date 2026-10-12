@@ -7,6 +7,7 @@ export interface ConfirmModalProps {
   message: string
   confirmLabel?: string
   cancelLabel?: string
+  destructive?: boolean
   onConfirm: () => void
   onCancel: () => void
 }
@@ -17,6 +18,7 @@ export function ConfirmModal({
   message,
   confirmLabel = 'delete',
   cancelLabel = 'cancel',
+  destructive = true,
   onConfirm,
   onCancel,
 }: ConfirmModalProps) {
@@ -31,7 +33,7 @@ export function ConfirmModal({
           <button className={styles.btnCancel} onClick={onCancel} type="button">
             {cancelLabel}
           </button>
-          <button className={styles.btnConfirm} onClick={onConfirm} type="button" autoFocus>
+          <button className={destructive ? styles.btnConfirm : styles.btnPrimary} onClick={onConfirm} type="button" autoFocus>
             {confirmLabel}
           </button>
         </div>

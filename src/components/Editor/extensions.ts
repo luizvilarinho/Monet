@@ -17,6 +17,8 @@ import { ReminderChip } from './ReminderChip'
 import { LinkedTaskItem } from './LinkedTaskItem'
 import { TaskRef } from './TaskRef'
 import { TaskStatus } from './TaskStatus'
+import { MonetClipboard } from './MonetClipboard'
+import { isBlankParagraph } from './blankParagraph'
 
 // Custom inline-code mark — força serialização com um único backtick
 // (defaultMarkdownSerializer.marks.code usa `backticksFor` que adiciona mais
@@ -31,15 +33,6 @@ const InlineCode = Code.extend({
     }
   },
 })
-
-// Parágrafo em branco: vazio ou contendo apenas hardBreaks. O segundo caso é
-// a forma round-tripped do primeiro (ver comentário abaixo).
-function isBlankParagraph(node: ProseMirrorNode): boolean {
-  for (let i = 0; i < node.childCount; i++) {
-    if (node.child(i).type.name !== 'hardBreak') return false
-  }
-  return true
-}
 
 // Markdown puro não representa parágrafo vazio: o serializer padrão emite
 // nada e a linha em branco some no próximo parse (ex.: linha em branco criada
@@ -127,7 +120,7 @@ export function buildBaseExtensions(placeholder: string): AnyExtension[] {
       linkify: false,
       breaks: false,
       transformPastedText: true,
-      transformCopiedText: true,
+      transformCopiedText: false,
     }),
     EmbedBlock,
     ToggleBlock,
@@ -135,5 +128,6 @@ export function buildBaseExtensions(placeholder: string): AnyExtension[] {
     ReminderChip,
     TaskRef,
     TaskStatus,
+    MonetClipboard,
   ]
 }

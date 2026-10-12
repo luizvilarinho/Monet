@@ -15,6 +15,7 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import {
   ArrowRight,
+  ArrowSquareOut,
   Books,
   CalendarBlank,
   DotsSixVertical,
@@ -172,6 +173,7 @@ interface SortableSubjectItemProps {
   editing: { id: string; value: string } | null
   onSelect: (id: string) => void
   onDelete: (id: string) => void
+  onTurnIntoNotebook: (id: string) => void
   onStartEdit: (id: string, value: string) => void
   onCommitEdit: () => void
   onCancelEdit: () => void
@@ -185,6 +187,7 @@ function SortableSubjectItem({
   editing,
   onSelect,
   onDelete,
+  onTurnIntoNotebook,
   onStartEdit,
   onCommitEdit,
   onCancelEdit,
@@ -254,6 +257,18 @@ function SortableSubjectItem({
       )}
       {!isTasks && editing?.id !== subject.id && (
         <button
+          className={styles.subjectMove}
+          onClick={(e) => { e.stopPropagation(); onTurnIntoNotebook(subject.id) }}
+          onDoubleClick={(e) => e.stopPropagation()}
+          aria-label={`turn subject ${subject.name || 'unnamed'} into a notebook`}
+          title="Turn into notebook"
+          type="button"
+        >
+          <ArrowSquareOut size={11} aria-hidden />
+        </button>
+      )}
+      {!isTasks && editing?.id !== subject.id && (
+        <button
           className={styles.subjectDelete}
           onClick={(e) => { e.stopPropagation(); onDelete(subject.id) }}
           onDoubleClick={(e) => e.stopPropagation()}
@@ -292,6 +307,7 @@ export interface NotebookListProps {
   onSelectSubject: (id: string | null) => void
   onCreateSubject: () => void
   onDeleteSubject: (id: string) => void
+  onTurnSubjectIntoNotebook: (id: string) => void
   onRenameSubject: (id: string, name: string) => void
   onReorderSubjects: (newOrder: string[]) => void
   width?: number
@@ -324,6 +340,7 @@ export function NotebookList({
   onSelectSubject,
   onCreateSubject,
   onDeleteSubject,
+  onTurnSubjectIntoNotebook,
   onRenameSubject,
   onReorderSubjects,
   width = 180,
@@ -397,6 +414,14 @@ export function NotebookList({
       { title: 'Delete subject' }
     )
     if (ok) onDeleteSubject(id)
+  }
+
+  async function handleTurnSubjectIntoNotebook(id: string, name: string) {
+    const ok = await confirm(
+      `Turn subject "${name || 'unnamed'}" into a notebook? Its notes move to a notebook with the same name (merged into it if one already exists).`,
+      { title: 'Turn into notebook', confirmLabel: 'Turn into notebook', destructive: false }
+    )
+    if (ok) onTurnSubjectIntoNotebook(id)
   }
 
   function commitEdit() {
@@ -585,6 +610,7 @@ export function NotebookList({
                                           editing={subjectEditing}
                                           onSelect={onSelectSubject}
                                           onDelete={(id) => handleDeleteSubject(id, subject.name)}
+                                          onTurnIntoNotebook={(id) => handleTurnSubjectIntoNotebook(id, subject.name)}
                                           onStartEdit={(id, value) => setSubjectEditing({ id, value })}
                                           onCommitEdit={commitSubjectEdit}
                                           onCancelEdit={() => setSubjectEditing(null)}

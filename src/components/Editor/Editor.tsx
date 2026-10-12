@@ -181,6 +181,13 @@ export function Editor({
   const addTaskItemsRef = useRef<EligibleTaskItem[]>([])
   const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  // O BubbleMenu precisa do elemento de scroll (.body) como scrollTarget; o
+  // ref é null no primeiro render, então o elemento também vai para o state.
+  const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null)
+  const setScrollNode = useCallback((el: HTMLDivElement | null) => {
+    scrollRef.current = el
+    setScrollEl(el)
+  }, [])
   const titleRef = useRef<HTMLInputElement>(null)
   const dateInputRef = useRef<HTMLInputElement>(null)
 
@@ -882,7 +889,7 @@ export function Editor({
         )}
       </div>
       <div className={styles.bodyWrap}>
-        <div className={styles.body} ref={scrollRef}>
+        <div className={styles.body} ref={setScrollNode}>
           <SearchInNote
             editor={editor}
             visible={searchVisible}
@@ -991,6 +998,7 @@ export function Editor({
       {relatedContent}
       {editor && <FormattingToolbar
           editor={editor as TiptapEditor}
+          scrollEl={scrollEl}
           onAskAi={onAskAi}
           onAddToTasks={onCreateTasks ? handleAddToTasks : undefined}
         />}

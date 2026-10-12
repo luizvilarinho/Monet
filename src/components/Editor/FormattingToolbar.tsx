@@ -1,6 +1,6 @@
 import { BubbleMenu } from '@tiptap/react/menus'
 import { useEditorState } from '@tiptap/react'
-import type { Editor } from '@tiptap/core'
+import { findParentNodeClosestToPos, type Editor } from '@tiptap/core'
 import { useEffect, useState } from 'react'
 import styles from './FormattingToolbar.module.css'
 import {
@@ -14,6 +14,8 @@ import { findEligibleTaskItems } from './TaskStatus'
 
 interface Props {
   editor: Editor
+  // Container de scroll do editor (.body): a barra se reposiciona no scroll dele.
+  scrollEl: HTMLElement | null
   // "Ask AI": envia o trecho selecionado para o chat do caderno.
   onAskAi?: (text: string) => void
   // "Add to Tasks": promove os itens de checklist selecionados a tasks.
@@ -21,6 +23,27 @@ interface Props {
 }
 
 const PLUGIN_KEY = 'monetFormattingMenu'
+
+// Com o cursor numa tabela, a barra ancora no <table> inteiro (acima dele) em
+// vez do cursor, para não cobrir as células. Fora de tabela retorna null e o
+// BubbleMenu usa a seleção como âncora (comportamento padrão).
+function tableAnchor(editor: Editor) {
+  if (!editor.isActive('table')) return null
+  const found = findParentNodeClosestToPos(
+    editor.state.selection.$anchor,
+    (node) => node.type.name === 'table'
+  )
+  if (!found) return null
+  const dom = editor.view.nodeDOM(found.pos)
+  if (!(dom instanceof HTMLElement)) return null
+  // Com resizable: true o nodeDOM é o div.tableWrapper do TableView.
+  const table = dom.tagName === 'TABLE' ? dom : dom.querySelector('table')
+  if (!table) return null
+  return {
+    getBoundingClientRect: () => table.getBoundingClientRect(),
+    getClientRects: () => [table.getBoundingClientRect()],
+  }
+}
 
 function renderGroups(
   editor: Editor,
@@ -53,7 +76,7 @@ function renderGroups(
   ))
 }
 
-export function FormattingToolbar({ editor, onAskAi, onAddToTasks }: Props) {
+export function FormattingToolbar({ editor, scrollEl, onAskAi, onAddToTasks }: Props) {
   const [hiddenByEscape, setHiddenByEscape] = useState(false)
 
   useEffect(() => {
@@ -87,6 +110,14 @@ export function FormattingToolbar({ editor, onAskAi, onAddToTasks }: Props) {
     },
   })
 
+  // Ao entrar/sair da tabela o plugin já posicionou a barra (cursor sem
+  // seleção atualiza na hora) com as options antigas; o BubbleMenu (filho)
+  // aplica as novas no effect dele, que roda antes deste — reposiciona aqui.
+  useEffect(() => {
+    if (editor.isDestroyed) return
+    editor.view.dispatch(editor.state.tr.setMeta(PLUGIN_KEY, 'updatePosition'))
+  }, [editor, inTable])
+
   const showAddToTasks = Boolean(onAddToTasks) && eligibleCount > 0
 
   const formattingGroups = inTable
@@ -104,7 +135,23 @@ export function FormattingToolbar({ editor, onAskAi, onAddToTasks }: Props) {
         const tbl = ed.isActive('table')
         return sel || tbl
       }}
-      options={{ placement: 'top', offset: 8 }}
+      getReferencedVirtualElement={() => tableAnchor(editor)}
+      options={
+        inTable
+          ? {
+              placement: 'top-start',
+              offset: 6,
+              flip: false,
+              shift: { crossAxis: true, padding: 4 },
+              // Esconde a barra quando a tabela sai inteira da área visível
+              // (o shift crossAxis a prenderia sobre outro conteúdo).
+              hide: true,
+              scrollTarget: scrollEl ?? undefined,
+            }
+          : // flip/shift/hide explícitos: o plugin mescla as options, então os
+            // valores do modo tabela persistiriam ao sair dela.
+            { placement: 'top', offset: 8, flip: {}, shift: {}, hide: false, scrollTarget: scrollEl ?? undefined }
+      }
     >
       <div
         className={styles.toolbar}
