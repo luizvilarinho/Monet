@@ -14,8 +14,13 @@ import {
   type ContentBlock,
   type StreamToolCallPayload,
 } from '../lib/openrouter'
-import type { AiModel, Notebook, Task } from '../types'
-import { queryTasksText, type ChecklistProgress, type TasksQuery } from '../lib/tasks'
+import type { AiModel, Notebook, Task, TaskStatusDef } from '../types'
+import {
+  BUILTIN_STATUS_DEFS,
+  queryTasksText,
+  type ChecklistProgress,
+  type TasksQuery,
+} from '../lib/tasks'
 import { formatSearchResults, hasTavilyKey, webSearch, type SearchResult } from '../lib/search'
 import { runDeepResearch, type DeepResearchPhase } from '../lib/deepResearch'
 import { enqueueLibrarian } from '../lib/librarian'
@@ -226,6 +231,8 @@ export interface TasksSnapshot {
   todayKey: string
   // Progresso do checklist da nota-corpo de cada task.
   checklist: Map<string, ChecklistProgress>
+  // Registro de status (enum da tool e nomes nas respostas).
+  statuses: TaskStatusDef[]
 }
 
 export type ConversationLocation =
@@ -2546,7 +2553,10 @@ export function useChat(
                 },
                 status: {
                   type: 'string',
-                  enum: ['todo', 'doing', 'done', 'dropped'],
+                  // Built-ins pelo id; custom pelo nome (lista dinâmica).
+                  enum: (getTasksSnapshotRef.current?.().statuses ?? BUILTIN_STATUS_DEFS).map((s) =>
+                    s.builtin ? s.id : s.name
+                  ),
                 },
               },
             },
@@ -2658,7 +2668,8 @@ export function useChat(
                       snapshot.notebooks.filter((n) => !disabled.has(n.id)),
                       query,
                       snapshot.todayKey,
-                      snapshot.checklist
+                      snapshot.checklist,
+                      snapshot.statuses
                     )
                   } catch (err) {
                     console.warn('notesIndexGetDisabledNotebooks failed:', err)

@@ -7,6 +7,8 @@ import type {
   Notebook,
   Subject,
   Task,
+  TaskStatusDef,
+  TaskView,
 } from '../types'
 import type { StorageAdapter } from './index'
 
@@ -16,6 +18,9 @@ export class BrowserStorage implements StorageAdapter {
   }
   async saveNotebook(_notebook: Notebook): Promise<void> {
     throw new Error('BrowserStorage.saveNotebook not implemented')
+  }
+  async setNotebookColor(_id: string, _color: string | null): Promise<void> {
+    throw new Error('BrowserStorage.setNotebookColor not implemented')
   }
   async deleteNotebook(_id: string): Promise<void> {
     throw new Error('BrowserStorage.deleteNotebook not implemented')
@@ -107,6 +112,24 @@ export class BrowserStorage implements StorageAdapter {
   }
   async deleteTask(_id: string): Promise<void> {
     throw new Error('BrowserStorage.deleteTask not implemented')
+  }
+  async getTaskStatuses(): Promise<TaskStatusDef[]> {
+    throw new Error('BrowserStorage.getTaskStatuses not implemented')
+  }
+  async saveTaskStatus(_status: TaskStatusDef): Promise<void> {
+    throw new Error('BrowserStorage.saveTaskStatus not implemented')
+  }
+  async deleteTaskStatus(_id: string): Promise<void> {
+    throw new Error('BrowserStorage.deleteTaskStatus not implemented')
+  }
+  async getTaskViews(): Promise<TaskView[]> {
+    throw new Error('BrowserStorage.getTaskViews not implemented')
+  }
+  async saveTaskView(_view: TaskView): Promise<void> {
+    throw new Error('BrowserStorage.saveTaskView not implemented')
+  }
+  async deleteTaskView(_id: string): Promise<void> {
+    throw new Error('BrowserStorage.deleteTaskView not implemented')
   }
 
   async getResponses(_noteId: string): Promise<AiResponse[]> {

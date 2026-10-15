@@ -4,17 +4,23 @@ import { dateKeyFromMs } from '../../lib/calendar'
 import {
   addDaysKey,
   computeTaskSummary,
+  filterTasksForView,
   formatDueShort,
+  isDone,
+  isInProgress,
   isOpen,
   isOverdue,
   planDate,
+  snoozeDate,
   startOfWeekKey,
   weekDayKeys,
   type ChecklistProgress,
   type TaskSummaryKey,
 } from '../../lib/tasks'
 import type { Notebook, Task } from '../../types'
-import { TasksHeader, type NewTaskDraft, type TasksMainView } from './TasksHeader'
+import { TasksHeader, type NewTaskDraft } from './TasksHeader'
+import { useTasksEnv } from './TasksEnv'
+import type { TasksMainView } from './views'
 import { TaskLine } from './TaskLine'
 import { TaskBatchBar } from './TaskBatchBar'
 import { useCardDrag } from './useCardDrag'
@@ -61,10 +67,9 @@ interface Column {
 // Important primeiro, depois `doing`, depois a ordem manual.
 function byBoardOrder(a: Task, b: Task): number {
   if (a.important !== b.important) return a.important ? -1 : 1
-  if (a.status !== b.status) {
-    if (a.status === 'doing') return -1
-    if (b.status === 'doing') return 1
-  }
+  const ai = isInProgress(a)
+  const bi = isInProgress(b)
+  if (ai !== bi) return ai ? -1 : 1
   return a.sortOrder - b.sortOrder
 }
 
@@ -93,9 +98,14 @@ export function WeekBoard({
     () => new Map(notebooks.map((nb) => [nb.id, nb.name || 'unnamed'])),
     [notebooks]
   )
+  const { search } = useTasksEnv()
+  const notebookColorById = useMemo(
+    () => new Map(notebooks.map((nb) => [nb.id, nb.color ?? null])),
+    [notebooks]
+  )
   const projectTasks = useMemo(
-    () => (filter === null ? tasks : tasks.filter((t) => t.notebookId === filter)),
-    [tasks, filter]
+    () => filterTasksForView(tasks, filter, search),
+    [tasks, filter, search]
   )
   const summary = useMemo(() => computeTaskSummary(projectTasks, todayKey), [projectTasks, todayKey])
 
@@ -110,7 +120,7 @@ export function WeekBoard({
         if (isOverdue(t, todayKey)) overdue.push(t)
         else if (plan === null) noDate.push(t)
         else byDay.get(plan)?.open.push(t)
-      } else if (t.status === 'done' && t.completedAt !== null) {
+      } else if (isDone(t) && t.completedAt !== null) {
         byDay.get(dateKeyFromMs(t.completedAt))?.done.push(t)
       }
     }
@@ -188,6 +198,7 @@ export function WeekBoard({
           todayKey={todayKey}
           projectName={filter === null ? notebookNameById.get(t.notebookId) : undefined}
           showDate={false}
+          projectColor={notebookColorById.get(t.notebookId) ?? null}
           checklist={checklist.get(t.id)}
           lines={3}
           cursor={t.id === kb.cursorId}
@@ -197,6 +208,9 @@ export function WeekBoard({
           }}
           onToggle={(done) => onToggleTask(t.id, done)}
           onDelete={() => void kb.requestDelete([t.id], 'Delete task')}
+          onSnooze={(kind) =>
+            onUpdateTasks([{ id: t.id, patch: { scheduledDate: snoozeDate(t, kind, todayKey) } }])
+          }
         />
       </div>
     )

@@ -1,0 +1,151 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.card {
+  background: var(--surface-2, #26262c);
+  border: 1px solid var(--border, #333340);
+  border-radius: 10px;
+  padding: 20px;
+  width: 90%;
+  max-width: 520px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.close {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.close:hover {
+  color: var(--text-primary);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.row,
+.create {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.swatch {
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.nameInput {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text-primary);
+  outline: none;
+}
+
+.nameInput:focus,
+.wip:focus {
+  border-color: var(--accent-task);
+}
+
+.wip {
+  width: 56px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-primary);
+  outline: none;
+}
+
+.wipSpacer {
+  width: 56px;
+}
+
+.deleteSpacer {
+  width: 21px;
+}
+
+.delete {
+  display: inline-flex;
+  background: transparent;
+  border: none;
+  padding: 3px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.delete:hover {
+  color: var(--accent-danger);
+}
+
+.add {
+  background: var(--accent);
+  border: none;
+  border-radius: 6px;
+  padding: 5px 12px;
+  font-family: inherit;
+  font-size: 12px;
+  color: #fff;
+  cursor: pointer;
+}
+
+.add:hover {
+  opacity: 0.85;
+}
+
+.error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--accent-danger);
+}

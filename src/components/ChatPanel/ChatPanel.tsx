@@ -10,6 +10,7 @@ import { notesFolderDocId } from '../../lib/documents'
 import type { ChecklistProgress } from '../../lib/tasks'
 import type { AiModel, Note, Notebook, Task } from '../../types'
 import { ModelSelector } from '../AiPanel/ModelSelector'
+import { useTasksEnv } from '../TasksView/TasksEnv'
 import styles from './ChatPanel.module.css'
 import { ChatSidebar } from './ChatSidebar'
 import { ChatToolsMenu } from './ChatToolsMenu'
@@ -51,8 +52,9 @@ export function ChatPanel({
   todayKey,
   taskChecklist,
 }: ChatPanelProps) {
-  const tasksSnapshotRef = useRef<TasksSnapshot>({ tasks, notebooks, todayKey, checklist: taskChecklist })
-  tasksSnapshotRef.current = { tasks, notebooks, todayKey, checklist: taskChecklist }
+  const { statuses } = useTasksEnv()
+  const tasksSnapshotRef = useRef<TasksSnapshot>({ tasks, notebooks, todayKey, checklist: taskChecklist, statuses })
+  tasksSnapshotRef.current = { tasks, notebooks, todayKey, checklist: taskChecklist, statuses }
   const {
     conversations,
     folders,

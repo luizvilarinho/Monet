@@ -13,7 +13,6 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-width: 640px;
 }
 
 .weekNav {
@@ -140,26 +139,4 @@
 
 .board:focus {
   outline: none;
-}
-
-/* Kanban: concluídas da semana esmaecidas, mas ainda arrastáveis. */
-.cardFaded {
-  opacity: 0.55;
-}
-
-.clearDone {
-  margin-left: auto;
-  background: transparent;
-  border: none;
-  padding: 0 2px;
-  font-family: inherit;
-  font-size: 11px;
-  letter-spacing: normal;
-  text-transform: none;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-
-.clearDone:hover {
-  color: var(--accent-danger);
 }

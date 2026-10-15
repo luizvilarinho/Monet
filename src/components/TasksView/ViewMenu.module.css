@@ -1,0 +1,116 @@
+.wrap {
+  position: relative;
+  min-width: 0;
+}
+
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 140px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 7px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trigger:hover,
+.trigger[aria-expanded='true'] {
+  border-color: var(--accent-task);
+}
+
+.menu {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 4px);
+  z-index: 30;
+  min-width: 180px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+.item {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.item:hover {
+  background: var(--surface-3);
+}
+
+.itemActive {
+  color: var(--accent-task);
+}
+
+.group {
+  padding: 6px 8px 2px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.savedRow {
+  display: flex;
+  align-items: center;
+}
+
+.iconBtn {
+  display: inline-flex;
+  background: transparent;
+  border: none;
+  padding: 3px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.iconBtn:hover {
+  color: var(--text-primary);
+}
+
+.divider {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--border);
+}
+
+.input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-primary);
+  outline: none;
+}
+
+.input:focus {
+  border-color: var(--accent-task);
+}

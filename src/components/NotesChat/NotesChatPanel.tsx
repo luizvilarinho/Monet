@@ -1,5 +1,5 @@
 import { openUrl } from '@tauri-apps/plugin-opener'
-import { Stop, Sliders, Files, Brain } from '@phosphor-icons/react'
+import { Stop, FileText, Brain } from '@phosphor-icons/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   useChat,
@@ -18,6 +18,8 @@ import {
 } from '../../lib/openrouter'
 import type { AiModel, Note, Notebook, Task } from '../../types'
 import { ModelSelector } from '../AiPanel/ModelSelector'
+import { useTasksEnv } from '../TasksView/TasksEnv'
+import { SystemPromptIcon } from '../ChatPanel/SystemPromptIcon'
 import { ChatToolsMenu } from '../ChatPanel/ChatToolsMenu'
 import { FolderSystemPromptModal } from '../ChatPanel/FolderSystemPromptModal'
 import { FolderDocumentSelectorModal } from '../ChatPanel/FolderDocumentSelectorModal'
@@ -81,8 +83,9 @@ export function NotesChatPanel({
   const [models, setModels] = useState<AiModel[]>([])
   const [modelsLoading, setModelsLoading] = useState(false)
   const [modelsError, setModelsError] = useState<string | null>(null)
-  const tasksSnapshotRef = useRef<TasksSnapshot>({ tasks, notebooks, todayKey, checklist: taskChecklist })
-  tasksSnapshotRef.current = { tasks, notebooks, todayKey, checklist: taskChecklist }
+  const { statuses } = useTasksEnv()
+  const tasksSnapshotRef = useRef<TasksSnapshot>({ tasks, notebooks, todayKey, checklist: taskChecklist, statuses })
+  tasksSnapshotRef.current = { tasks, notebooks, todayKey, checklist: taskChecklist, statuses }
 
   const {
     activeId,
@@ -123,6 +126,12 @@ export function NotesChatPanel({
     () => folders.find((f) => f.id === notebookFolderId) ?? null,
     [folders, notebookFolderId]
   )
+
+  const visibleDocCount = notebookFolder
+    ? getFolderVisibleDocumentIds(notebookFolder.id).length
+    : 0
+  const hasSystemPrompt = (notebookFolder?.systemPrompt ?? '').trim().length > 0
+  const hasMemory = (notebookFolder?.memory ?? '').trim().length > 0
 
   // Conversas da pasta do caderno, na ordem da pasta (mais recente primeiro).
   const folderConversations = useMemo(() => {
@@ -356,6 +365,7 @@ export function NotesChatPanel({
       projectTasks,
       todayKey,
       checklist: taskChecklist,
+      statuses,
     })
     void send(text, undefined, undefined, {
       ephemeralContext,
@@ -379,30 +389,42 @@ export function NotesChatPanel({
             <div className={styles.headerActions}>
               <button
                 type="button"
-                className={styles.iconBtn}
-                aria-label="System prompt"
-                title="System prompt"
-                onClick={() => setPromptOpen(true)}
-              >
-                <Sliders size={14} />
-              </button>
-              <button
-                type="button"
-                className={styles.iconBtn}
-                aria-label="Documents"
-                title="Documents"
+                className={`${styles.iconBtn} ${visibleDocCount > 0 ? styles.iconBtnActive : ''}`}
+                aria-label={`configure documents for ${notebook.name || 'folder'}`}
+                title={
+                  visibleDocCount > 0
+                    ? `${visibleDocCount} document(s) active (click to edit)`
+                    : 'select knowledge base documents for this folder'
+                }
                 onClick={() => setDocsOpen(true)}
               >
-                <Files size={14} />
+                <FileText size={12} aria-hidden />
               </button>
               <button
                 type="button"
-                className={styles.iconBtn}
-                aria-label="Notebook memory"
-                title="Notebook memory"
+                className={`${styles.iconBtn} ${hasSystemPrompt ? styles.iconBtnActive : ''}`}
+                aria-label={`configure system prompt for ${notebook.name || 'folder'}`}
+                title={
+                  hasSystemPrompt
+                    ? 'system prompt active (click to edit)'
+                    : 'set folder system prompt'
+                }
+                onClick={() => setPromptOpen(true)}
+              >
+                <SystemPromptIcon />
+              </button>
+              <button
+                type="button"
+                className={`${styles.iconBtn} ${hasMemory ? styles.iconBtnActive : ''}`}
+                aria-label={`view folder memory for ${notebook.name || 'folder'}`}
+                title={
+                  hasMemory
+                    ? 'folder memory active (click to view/edit)'
+                    : 'view/edit folder memory'
+                }
                 onClick={() => setMemoryOpen(true)}
               >
-                <Brain size={14} />
+                <Brain size={12} aria-hidden />
               </button>
               <div className={styles.toolsMenu}>
                 <ChatToolsMenu

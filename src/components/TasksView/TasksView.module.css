@@ -52,7 +52,8 @@
   font-size: 11px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--text-secondary);
+  font-weight: 600;
+  color: var(--accent-task);
   text-align: left;
   cursor: pointer;
 }

@@ -28,12 +28,23 @@ import { UpdaterDialog } from './components/UpdaterDialog/UpdaterDialog'
 import { SearchPalette } from './components/SearchPalette/SearchPalette'
 import { Sidebar } from './components/Sidebar/Sidebar'
 import { TasksView } from './components/TasksView/TasksView'
-import type { NewTaskDraft, TasksMainView } from './components/TasksView/TasksHeader'
+import type { NewTaskDraft } from './components/TasksView/TasksHeader'
+import { TasksEnvProvider, type TasksEnv } from './components/TasksView/TasksEnv'
+import { StatusManagerModal } from './components/TasksView/StatusManagerModal'
+import { ProjectsBoard } from './components/TasksView/ProjectsBoard'
+import { GroupsBoard } from './components/TasksView/GroupsBoard'
+import { TodayBoard } from './components/TasksView/TodayBoard'
+import {
+  EPHEMERAL_VIEW,
+  resolveMainView,
+  type TasksMainView,
+} from './components/TasksView/views'
 import { WeekBoard } from './components/TasksView/WeekBoard'
 import { KanbanBoard } from './components/TasksView/KanbanBoard'
 import { DueTodayBlock } from './components/TasksView/DueTodayBlock'
 import { WeeklyReview } from './components/TasksView/WeeklyReview'
 import { TaskPropertiesBar } from './components/TasksView/TaskPropertiesBar'
+import type { TaskChanges } from './components/TasksView/useTaskKeyboard'
 import { Toolbar, type ActiveMode } from './components/Toolbar/Toolbar'
 import { useAi } from './hooks/useAi'
 import {
@@ -51,6 +62,9 @@ import { useNotesIndexSync } from './hooks/useNotesIndexSync'
 import { useReminders } from './hooks/useReminders'
 import { useSubjects } from './hooks/useSubjects'
 import { useTasks } from './hooks/useTasks'
+import { useTaskStatuses } from './hooks/useTaskStatuses'
+import { SIDEBAR_WIDTH_KEY, SIDEBAR_WIDE_WIDTH_KEY, WIDE_MAX_WIDTH } from './hooks/useSidebarResize'
+import { useTaskViews } from './hooks/useTaskViews'
 import { useToday } from './hooks/useToday'
 import { findCommand } from './lib/commands'
 import {
@@ -77,6 +91,7 @@ import {
   splitPipeTitle,
   summaryMatches,
   stripGroupPrefix,
+  TASK_SUMMARY_KEYS,
   TASKS_SUBJECT_NAME,
   taskProgressByNotebook,
   tasksSubjectId,
@@ -119,6 +134,7 @@ import type {
   Note,
   Notebook,
   Task,
+  TaskViewConfig,
 } from './types'
 
 function getSystemLanguage(): string {
@@ -289,6 +305,7 @@ function App() {
     save: saveNotebook,
     create: createNotebook,
     remove: removeNotebook,
+    setColor: setNotebookColor,
     saveError: notebookSaveError,
   } = useNotebooks()
   const {
@@ -366,8 +383,13 @@ function App() {
     return isNaN(saved) ? 180 : saved
   })
   const [sidebarWidth, setSidebarWidth] = useState(() => {
-    const saved = parseInt(localStorage.getItem('monet:sidebar-width') ?? '', 10)
+    const saved = parseInt(localStorage.getItem(SIDEBAR_WIDTH_KEY) ?? '', 10)
     return isNaN(saved) ? 220 : saved
+  })
+  // Largura própria da coluna Tasks/Anotações com os cadernos ocultos.
+  const [wideSidebarWidth, setWideSidebarWidth] = useState(() => {
+    const saved = parseInt(localStorage.getItem(SIDEBAR_WIDE_WIDTH_KEY) ?? '', 10)
+    return isNaN(saved) ? sidebarWidth : saved
   })
   const [notebookCollapsed, setNotebookCollapsed] = useState(
     () => localStorage.getItem('monet:notebook-collapsed') === '1'
@@ -388,26 +410,30 @@ function App() {
   // O review nunca é lembrado.
   const [tasksMainView, setTasksMainViewState] = useState<TasksMainView>(() => {
     try {
-      const saved = localStorage.getItem('monet:tasks-main-view')
-      return saved === 'week' || saved === 'kanban' ? saved : 'list'
+      const view = resolveMainView(localStorage.getItem('monet:tasks-main-view'))
+      return view === EPHEMERAL_VIEW ? 'list' : view
     } catch {
       return 'list'
     }
   })
   const setTasksMainView = useCallback((view: TasksMainView) => {
-    setTasksMainViewState(view)
-    if (view === 'review') return
+    const next = resolveMainView(view)
+    setTasksMainViewState(next)
+    if (next === EPHEMERAL_VIEW) return
     try {
-      localStorage.setItem('monet:tasks-main-view', view)
+      localStorage.setItem('monet:tasks-main-view', next)
     } catch {
       /* ignorar */
     }
   }, [])
+  // Busca de texto (título/group) aplicada a todas as visões de Tasks.
+  const [tasksSearch, setTasksSearch] = useState('')
+  const [statusManagerOpen, setStatusManagerOpen] = useState(false)
   // Group by da lista de tasks.
   const [tasksGroupBy, setTasksGroupByState] = useState<TaskGroupBy>(() => {
     try {
       const saved = localStorage.getItem('monet:tasks-group-by')
-      return saved === 'project' || saved === 'status' ? saved : 'date'
+      return saved === 'project' || saved === 'status' || saved === 'group' ? saved : 'date'
     } catch {
       return 'date'
     }
@@ -446,8 +472,24 @@ function App() {
     updateTask,
     updateTasks,
     deleteTasks,
+    reassignStatus,
     saveError: tasksSaveError,
   } = useTasks()
+  // Registro de status e visões salvas (SQLite, compartilhados entre janelas).
+  const {
+    statuses: statusRegistry,
+    create: createStatus,
+    rename: renameStatus,
+    update: updateStatus,
+    remove: removeStatus,
+    saveError: statusSaveError,
+  } = useTaskStatuses({ onRemoved: (id) => reassignStatus(id, 'todo') })
+  const {
+    views: savedViews,
+    create: createSavedView,
+    rename: renameSavedView,
+    remove: removeSavedView,
+  } = useTaskViews()
   const { disabledNotebookIds, setNotebookIndexEnabled } = useNotesIndexSync({
     notes,
     notesLoaded,
@@ -456,6 +498,7 @@ function App() {
     tasks,
     tasksLoaded,
     tasksLoadFailed,
+    statuses: statusRegistry,
     loadFailed: notesLoadFailed || notebooksLoadFailed,
     hasApiKey,
     activeNoteId: activeId,
@@ -612,11 +655,15 @@ function App() {
 
   // Leva a task e a nota-corpo (para o subject "Tasks") para outro caderno.
   const relocateTask = useCallback(
-    async (task: Task, notebookId: string) => {
+    async (task: Task, notebookId: string): Promise<boolean> => {
       const subjectId = await ensureTasksSubject(notebookId)
       const note = task.noteId ? notesRef.current.find((n) => n.id === task.noteId) : undefined
-      if (note) await saveNote({ ...note, notebookId, subjectId, updatedAt: Date.now() })
+      if (note) {
+        const saved = await saveNote({ ...note, notebookId, subjectId, updatedAt: Date.now() })
+        if (!saved) return false
+      }
       await updateTask(task.id, { notebookId })
+      return true
     },
     [ensureTasksSubject, saveNote, updateTask]
   )
@@ -633,12 +680,15 @@ function App() {
 
   // Antes de excluir/mover um caderno: as tasks dele (com as notas-corpo) vão
   // para outro caderno. Retorna os ids das notas-corpo movidas, que o chamador
-  // não deve apagar nem achatar junto com as notas comuns.
+  // não deve apagar nem achatar junto com as notas comuns. `ok` = false quando
+  // alguma task não pôde ser movida: o chamador NÃO deve excluir/mesclar o caderno.
   const relocateNotebookTasks = useCallback(
-    async (fromId: string, toId: string): Promise<Set<string>> => {
+    async (fromId: string, toId: string): Promise<{ movedNoteIds: Set<string>; ok: boolean }> => {
       const moving = tasks.filter((t) => t.notebookId === fromId)
-      for (const t of moving) await relocateTask(t, toId)
-      return new Set(moving.flatMap((t) => (t.noteId ? [t.noteId] : [])))
+      for (const t of moving) {
+        if (!(await relocateTask(t, toId))) return { movedNoteIds: new Set(), ok: false }
+      }
+      return { movedNoteIds: new Set(moving.flatMap((t) => (t.noteId ? [t.noteId] : []))), ok: true }
     },
     [tasks, relocateTask]
   )
@@ -1416,7 +1466,13 @@ function App() {
   )
 
   const effectiveNotebookWidth = notebookCollapsed ? COLLAPSED_PANEL_WIDTH : notebookWidth
-  const effectiveSidebarWidth = sidebarCollapsed ? COLLAPSED_PANEL_WIDTH : sidebarWidth
+  // Com cadernos ocultos vale a largura "wide" (clampada ao teto maior, sem
+  // regravar); com cadernos visíveis, a normal de sempre.
+  const columnWidth = notebookCollapsed
+    ? Math.min(WIDE_MAX_WIDTH, wideSidebarWidth)
+    : sidebarWidth
+  const setColumnWidth = notebookCollapsed ? setWideSidebarWidth : setSidebarWidth
+  const effectiveSidebarWidth = sidebarCollapsed ? COLLAPSED_PANEL_WIDTH : columnWidth
 
   function updateActive(patch: Partial<Note>) {
     if (!activeNote) return
@@ -1451,7 +1507,8 @@ function App() {
     if (id === INBOX_NOTEBOOK_ID) return
     // As tasks do caderno (com as notas-corpo) vão para o Inbox ANTES da
     // exclusão em cascata das notas do caderno.
-    const movedNoteIds = await relocateNotebookTasks(id, await ensureInbox())
+    const { movedNoteIds, ok } = await relocateNotebookTasks(id, await ensureInbox())
+    if (!ok) return
     if (tasksFilter === id) setTasksFilter(null)
     await removeNotebook(id)
     // Desfaz o vínculo caderno → pasta de chat; as conversas ficam numa pasta comum.
@@ -1552,7 +1609,7 @@ function App() {
       for (const n of childNotes) {
         const task = taskByNoteId.get(n.id)
         if (task) {
-          await relocateTask(task, destId)
+          if (!(await relocateTask(task, destId))) failed = true
           continue
         }
         const next = { ...n, notebookId: destId, subjectId: null, updatedAt: Date.now() }
@@ -1721,7 +1778,8 @@ function App() {
       }
       // Tasks (e notas-corpo) seguem para o subject "Tasks" do destino; só as
       // notas comuns são achatadas no subject com o nome da origem.
-      const movedNoteIds = await relocateNotebookTasks(sourceId, destId)
+      const { movedNoteIds, ok } = await relocateNotebookTasks(sourceId, destId)
+      if (!ok) return
       if (tasksFilter === sourceId) setTasksFilter(null)
       const childNotes = notes.filter((n) => n.notebookId === sourceId && !movedNoteIds.has(n.id))
       await Promise.all(
@@ -1949,7 +2007,92 @@ function App() {
     })
   }, [])
 
+  const currentViewConfig = useMemo<TaskViewConfig>(
+    () => ({
+      base: tasksMainView,
+      project: tasksFilter,
+      summary: tasksSummaryFilter,
+      text: tasksSearch,
+      groupBy: tasksGroupBy,
+    }),
+    [tasksMainView, tasksFilter, tasksSummaryFilter, tasksSearch, tasksGroupBy]
+  )
+  // Visão salva "ativa" = a que coincide com o estado atual dos filtros.
+  const activeSavedViewId =
+    savedViews.find(
+      (v) =>
+        v.config.base === currentViewConfig.base &&
+        v.config.project === currentViewConfig.project &&
+        v.config.summary === currentViewConfig.summary &&
+        v.config.text === currentViewConfig.text &&
+        v.config.groupBy === currentViewConfig.groupBy
+    )?.id ?? null
+
+  function resetTasksView() {
+    setTasksMainView('list')
+    setTasksFilter(null)
+    setTasksSummaryFilter(null)
+    setTasksSearch('')
+  }
+
+  const tasksEnv: TasksEnv = {
+    statuses: statusRegistry,
+    onManageStatuses: () => setStatusManagerOpen(true),
+    savedViews,
+    currentViewConfig,
+    activeSavedViewId,
+    onApplyView: (view) => {
+      const { base, project, summary, text, groupBy } = view.config
+      setTasksMainView(base)
+      // Projeto/filtros removidos desde que a visão foi salva são ignorados.
+      setTasksFilter(project !== null && notebooks.some((nb) => nb.id === project) ? project : null)
+      setTasksSummaryFilter(
+        TASK_SUMMARY_KEYS.includes(summary as TaskSummaryKey) ? (summary as TaskSummaryKey) : null
+      )
+      setTasksSearch(text)
+      if (groupBy === 'date' || groupBy === 'project' || groupBy === 'status' || groupBy === 'group') setTasksGroupBy(groupBy)
+    },
+    onSaveView: (name) => void createSavedView(name, currentViewConfig),
+    onRenameView: (id, name) => void renameSavedView(id, name),
+    onDeleteView: (id) => {
+      if (id === activeSavedViewId) resetTasksView()
+      void removeSavedView(id)
+    },
+    search: tasksSearch,
+    onSearchChange: setTasksSearch,
+    onMoveTaskToProject: (taskId, notebookId) => void moveProjectTask(taskId, { notebookId }),
+    onSetProjectColor: (notebookId, color) => void setNotebookColor(notebookId, color),
+  }
+
+  // Props comuns das visões em colunas (Kanban, Projects, Groups, Today).
+  const boardProps = {
+    tasks,
+    notebooks: orderedNotebooks,
+    todayKey: today,
+    mainView: tasksMainView,
+    onMainViewChange: setTasksMainView,
+    filter: tasksFilter,
+    onFilterChange: setTasksFilter,
+    onSummaryFilterChange: (key: TaskSummaryKey | null) => {
+      setTasksSummaryFilter(key)
+      setTasksMainView('list')
+    },
+    onCreateTask: async (draft: NewTaskDraft) => {
+      await createNewTask(draft)
+    },
+    onOpenTask: (task: Task) => {
+      setTasksMainView('list')
+      void selectTask(task)
+    },
+    onToggleTask: handleToggleLinkedTask,
+    onUpdateTasks: (changes: TaskChanges) => void updateTasks(changes),
+    onConvertPipeTitles: (list: Task[]) => void convertPipeTitles(list),
+    onDeleteTasks: (ids: string[]) => void deleteProjectTasks(ids),
+    checklist: taskChecklist,
+  }
+
   return (
+    <TasksEnvProvider value={tasksEnv}>
     <div className="app">
       <Toolbar
         activeMode={activeMode}
@@ -1966,9 +2109,9 @@ function App() {
         previewMode={previewMode}
         onTogglePreview={() => setPreviewMode((v) => !v)}
       />
-      {(noteSaveError || notebookSaveError || subjectSaveError || tasksSaveError || taskCreateError || subjectConvertError) && (
+      {(noteSaveError || notebookSaveError || subjectSaveError || tasksSaveError || statusSaveError || taskCreateError || subjectConvertError) && (
         <div className="saveErrorBanner" role="alert">
-          {noteSaveError || notebookSaveError || subjectSaveError || tasksSaveError || taskCreateError || subjectConvertError}
+          {noteSaveError || notebookSaveError || subjectSaveError || tasksSaveError || statusSaveError || taskCreateError || subjectConvertError}
         </div>
       )}
       {activeMode === 'library' ? (
@@ -1978,7 +2121,9 @@ function App() {
             notes={notes}
             onCreateNotebook={handleCreateNotebookFromChat}
             onCreateNote={handleCreateNoteFromChat}
-            onSaveNote={saveNote}
+            onSaveNote={async (note) => {
+              await saveNote(note)
+            }}
           />
         </div>
       ) : activeMode === 'chat' ? (
@@ -1992,7 +2137,9 @@ function App() {
             notes={notes}
             onCreateNotebook={handleCreateNotebookFromChat}
             onCreateNote={handleCreateNoteFromChat}
-            onSaveNote={saveNote}
+            onSaveNote={async (note) => {
+              await saveNote(note)
+            }}
             onNavigateToNote={handleNavigateToNote}
             tasks={tasks}
             todayKey={today}
@@ -2081,31 +2228,13 @@ function App() {
             onSaveReview={saveWeeklyReview}
           />
         ) : tasksBoardOpen && tasksMainView === 'kanban' ? (
-          <KanbanBoard
-            tasks={tasks}
-            notebooks={orderedNotebooks}
-            todayKey={today}
-            mainView={tasksMainView}
-            onMainViewChange={setTasksMainView}
-            filter={tasksFilter}
-            onFilterChange={setTasksFilter}
-            onSummaryFilterChange={(key) => {
-              setTasksSummaryFilter(key)
-              setTasksMainView('list')
-            }}
-            onCreateTask={async (draft) => {
-              await createNewTask(draft)
-            }}
-            onOpenTask={(task) => {
-              setTasksMainView('list')
-              void selectTask(task)
-            }}
-            onToggleTask={handleToggleLinkedTask}
-            onUpdateTasks={(changes) => void updateTasks(changes)}
-            onConvertPipeTitles={(list) => void convertPipeTitles(list)}
-            onDeleteTasks={(ids) => void deleteProjectTasks(ids)}
-            checklist={taskChecklist}
-          />
+          <KanbanBoard {...boardProps} />
+        ) : tasksBoardOpen && tasksMainView === 'projects' ? (
+          <ProjectsBoard {...boardProps} />
+        ) : tasksBoardOpen && tasksMainView === 'groups' ? (
+          <GroupsBoard {...boardProps} />
+        ) : tasksBoardOpen && tasksMainView === 'plan' ? (
+          <TodayBoard {...boardProps} />
         ) : tasksBoardOpen ? (
           <WeekBoard
             tasks={tasks}
@@ -2140,8 +2269,9 @@ function App() {
             todayKey={today}
             mainView={tasksMainView}
             onMainViewChange={setTasksMainView}
-            width={sidebarWidth}
-            onWidthChange={setSidebarWidth}
+            width={columnWidth}
+            wide={notebookCollapsed}
+            onWidthChange={setColumnWidth}
             filter={tasksFilter}
             onFilterChange={setTasksFilter}
             summaryFilter={tasksSummaryFilter}
@@ -2174,9 +2304,10 @@ function App() {
               setActiveId(noteId)
             }}
             width={effectiveSidebarWidth}
+            wide={notebookCollapsed}
             collapsed={sidebarCollapsed}
             onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
-            onWidthChange={setSidebarWidth}
+            onWidthChange={setColumnWidth}
             tasks={tasks}
             todayKey={today}
             onToggleTaskDone={handleToggleLinkedTask}
@@ -2200,9 +2331,10 @@ function App() {
             notebooks={orderedNotebooks}
             onMoveNote={handleMoveNote}
             width={effectiveSidebarWidth}
+            wide={notebookCollapsed}
             collapsed={sidebarCollapsed}
             onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
-            onWidthChange={setSidebarWidth}
+            onWidthChange={setColumnWidth}
             subjects={effectiveSubjects.filter((s) => !isTasksSubject(s))}
             onAssignSubject={handleAssignNoteToSubject}
             tasksSection={activeNotebookId !== null && tasksLoaded ? (
@@ -2290,6 +2422,7 @@ function App() {
               <TaskPropertiesBar
                 task={activeTask}
                 notebooks={orderedNotebooks}
+                statuses={statusRegistry}
                 groupSuggestions={groupsOfNotebook(tasks, activeTask.notebookId)}
                 sourceNoteExists={
                   activeTask.sourceNoteId !== null && notes.some((n) => n.id === activeTask.sourceNoteId)
@@ -2417,7 +2550,18 @@ function App() {
         }}
         notebooks={notebooks}
       />
+      <StatusManagerModal
+        open={statusManagerOpen}
+        onClose={() => setStatusManagerOpen(false)}
+        statuses={statusRegistry}
+        tasks={tasks}
+        onCreate={createStatus}
+        onRename={(id, name) => void renameStatus(id, name)}
+        onUpdate={(id, change) => void updateStatus(id, change)}
+        onRemove={(id) => void removeStatus(id)}
+      />
     </div>
+    </TasksEnvProvider>
   )
 }
 

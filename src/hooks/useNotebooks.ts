@@ -3,6 +3,7 @@ import { nanoid } from 'nanoid'
 import type { Notebook } from '../types'
 import { storage } from '../storage'
 import { notesIndexSetNotebookEnabled, replaceNotebookVisibility } from '../lib/documents'
+import { emitTasksChanged, onTasksChangedElsewhere } from '../lib/tasksEvents'
 
 export function useNotebooks() {
   const [notebooks, setNotebooks] = useState<Notebook[]>([])
@@ -20,6 +21,25 @@ export function useNotebooks() {
       })
       .finally(() => setLoaded(true))
   }, [])
+
+  // Cor do projeto mudada em outra janela (mesmo evento das tasks).
+  useEffect(
+    () =>
+      onTasksChangedElsewhere(() => {
+        storage
+          .getNotebooks()
+          .then((list) =>
+            setNotebooks((prev) =>
+              prev.map((nb) => {
+                const fresh = list.find((n) => n.id === nb.id)
+                return fresh ? { ...nb, color: fresh.color ?? null } : nb
+              })
+            )
+          )
+          .catch((err) => console.error('failed to reload notebooks', err))
+      }),
+    []
+  )
 
   const save = useCallback(async (nb: Notebook) => {
     setNotebooks((prev) => {
@@ -57,6 +77,18 @@ export function useNotebooks() {
     }
   }, [])
 
+  const setColor = useCallback(async (id: string, color: string | null) => {
+    setNotebooks((prev) => prev.map((n) => (n.id === id ? { ...n, color } : n)))
+    try {
+      await storage.setNotebookColor(id, color)
+      setSaveError(null)
+      emitTasksChanged()
+    } catch (err) {
+      console.error('failed to set notebook color', err)
+      setSaveError('Failed to save project color.')
+    }
+  }, [])
+
   const create = useCallback(
     async (name: string) => {
       const now = Date.now()
@@ -72,5 +104,5 @@ export function useNotebooks() {
     [save]
   )
 
-  return { notebooks, loaded, loadFailed, save, remove, create, saveError }
+  return { notebooks, loaded, loadFailed, save, remove, create, setColor, saveError }
 }

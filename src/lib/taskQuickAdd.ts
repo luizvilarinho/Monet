@@ -1,13 +1,20 @@
-import type { Notebook, TaskStatus } from '../types'
+import type { Notebook, TaskStatus, TaskStatusDef } from '../types'
 import { toDateKey } from './calendar'
-import { addDaysKey, findProjectByTag, formatDueShort, normalizeName, type ProjectChoice } from './tasks'
+import {
+  addDaysKey,
+  BUILTIN_STATUS_DEFS,
+  findProjectByTag,
+  formatDueShort,
+  normalizeName,
+  type ProjectChoice,
+} from './tasks'
 
 // Quick add do "New task…": tokens isolados (separados por espaço) viram
 // campos da task; o resto é o título.
 //   today/hoje, tomorrow/amanhã, dia da semana (EN/PT), dd/mm[/yyyy] → Do date
 //   !<data>   → Deadline
 //   #Projeto  → caderno existente; nome desconhecido só após confirmação
-//   @doing    → status doing
+//   @status   → status pelo nome (sem espaços, sem diferenciar maiúsculas)
 //   !!        → important
 // Repetição do mesmo tipo: o último vence (os anteriores ficam no título).
 
@@ -41,6 +48,8 @@ interface QuickAddOptions {
   ignored: Set<string>
   // Projetos novos (`#Nome`, raw minúsculo) confirmados pelo usuário.
   confirmed: Set<string>
+  // Registro de status (padrão: built-ins).
+  statuses?: TaskStatusDef[]
 }
 
 const WEEKDAYS: Record<string, number> = {
@@ -89,13 +98,20 @@ function parseDateWord(word: string, todayKey: string): string | null {
   return toDateKey(year, month, day)
 }
 
+// Status cujo nome, sem espaços/acentos, casa exatamente com `word` (sem o `@`).
+function findStatusByTag(statuses: TaskStatusDef[], word: string): TaskStatusDef | undefined {
+  const wanted = normalizeName(word)
+  if (!wanted) return undefined
+  return statuses.find((s) => normalizeName(s.name).replace(/\s+/g, '') === wanted || s.id === wanted)
+}
+
 function dayLabel(key: string): string {
   const d = keyDate(key)
   return `${DAY_SHORT[d.getDay()]} ${d.getDate()}`
 }
 
 export function parseQuickAdd(input: string, opts: QuickAddOptions): QuickAddResult {
-  const { notebooks, todayKey, ignored, confirmed } = opts
+  const { notebooks, todayKey, ignored, confirmed, statuses = BUILTIN_STATUS_DEFS } = opts
   const accepted = new Map<QuickAddTokenKind, QuickAddToken>()
   const pending: QuickAddToken[] = []
   let scheduledDate: string | null = null
@@ -131,10 +147,13 @@ export function parseQuickAdd(input: string, opts: QuickAddOptions): QuickAddRes
       accepted.set('date', { ...base, kind: 'date', label: `Do ${dayLabel(date)}` })
       continue
     }
-    if (lower === '@doing') {
-      status = 'doing'
-      accepted.set('status', { ...base, kind: 'status', label: 'doing' })
-      continue
+    if (raw.length > 1 && raw.startsWith('@')) {
+      const def = findStatusByTag(statuses, raw.slice(1))
+      if (def) {
+        status = def.id
+        accepted.set('status', { ...base, kind: 'status', label: def.name })
+        continue
+      }
     }
     // `#` só no início da palavra e com algo além de dígitos (`#1` não é projeto).
     if (raw.length > 1 && raw.startsWith('#') && !/^#\d+$/.test(raw)) {

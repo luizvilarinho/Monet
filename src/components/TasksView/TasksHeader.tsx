@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { DotsThree, X } from '@phosphor-icons/react'
+import { DotsThree, GearSix, MagnifyingGlass, X } from '@phosphor-icons/react'
 import { useConfirm } from '../../hooks/useConfirm'
 import {
   INBOX_NOTEBOOK_ID,
@@ -12,9 +12,10 @@ import {
 import { parseQuickAdd } from '../../lib/taskQuickAdd'
 import type { Notebook, Task, TaskStatus } from '../../types'
 import { ProjectPicker } from './ProjectPicker'
+import { useTasksEnv } from './TasksEnv'
+import { ViewMenu } from './ViewMenu'
+import type { TasksMainView } from './views'
 import styles from './TasksHeader.module.css'
-
-export type TasksMainView = 'list' | 'week' | 'kanban' | 'review'
 
 // Task a criar pelo "New task…" (campos vindos do quick add).
 export interface NewTaskDraft {
@@ -59,17 +60,11 @@ export const SUMMARY_LABEL: Record<TaskSummaryKey, string> = {
 
 const ALL_PROJECTS = '__all__'
 
-const VIEWS: Array<{ value: TasksMainView; label: string }> = [
-  { value: 'list', label: 'List' },
-  { value: 'week', label: 'Week' },
-  { value: 'kanban', label: 'Kanban' },
-  { value: 'review', label: 'Review' },
-]
-
 const GROUP_BY_LABEL: Record<TaskGroupBy, string> = {
   date: 'Date',
   project: 'Project',
   status: 'Status',
+  group: 'Group',
 }
 
 export function TasksHeader({
@@ -88,6 +83,7 @@ export function TasksHeader({
   onGroupByChange,
   onConvertPipeTitles,
 }: TasksHeaderProps) {
+  const { statuses, onManageStatuses, search, onSearchChange } = useTasksEnv()
   const [newTitle, setNewTitle] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
   const { confirm, modal } = useConfirm()
@@ -133,8 +129,8 @@ export function TasksHeader({
   const [ignored, setIgnored] = useState<Set<string>>(() => new Set())
   const [confirmed, setConfirmed] = useState<Set<string>>(() => new Set())
   const parsed = useMemo(
-    () => parseQuickAdd(newTitle, { notebooks, todayKey, ignored, confirmed }),
-    [newTitle, notebooks, todayKey, ignored, confirmed]
+    () => parseQuickAdd(newTitle, { notebooks, todayKey, ignored, confirmed, statuses }),
+    [newTitle, notebooks, todayKey, ignored, confirmed, statuses]
   )
 
   function resetDraft() {
@@ -171,21 +167,16 @@ export function TasksHeader({
     <div className={styles.header}>
       <div className={styles.titleRow}>
         <span className={styles.heading}>Tasks</span>
-        <span className={styles.views} role="radiogroup" aria-label="view">
-          {VIEWS.map((v) => (
-            <button
-              key={v.value}
-              type="button"
-              role="radio"
-              aria-checked={mainView === v.value}
-              className={`${styles.view} ${mainView === v.value ? styles.viewActive : ''}`}
-              onClick={() => onMainViewChange(v.value)}
-              title={v.value === 'review' ? 'Weekly review' : undefined}
-            >
-              {v.label}
-            </button>
-          ))}
-        </span>
+        <ViewMenu mainView={mainView} onMainViewChange={onMainViewChange} />
+        <button
+          type="button"
+          className={styles.iconBtn}
+          onClick={onManageStatuses}
+          aria-label="manage statuses"
+          title="Manage statuses"
+        >
+          <GearSix size={14} aria-hidden />
+        </button>
         <select
           className={styles.select}
           value={filter ?? ALL_PROJECTS}
@@ -242,6 +233,24 @@ export function TasksHeader({
           </div>
         )}
       </div>
+      <label className={styles.searchRow}>
+        <MagnifyingGlass size={12} aria-hidden />
+        <input
+          className={styles.search}
+          value={search}
+          onChange={(e) => onSearchChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') {
+              e.stopPropagation()
+              if (search) onSearchChange('')
+              else e.currentTarget.blur()
+            }
+          }}
+          placeholder="Search tasks…"
+          aria-label="search tasks"
+          data-tasks-search
+        />
+      </label>
       {(onGroupByChange || convertible.length > 0) && (
         <div className={styles.toolbar}>
           {groupBy && onGroupByChange && (
@@ -305,7 +314,7 @@ export function TasksHeader({
           onChange={(e) => setNewTitle(e.target.value)}
           placeholder="New task…"
           aria-label="new task"
-          title="Try: today, tomorrow, fri, 17/10, !fri (deadline), #Project, @doing, !! (important)"
+          title="Try: today, tomorrow, fri, 17/10, !fri (deadline), #Project, @status, !! (important)"
         />
         {parsed.tokens.length > 0 && (
           <div className={styles.tokens}>

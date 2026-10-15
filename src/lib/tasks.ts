@@ -1,4 +1,4 @@
-import type { Note, Notebook, Subject, Task, TaskRecurrence, TaskStatus } from '../types'
+import type { Note, Notebook, Subject, Task, TaskRecurrence, TaskStatus, TaskStatusDef } from '../types'
 import { CALENDAR_NOTEBOOK_ID, dateKeyFromMs, toDateKey } from './calendar'
 
 export const TASK_REF_TAG = 'task-ref'
@@ -25,11 +25,76 @@ export function tasksSummaryNoteId(notebookId: string): string {
   return `tasks-${notebookId}`
 }
 
-export const TASK_STATUS_LABEL: Record<TaskStatus, string> = {
-  todo: 'To do',
-  doing: 'Doing',
-  done: 'Done',
-  dropped: 'Dropped',
+// Status built-in: ids fixos, sempre presentes no registro `task_statuses`.
+// Só cor e WIP são editáveis; não são renomeáveis nem excluíveis.
+export const BUILTIN_STATUS_IDS = ['todo', 'doing', 'done', 'dropped'] as const
+
+// Rótulo/cor de seed e fallback quando o registro ainda não carregou.
+export const BUILTIN_STATUS_DEFS: TaskStatusDef[] = [
+  { id: 'todo', name: 'To do', color: null, sortOrder: 0, wipLimit: null, builtin: true },
+  { id: 'doing', name: 'Doing', color: null, sortOrder: 1, wipLimit: null, builtin: true },
+  { id: 'done', name: 'Done', color: null, sortOrder: 2, wipLimit: null, builtin: true },
+  { id: 'dropped', name: 'Dropped', color: null, sortOrder: 3, wipLimit: null, builtin: true },
+]
+
+export function isBuiltinStatus(id: TaskStatus): boolean {
+  return (BUILTIN_STATUS_IDS as readonly string[]).includes(id)
+}
+
+// Helpers únicos de semântica de status. Status custom é sempre "aberto".
+export function isDone(t: Task): boolean {
+  return t.status === 'done'
+}
+
+export function isDropped(t: Task): boolean {
+  return t.status === 'dropped'
+}
+
+export function isOpen(t: Task): boolean {
+  return !isDone(t) && !isDropped(t)
+}
+
+// Aberta e já iniciada: `doing` ou qualquer status custom (conta em Doing).
+export function isInProgress(t: Task): boolean {
+  return isOpen(t) && t.status !== 'todo'
+}
+
+// Nome do status; id desconhecido (excluído em outra janela) usa o próprio id.
+export function statusName(id: TaskStatus, statuses: TaskStatusDef[]): string {
+  return statuses.find((s) => s.id === id)?.name ?? id
+}
+
+// Paleta fixa de cores (status e projetos): valores gravados no banco.
+export const TASK_COLOR_PALETTE = [
+  '#9a9aae',
+  '#5b9cf0',
+  '#5cc185',
+  '#f26b55',
+  '#ef9f27',
+  '#e6c449',
+  '#7b6ed4',
+  '#5dcaa5',
+]
+
+// Cor do status: a do registro, senão o token built-in, senão neutra.
+export function statusColor(id: TaskStatus, statuses: TaskStatusDef[]): string {
+  const color = statuses.find((s) => s.id === id)?.color
+  if (color) return color
+  return isBuiltinStatus(id) ? `var(--status-${id})` : 'var(--text-muted)'
+}
+
+// Próximo status no ciclo do atalho `s`: abertos na ordem do registro, o
+// último abre em `done`; `done`/`dropped` voltam a `todo`.
+export function nextStatus(id: TaskStatus, statuses: TaskStatusDef[]): TaskStatus {
+  if (id === 'done' || id === 'dropped') return 'todo'
+  const open = openStatuses(statuses)
+  const i = open.findIndex((s) => s.id === id)
+  return i >= 0 && i < open.length - 1 ? open[i + 1].id : 'done'
+}
+
+// Status abertos (todo, doing, custom) na ordem do registro.
+export function openStatuses(statuses: TaskStatusDef[]): TaskStatusDef[] {
+  return statuses.filter((s) => s.id !== 'done' && s.id !== 'dropped')
 }
 
 // Nota-corpo de task: fica no subject "Tasks" do próprio caderno.
@@ -54,6 +119,7 @@ export type TaskPatch = Partial<
     | 'important'
     | 'recurrence'
     | 'recurrenceNextId'
+    | 'plannedDay'
   >
 >
 
@@ -67,7 +133,8 @@ export function normalizeGroup(group: string | null): string | null {
 // - reschedule_count conta quando havia deadline e ele muda para outro
 //   deadline, ou quando havia do date e ele é adiado (rollover); definir o
 //   primeiro valor, antecipar o do date ou limpar não contam;
-// - completed_at é gravado ao entrar em `done` e limpo ao sair dele.
+// - completed_at é gravado ao entrar em `done` e limpo ao sair dele;
+// - doing_since é gravado ao entrar em `doing` e limpo ao sair dele.
 export function applyTaskPatch(prev: Task, patch: TaskPatch, now: number): Task {
   const next: Task = { ...prev, ...patch, updatedAt: now }
   if (patch.group !== undefined) next.group = normalizeGroup(patch.group)
@@ -89,6 +156,8 @@ export function applyTaskPatch(prev: Task, patch: TaskPatch, now: number): Task 
   if (patch.status !== undefined && patch.status !== prev.status) {
     if (patch.status === 'done') next.completedAt = now
     else if (prev.status === 'done') next.completedAt = null
+    if (patch.status === 'doing') next.doingSince = now
+    else if (prev.status === 'doing') next.doingSince = null
   }
   return next
 }
@@ -99,8 +168,47 @@ export function deleteTasksMessage(tasks: Task[]): string {
   return `Delete ${tasks.length} tasks and their notes? This can't be undone.`
 }
 
-export function isOpen(t: Task): boolean {
-  return t.status === 'todo' || t.status === 'doing'
+// Texto da busca: título ou group, sem diferenciar maiúsculas/acentos.
+export function matchesSearch(t: Task, search: string): boolean {
+  const q = normalizeName(search.trim())
+  if (!q) return true
+  return normalizeName(t.title).includes(q) || normalizeName(t.group ?? '').includes(q)
+}
+
+// Tasks que as visões mostram: projeto filtrado (null = todos) + busca.
+export function filterTasksForView(tasks: Task[], notebookId: string | null, search: string): Task[] {
+  if (notebookId === null && !search.trim()) return tasks
+  return tasks.filter(
+    (t) => (notebookId === null || t.notebookId === notebookId) && matchesSearch(t, search)
+  )
+}
+
+export type SnoozeKind = '1d' | '1w' | 'nextMonday'
+
+export const SNOOZE_OPTIONS: Array<{ kind: SnoozeKind; label: string }> = [
+  { kind: '1d', label: '1 day' },
+  { kind: '1w', label: '1 week' },
+  { kind: 'nextMonday', label: 'Next Monday' },
+]
+
+// Nova data de planejamento de um snooze: parte da do date atual (ou de hoje,
+// se vazia ou no passado) e avança 1 dia / 1 semana / até a próxima segunda.
+export function snoozeDate(t: Task, kind: SnoozeKind, todayKey: string): string {
+  const current = t.scheduledDate ?? todayKey
+  const base = current > todayKey ? current : todayKey
+  if (kind === '1d') return addDaysKey(base, 1)
+  if (kind === '1w') return addDaysKey(base, 7)
+  // Semana começa no domingo: de domingo, amanhã; senão, domingo + 8.
+  const sunday = startOfWeekKey(base)
+  return addDaysKey(sunday, base === sunday ? 1 : 8)
+}
+
+// "3d" / "5h" / "<1h" a partir de uma duração em ms.
+export function formatElapsed(ms: number): string {
+  const hours = Math.floor(ms / 3_600_000)
+  if (hours < 1) return '<1h'
+  if (hours < 24) return `${hours}h`
+  return `${Math.floor(hours / 24)}d`
 }
 
 // Data de planejamento: base única de agrupamento e contagem das tasks.
@@ -198,8 +306,8 @@ export function groupTasks(tasks: Task[], todayKey: string): TaskGroups {
   for (const t of tasks) {
     const plan = planDate(t)
     if (!isOpen(t)) groups.done.push(t)
-    else if (t.status === 'doing') groups.inProgress.push(t)
     else if (isOverdue(t, todayKey)) groups.overdue.push(t)
+    else if (isInProgress(t)) groups.inProgress.push(t)
     else if (plan === null) groups.noDate.push(t)
     else if (plan === todayKey) groups.today.push(t)
     else if (plan <= weekEnd) groups.thisWeek.push(t)
@@ -241,6 +349,8 @@ function byCompletedDesc(a: Task, b: Task): number {
 // Filtros da faixa de resumo da TasksView.
 export type TaskSummaryKey = 'overdue' | 'today' | 'week' | 'doing' | 'doneWeek'
 
+export const TASK_SUMMARY_KEYS: TaskSummaryKey[] = ['overdue', 'today', 'week', 'doing', 'doneWeek']
+
 export interface TaskSummary {
   overdue: number
   // Algum atraso é de deadline (chip vermelho); senão o chip fica amarelo.
@@ -270,10 +380,10 @@ export function summaryMatches(key: TaskSummaryKey, t: Task, todayKey: string): 
         plan <= endOfWeekKey(todayKey)
       )
     case 'doing':
-      return t.status === 'doing'
+      return isInProgress(t)
     case 'doneWeek':
       return (
-        t.status === 'done' &&
+        isDone(t) &&
         t.completedAt !== null &&
         dateKeyFromMs(t.completedAt) >= startOfWeekKey(todayKey) &&
         dateKeyFromMs(t.completedAt) <= endOfWeekKey(todayKey)
@@ -327,14 +437,14 @@ export function taskProgressByNotebook(
 ): Map<string, NotebookTaskProgress> {
   const all = new Map<string, NotebookTaskProgress>()
   for (const t of tasks) {
-    if (t.status === 'dropped') continue
+    if (isDropped(t)) continue
     let p = all.get(t.notebookId)
     if (!p) {
       p = { done: 0, total: 0, open: 0, overdue: 0 }
       all.set(t.notebookId, p)
     }
     p.total++
-    if (t.status === 'done') p.done++
+    if (isDone(t)) p.done++
     else p.open++
     if (isOverdue(t, todayKey)) p.overdue++
   }
@@ -397,7 +507,7 @@ export function stripGroupPrefix(title: string, group: string | null): string {
 
 // ─── Group by da lista ──────────────────────────────────────────────────────
 
-export type TaskGroupBy = 'date' | 'project' | 'status'
+export type TaskGroupBy = 'date' | 'project' | 'status' | 'group'
 
 export interface TaskSection {
   key: string
@@ -426,7 +536,8 @@ export function groupTasksBy(
   mode: TaskGroupBy,
   tasks: Task[],
   todayKey: string,
-  notebooks: Notebook[]
+  notebooks: Notebook[],
+  statuses: TaskStatusDef[]
 ): TaskSection[] {
   let sections: TaskSection[]
   if (mode === 'date') {
@@ -440,17 +551,72 @@ export function groupTasksBy(
     }))
   } else if (mode === 'status') {
     const withStatus = (s: TaskStatus) => tasks.filter((t) => t.status === s)
+    const known = new Set(statuses.map((s) => s.id))
+    // Abertos na ordem do registro; ids fora do registro (excluídos em outra
+    // janela) aparecem como abertos, com o id como nome.
+    const orphans = [...new Set(tasks.map((t) => t.status))].filter((id) => !known.has(id))
+    const open = [
+      ...openStatuses(statuses).map((s) => ({ id: s.id, name: s.name })),
+      ...orphans.map((id) => ({ id, name: id })),
+    ]
     sections = [
-      { key: 'doing', label: TASK_STATUS_LABEL.doing, tasks: withStatus('doing').sort(compareTasks), collapsible: false },
-      { key: 'todo', label: TASK_STATUS_LABEL.todo, tasks: withStatus('todo').sort(compareTasks), collapsible: false },
+      ...open.map(({ id, name }) => ({
+        key: id,
+        label: name,
+        tasks: withStatus(id).sort(compareTasks),
+        collapsible: false,
+      })),
       {
         key: 'done',
-        label: TASK_STATUS_LABEL.done,
+        label: statusName('done', statuses),
         tasks: withStatus('done').sort(byCompletedDesc).slice(0, DONE_LIMIT),
         collapsible: true,
       },
-      { key: 'dropped', label: TASK_STATUS_LABEL.dropped, tasks: withStatus('dropped').sort(byCompletedDesc), collapsible: true },
+      {
+        key: 'dropped',
+        label: statusName('dropped', statuses),
+        tasks: withStatus('dropped').sort(byCompletedDesc),
+        collapsible: true,
+      },
     ]
+  } else if (mode === 'group') {
+    // Frentes cruzando projetos: subtítulo = projeto de cada task.
+    const nameById = new Map(notebooks.map((nb) => [nb.id, nb.name || 'unnamed']))
+    const byGroup = new Map<string | null, Task[]>()
+    for (const t of tasks) {
+      if (!isOpen(t)) continue
+      const list = byGroup.get(t.group) ?? []
+      list.push(t)
+      byGroup.set(t.group, list)
+    }
+    const names = [...byGroup.keys()]
+      .filter((g): g is string => g !== null)
+      .sort((a, b) => a.localeCompare(b))
+    const order: Array<string | null> = byGroup.has(null) ? [...names, null] : names
+    sections = order.map((g) => {
+      const byProject = new Map<string, Task[]>()
+      for (const t of byGroup.get(g)!) {
+        const list = byProject.get(t.notebookId) ?? []
+        list.push(t)
+        byProject.set(t.notebookId, list)
+      }
+      const subgroups = [...byProject.entries()]
+        .map(([id, list]) => ({ label: nameById.get(id) ?? 'unnamed', tasks: list.sort(compareTasks) }))
+        .sort((a, b) => (a.label ?? '').localeCompare(b.label ?? ''))
+      return {
+        key: `group:${g ?? ''}`,
+        label: g ?? 'No group',
+        subgroups,
+        tasks: subgroups.flatMap((sg) => sg.tasks),
+        collapsible: false,
+      }
+    })
+    sections.push({
+      key: 'done',
+      label: 'Done',
+      tasks: tasks.filter((t) => !isOpen(t)).sort(byCompletedDesc).slice(0, DONE_LIMIT),
+      collapsible: true,
+    })
   } else {
     const byNotebook = new Map<string, Task[]>()
     for (const t of tasks) {
@@ -563,7 +729,7 @@ export function filterTasksForBlock(
         case 'overdue':
           return late
         case 'this week':
-          return late || t.status === 'doing' || (plan !== null && plan <= weekEnd)
+          return late || isInProgress(t) || (plan !== null && plan <= weekEnd)
         case 'all':
           return true
       }
@@ -674,6 +840,8 @@ export function buildNextOccurrence(
     sourceNoteId: null,
     rescheduleCount: 0,
     sortOrder,
+    doingSince: null,
+    plannedDay: null,
   }
 }
 
@@ -714,7 +882,7 @@ export type TasksQueryPeriod = 'overdue' | 'today' | 'this_week' | 'next_week' |
 export interface TasksQuery {
   period?: TasksQueryPeriod
   project?: string
-  status?: TaskStatus
+  status?: string
 }
 
 const QUERY_LIMIT = 100
@@ -730,7 +898,8 @@ export function queryTasksText(
   notebooks: Notebook[],
   q: TasksQuery,
   todayKey: string,
-  checklist?: Map<string, ChecklistProgress>
+  checklist?: Map<string, ChecklistProgress>,
+  statuses: TaskStatusDef[] = BUILTIN_STATUS_DEFS
 ): string {
   let notebookId: string | null = null
   if (q.project) {
@@ -738,13 +907,19 @@ export function queryTasksText(
     if (!nb) return `No project named "${q.project}".`
     notebookId = nb.id
   }
+  // O filtro aceita o id ou o nome do status (a tool expõe o nome dos custom).
+  const wanted = q.status?.trim().toLowerCase()
+  const statusId = wanted
+    ? statuses.find((s) => s.id.toLowerCase() === wanted || s.name.toLowerCase() === wanted)?.id ?? q.status
+    : undefined
   const weekEnd = endOfWeekKey(todayKey)
   const nextStart = addDaysKey(weekEnd, 1)
   const nextEnd = addDaysKey(weekEnd, 7)
   const matches = tasks
     .filter((t) => {
       if (notebookId !== null && t.notebookId !== notebookId) return false
-      if (q.status && t.status !== q.status) return false
+      // "doing" no chat = em andamento como na UI (inclui status custom).
+      if (statusId === 'doing' ? !isInProgress(t) : statusId && t.status !== statusId) return false
       const plan = planDate(t)
       switch (q.period) {
         case 'overdue':
@@ -763,7 +938,7 @@ export function queryTasksText(
         case 'open':
           return isOpen(t)
         default:
-          return q.status ? true : isOpen(t)
+          return statusId ? true : isOpen(t)
       }
     })
     .sort(compareTasks)
@@ -772,7 +947,13 @@ export function queryTasksText(
   const lines = matches
     .slice(0, QUERY_LIMIT)
     .map((t) =>
-      taskLineForAi(t, todayKey, names.get(t.notebookId) ?? 'unnamed', checklist?.get(t.id) ?? null)
+      taskLineForAi(
+        t,
+        todayKey,
+        names.get(t.notebookId) ?? 'unnamed',
+        checklist?.get(t.id) ?? null,
+        statuses
+      )
     )
   if (matches.length > QUERY_LIMIT) lines.push(`(${matches.length - QUERY_LIMIT} more not shown)`)
   return lines.join('\n')
@@ -784,7 +965,8 @@ export function taskLineForAi(
   t: Task,
   todayKey: string,
   projectName: string | null,
-  checklist: ChecklistProgress | null
+  checklist: ChecklistProgress | null,
+  statuses: TaskStatusDef[] = BUILTIN_STATUS_DEFS
 ): string {
   const where = [projectName, t.group].filter(Boolean).join(' / ')
   const late = overdueKind(t, todayKey)
@@ -797,5 +979,7 @@ export function taskLineForAi(
     t.recurrence ? `repeats ${describeRecurrence(t.recurrence)}` : '',
     checklist ? `checklist ${checklist.done}/${checklist.total}` : '',
   ].filter(Boolean)
-  return `- [${t.status}] ${t.title}${where ? ` — ${where}` : ''}${meta.length ? ` · ${meta.join(' · ')}` : ''}`
+  // Built-ins pelo id (compatível com o enum da tool); custom pelo nome.
+  const status = isBuiltinStatus(t.status) ? t.status : statusName(t.status, statuses)
+  return `- [${status}] ${t.title}${where ? ` — ${where}` : ''}${meta.length ? ` · ${meta.join(' · ')}` : ''}`
 }

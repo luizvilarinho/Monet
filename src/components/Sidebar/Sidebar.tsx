@@ -156,6 +156,8 @@ export interface SidebarProps {
   notebooks: Notebook[]
   onMoveNote?: (noteId: string, destNotebookId: string) => void
   width?: number
+  // Cadernos ocultos: a coluna aceita largura maior (largura própria).
+  wide?: boolean
   collapsed?: boolean
   onToggleCollapsed?: () => void
   onWidthChange?: (w: number) => void
@@ -177,6 +179,7 @@ export function Sidebar({
   notebooks,
   onMoveNote,
   width = 220,
+  wide = false,
   collapsed = false,
   onToggleCollapsed,
   onWidthChange,
@@ -190,7 +193,7 @@ export function Sidebar({
   const { confirm, modal } = useConfirm()
   const [mergeSourceId, setMergeSourceId] = useState<string | null>(null)
   const [moveNoteId, setMoveNoteId] = useState<string | null>(null)
-  const onMouseDown = useSidebarResize(width, onWidthChange)
+  const onMouseDown = useSidebarResize(width, onWidthChange, wide)
 
   async function handleDeleteNote(id: string, title: string) {
     const ok = await confirm(

@@ -1,12 +1,14 @@
-import type { AiResponse, Note, Task } from '../types'
+import type { AiResponse, Note, Task, TaskStatusDef } from '../types'
 import { storage } from '../storage'
 import { getToggleTitle } from '../components/Editor/commandParser'
 import { dateKeyFromMs, getWeekdayName, parseCalendarTitle } from './calendar'
 import {
   checklistProgress,
   describeRecurrence,
+  isDone,
+  openStatuses,
   planDate,
-  TASK_STATUS_LABEL,
+  statusName,
   type ChecklistProgress,
 } from './tasks'
 
@@ -202,10 +204,11 @@ function taskMetadataLines(
   projectName: string,
   resolveNoteTitle: (noteId: string) => string | undefined,
   checklist: ChecklistProgress | null,
+  statuses: TaskStatusDef[],
 ): string[] {
   const lines = [
     `Project: ${projectName}`,
-    `Status: ${TASK_STATUS_LABEL[task.status]}`,
+    `Status: ${statusName(task.status, statuses)}`,
     `Do date: ${task.scheduledDate ?? 'none'}`,
     `Deadline: ${task.dueDate ?? 'none'}`,
     `Created: ${dateKeyFromMs(task.createdAt)}`,
@@ -215,7 +218,7 @@ function taskMetadataLines(
   if (task.recurrence) lines.push(`Repeats: ${describeRecurrence(task.recurrence)}`)
   if (task.rescheduleCount > 0) lines.push(`Postponed: ${task.rescheduleCount}x`)
   if (checklist) lines.push(`Checklist: ${checklist.done}/${checklist.total} done`)
-  if (task.status === 'done' && task.completedAt !== null) {
+  if (isDone(task) && task.completedAt !== null) {
     lines.push(`Completed: ${dateKeyFromMs(task.completedAt)}`)
   }
   const source = task.sourceNoteId ? resolveNoteTitle(task.sourceNoteId)?.trim() : undefined
@@ -230,7 +233,7 @@ function taskMetadataLines(
 export function buildNoteFileText(
   note: Note,
   resolveNoteTitle: (noteId: string) => string | undefined,
-  taskContext?: { task: Task; projectName: string },
+  taskContext?: { task: Task; projectName: string; statuses: TaskStatusDef[] },
   resolveEmbed?: (commandId: string) => AiResponse | undefined,
 ): string {
   const title = note.title.trim()
@@ -244,6 +247,7 @@ export function buildNoteFileText(
         taskContext.projectName,
         resolveNoteTitle,
         checklistProgress(note.content),
+        taskContext.statuses,
       ),
     )
   }
@@ -253,8 +257,6 @@ export function buildNoteFileText(
   return body ? `${header.join('\n')}\n\n${body}` : header.join('\n')
 }
 
-const SUMMARY_STATUS_ORDER: Task['status'][] = ['doing', 'todo', 'done', 'dropped']
-
 // Documento-resumo das tasks de um caderno-projeto, agrupado por status, para
 // perguntas de agregação ("o que está pendente no projeto X?").
 export function buildTasksSummaryText(
@@ -263,9 +265,16 @@ export function buildTasksSummaryText(
   resolveNoteTitle: (noteId: string) => string | undefined,
   // Progresso do checklist da nota-corpo da task.
   checklistOf: (task: Task) => ChecklistProgress | null,
+  statuses: TaskStatusDef[],
 ): string {
   const sections = [`# Tasks — ${projectName}\nAll tasks of the project "${projectName}", grouped by status.`]
-  for (const status of SUMMARY_STATUS_ORDER) {
+  // Abertos na ordem do registro (doing antes de todo), depois done/dropped;
+  // status fora do registro entra como aberto, com o id como nome.
+  const known = new Set(statuses.map((s) => s.id))
+  const orphans = [...new Set(tasks.map((t) => t.status))].filter((id) => !known.has(id))
+  const open = openStatuses(statuses).map((s) => s.id)
+  const order = ['doing', ...open.filter((id) => id !== 'doing'), ...orphans, 'done', 'dropped']
+  for (const status of order) {
     const group = tasks
       .filter((t) => t.status === status)
       .sort(
@@ -273,9 +282,12 @@ export function buildTasksSummaryText(
           (planDate(a) ?? '9999').localeCompare(planDate(b) ?? '9999') || a.sortOrder - b.sortOrder,
       )
     if (group.length === 0) continue
-    sections.push(`## ${TASK_STATUS_LABEL[status]} (${group.length})`)
+    sections.push(`## ${statusName(status, statuses)} (${group.length})`)
     for (const t of group) {
-      const lines = [`### ${t.title.trim() || 'Untitled'}`, ...taskMetadataLines(t, projectName, resolveNoteTitle, checklistOf(t))]
+      const lines = [
+        `### ${t.title.trim() || 'Untitled'}`,
+        ...taskMetadataLines(t, projectName, resolveNoteTitle, checklistOf(t), statuses),
+      ]
       sections.push(lines.join('\n'))
     }
   }

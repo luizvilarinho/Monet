@@ -1,13 +1,22 @@
-import { CalendarBlank, Flag, Repeat, Target, Trash } from '@phosphor-icons/react'
+import { useState } from 'react'
+import { CalendarBlank, Clock, Flag, Repeat, Sun, Target, Trash } from '@phosphor-icons/react'
 import {
   describeRecurrence,
   formatDueShort,
+  formatElapsed,
+  isDone,
+  isInProgress,
   isOpen,
   overdueKind,
   planDate,
+  SNOOZE_OPTIONS,
+  statusColor,
+  statusName,
   type ChecklistProgress,
+  type SnoozeKind,
 } from '../../lib/tasks'
 import type { Task } from '../../types'
+import { useTasksEnv } from './TasksEnv'
 import styles from './TaskLine.module.css'
 
 // Linha de task compartilhada pelas visões de Tasks: o título ocupa a largura
@@ -18,8 +27,10 @@ interface TaskLineProps {
   todayKey: string
   // Nome do projeto (só quando a lista mostra todos os projetos).
   projectName?: string
-  // Mostra o indicador "doing" (falso onde o grupo já diz isso).
+  // Mostra o indicador de status em andamento (falso onde o grupo já diz isso).
   showDoing?: boolean
+  // Cor do projeto (borda esquerda); null = neutra.
+  projectColor?: string | null
   // Mostra a data de planejamento (falso no Week board, onde a coluna é a data).
   showDate?: boolean
   // Mostra o group (falso no Group by projeto, que já usa subtítulos).
@@ -37,6 +48,11 @@ interface TaskLineProps {
   onToggle: (done: boolean) => void
   // Exclusão (pede confirmação no chamador); ausente = sem botão.
   onDelete?: () => void
+  // Adia a data de planejamento; ausente = sem botão.
+  onSnooze?: (kind: SnoozeKind) => void
+  // Plan today: adiciona/remove a task de hoje; ausente = sem botão.
+  planned?: boolean
+  onTogglePlan?: () => void
 }
 
 export function TaskLine({
@@ -44,6 +60,7 @@ export function TaskLine({
   todayKey,
   projectName,
   showDoing = true,
+  projectColor = null,
   showDate = true,
   showGroup = true,
   checklist = null,
@@ -54,14 +71,19 @@ export function TaskLine({
   onSelect,
   onToggle,
   onDelete,
+  onSnooze,
+  planned = false,
+  onTogglePlan,
 }: TaskLineProps) {
   const closed = !isOpen(task)
+  const [snoozeOpen, setSnoozeOpen] = useState(false)
   return (
     <div
       className={`${styles.line} ${selected ? styles.selected : ''} ${cursor ? styles.cursor : ''} ${
         inSelection ? styles.inSelection : ''
       }`}
       data-task-id={task.id}
+      style={projectColor && !selected ? { borderLeftColor: projectColor } : undefined}
       onClick={onSelect}
       role="button"
       tabIndex={0}
@@ -72,7 +94,7 @@ export function TaskLine({
       <input
         type="checkbox"
         className={styles.checkbox}
-        checked={task.status === 'done'}
+        checked={isDone(task)}
         onClick={(e) => e.stopPropagation()}
         onChange={(e) => onToggle(e.target.checked)}
         aria-label="done"
@@ -95,6 +117,63 @@ export function TaskLine({
           checklist={checklist}
         />
       </div>
+      {onTogglePlan && isOpen(task) && (
+        <button
+          type="button"
+          className={`${styles.deleteBtn} ${planned ? styles.planned : ''}`}
+          aria-label={planned ? 'Remove from today' : 'Add to today'}
+          aria-pressed={planned}
+          title={planned ? 'Remove from today' : 'Add to today'}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation()
+            onTogglePlan()
+          }}
+        >
+          <Sun size={13} weight={planned ? 'fill' : 'regular'} aria-hidden />
+        </button>
+      )}
+      {onSnooze && isOpen(task) && (
+        <span
+          className={styles.snoozeWrap}
+          onMouseDown={(e) => e.stopPropagation()}
+          onBlur={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setSnoozeOpen(false)
+          }}
+        >
+          <button
+            type="button"
+            className={styles.deleteBtn}
+            aria-label="Snooze task"
+            title="Snooze"
+            onClick={(e) => {
+              e.stopPropagation()
+              setSnoozeOpen((v) => !v)
+            }}
+          >
+            <Clock size={13} aria-hidden />
+          </button>
+          {snoozeOpen && (
+            <div className={styles.snoozeMenu} role="menu">
+              {SNOOZE_OPTIONS.map((o) => (
+                <button
+                  key={o.kind}
+                  type="button"
+                  role="menuitem"
+                  className={styles.snoozeItem}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setSnoozeOpen(false)
+                    onSnooze(o.kind)
+                  }}
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </span>
+      )}
       {onDelete && (
         <button
           type="button"
@@ -127,13 +206,14 @@ interface TaskMetaProps {
 }
 
 function TaskMeta({ task, todayKey, projectName, showDoing, showDate, showGroup, checklist }: TaskMetaProps) {
+  const { statuses } = useTasksEnv()
   const plan = planDate(task)
   const late = overdueKind(task, todayKey)
   const date = showDate ? plan : null
   // Deadline à parte só quando difere da data de planejamento.
   const deadline = task.dueDate !== null && task.dueDate !== plan ? task.dueDate : null
   const postponed = task.rescheduleCount
-  const doing = showDoing && task.status === 'doing'
+  const doing = showDoing && isInProgress(task)
   const group = showGroup ? task.group : null
   if (
     !date &&
@@ -178,9 +258,16 @@ function TaskMeta({ task, todayKey, projectName, showDoing, showDate, showGroup,
         </span>
       )}
       {doing && (
-        <span className={`${styles.chip} ${styles.doing}`}>
+        <span
+          className={`${styles.chip} ${styles.doing}`}
+          style={{ color: statusColor(task.status, statuses) }}
+          title={task.doingSince !== null ? 'Time in this status' : undefined}
+        >
           <span className={styles.doingDot} aria-hidden />
-          doing
+          {statusName(task.status, statuses).toLowerCase()}
+          {task.status === 'doing' && task.doingSince !== null && (
+            <> {formatElapsed(Date.now() - task.doingSince)}</>
+          )}
         </span>
       )}
       {projectName && <span className={`${styles.chip} ${styles.project}`}>{projectName}</span>}

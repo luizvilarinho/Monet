@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { emit, listen } from '@tauri-apps/api/event'
 import { nanoid } from 'nanoid'
 import type { Task, TaskRecurrence, TaskStatus } from '../types'
 import { storage } from '../storage'
 import { dateKeyFromMs } from '../lib/calendar'
+import { emitTasksChanged, onTasksChangedElsewhere } from '../lib/tasksEvents'
 import { applyTaskPatch, buildNextOccurrence, normalizeGroup, type TaskPatch } from '../lib/tasks'
 
 export interface NewTaskInput {
@@ -32,7 +32,6 @@ export function useTasks() {
   const [loadFailed, setLoadFailed] = useState(false)
   const tasksRef = useRef(tasks)
   tasksRef.current = tasks
-  const originRef = useRef(nanoid())
 
   const reload = useCallback(async () => {
     try {
@@ -47,25 +46,14 @@ export function useTasks() {
 
   useEffect(() => {
     void reload()
-    let cancelled = false
-    let unlisten: (() => void) | undefined
-    void listen<{ origin: string }>('tasks-changed', (e) => {
-      if (e.payload?.origin !== originRef.current) void reload()
-    }).then((fn) => {
-      if (cancelled) fn()
-      else unlisten = fn
-    })
-    return () => {
-      cancelled = true
-      unlisten?.()
-    }
+    return onTasksChangedElsewhere(() => void reload())
   }, [reload])
 
   const persist = useCallback(async (op: () => Promise<void>, what: string) => {
     try {
       await op()
       setSaveError(null)
-      void emit('tasks-changed', { origin: originRef.current })
+      emitTasksChanged()
     } catch (err) {
       console.error(`failed to ${what}`, err)
       setSaveError('Failed to save task.')
@@ -97,6 +85,8 @@ export function useTasks() {
           sourceNoteId: i.sourceNoteId ?? null,
           rescheduleCount: 0,
           sortOrder: order,
+          doingSince: status === 'doing' ? now : null,
+          plannedDay: null,
         }
       })
       setTasks((prev) => [...prev, ...created])
@@ -164,6 +154,12 @@ export function useTasks() {
     [persist]
   )
 
+  // Status excluído: as tasks nele voltam a `todo` só em memória; o banco já
+  // foi migrado por `deleteTaskStatus`.
+  const reassignStatus = useCallback((from: string, to: string) => {
+    setTasks((list) => list.map((t) => (t.status === from ? { ...t, status: to } : t)))
+  }, [])
+
   const tasksById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks])
 
   return {
@@ -177,5 +173,6 @@ export function useTasks() {
     updateTask,
     updateTasks,
     deleteTasks,
+    reassignStatus,
   }
 }

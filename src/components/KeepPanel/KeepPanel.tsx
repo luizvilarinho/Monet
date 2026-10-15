@@ -15,6 +15,8 @@ import { storage } from '../../storage'
 import type { Note, Notebook } from '../../types'
 import { useTasks } from '../../hooks/useTasks'
 import { useToday } from '../../hooks/useToday'
+import { useTaskStatuses } from '../../hooks/useTaskStatuses'
+import { DEFAULT_TASKS_ENV, TasksEnvProvider } from '../TasksView/TasksEnv'
 import { buildBaseExtensions } from '../Editor/extensions'
 import { RemindersProvider } from '../Editor/RemindersContext'
 import { TasksProvider } from '../Editor/TasksContext'
@@ -39,6 +41,9 @@ export function KeepPanel() {
   noteRef.current = note
   const todayKey = useToday()
   const { tasks, tasksById, updateTask, reload: reloadTasks } = useTasks()
+  // Registro de status (SQLite) para o bloco `/tasks` mostrar nomes/cores custom.
+  const { statuses } = useTaskStatuses()
+  const tasksEnv = useMemo(() => ({ ...DEFAULT_TASKS_ENV, statuses }), [statuses])
   const reloadTasksRef = useRef(reloadTasks)
   reloadTasksRef.current = reloadTasks
   // Cadernos para o `#Projeto` dos blocos `/tasks` da nota.
@@ -257,6 +262,7 @@ export function KeepPanel() {
   const headerWeekday = getWeekdayName(parseCalendarTitle(headerDate) ?? new Date())
 
   return (
+    <TasksEnvProvider value={tasksEnv}>
     <div className={styles.window}>
       <div className={styles.titlebar} data-tauri-drag-region>
         <span className={styles.title}>
@@ -301,5 +307,6 @@ export function KeepPanel() {
         />
       )}
     </div>
+    </TasksEnvProvider>
   )
 }

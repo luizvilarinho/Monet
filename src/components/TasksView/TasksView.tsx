@@ -3,14 +3,18 @@ import { useMemo, useState } from 'react'
 import {
   computeTaskSummary,
   filterBySummary,
+  filterTasksForView,
   groupTasksBy,
   isOpen,
+  snoozeDate,
   type ChecklistProgress,
   type TaskGroupBy,
   type TaskSummaryKey,
 } from '../../lib/tasks'
 import type { Notebook, Task } from '../../types'
-import { SUMMARY_LABEL, TasksHeader, type NewTaskDraft, type TasksMainView } from './TasksHeader'
+import { SUMMARY_LABEL, TasksHeader, type NewTaskDraft } from './TasksHeader'
+import { useTasksEnv } from './TasksEnv'
+import type { TasksMainView } from './views'
 import { TaskLine } from './TaskLine'
 import { TaskBatchBar } from './TaskBatchBar'
 import { useTaskKeyboard, type TaskChanges } from './useTaskKeyboard'
@@ -26,6 +30,8 @@ interface TasksViewProps {
   mainView: TasksMainView
   onMainViewChange: (view: TasksMainView) => void
   width: number
+  // Cadernos ocultos: a coluna aceita largura maior (largura própria).
+  wide?: boolean
   onWidthChange: (w: number) => void
   // Caderno-projeto filtrado (null = todos).
   filter: string | null
@@ -57,6 +63,7 @@ export function TasksView({
   mainView,
   onMainViewChange,
   width,
+  wide = false,
   onWidthChange,
   filter,
   onFilterChange,
@@ -75,21 +82,27 @@ export function TasksView({
 }: TasksViewProps) {
   // Seções recolhíveis (Done/Dropped) abertas pelo usuário.
   const [openSections, setOpenSections] = useState<Set<string>>(() => new Set())
-  const onResizeMouseDown = useSidebarResize(width, onWidthChange)
+  const onResizeMouseDown = useSidebarResize(width, onWidthChange, wide)
 
   const notebookNameById = useMemo(
     () => new Map(notebooks.map((nb) => [nb.id, nb.name || 'unnamed'])),
     [notebooks]
   )
 
+  const { statuses, search } = useTasksEnv()
+  const notebookColorById = useMemo(
+    () => new Map(notebooks.map((nb) => [nb.id, nb.color ?? null])),
+    [notebooks]
+  )
+
   const projectTasks = useMemo(
-    () => (filter === null ? tasks : tasks.filter((t) => t.notebookId === filter)),
-    [tasks, filter]
+    () => filterTasksForView(tasks, filter, search),
+    [tasks, filter, search]
   )
   const summary = useMemo(() => computeTaskSummary(projectTasks, todayKey), [projectTasks, todayKey])
   const sections = useMemo(
-    () => groupTasksBy(groupBy, projectTasks, todayKey, notebooks),
-    [groupBy, projectTasks, todayKey, notebooks]
+    () => groupTasksBy(groupBy, projectTasks, todayKey, notebooks, statuses),
+    [groupBy, projectTasks, todayKey, notebooks, statuses]
   )
   const filtered = useMemo(
     () => (summaryFilter ? filterBySummary(projectTasks, summaryFilter, todayKey) : []),
@@ -119,9 +132,10 @@ export function TasksView({
         key={t.id}
         task={t}
         todayKey={todayKey}
-        projectName={filter === null && groupBy !== 'project' ? notebookNameById.get(t.notebookId) : undefined}
+        projectName={filter === null && groupBy !== 'project' && groupBy !== 'group' ? notebookNameById.get(t.notebookId) : undefined}
         showDoing={showDoing}
-        showGroup={summaryFilter !== null || groupBy !== 'project'}
+        projectColor={notebookColorById.get(t.notebookId) ?? null}
+        showGroup={summaryFilter !== null || (groupBy !== 'project' && groupBy !== 'group')}
         checklist={checklist.get(t.id)}
         selected={t.id === selectedTaskId}
         cursor={t.id === kb.cursorId}
@@ -131,6 +145,13 @@ export function TasksView({
         }}
         onToggle={(done) => onToggleTask(t.id, done)}
         onDelete={() => void kb.requestDelete([t.id], 'Delete task')}
+        onSnooze={(kind) =>
+          onUpdateTasks([{ id: t.id, patch: { scheduledDate: snoozeDate(t, kind, todayKey) } }])
+        }
+        planned={t.plannedDay === todayKey}
+        onTogglePlan={() =>
+          onUpdateTasks([{ id: t.id, patch: { plannedDay: t.plannedDay === todayKey ? null : todayKey } }])
+        }
       />
     )
   }
@@ -233,7 +254,7 @@ export function TasksView({
                           {g.tasks.map((t) => renderTask(t, true))}
                         </div>
                       ))
-                    : list.map((t) => renderTask(t, key !== 'inProgress' && key !== 'doing')))}
+                    : list.map((t) => renderTask(t, key !== 'inProgress' && groupBy !== 'status')))}
               </section>
             )
           })

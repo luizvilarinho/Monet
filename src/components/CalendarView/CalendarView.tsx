@@ -49,6 +49,8 @@ interface CalendarViewProps {
   onDayClick: (date: Date) => void
   onNoteClick: (noteId: string) => void
   width?: number
+  // Cadernos ocultos: a coluna aceita largura maior (largura própria).
+  wide?: boolean
   collapsed?: boolean
   onToggleCollapsed?: () => void
   onWidthChange?: (w: number) => void
@@ -67,6 +69,7 @@ export function CalendarView({
   onDayClick,
   onNoteClick,
   width = 220,
+  wide = false,
   collapsed = false,
   onToggleCollapsed,
   onWidthChange,
@@ -95,7 +98,7 @@ export function CalendarView({
     setSelectedDay((sel) => (sel === prev ? todayKey : sel))
   }, [todayKey])
 
-  const onMouseDown = useSidebarResize(width, onWidthChange)
+  const onMouseDown = useSidebarResize(width, onWidthChange, wide)
 
   const dayDotMap = useMemo(() => {
     const map = new Map<string, 'todo' | 'content'>()

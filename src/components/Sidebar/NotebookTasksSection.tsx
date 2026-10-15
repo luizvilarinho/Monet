@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { CaretDown, CaretRight } from '@phosphor-icons/react'
 import { compareTasks, isOpen, overdueKind, type ChecklistProgress } from '../../lib/tasks'
 import { parseQuickAdd } from '../../lib/taskQuickAdd'
+import { useTasksEnv } from '../TasksView/TasksEnv'
 import type { Notebook, Task } from '../../types'
 import type { NewTaskDraft } from '../TasksView/TasksHeader'
 import { TaskLine } from '../TasksView/TaskLine'
@@ -64,6 +65,7 @@ export function NotebookTasksSection({
     const saved = Number(readStorage(HEIGHT_KEY))
     return saved >= MIN_HEIGHT ? saved : DEFAULT_HEIGHT
   })
+  const { statuses } = useTasksEnv()
   const [draft, setDraft] = useState('')
   const sectionRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<{ startY: number; startHeight: number; max: number } | null>(null)
@@ -78,8 +80,8 @@ export function NotebookTasksSection({
   const lateTone = late.includes('deadline') ? styles.lateDeadline : styles.latePlan
 
   const parsed = useMemo(
-    () => parseQuickAdd(draft, { notebooks, todayKey, ignored: NO_SET, confirmed: NO_SET }),
-    [draft, notebooks, todayKey]
+    () => parseQuickAdd(draft, { notebooks, todayKey, ignored: NO_SET, confirmed: NO_SET, statuses }),
+    [draft, notebooks, todayKey, statuses]
   )
 
   async function handleCreate() {
@@ -150,7 +152,7 @@ export function NotebookTasksSection({
         }}
         placeholder="+ task"
         aria-label="new task in this notebook"
-        title="Try: today, tomorrow, fri, 17/10, !fri (deadline), @doing, !! (important)"
+        title="Try: today, tomorrow, fri, 17/10, !fri (deadline), @status, !! (important)"
       />
       {parsed.tokens.some((t) => !t.needsConfirm) && (
         <div className={styles.tokens}>

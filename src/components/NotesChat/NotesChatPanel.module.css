@@ -48,20 +48,35 @@
   top: calc(100% + 8px);
 }
 
+/* Mesmo estilo dos botões de pasta do ChatSidebar (folderSysPromptBtn). */
 .iconBtn {
+  flex-shrink: 0;
   background: transparent;
   border: none;
-  color: var(--text-muted, #7c7c93);
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-  padding: 4px 6px;
+  color: var(--text-muted, #606070);
+  padding: 2px 4px;
   border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.85;
+  transition: opacity 0.12s, color 0.12s, background 0.12s;
 }
 
 .iconBtn:hover {
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--text-primary, #ddddf1);
+  opacity: 1;
+  color: var(--accent-ai, #5dcaa5);
+  background: rgba(93, 202, 165, 0.12);
+}
+
+.iconBtnActive {
+  color: var(--accent-ai, #5dcaa5);
+  opacity: 1;
+}
+
+.iconBtnActive:hover {
+  background: rgba(93, 202, 165, 0.18);
 }
 
 /* ─── Barra de conversas da pasta do caderno ───────────────────────────── */

@@ -3,6 +3,8 @@ export interface Notebook {
   name: string
   createdAt: number
   updatedAt: number
+  // Cor do projeto nas visões de Tasks (token da paleta); null = neutro.
+  color?: string | null
 }
 
 export interface Subject {
@@ -26,7 +28,34 @@ export interface Note {
   updatedAt: number
 }
 
-export type TaskStatus = 'todo' | 'doing' | 'done' | 'dropped'
+// Id de um status do registro `task_statuses`: built-ins (todo/doing/done/
+// dropped) ou custom (`st_<id>`).
+export type TaskStatus = string
+
+export interface TaskStatusDef {
+  id: string
+  name: string
+  color: string | null
+  sortOrder: number
+  wipLimit: number | null
+  builtin: boolean
+}
+
+// Visão salva: base + filtros da TasksView.
+export interface TaskViewConfig {
+  base: string
+  project: string | null
+  summary: string | null
+  text: string
+  groupBy: string | null
+}
+
+export interface TaskView {
+  id: string
+  name: string
+  config: TaskViewConfig
+  sortOrder: number
+}
 
 export type TaskRecurrence =
   | { freq: 'daily' }
@@ -58,6 +87,10 @@ export interface Task {
   sourceNoteId: string | null
   rescheduleCount: number
   sortOrder: number
+  // Quando entrou em `doing` (epoch ms); null fora de doing ou sem registro.
+  doingSince: number | null
+  // Dia (YYYY-MM-DD) em que a task foi planejada em "Plan today".
+  plannedDay: string | null
 }
 
 export type DocumentStatus = 'indexing' | 'available' | 'error'

@@ -1,6 +1,6 @@
 import { cleanNoteContentForAi, noteDate } from '../../lib/noteFileText'
 import { isOpen, taskLineForAi, type ChecklistProgress } from '../../lib/tasks'
-import type { AiResponse, Note, Task } from '../../types'
+import type { AiResponse, Note, Task, TaskStatusDef } from '../../types'
 
 // ─── Builder do bloco de contexto das Anotações ─────────────────────────────
 // Função pura (sem I/O), espelho de readerContext.ts: monta o bloco EFEMERO
@@ -27,6 +27,8 @@ export interface NotesContextInput {
   todayKey: string
   // Progresso do checklist da nota-corpo de cada task.
   checklist: Map<string, ChecklistProgress>
+  // Registro de status (nome dos status custom nas linhas das tasks).
+  statuses: TaskStatusDef[]
 }
 
 function truncateWithMarker(s: string, budget: number): string {
@@ -73,7 +75,9 @@ export function buildNotesContext(input: NotesContextInput): string {
       `Tasks of this notebook (${open} open, ${projectTasks.length - open} done this week; today is ${input.todayKey}; "do" = planned date, "deadline" = delivery date):`
     )
     for (const t of projectTasks.slice(0, PROJECT_TASKS_LIMIT)) {
-      lines.push(taskLineForAi(t, input.todayKey, null, input.checklist.get(t.id) ?? null))
+      lines.push(
+        taskLineForAi(t, input.todayKey, null, input.checklist.get(t.id) ?? null, input.statuses)
+      )
     }
     if (projectTasks.length > PROJECT_TASKS_LIMIT) lines.push('- [truncated]')
   }

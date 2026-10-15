@@ -1,0 +1,52 @@
+import { createContext, useContext } from 'react'
+import type { TaskStatusDef, TaskView, TaskViewConfig } from '../../types'
+import { BUILTIN_STATUS_DEFS } from '../../lib/tasks'
+
+// Estado compartilhado das visões de Tasks (registro de status, visões
+// salvas, busca, ações de projeto), entregue pelo App para evitar repassar as
+// mesmas props por TasksView/Week/Kanban/Projects/Groups/Today/Review.
+export interface TasksEnv {
+  statuses: TaskStatusDef[]
+  onManageStatuses: () => void
+  // Visões salvas e a configuração atual da TasksView (para "Save current view").
+  savedViews: TaskView[]
+  currentViewConfig: TaskViewConfig
+  onApplyView: (view: TaskView) => void
+  onSaveView: (name: string) => void
+  onRenameView: (id: string, name: string) => void
+  onDeleteView: (id: string) => void
+  // Id da visão salva aplicada (null = visão built-in).
+  activeSavedViewId: string | null
+  // Busca de texto (título/group), válida para todas as visões.
+  search: string
+  onSearchChange: (text: string) => void
+  // Mover a task (e a nota-corpo) para o projeto `notebookId`.
+  onMoveTaskToProject: (taskId: string, notebookId: string) => void
+  onSetProjectColor: (notebookId: string, color: string | null) => void
+}
+
+const noop = () => {}
+
+export const DEFAULT_TASKS_ENV: TasksEnv = {
+  statuses: BUILTIN_STATUS_DEFS,
+  onManageStatuses: noop,
+  savedViews: [],
+  currentViewConfig: { base: 'list', project: null, summary: null, text: '', groupBy: null },
+  onApplyView: noop,
+  onSaveView: noop,
+  onRenameView: noop,
+  onDeleteView: noop,
+  activeSavedViewId: null,
+  search: '',
+  onSearchChange: noop,
+  onMoveTaskToProject: noop,
+  onSetProjectColor: noop,
+}
+
+const TasksEnvContext = createContext<TasksEnv>(DEFAULT_TASKS_ENV)
+
+export const TasksEnvProvider = TasksEnvContext.Provider
+
+export function useTasksEnv(): TasksEnv {
+  return useContext(TasksEnvContext)
+}

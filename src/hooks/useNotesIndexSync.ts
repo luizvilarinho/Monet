@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { Note, Notebook, Task } from '../types'
+import type { Note, Notebook, Task, TaskStatusDef } from '../types'
 import {
   NOTES_INDEX_CHANGED_EVENT,
   notesIndexDelete,
@@ -10,7 +10,7 @@ import {
   notesIndexUpsert,
 } from '../lib/documents'
 import { buildNoteFileText, buildTasksSummaryText, loadEmbedResponses } from '../lib/noteFileText'
-import { checklistProgress, tasksSummaryNoteId } from '../lib/tasks'
+import { checklistProgress, statusName, tasksSummaryNoteId } from '../lib/tasks'
 
 // Espelha as notas de cada caderno no RAG (pasta gerenciada `origin='notes'`).
 // O sync vai só do app para o disco: o hook compara o array de notas com o que
@@ -38,6 +38,8 @@ interface Params {
   // A leitura de tasks falhou: a reconciliação das notas roda mesmo assim e só
   // pula os resumos de tasks (o diff de tasks cobre quando elas carregarem).
   tasksLoadFailed: boolean
+  // Registro de status (nomes no texto indexado).
+  statuses: TaskStatusDef[]
   // A leitura inicial de notas ou cadernos falhou: as listas vazias não são
   // confiáveis e a reconciliação não roda (senão apagaria todas as cópias).
   loadFailed: boolean
@@ -57,10 +59,15 @@ function jobDocKey(job: Job): string | null {
 }
 
 // Tudo de uma task que entra no texto indexado (nota-corpo e resumo).
-function taskSignature(task: Task, projectName: string | undefined): string {
+function taskSignature(
+  task: Task,
+  projectName: string | undefined,
+  statusLabel: string
+): string {
   return JSON.stringify([
     task.title,
     task.status,
+    statusLabel,
     task.notebookId,
     task.noteId,
     task.dueDate,
@@ -84,6 +91,7 @@ export function useNotesIndexSync({
   tasks,
   tasksLoaded,
   tasksLoadFailed,
+  statuses,
   loadFailed,
   hasApiKey,
   activeNoteId,
@@ -97,6 +105,8 @@ export function useNotesIndexSync({
   notebooksRef.current = notebooks
   const tasksRef = useRef(tasks)
   tasksRef.current = tasks
+  const statusesRef = useRef(statuses)
+  statusesRef.current = statuses
   const hasApiKeyRef = useRef(hasApiKey)
   hasApiKeyRef.current = hasApiKey
 
@@ -128,7 +138,7 @@ export function useNotesIndexSync({
       return buildNoteFileText(
         note,
         resolveNoteTitle,
-        task ? { task, projectName: projectName ?? 'Unknown' } : undefined,
+        task ? { task, projectName: projectName ?? 'Unknown', statuses: statusesRef.current } : undefined,
         (id) => embeds.get(id),
       )
     },
@@ -200,7 +210,7 @@ export function useNotesIndexSync({
           const fileText = buildTasksSummaryText(notebook.name, nbTasks, resolveNoteTitle, (t) => {
             const body = t.noteId ? notesRef.current.find((n) => n.id === t.noteId) : undefined
             return body ? checklistProgress(body.content) : null
-          })
+          }, statusesRef.current)
           const synced = lastSyncedRef.current.get(summaryId)
           if (synced && synced.notebookId === notebook.id && synced.fileText === fileText) return
           const result = await notesIndexUpsert({
@@ -417,7 +427,10 @@ export function useNotesIndexSync({
         lastSeenTaskRef.current = new Map(
           currentTasks.map((t) => [
             t.id,
-            { sig: taskSignature(t, nameById.get(t.notebookId)), notebookId: t.notebookId },
+            {
+              sig: taskSignature(t, nameById.get(t.notebookId), statusName(t.status, statusesRef.current)),
+              notebookId: t.notebookId,
+            },
           ]),
         )
         lastSeenNoteRef.current = new Map(noteById)
@@ -482,7 +495,7 @@ export function useNotesIndexSync({
     const currentIds = new Set<string>()
     for (const task of tasks) {
       currentIds.add(task.id)
-      const sig = taskSignature(task, nameById.get(task.notebookId))
+      const sig = taskSignature(task, nameById.get(task.notebookId), statusName(task.status, statuses))
       const prev = seen.get(task.id)
       if (prev?.sig === sig) continue
       seen.set(task.id, { sig, notebookId: task.notebookId })
@@ -498,7 +511,7 @@ export function useNotesIndexSync({
     for (const nbId of affected) {
       if (!disabled.has(nbId)) scheduleTasksSummary(nbId)
     }
-  }, [tasks, notebooks, scheduleUpsert, scheduleTasksSummary])
+  }, [tasks, notebooks, statuses, scheduleUpsert, scheduleTasksSummary])
 
   // Diff de cadernos: apagado → remove a pasta; renomeado → um upsert
   // atualiza o nome da pasta ("Notes — <Caderno>").

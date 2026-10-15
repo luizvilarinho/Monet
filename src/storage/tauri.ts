@@ -13,7 +13,11 @@ import type {
   Task,
   TaskRecurrence,
   TaskStatus,
+  TaskStatusDef,
+  TaskView,
+  TaskViewConfig,
 } from '../types'
+import { BUILTIN_STATUS_DEFS } from '../lib/tasks'
 import type { StorageAdapter } from './index'
 
 const DB_URL = 'sqlite:monet.db'
@@ -23,6 +27,8 @@ interface NotebookRow {
   name: string
   created_at: number
   updated_at: number
+  // Coluna `color` adicionada por ensureNotebookColorColumn (nula em linhas antigas).
+  color?: string | null
 }
 
 interface NoteRow {
@@ -122,7 +128,13 @@ function rowToResponse(r: AiResponseRow): AiResponse {
 }
 
 function rowToNotebook(r: NotebookRow): Notebook {
-  return { id: r.id, name: r.name, createdAt: r.created_at, updatedAt: r.updated_at }
+  return {
+    id: r.id,
+    name: r.name,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    color: r.color ?? null,
+  }
 }
 
 function rowToNote(r: NoteRow): Note {
@@ -277,11 +289,58 @@ interface TaskRow {
   source_note_id: string | null
   reschedule_count: number
   sort_order: number
+  doing_since: number | null
+  planned_day: string | null
 }
 
-function normalizeTaskStatus(s: string): TaskStatus {
-  if (s === 'todo' || s === 'doing' || s === 'done' || s === 'dropped') return s
-  return 'todo'
+interface TaskStatusRow {
+  id: string
+  name: string
+  color: string | null
+  sort_order: number
+  wip_limit: number | null
+  builtin: number
+}
+
+interface TaskViewRow {
+  id: string
+  name: string
+  config: string
+  sort_order: number
+}
+
+// Qualquer string não vazia é um status válido (built-in ou custom); vazio
+// vira 'todo'. Ids desconhecidos não são descartados nem reescritos.
+function normalizeTaskStatus(s: string | null): TaskStatus {
+  return s && s.trim() ? s : 'todo'
+}
+
+function rowToTaskStatus(r: TaskStatusRow): TaskStatusDef {
+  return {
+    id: r.id,
+    name: r.name,
+    color: r.color ?? null,
+    sortOrder: r.sort_order,
+    wipLimit: r.wip_limit ?? null,
+    builtin: r.builtin === 1,
+  }
+}
+
+function rowToTaskView(r: TaskViewRow): TaskView {
+  let config: TaskViewConfig = { base: 'list', project: null, summary: null, text: '', groupBy: null }
+  try {
+    const parsed = JSON.parse(r.config) as Partial<TaskViewConfig>
+    config = {
+      base: typeof parsed.base === 'string' ? parsed.base : 'list',
+      project: typeof parsed.project === 'string' ? parsed.project : null,
+      summary: typeof parsed.summary === 'string' ? parsed.summary : null,
+      text: typeof parsed.text === 'string' ? parsed.text : '',
+      groupBy: typeof parsed.groupBy === 'string' ? parsed.groupBy : null,
+    }
+  } catch {
+    // config inválida: usa o padrão
+  }
+  return { id: r.id, name: r.name, config, sortOrder: r.sort_order }
 }
 
 // Recorrência gravada como JSON; inválida ou ausente vira null.
@@ -321,6 +380,8 @@ function rowToTask(r: TaskRow): Task {
     sourceNoteId: r.source_note_id,
     rescheduleCount: r.reschedule_count ?? 0,
     sortOrder: r.sort_order ?? 0,
+    doingSince: r.doing_since ?? null,
+    plannedDay: r.planned_day ?? null,
   }
 }
 
@@ -346,6 +407,20 @@ const TASKS_TABLES_SQL = [
   )`,
   'CREATE INDEX IF NOT EXISTS idx_notebook_tasks_notebook ON notebook_tasks(notebook_id)',
   'CREATE INDEX IF NOT EXISTS idx_notebook_tasks_source_note ON notebook_tasks(source_note_id)',
+  `CREATE TABLE IF NOT EXISTS task_statuses (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    color TEXT,
+    sort_order INTEGER NOT NULL,
+    wip_limit INTEGER,
+    builtin INTEGER NOT NULL DEFAULT 0
+  )`,
+  `CREATE TABLE IF NOT EXISTS task_views (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    config TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0
+  )`,
 ]
 
 // Colunas de notebook_tasks posteriores à v18. Entram aqui, e não em
@@ -358,6 +433,8 @@ const TASKS_EXTRA_COLUMNS = [
   { name: 'important', ddl: 'important INTEGER NOT NULL DEFAULT 0' },
   { name: 'recurrence', ddl: 'recurrence TEXT' },
   { name: 'recurrence_next_id', ddl: 'recurrence_next_id TEXT' },
+  { name: 'doing_since', ddl: 'doing_since INTEGER' },
+  { name: 'planned_day', ddl: 'planned_day TEXT' },
 ]
 
 // O banco roda em modo WAL (default do SQLite). Com o pool de múltiplas
@@ -383,6 +460,7 @@ export class TauriStorage implements StorageAdapter {
   private checkpointTimer?: ReturnType<typeof setTimeout>
   private lastCheckpoint = 0
   private tasksTablesReady: Promise<void> | null = null
+  private notebookColorReady: Promise<void> | null = null
 
   private db(): Promise<Database> {
     if (!this.dbPromise) {
@@ -474,6 +552,13 @@ export class TauriStorage implements StorageAdapter {
          updated_at = excluded.updated_at`,
       [nb.id, nb.name, nb.createdAt, nb.updatedAt]
     )
+    this.scheduleCheckpoint()
+  }
+
+  async setNotebookColor(id: string, color: string | null): Promise<void> {
+    const db = await this.db()
+    await this.ensureNotebookColorColumn(db)
+    await db.execute('UPDATE notebooks SET color = $1 WHERE id = $2', [color, id])
     this.scheduleCheckpoint()
   }
 
@@ -610,6 +695,29 @@ export class TauriStorage implements StorageAdapter {
     )
   }
 
+  // Adiciona `notebooks.color` se faltar; "duplicate column" (outra janela
+  // adicionou entre o PRAGMA e o ALTER) conta como sucesso. Memoizado. Só roda
+  // ao gravar a cor: a leitura (`SELECT *`) já traz a coluna quando existe, e
+  // fica sem DDL no cold start.
+  private ensureNotebookColorColumn(db: Database): Promise<void> {
+    if (!this.notebookColorReady) {
+      const p = (async () => {
+        const cols = await db.select<Array<{ name: string }>>('PRAGMA table_info(notebooks)')
+        if (cols.some((c) => c.name === 'color')) return
+        try {
+          await db.execute('ALTER TABLE notebooks ADD COLUMN color TEXT')
+        } catch (e) {
+          if (!String(e).toLowerCase().includes('duplicate column')) throw e
+        }
+      })()
+      this.notebookColorReady = p
+      p.catch(() => {
+        if (this.notebookColorReady === p) this.notebookColorReady = null
+      })
+    }
+    return this.notebookColorReady
+  }
+
   // Mesmo motivo do ensureReminderStateTable: não depender do estado das
   // migrations (v18) para as tabelas de tasks existirem. Memoizado; se falhar,
   // zera para tentar de novo na próxima chamada.
@@ -632,6 +740,18 @@ export class TauriStorage implements StorageAdapter {
             }
           }
         }
+        // Seed dos built-ins (ids fixos) e backfill aproximado de doing_since;
+        // cada statement é independente e idempotente.
+        for (const def of BUILTIN_STATUS_DEFS) {
+          await db.execute(
+            `INSERT OR IGNORE INTO task_statuses (id, name, color, sort_order, wip_limit, builtin)
+             VALUES ($1, $2, NULL, $3, NULL, 1)`,
+            [def.id, def.name, def.sortOrder]
+          )
+        }
+        await db.execute(
+          "UPDATE notebook_tasks SET doing_since = updated_at WHERE status = 'doing' AND doing_since IS NULL"
+        )
       })()
       this.tasksTablesReady = p
       p.catch(() => {
@@ -654,8 +774,8 @@ export class TauriStorage implements StorageAdapter {
     const db = await this.db()
     await this.ensureTasksTables(db)
     await db.execute(
-      `INSERT INTO notebook_tasks (id, title, status, notebook_id, note_id, due_date, created_at, updated_at, completed_at, source_note_id, reschedule_count, sort_order, scheduled_date, task_group, important, recurrence, recurrence_next_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+      `INSERT INTO notebook_tasks (id, title, status, notebook_id, note_id, due_date, created_at, updated_at, completed_at, source_note_id, reschedule_count, sort_order, scheduled_date, task_group, important, recurrence, recurrence_next_id, doing_since, planned_day)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
        ON CONFLICT(id) DO UPDATE SET
          title = excluded.title,
          status = excluded.status,
@@ -671,7 +791,9 @@ export class TauriStorage implements StorageAdapter {
          task_group = excluded.task_group,
          important = excluded.important,
          recurrence = excluded.recurrence,
-         recurrence_next_id = excluded.recurrence_next_id`,
+         recurrence_next_id = excluded.recurrence_next_id,
+         doing_since = excluded.doing_since,
+         planned_day = excluded.planned_day`,
       [
         t.id,
         t.title,
@@ -690,6 +812,8 @@ export class TauriStorage implements StorageAdapter {
         t.important ? 1 : 0,
         t.recurrence ? JSON.stringify(t.recurrence) : null,
         t.recurrenceNextId,
+        t.doingSince,
+        t.plannedDay,
       ]
     )
     this.scheduleCheckpoint()
@@ -699,6 +823,72 @@ export class TauriStorage implements StorageAdapter {
     const db = await this.db()
     await this.ensureTasksTables(db)
     await db.execute('DELETE FROM notebook_tasks WHERE id = $1', [id])
+    this.scheduleCheckpoint()
+  }
+
+  async getTaskStatuses(): Promise<TaskStatusDef[]> {
+    const db = await this.db()
+    await this.ensureTasksTables(db)
+    const rows = await db.select<TaskStatusRow[]>(
+      'SELECT * FROM task_statuses ORDER BY sort_order ASC, id ASC'
+    )
+    return rows.map(rowToTaskStatus)
+  }
+
+  async saveTaskStatus(s: TaskStatusDef): Promise<void> {
+    const db = await this.db()
+    await this.ensureTasksTables(db)
+    await db.execute(
+      `INSERT INTO task_statuses (id, name, color, sort_order, wip_limit, builtin)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT(id) DO UPDATE SET
+         name = excluded.name,
+         color = excluded.color,
+         sort_order = excluded.sort_order,
+         wip_limit = excluded.wip_limit`,
+      [s.id, s.name, s.color, s.sortOrder, s.wipLimit, s.builtin ? 1 : 0]
+    )
+    this.scheduleCheckpoint()
+  }
+
+  // Duas execuções separadas, nesta ordem (sem BEGIN/COMMIT: pool sqlx):
+  // falha entre elas é segura, reexecutar é idempotente.
+  async deleteTaskStatus(id: string): Promise<void> {
+    const db = await this.db()
+    await this.ensureTasksTables(db)
+    await db.execute("UPDATE notebook_tasks SET status = 'todo' WHERE status = $1", [id])
+    await db.execute('DELETE FROM task_statuses WHERE id = $1 AND builtin = 0', [id])
+    this.scheduleCheckpoint()
+  }
+
+  async getTaskViews(): Promise<TaskView[]> {
+    const db = await this.db()
+    await this.ensureTasksTables(db)
+    const rows = await db.select<TaskViewRow[]>(
+      'SELECT * FROM task_views ORDER BY sort_order ASC, id ASC'
+    )
+    return rows.map(rowToTaskView)
+  }
+
+  async saveTaskView(v: TaskView): Promise<void> {
+    const db = await this.db()
+    await this.ensureTasksTables(db)
+    await db.execute(
+      `INSERT INTO task_views (id, name, config, sort_order)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT(id) DO UPDATE SET
+         name = excluded.name,
+         config = excluded.config,
+         sort_order = excluded.sort_order`,
+      [v.id, v.name, JSON.stringify(v.config), v.sortOrder]
+    )
+    this.scheduleCheckpoint()
+  }
+
+  async deleteTaskView(id: string): Promise<void> {
+    const db = await this.db()
+    await this.ensureTasksTables(db)
+    await db.execute('DELETE FROM task_views WHERE id = $1', [id])
     this.scheduleCheckpoint()
   }
 

@@ -5,6 +5,7 @@ import {
   computeTaskSummary,
   endOfWeekKey,
   filterBySummary,
+  filterTasksForView,
   formatDueShort,
   isOpen,
   isOverdue,
@@ -14,7 +15,9 @@ import {
   type TaskSummaryKey,
 } from '../../lib/tasks'
 import type { Notebook, Task } from '../../types'
-import { TasksHeader, type NewTaskDraft, type TasksMainView } from './TasksHeader'
+import { TasksHeader, type NewTaskDraft } from './TasksHeader'
+import { useTasksEnv } from './TasksEnv'
+import type { TasksMainView } from './views'
 import { TaskLine } from './TaskLine'
 import type { TaskChanges } from './useTaskKeyboard'
 import styles from './WeeklyReview.module.css'
@@ -68,9 +71,10 @@ export function WeeklyReview({
     () => new Map(notebooks.map((nb) => [nb.id, nb.name || 'unnamed'])),
     [notebooks]
   )
+  const { search } = useTasksEnv()
   const projectTasks = useMemo(
-    () => (filter === null ? tasks : tasks.filter((t) => t.notebookId === filter)),
-    [tasks, filter]
+    () => filterTasksForView(tasks, filter, search),
+    [tasks, filter, search]
   )
   const summary = useMemo(() => computeTaskSummary(projectTasks, todayKey), [projectTasks, todayKey])
 

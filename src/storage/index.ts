@@ -7,6 +7,8 @@ import type {
   Notebook,
   Subject,
   Task,
+  TaskStatusDef,
+  TaskView,
 } from '../types'
 import { TauriStorage } from './tauri'
 import { BrowserStorage } from './browser'
@@ -15,6 +17,7 @@ export interface StorageAdapter {
   getNotebooks(): Promise<Notebook[]>
   saveNotebook(notebook: Notebook): Promise<void>
   deleteNotebook(id: string): Promise<void>
+  setNotebookColor(id: string, color: string | null): Promise<void>
 
   getSubjects(notebookId: string): Promise<Subject[]>
   saveSubject(subject: Subject): Promise<void>
@@ -45,6 +48,13 @@ export interface StorageAdapter {
   getTasks(): Promise<Task[]>
   saveTask(task: Task): Promise<void>
   deleteTask(id: string): Promise<void>
+
+  getTaskStatuses(): Promise<TaskStatusDef[]>
+  saveTaskStatus(status: TaskStatusDef): Promise<void>
+  deleteTaskStatus(id: string): Promise<void>
+  getTaskViews(): Promise<TaskView[]>
+  saveTaskView(view: TaskView): Promise<void>
+  deleteTaskView(id: string): Promise<void>
 
   getResponses(noteId: string): Promise<AiResponse[]>
   getResponsesByIds(ids: string[]): Promise<AiResponse[]>

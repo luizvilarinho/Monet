@@ -28,7 +28,8 @@ export function useNotes() {
     return list
   }, [])
 
-  const save = useCallback(async (note: Note) => {
+  // Devolve false quando a gravação falha (o erro já fica em `saveError`).
+  const save = useCallback(async (note: Note): Promise<boolean> => {
     setNotes((prev) => {
       const i = prev.findIndex((n) => n.id === note.id)
       if (i >= 0) {
@@ -41,9 +42,11 @@ export function useNotes() {
     try {
       await storage.saveNote(note)
       setSaveError(null)
+      return true
     } catch (err) {
       console.error('failed to save note', err)
       setSaveError('Failed to save note. Your changes may be lost.')
+      return false
     }
   }, [])
 

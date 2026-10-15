@@ -1,14 +1,27 @@
 import { useCallback, useState, type KeyboardEvent } from 'react'
 import { useConfirm } from '../../hooks/useConfirm'
-import { addDaysKey, deleteTasksMessage, startOfWeekKey, type TaskPatch } from '../../lib/tasks'
-import type { Task, TaskStatus } from '../../types'
+import {
+  addDaysKey,
+  deleteTasksMessage,
+  isDone,
+  isDropped,
+  isOpen,
+  nextStatus,
+  snoozeDate,
+  startOfWeekKey,
+  type SnoozeKind,
+  type TaskPatch,
+} from '../../lib/tasks'
+import type { Task } from '../../types'
+import { useTasksEnv } from './TasksEnv'
 
 // Atalhos e multi-seleção das visões de Tasks (lista, Week, Kanban). Ativos
 // só com o foco dentro do container; eventos vindos de campos de texto são
 // ignorados. As ações valem para a seleção (ou para o cursor, sem seleção):
 //   ↑/↓ cursor (Shift estende) · Enter abre · Esc limpa a seleção
 //   x concluir/reabrir · s cicla status · t para hoje · d escolher data
-//   Delete → dropped
+//   p planeja para hoje · z adia 1 dia · Z adia 1 semana · Delete → dropped
+//   / ou Ctrl+F foca a busca
 // Clique abre; Ctrl/Cmd+clique alterna na seleção; Shift+clique seleciona o
 // intervalo desde o cursor.
 
@@ -31,13 +44,6 @@ interface ClickModifiers {
   shiftKey: boolean
 }
 
-const NEXT_STATUS: Record<TaskStatus, TaskStatus> = {
-  todo: 'doing',
-  doing: 'done',
-  done: 'todo',
-  dropped: 'todo',
-}
-
 function isTextTarget(el: EventTarget | null): boolean {
   return (
     el instanceof HTMLElement &&
@@ -54,6 +60,7 @@ export function useTaskKeyboard({
   onDeleteTasks,
 }: Options) {
   const { confirm, modal: confirmModal } = useConfirm()
+  const { statuses } = useTasksEnv()
   const [cursorId, setCursorId] = useState<string | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   // Popover de data: posição na tela (linha do cursor ou barra de lote).
@@ -96,12 +103,23 @@ export function useTaskKeyboard({
 
   function toggleDone() {
     const all = targets.map((id) => tasksById.get(id)).filter((t): t is Task => !!t)
-    const allDone = all.length > 0 && all.every((t) => t.status === 'done')
+    const allDone = all.length > 0 && all.every(isDone)
     apply(() => ({ status: allDone ? 'todo' : 'done' }))
   }
 
   function schedule(key: string | null) {
     apply((t) => (t.scheduledDate === key ? null : { scheduledDate: key }))
+  }
+
+  // Plan today: planeja para hoje; se todas já estão, remove.
+  function togglePlanToday() {
+    const all = targets.map((id) => tasksById.get(id)).filter((t): t is Task => !!t)
+    const allPlanned = all.length > 0 && all.every((t) => t.plannedDay === todayKey)
+    apply((t) => (isOpen(t) ? { plannedDay: allPlanned ? null : todayKey } : null))
+  }
+
+  function snooze(kind: SnoozeKind) {
+    apply((t) => (isDone(t) || isDropped(t) ? null : { scheduledDate: snoozeDate(t, kind, todayKey) }))
   }
 
   function openDatePicker(anchor: HTMLElement | null) {
@@ -133,9 +151,19 @@ export function useTaskKeyboard({
   }
 
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
-    if (isTextTarget(e.target) || e.altKey || e.ctrlKey || e.metaKey) return
+    if (isTextTarget(e.target) || e.altKey) return
     // Eventos de portais (modal de confirmação) borbulham pela árvore React.
     if (!e.currentTarget.contains(e.target as Node)) return
+    // Busca: `/` ou Ctrl/Cmd+F focam o campo do cabeçalho.
+    if ((e.key === '/' && !e.ctrlKey && !e.metaKey) || (e.key.toLowerCase() === 'f' && (e.ctrlKey || e.metaKey))) {
+      const input = document.querySelector<HTMLInputElement>('[data-tasks-search]')
+      if (!input) return
+      input.focus()
+      input.select()
+      e.preventDefault()
+      return
+    }
+    if (e.ctrlKey || e.metaKey) return
     switch (e.key) {
       case 'ArrowDown':
       case 'ArrowUp':
@@ -156,16 +184,25 @@ export function useTaskKeyboard({
         toggleDone()
         break
       case 's':
-        apply((t) => ({ status: NEXT_STATUS[t.status] }))
+        apply((t) => ({ status: nextStatus(t.status, statuses) }))
         break
       case 't':
         schedule(todayKey)
+        break
+      case 'p':
+        togglePlanToday()
+        break
+      case 'z':
+        snooze('1d')
+        break
+      case 'Z':
+        snooze('1w')
         break
       case 'd':
         openDatePicker(cursor ? rowEl(e.currentTarget, cursor) : null)
         break
       case 'Delete':
-        apply((t) => (t.status === 'dropped' ? null : { status: 'dropped' }))
+        apply((t) => (isDropped(t) ? null : { status: 'dropped' }))
         break
       default:
         return
@@ -205,7 +242,8 @@ export function useTaskKeyboard({
     handleClick,
     clearSelection,
     schedule,
-    markDone: () => apply((t) => (t.status === 'done' ? null : { status: 'done' })),
+    markDone: () => apply((t) => (isDone(t) ? null : { status: 'done' })),
+    snooze,
     requestDelete,
     deleteSelected: () => void requestDelete(targets),
     confirmModal,

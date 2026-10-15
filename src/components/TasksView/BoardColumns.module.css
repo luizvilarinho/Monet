@@ -1,0 +1,122 @@
+/* Colunas dividem a largura (min 240px); se n�o couberem, scroll horizontal. */
+.columns {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+}
+
+.column {
+  flex: 1 1 0;
+  min-width: 240px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 6px;
+  background: var(--surface-1);
+  border: 1px solid transparent;
+}
+
+.columnOver {
+  background: var(--surface-2);
+  border-color: var(--accent-task);
+  border-style: dashed;
+}
+
+/* WIP excedido: aviso visual, nunca bloqueia. */
+.columnWip {
+  border-color: var(--accent-warn);
+}
+
+.columnWip .columnCount {
+  color: var(--accent-warn);
+}
+
+.columnHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.colorDot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.columnLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.columnCount {
+  color: var(--text-muted);
+}
+
+.cards {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sectionLabel {
+  padding: 4px 4px 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card {
+  border-radius: 4px;
+  background: var(--bg-app);
+  cursor: grab;
+}
+
+.cardDragging {
+  opacity: 0.35;
+}
+
+/* Concluídas da semana: esmaecidas, mas ainda arrastáveis. */
+.cardFaded {
+  opacity: 0.55;
+}
+
+.headerAction {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  padding: 0 2px;
+  font-family: inherit;
+  font-size: 11px;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.headerAction:hover {
+  color: var(--accent-danger);
+}

@@ -117,37 +117,6 @@
   gap: 4px;
 }
 
-.views {
-  display: inline-flex;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  overflow: hidden;
-  flex-shrink: 0;
-}
-
-.view {
-  background: transparent;
-  border: none;
-  padding: 2px 8px;
-  font-family: inherit;
-  font-size: 11px;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-
-.view + .view {
-  border-left: 1px solid var(--border);
-}
-
-.view:hover {
-  color: var(--text-primary);
-}
-
-.viewActive {
-  background: var(--surface-2);
-  color: var(--text-primary);
-}
-
 .tokens {
   display: flex;
   flex-wrap: wrap;
@@ -285,4 +254,47 @@ button.tokenLabel:hover {
 
 .menuItem:hover {
   background: var(--surface-3);
+}
+
+.iconBtn {
+  display: inline-flex;
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 2px 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.iconBtn:hover {
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+
+.searchRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 7px;
+  color: var(--text-muted);
+}
+
+.searchRow:focus-within {
+  border-color: var(--accent-task);
+}
+
+.search {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  padding: 4px 0;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-primary);
+  outline: none;
 }

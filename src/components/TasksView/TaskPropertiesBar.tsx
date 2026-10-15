@@ -3,9 +3,11 @@
 // Novo metadado de task — lugares a tocar:
 //   1. `Task` em src/types/index.ts (e `TaskPatch` em src/lib/tasks.ts, se editável);
 //   2. coluna em TASKS_EXTRA_COLUMNS + `TaskRow`/`rowToTask`/`saveTask` em src/storage/tauri.ts;
-//   3. uma entrada em `TASK_PROPERTIES` abaixo (controle 'pills', 'toggle', 'date', 'text',
+//   3. uma entrada em `TASK_PROPERTIES` abaixo (controle 'status', 'toggle', 'date', 'text',
 //      'repeat' ou 'project';
 //      um tipo de controle novo pede um caso em `renderControl`).
+// Status vem do registro `task_statuses` (prop `statuses`); `doingSince` e `plannedDay`
+// são derivados (applyTaskPatch / Plan today) e não têm controle aqui.
 // Cada propriedade ocupa uma linha (label à esquerda, controle à direita), na ordem da lista.
 import { useEffect, useId, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
 import { ArrowSquareOut, CalendarBlank, Flag, ListChecks, Trash } from '@phosphor-icons/react'
@@ -15,18 +17,20 @@ import {
   deleteTasksMessage,
   planDate,
   scheduledAfterDeadline,
-  TASK_STATUS_LABEL,
+  statusColor,
   WEEKDAY_SHORT,
   type ProjectChoice,
   type TaskPatch,
 } from '../../lib/tasks'
-import type { Notebook, Task, TaskRecurrence, TaskStatus } from '../../types'
+import type { Notebook, Task, TaskRecurrence, TaskStatusDef } from '../../types'
 import { ProjectPicker } from './ProjectPicker'
 import styles from './TaskPropertiesBar.module.css'
 
 interface TaskPropertiesBarProps {
   task: Task
   notebooks: Notebook[]
+  // Registro de status (opções do controle Status).
+  statuses: TaskStatusDef[]
   // Groups já usados no projeto da task (autocomplete do campo Group).
   groupSuggestions: string[]
   sourceNoteExists: boolean
@@ -37,13 +41,8 @@ interface TaskPropertiesBarProps {
 }
 
 type TaskPropertyControl =
-  | {
-      // Uma pill clicável por opção, todas visíveis; `color` é um valor CSS (ex.: token).
-      kind: 'pills'
-      options: Array<{ value: string; label: string; color: string }>
-      get: (t: Task) => string
-      set: (value: string) => TaskPatch
-    }
+  // Status: uma pill clicável por status do registro, todas visíveis.
+  | { kind: 'status' }
   | {
       // Uma única pill liga/desliga.
       kind: 'toggle'
@@ -79,13 +78,6 @@ interface TaskProperty {
   control: TaskPropertyControl
 }
 
-const STATUS_OPTIONS: Array<{ value: TaskStatus; label: string; color: string }> = [
-  { value: 'todo', label: TASK_STATUS_LABEL.todo, color: 'var(--status-todo)' },
-  { value: 'doing', label: TASK_STATUS_LABEL.doing, color: 'var(--status-doing)' },
-  { value: 'done', label: TASK_STATUS_LABEL.done, color: 'var(--status-done)' },
-  { value: 'dropped', label: TASK_STATUS_LABEL.dropped, color: 'var(--status-dropped)' },
-]
-
 const TASK_PROPERTIES: TaskProperty[] = [
   { id: 'project', label: 'Project', control: { kind: 'project' } },
   {
@@ -101,12 +93,7 @@ const TASK_PROPERTIES: TaskProperty[] = [
   {
     id: 'status',
     label: 'Status',
-    control: {
-      kind: 'pills',
-      options: STATUS_OPTIONS,
-      get: (t) => t.status,
-      set: (value) => ({ status: value as TaskStatus }),
-    },
+    control: { kind: 'status' },
   },
   {
     id: 'scheduledDate',
@@ -145,6 +132,7 @@ const TASK_PROPERTIES: TaskProperty[] = [
 export function TaskPropertiesBar({
   task,
   notebooks,
+  statuses,
   groupSuggestions,
   sourceNoteExists,
   onUpdate,
@@ -165,15 +153,25 @@ export function TaskPropertiesBar({
   function renderControl(prop: TaskProperty) {
     const { control } = prop
     switch (control.kind) {
-      case 'pills':
+      case 'status': {
+        // Status excluído em outra janela: a pill ativa mostra o id.
+        const options = statuses.map((s) => ({
+          value: s.id,
+          label: s.name,
+          color: statusColor(s.id, statuses),
+        }))
+        if (!statuses.some((s) => s.id === task.status)) {
+          options.push({ value: task.status, label: task.status, color: statusColor(task.status, statuses) })
+        }
         return (
           <PillsControl
             label={prop.label}
-            options={control.options}
-            value={control.get(task)}
-            onChange={(value) => onUpdate(control.set(value))}
+            options={options}
+            value={task.status}
+            onChange={(value) => onUpdate({ status: value })}
           />
         )
+      }
       case 'toggle':
         return (
           <button
