@@ -33,6 +33,7 @@ interface KanbanBoardProps {
   onOpenTask: (task: Task) => void
   onToggleTask: (id: string, done: boolean) => void
   onUpdateTasks: (changes: TaskChanges) => void
+  onDeleteTasks: (ids: string[]) => void
   onConvertPipeTitles: (tasks: Task[]) => void
   checklist: Map<string, ChecklistProgress>
 }
@@ -56,6 +57,7 @@ export function KanbanBoard({
   onOpenTask,
   onToggleTask,
   onUpdateTasks,
+  onDeleteTasks,
   onConvertPipeTitles,
   checklist,
 }: KanbanBoardProps) {
@@ -90,7 +92,14 @@ export function KanbanBoard({
 
   const tasksById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks])
   const orderedIds = useMemo(() => columns.flatMap((c) => c.tasks.map((t) => t.id)), [columns])
-  const kb = useTaskKeyboard({ orderedIds, tasksById, todayKey, onOpen: onOpenTask, onUpdateTasks })
+  const kb = useTaskKeyboard({
+    orderedIds,
+    tasksById,
+    todayKey,
+    onOpen: onOpenTask,
+    onUpdateTasks,
+    onDeleteTasks,
+  })
 
   const { draggingId, overKey, onCardMouseDown } = useCardDrag((id, dropKey) => {
     const task = tasksById.get(id)
@@ -130,6 +139,15 @@ export function KanbanBoard({
             <div className={styles.columnHeader}>
               <span className={styles.columnLabel}>{c.label}</span>
               <span className={styles.columnCount}>{c.tasks.length}</span>
+              {c.status === 'done' && c.tasks.length > 0 && (
+                <button
+                  type="button"
+                  className={styles.clearDone}
+                  onClick={() => void kb.requestDelete(c.tasks.map((t) => t.id), 'Clear done')}
+                >
+                  Clear done
+                </button>
+              )}
             </div>
             <div className={styles.cards}>
               {c.tasks.map((t) => (
@@ -153,6 +171,7 @@ export function KanbanBoard({
                       if (kb.handleClick(e, t.id)) onOpenTask(t)
                     }}
                     onToggle={(done) => onToggleTask(t.id, done)}
+                    onDelete={() => void kb.requestDelete([t.id], 'Delete task')}
                   />
                 </div>
               ))}

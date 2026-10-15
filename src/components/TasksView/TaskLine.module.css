@@ -18,6 +18,27 @@
   border-left-color: var(--accent-task);
 }
 
+.deleteBtn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  background: transparent;
+  border: none;
+  padding: 2px;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.line:hover .deleteBtn,
+.deleteBtn:focus-visible {
+  opacity: 1;
+}
+
+.deleteBtn:hover {
+  color: var(--accent-danger);
+}
+
 .checkbox {
   flex-shrink: 0;
   accent-color: var(--accent-task);

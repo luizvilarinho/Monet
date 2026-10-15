@@ -1,5 +1,6 @@
 import { useCallback, useState, type KeyboardEvent } from 'react'
-import { addDaysKey, startOfWeekKey, type TaskPatch } from '../../lib/tasks'
+import { useConfirm } from '../../hooks/useConfirm'
+import { addDaysKey, deleteTasksMessage, startOfWeekKey, type TaskPatch } from '../../lib/tasks'
 import type { Task, TaskStatus } from '../../types'
 
 // Atalhos e multi-seleção das visões de Tasks (lista, Week, Kanban). Ativos
@@ -20,6 +21,8 @@ interface Options {
   todayKey: string
   onOpen: (task: Task) => void
   onUpdateTasks: (changes: TaskChanges) => void
+  // Exclusão definitiva (task + nota-corpo), depois da confirmação.
+  onDeleteTasks: (ids: string[]) => void
 }
 
 interface ClickModifiers {
@@ -42,7 +45,15 @@ function isTextTarget(el: EventTarget | null): boolean {
   )
 }
 
-export function useTaskKeyboard({ orderedIds, tasksById, todayKey, onOpen, onUpdateTasks }: Options) {
+export function useTaskKeyboard({
+  orderedIds,
+  tasksById,
+  todayKey,
+  onOpen,
+  onUpdateTasks,
+  onDeleteTasks,
+}: Options) {
+  const { confirm, modal: confirmModal } = useConfirm()
   const [cursorId, setCursorId] = useState<string | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   // Popover de data: posição na tela (linha do cursor ou barra de lote).
@@ -68,6 +79,19 @@ export function useTaskKeyboard({ orderedIds, tasksById, todayKey, onOpen, onUpd
       if (patch) changes.push({ id, patch })
     }
     if (changes.length > 0) onUpdateTasks(changes)
+  }
+
+  async function requestDelete(ids: string[], title = 'Delete tasks') {
+    const list = ids.map((id) => tasksById.get(id)).filter((t): t is Task => !!t)
+    if (list.length === 0) return
+    const ok = await confirm(deleteTasksMessage(list), {
+      title,
+      confirmLabel: 'Delete',
+      destructive: true,
+    })
+    if (!ok) return
+    onDeleteTasks(list.map((t) => t.id))
+    clearSelection()
   }
 
   function toggleDone() {
@@ -110,6 +134,8 @@ export function useTaskKeyboard({ orderedIds, tasksById, todayKey, onOpen, onUpd
 
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     if (isTextTarget(e.target) || e.altKey || e.ctrlKey || e.metaKey) return
+    // Eventos de portais (modal de confirmação) borbulham pela árvore React.
+    if (!e.currentTarget.contains(e.target as Node)) return
     switch (e.key) {
       case 'ArrowDown':
       case 'ArrowUp':
@@ -180,6 +206,9 @@ export function useTaskKeyboard({ orderedIds, tasksById, todayKey, onOpen, onUpd
     clearSelection,
     schedule,
     markDone: () => apply((t) => (t.status === 'done' ? null : { status: 'done' })),
+    requestDelete,
+    deleteSelected: () => void requestDelete(targets),
+    confirmModal,
     nextMonday: addDaysKey(startOfWeekKey(todayKey), 8),
     datePickerAt,
     openDatePicker,

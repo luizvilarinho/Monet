@@ -1,4 +1,6 @@
-import type { Note, Task } from '../types'
+import type { AiResponse, Note, Task } from '../types'
+import { storage } from '../storage'
+import { getToggleTitle } from '../components/Editor/commandParser'
 import { dateKeyFromMs, getWeekdayName, parseCalendarTitle } from './calendar'
 import {
   checklistProgress,
@@ -16,15 +18,19 @@ const MD_DATA_IMAGE_RE = /!\[[^\]]*\]\(data:[^)]*\)/g
 const HTML_DATA_IMAGE_RE = /<img\b[^>]*\bsrc=["']data:[^"']*["'][^>]*>/gi
 const DATA_URL_RE = /data:[a-z]+\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/gi
 const LINKED_NOTE_RE = /<linked-note\b[^>]*\bdata-note-id="([^"]*)"[^>]*>\s*<\/linked-note>/g
+const EMBED_TAG_RE = /<embed-block\b[^>]*\bdata-cmd="([^"]*)"[^>]*>\s*<\/embed-block>/g
 const REMINDER_CHIP_RE = /<reminder-chip\b[^>]*\bdata-time="([^"]*)"[^>]*>\s*<\/reminder-chip>/g
 // O [ ]/[x] do item pode estar defasado: o status real vive na task vinculada.
 const TASK_REF_RE = /<task-ref\b[^>]*>\s*<\/task-ref>/g
 // Bloco `/tasks`: só o filtro vive no conteúdo (a lista é renderizada ao vivo).
 const TASKS_QUERY_RE = /<tasks-query\b[^>]*\bdata-filter="([^"]*)"[^>]*>\s*<\/tasks-query>/g
-const TOGGLE_BLOCK_RE = /<div data-type="toggle-block"[^>]*\bdata-title="([^"]*)"[^>]*>([\s\S]*?)<\/div>/g
+const TOGGLE_START = '<div data-type="toggle-block"'
+const DIV_TAG_RE = /<div\b|<\/div>/g
+const EMBED_ID_RE = /<embed-block\b[^>]*\bdata-cmd="([^"]*)"/g
+const LINKED_NOTE_ID_RE = /<linked-note\b[^>]*\bdata-note-id="([^"]*)"/g
 const BR_RE = /<br\s*\/?>/gi
-const BLOCK_END_RE = /<\/(p|li|h[1-6]|blockquote|pre)>/gi
-const TAG_RE = /<[^>]+>/g
+const LINKED_NOTE_BUDGET = 2000
+const TEXT_BLOCK_TAGS = new Set(['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'PRE'])
 
 function decodeEntities(text: string): string {
   return text
@@ -34,33 +40,145 @@ function decodeEntities(text: string): string {
     .replace(/&amp;/g, '&')
 }
 
+export interface NoteAiTextOptions {
+  resolveNoteTitle: (noteId: string) => string | undefined
+  // commandId → resposta salva; ausente/undefined = bloco ignorado.
+  resolveEmbed?: (commandId: string) => AiResponse | undefined
+  // Presente = expande as notas linkadas (1 nível); ausente = só o título (RAG).
+  resolveLinkedNoteContent?: (noteId: string) => string | undefined
+}
+
+// Troca cada toggle de topo pelo texto do walker. O fim do toggle é achado
+// contando a profundidade de <div>, porque o taskItem gera <div> interno.
+function replaceToggleBlocks(text: string, render: (el: Element) => string): string {
+  let out = ''
+  let pos = 0
+  for (;;) {
+    const start = text.indexOf(TOGGLE_START, pos)
+    if (start === -1) break
+    let end = text.length
+    let depth = 0
+    DIV_TAG_RE.lastIndex = start
+    for (let m = DIV_TAG_RE.exec(text); m; m = DIV_TAG_RE.exec(text)) {
+      depth += m[0] === '</div>' ? -1 : 1
+      if (depth === 0) {
+        end = m.index + m[0].length
+        break
+      }
+    }
+    const template = document.createElement('template')
+    template.innerHTML = text.slice(start, end)
+    out += text.slice(pos, start) + Array.from(template.content.children).map(render).join('\n')
+    pos = end
+  }
+  return out + text.slice(pos)
+}
+
 // Variante de cleanContent (scoreNotes.ts) que preserva as quebras de linha,
 // porque o chunking do backend divide por parágrafos ("\n\n"). Remove base64 e
-// converte as tags customizadas do editor em texto legível para a IA.
-export function cleanNoteContentForAi(
-  content: string,
-  resolveNoteTitle: (noteId: string) => string | undefined,
-): string {
-  return content
-    .replace(EMBED_BLOCK_RE, '')
-    .replace(MARKER_RE, '')
-    .replace(MD_DATA_IMAGE_RE, '[image]')
-    .replace(HTML_DATA_IMAGE_RE, '[image]')
-    .replace(DATA_URL_RE, '[image]')
-    .replace(LINKED_NOTE_RE, (_, id: string) => `[Linked note: ${resolveNoteTitle(id)?.trim() || 'untitled'}]`)
+// converte os blocos customizados do editor em texto legível para a IA:
+// respostas da IA embutidas, conteúdo dos toggles e notas linkadas.
+export function cleanNoteContentForAi(content: string, opts: NoteAiTextOptions): string {
+  const { resolveNoteTitle, resolveEmbed, resolveLinkedNoteContent } = opts
+
+  const embedResponseText = (commandId: string): string => {
+    const r = resolveEmbed?.(commandId)
+    if (!r || r.status === 'error' || !r.response.trim()) return ''
+    return `${getToggleTitle(r.command)}\n${r.response.trim()}`
+  }
+
+  const linkedNoteText = (noteId: string): string => {
+    const title = resolveNoteTitle(noteId)?.trim() || 'untitled'
+    if (!resolveLinkedNoteContent) return `[Linked note: ${title}]`
+    const linked = resolveLinkedNoteContent(noteId)
+    if (linked === undefined) return ''
+    // Sem resolveLinkedNoteContent na recursão: 1 nível só, o que evita ciclos.
+    let body = cleanNoteContentForAi(linked, { resolveNoteTitle, resolveEmbed })
+    if (body.length > LINKED_NOTE_BUDGET) body = `${body.slice(0, LINKED_NOTE_BUDGET)} [truncated]`
+    return body ? `[Linked note: ${title}]\n${body}\n[/Linked note]` : `[Linked note: ${title}]`
+  }
+
+  const nodeToAiText = (node: Node): string => {
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? ''
+    if (node.nodeType !== Node.ELEMENT_NODE) return ''
+    const el = node as Element
+    const tag = el.tagName
+    const children = () => Array.from(el.childNodes).map(nodeToAiText).join('')
+    if (tag === 'TOGGLE-BLOCK' || (tag === 'DIV' && el.getAttribute('data-type') === 'toggle-block')) {
+      return `${el.getAttribute('data-title') ?? ''}\n${children()}\n`
+    }
+    if (TEXT_BLOCK_TAGS.has(tag)) return `${children()}\n`
+    if (tag === 'BR') return '\n'
+    if (tag === 'LI') {
+      const prefix =
+        el.getAttribute('data-type') === 'taskItem'
+          ? el.getAttribute('data-checked') === 'true' ? '- [x] ' : '- [ ] '
+          : '- '
+      return `${prefix}${children().trim()}\n`
+    }
+    if (tag === 'LABEL') return ''
+    if (tag === 'EMBED-BLOCK') return `${embedResponseText(el.getAttribute('data-cmd') ?? '')}\n`
+    if (tag === 'LINKED-NOTE') return `${linkedNoteText(el.getAttribute('data-note-id') ?? '')}\n`
+    if (tag === 'TASK-REF') return '[task]'
+    if (tag === 'REMINDER-CHIP') return `⏰ ${el.getAttribute('data-time') ?? ''}`
+    if (tag === 'TASKS-QUERY') return `[Tasks block: ${el.getAttribute('data-filter') ?? ''}]\n`
+    if (tag === 'IMG') return '[image]'
+    return children()
+  }
+
+  const toggleText = (el: Element) => nodeToAiText(el).replace(/\n{2,}/g, '\n').trim()
+
+  return replaceToggleBlocks(
+    content
+      .replace(EMBED_BLOCK_RE, '')
+      .replace(MARKER_RE, '')
+      .replace(MD_DATA_IMAGE_RE, '[image]')
+      .replace(HTML_DATA_IMAGE_RE, '[image]')
+      .replace(DATA_URL_RE, '[image]'),
+    toggleText,
+  )
     .replace(REMINDER_CHIP_RE, (_, time: string) => `⏰ ${time}`)
     .replace(TASK_REF_RE, '[task]')
     .replace(TASKS_QUERY_RE, (_, filter: string) => `[Tasks block: ${decodeEntities(filter)}]`)
-    .replace(TOGGLE_BLOCK_RE, (_, title: string, inner: string) => {
-      const text = inner.replace(BR_RE, '\n').replace(BLOCK_END_RE, '\n').replace(TAG_RE, '')
-      return `${decodeEntities(title)}\n${decodeEntities(text).trim()}`
-    })
+    // Blocos de topo por último, para o texto inserido não ser reprocessado.
+    .replace(EMBED_TAG_RE, (_, id: string) => embedResponseText(id))
+    .replace(LINKED_NOTE_RE, (_, id: string) => linkedNoteText(id))
     .replace(BR_RE, '\n')
     .split('\n')
     .filter((l) => !COMMAND_LINE_RE.test(l.trim()))
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
+}
+
+function collectIds(content: string, re: RegExp): string[] {
+  return Array.from(content.matchAll(re), (m) => m[1]).filter(Boolean)
+}
+
+// Busca no storage as respostas da IA embutidas nos conteúdos (e nas notas
+// linkadas, 1 nível, quando o resolver vem). Em erro, a IA segue sem elas.
+export async function loadEmbedResponses(
+  contents: string[],
+  resolveLinkedNoteContent?: (noteId: string) => string | undefined,
+): Promise<Map<string, AiResponse>> {
+  const all = [...contents]
+  if (resolveLinkedNoteContent) {
+    for (const c of contents) {
+      for (const id of collectIds(c, LINKED_NOTE_ID_RE)) {
+        const linked = resolveLinkedNoteContent(id)
+        if (linked !== undefined) all.push(linked)
+      }
+    }
+  }
+  const ids = [...new Set(all.flatMap((c) => collectIds(c, EMBED_ID_RE)))]
+  if (ids.length === 0) return new Map()
+  try {
+    const responses = await storage.getResponsesByIds(ids)
+    return new Map(responses.map((r) => [r.id, r]))
+  } catch (err) {
+    console.warn('[Monet AI] Failed to load embedded responses', err)
+    return new Map()
+  }
 }
 
 export function noteDate(note: Note): string | null {
@@ -107,14 +225,16 @@ function taskMetadataLines(
 
 // Texto do arquivo .md espelhado no RAG. Retorna '' para nota sem título e
 // sem corpo (o backend remove o documento nesse caso). Nota-corpo de task
-// recebe os metadados da task logo abaixo do título.
+// recebe os metadados da task logo abaixo do título. Notas linkadas entram só
+// com o título: elas já são indexadas sozinhas.
 export function buildNoteFileText(
   note: Note,
   resolveNoteTitle: (noteId: string) => string | undefined,
   taskContext?: { task: Task; projectName: string },
+  resolveEmbed?: (commandId: string) => AiResponse | undefined,
 ): string {
   const title = note.title.trim()
-  const body = cleanNoteContentForAi(note.content, resolveNoteTitle)
+  const body = cleanNoteContentForAi(note.content, { resolveNoteTitle, resolveEmbed })
   if (!title && !body && !taskContext) return ''
   const header = [`# ${title || 'Untitled'}`]
   if (taskContext) {

@@ -47,6 +47,7 @@ export interface StorageAdapter {
   deleteTask(id: string): Promise<void>
 
   getResponses(noteId: string): Promise<AiResponse[]>
+  getResponsesByIds(ids: string[]): Promise<AiResponse[]>
   saveResponse(response: AiResponse): Promise<void>
   deleteResponse(id: string): Promise<void>
   deleteResponses(noteId: string): Promise<void>

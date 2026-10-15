@@ -1,6 +1,6 @@
 import { cleanNoteContentForAi, noteDate } from '../../lib/noteFileText'
 import { isOpen, taskLineForAi, type ChecklistProgress } from '../../lib/tasks'
-import type { Note, Task } from '../../types'
+import type { AiResponse, Note, Task } from '../../types'
 
 // ─── Builder do bloco de contexto das Anotações ─────────────────────────────
 // Função pura (sem I/O), espelho de readerContext.ts: monta o bloco EFEMERO
@@ -17,6 +17,10 @@ export interface NotesContextInput {
   // '' = sem seleção
   selectionText: string
   resolveNoteTitle: (noteId: string) => string | undefined
+  // Conteúdo das notas linkadas (expandidas 1 nível no contexto).
+  resolveLinkedNoteContent: (noteId: string) => string | undefined
+  // Respostas da IA embutidas na nota (e nas linkadas).
+  resolveEmbed: (commandId: string) => AiResponse | undefined
   // Tasks do caderno (abertas + concluídas na semana), já filtradas pela
   // visibilidade de IA do caderno.
   projectTasks?: Task[]
@@ -41,7 +45,11 @@ export function buildNotesContext(input: NotesContextInput): string {
     lines.push(`Current note: "${input.note.title.trim() || 'Untitled'}"`)
     const date = noteDate(input.note)
     if (date) lines.push(`Date: ${date}`)
-    const content = cleanNoteContentForAi(input.note.content, input.resolveNoteTitle)
+    const content = cleanNoteContentForAi(input.note.content, {
+      resolveNoteTitle: input.resolveNoteTitle,
+      resolveEmbed: input.resolveEmbed,
+      resolveLinkedNoteContent: input.resolveLinkedNoteContent,
+    })
     lines.push(
       `Current note content: ${content ? truncateWithMarker(content, NOTE_TEXT_BUDGET) : '(empty)'}`
     )

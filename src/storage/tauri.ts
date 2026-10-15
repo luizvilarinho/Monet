@@ -858,6 +858,17 @@ export class TauriStorage implements StorageAdapter {
     return rows.map(rowToResponse)
   }
 
+  async getResponsesByIds(ids: string[]): Promise<AiResponse[]> {
+    if (ids.length === 0) return []
+    const db = await this.db()
+    const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ')
+    const rows = await db.select<AiResponseRow[]>(
+      `SELECT * FROM ai_responses WHERE id IN (${placeholders})`,
+      ids
+    )
+    return rows.map(rowToResponse)
+  }
+
   async saveResponse(r: AiResponse): Promise<void> {
     const db = await this.db()
     const sourcesJson = r.sources && r.sources.length > 0 ? JSON.stringify(r.sources) : null

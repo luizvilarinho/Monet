@@ -39,6 +39,7 @@ interface WeekBoardProps {
   onToggleTask: (id: string, done: boolean) => void
   onSchedule: (id: string, scheduledDate: string | null) => void
   onUpdateTasks: (changes: TaskChanges) => void
+  onDeleteTasks: (ids: string[]) => void
   onConvertPipeTitles: (tasks: Task[]) => void
   checklist: Map<string, ChecklistProgress>
 }
@@ -81,6 +82,7 @@ export function WeekBoard({
   onToggleTask,
   onSchedule,
   onUpdateTasks,
+  onDeleteTasks,
   onConvertPipeTitles,
   checklist,
 }: WeekBoardProps) {
@@ -151,7 +153,14 @@ export function WeekBoard({
     () => columns.flatMap((c) => [...c.open, ...c.done]).map((t) => t.id),
     [columns]
   )
-  const kb = useTaskKeyboard({ orderedIds, tasksById, todayKey, onOpen: onOpenTask, onUpdateTasks })
+  const kb = useTaskKeyboard({
+    orderedIds,
+    tasksById,
+    todayKey,
+    onOpen: onOpenTask,
+    onUpdateTasks,
+    onDeleteTasks,
+  })
 
   const { draggingId, overKey, onCardMouseDown } = useCardDrag((id, dropKey) => {
     const task = tasksById.get(id)
@@ -187,6 +196,7 @@ export function WeekBoard({
             if (kb.handleClick(e, t.id)) onOpenTask(t)
           }}
           onToggle={(done) => onToggleTask(t.id, done)}
+          onDelete={() => void kb.requestDelete([t.id], 'Delete task')}
         />
       </div>
     )

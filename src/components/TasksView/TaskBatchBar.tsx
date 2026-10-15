@@ -42,11 +42,15 @@ export function TaskBatchBar({ kb, todayKey }: { kb: TaskKeyboard; todayKey: str
           <button type="button" className={styles.action} onClick={kb.markDone}>
             Done
           </button>
+          <button type="button" className={styles.action} onClick={kb.deleteSelected}>
+            Delete
+          </button>
           <button type="button" className={styles.clear} onClick={kb.clearSelection}>
             Clear
           </button>
         </div>
       )}
+      {kb.confirmModal}
       {kb.datePickerAt && (
         <TaskDatePopover
           at={kb.datePickerAt}

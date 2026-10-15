@@ -9,7 +9,7 @@ import {
   notesIndexSetNotebookEnabled,
   notesIndexUpsert,
 } from '../lib/documents'
-import { buildNoteFileText, buildTasksSummaryText } from '../lib/noteFileText'
+import { buildNoteFileText, buildTasksSummaryText, loadEmbedResponses } from '../lib/noteFileText'
 import { checklistProgress, tasksSummaryNoteId } from '../lib/tasks'
 
 // Espelha as notas de cada caderno no RAG (pasta gerenciada `origin='notes'`).
@@ -119,15 +119,17 @@ export function useNotesIndexSync({
   )
 
   const fileTextFor = useCallback(
-    (note: Note) => {
+    async (note: Note) => {
       const task = tasksRef.current.find((t) => t.noteId === note.id)
       const projectName = task
         ? notebooksRef.current.find((nb) => nb.id === task.notebookId)?.name
         : undefined
+      const embeds = await loadEmbedResponses([note.content])
       return buildNoteFileText(
         note,
         resolveNoteTitle,
         task ? { task, projectName: projectName ?? 'Unknown' } : undefined,
+        (id) => embeds.get(id),
       )
     },
     [resolveNoteTitle],
@@ -165,7 +167,7 @@ export function useNotesIndexSync({
             lastSyncedRef.current.delete(job.noteId)
             return
           }
-          const fileText = fileTextFor(note)
+          const fileText = await fileTextFor(note)
           const result = await notesIndexUpsert({
             notebookId: notebook.id,
             notebookName: notebook.name,
@@ -302,17 +304,23 @@ export function useNotesIndexSync({
           debounceTimers.current.delete(noteId)
           // A comparação de conteúdo fica aqui (uma vez por debounce) e não no
           // diff por tecla: buildNoteFileText é caro em notas grandes.
-          const note = notesRef.current.find((n) => n.id === noteId)
-          const synced = lastSyncedRef.current.get(noteId)
-          if (
-            note &&
-            synced &&
-            synced.notebookId === note.notebookId &&
-            synced.fileText === fileTextFor(note)
-          ) {
-            return
-          }
-          enqueue({ kind: 'upsert', noteId })
+          void (async () => {
+            const note = notesRef.current.find((n) => n.id === noteId)
+            const synced = lastSyncedRef.current.get(noteId)
+            try {
+              if (
+                note &&
+                synced &&
+                synced.notebookId === note.notebookId &&
+                synced.fileText === (await fileTextFor(note))
+              ) {
+                return
+              }
+            } catch {
+              // Na dúvida, reindexa.
+            }
+            enqueue({ kind: 'upsert', noteId })
+          })()
         }, DEBOUNCE_MS),
       )
     },

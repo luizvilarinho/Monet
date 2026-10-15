@@ -12,6 +12,7 @@ import { ArrowSquareOut, CalendarBlank, Flag, ListChecks, Trash } from '@phospho
 import { useConfirm } from '../../hooks/useConfirm'
 import { dateKeyFromMs } from '../../lib/calendar'
 import {
+  deleteTasksMessage,
   planDate,
   scheduledAfterDeadline,
   TASK_STATUS_LABEL,
@@ -154,7 +155,7 @@ export function TaskPropertiesBar({
   const { confirm, modal } = useConfirm()
 
   async function handleDelete() {
-    const ok = await confirm(`Delete task "${task.title}" and its note?`, {
+    const ok = await confirm(deleteTasksMessage([task]), {
       title: 'Delete task',
       confirmLabel: 'Delete',
     })

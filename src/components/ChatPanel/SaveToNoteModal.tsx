@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { Note, Notebook } from '../../types'
+import { formatLocalTimestamp } from '../../lib/calendar'
 import styles from './SaveToNoteModal.module.css'
 
 const LAST_NOTEBOOK_KEY = 'monet:chat-save-last-notebook-id'
@@ -56,21 +57,7 @@ function saveLastNotebookId(id: string): void {
   }
 }
 
-function formatTimestamp(now = new Date()): string {
-  const locale = localStorage.getItem('monet:user-language') ?? navigator.language
-  const date = now.toLocaleDateString(locale, {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-  })
-  const time = now.toLocaleTimeString(locale, {
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-  return `${date} ${time}`
-}
-
-export function buildToggleBlock(rawMarkdown: string, timestamp = formatTimestamp()): string {
+export function buildToggleBlock(rawMarkdown: string, timestamp = formatLocalTimestamp()): string {
   const body = rawMarkdown.trim()
   // Pure markdown: timestamp header + content. No HTML, fully editable and rendered normally in preview.
   return `**Chat Response — ${timestamp}**\n\n${body}`

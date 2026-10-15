@@ -27,6 +27,26 @@ export function parseCalendarTitle(title: string): Date | null {
   return date
 }
 
+// Data e hora no locale do usuário. `hour24` força 00–23 (o "Date and time"
+// do editor); sem ele, a hora segue o padrão do locale.
+export function formatLocalTimestamp(
+  now = new Date(),
+  { hour24 = false, separator = ' ' }: { hour24?: boolean; separator?: string } = {}
+): string {
+  const locale = localStorage.getItem('monet:user-language') ?? navigator.language
+  const date = now.toLocaleDateString(locale, {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  })
+  const time = now.toLocaleTimeString(locale, {
+    hour: '2-digit',
+    minute: '2-digit',
+    ...(hour24 ? { hourCycle: 'h23' as const } : {}),
+  })
+  return `${date}${separator}${time}`
+}
+
 export function getWeekdayName(date: Date): string {
   return date.toLocaleDateString('en-US', { weekday: 'long' })
 }

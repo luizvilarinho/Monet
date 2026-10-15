@@ -49,3 +49,25 @@
 - Summary: Coordenador testou e aprovou a seção Tasks do caderno e o acesso da IA aos metadados das tasks; pediu commit + push, merge para develop e pipeline de build. Etapa de review desta task não executada por decisão do Coordenador.
 - Decision: commit em feature/tasks-v2 → push → merge em develop → push → buildAgent (bump v1.4.7).
 - Next step: concluído
+
+### BuildAgent — bump de versão e build v1.4.7 — 20261012170100
+- Summary: Bump da versão do app de 1.4.6 para 1.4.7 seguindo os 5 passos do behavior, na `develop` (HEAD `ed1591e feat: tasks v2`, working tree limpo antes do bump). Pré-checagem: nenhum `vite.config.js`/`.d.ts` ou outro artefato não rastreado na raiz (só `vite.config.ts`). Passo 1: `NotebookList.tsx` span de versão `v1.4.6` → `v1.4.7`. Passo 2: `src-tauri/tauri.conf.json` `"version"` → `1.4.7` (`package.json`/`Cargo.toml` seguem em `0.1.0`, conforme convenção). Passo 3: `npm run tauri:build` — exit 0; `tsc` + `vite build` sem erros (apenas o aviso habitual de chunk > 500 kB); Rust release compilado; bundles NSIS e MSI + 2 assinaturas de updater. Passo 4: chave copiada de `monet_1.4.7_x64_en-US.msi.sig` (decodifica para `file:monet_1.4.7_x64_en-US.msi`, timestamp 1791835222 = 2026-10-12T20:00:22Z). Passo 5: `latest.json` atualizado (version, notes em inglês do Tasks v2 + fixes de tabela/subject, pub_date derivado do timestamp da assinatura, url do MSI v1.4.7 no GitHub Releases, signature idêntica ao `.sig`, verificada programaticamente). Formatação/LF do `latest.json` preservados.
+- Inputs:
+  - DOCS/agents/buildAgent.md
+  - DOCS/docs.menu.md
+  - DOCS/reports/11-10-2026/executionreport_20261011150152.md (referência do bump anterior)
+- Files changed:
+  - src/components/NotebookList/NotebookList.tsx (apenas a linha do span de versão)
+  - src-tauri/tauri.conf.json (apenas o campo "version")
+  - latest.json (version, notes, pub_date, url, signature)
+  - DOCS/reports/12-10-2026/executionreport_20261012164328.md (esta sessão)
+- Artifacts gerados pelo build (dentro de src-tauri/target, ignorado pelo git):
+  - src-tauri/target/release/bundle/msi/monet_1.4.7_x64_en-US.msi (10.391.552 bytes)
+  - src-tauri/target/release/bundle/msi/monet_1.4.7_x64_en-US.msi.sig
+  - src-tauri/target/release/bundle/nsis/monet_1.4.7_x64-setup.exe (8.016.944 bytes)
+  - src-tauri/target/release/bundle/nsis/monet_1.4.7_x64-setup.exe.sig
+  - src-tauri/target/release/monet.exe
+- Validation: build de release exit 0; `latest.json` JSON válido com signature conferida contra o `.sig`; diffs dos arquivos de versão contêm só as mudanças esperadas; nenhum arquivo novo não rastreado na raiz do repo.
+- Constraints respeitadas: nada commitado, nada publicado (GitHub/Store); nenhum código funcional alterado.
+- Pendências: commit do bump + latest.json e publicação do release v1.4.7 (upload do MSI/NSIS + latest.json ao GitHub Releases, eventual MSIX/Store) aguardam instrução expressa do Coordenador.
+- Next step: concluído

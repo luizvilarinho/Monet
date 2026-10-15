@@ -62,6 +62,7 @@ import {
   setSkippedVersion,
 } from './lib/updater'
 import { getToggleTitle, isPotentialCommandLine } from './components/Editor/commandParser'
+import { cleanNoteContentForAi, loadEmbedResponses } from './lib/noteFileText'
 import { RemindersProvider } from './components/Editor/RemindersContext'
 import { TasksProvider } from './components/Editor/TasksContext'
 import {
@@ -203,30 +204,23 @@ function formatRagContext(chunks: ChunkResult[]): string {
   return `Relevant document excerpts from the notebook:\n\n${blocks.join('\n\n')}\n\n---`
 }
 
-function stripEmbedBlockTags(content: string): string {
-  if (!content.includes('<embed-block')) return content
-  return content.replace(/<embed-block\b[^>]*><\/embed-block>/g, '')
-}
-
 function getWeekCalendarNotes(
   notes: Note[],
   anchor: Date
-): { dateLabel: string; content: string }[] {
+): { dateLabel: string; note: Note }[] {
   const byTitle = new Map(
     notes
       .filter((n) => n.notebookId === CALENDAR_NOTEBOOK_ID)
       .map((n) => [n.title, n] as const)
   )
-  const entries: { dateLabel: string; content: string }[] = []
+  const entries: { dateLabel: string; note: Note }[] = []
   for (let i = 6; i >= 0; i--) {
     const day = new Date(anchor)
     day.setDate(day.getDate() - i)
     const title = formatCalendarTitle(day)
     const note = byTitle.get(title)
     if (!note) continue
-    const content = stripCommandLines(stripEmbedBlockTags(note.content)).trim()
-    if (!content) continue
-    entries.push({ dateLabel: title, content })
+    entries.push({ dateLabel: title, note })
   }
   return entries
 }
@@ -244,17 +238,9 @@ function toIsoDate(date: Date): string {
   return `${y}-${m}-${d}`
 }
 
-function getDatedNotes(notes: Note[], anchor: Date): { title: string; content: string }[] {
+function getDatedNotes(notes: Note[], anchor: Date): Note[] {
   const isoDate = toIsoDate(anchor)
-  const entries: { title: string; content: string }[] = []
-  for (const note of notes) {
-    if (note.notebookId === CALENDAR_NOTEBOOK_ID) continue
-    if (note.date !== isoDate) continue
-    const content = stripCommandLines(stripEmbedBlockTags(note.content)).trim()
-    if (!content) continue
-    entries.push({ title: note.title.trim() || 'Untitled', content })
-  }
-  return entries
+  return notes.filter((note) => note.notebookId !== CALENDAR_NOTEBOOK_ID && note.date === isoDate)
 }
 
 function formatDatedNotesContext(entries: { title: string; content: string }[]): string {
@@ -280,7 +266,7 @@ function buildUserMessage(
   if (searchContext) parts.push(`\n${searchContext}`)
   if (weekContext) parts.push(`\n${weekContext}`)
   if (datedNotesContext) parts.push(`\n${datedNotesContext}`)
-  const cleanContent = stripCommandLines(noteContent)
+  const cleanContent = noteContent.trim()
   if (cleanContent) {
     parts.push(`\nCurrent note content:\n${cleanContent}`)
   }
@@ -459,7 +445,7 @@ function App() {
     createTasks,
     updateTask,
     updateTasks,
-    deleteTask,
+    deleteTasks,
     saveError: tasksSaveError,
   } = useTasks()
   const { disabledNotebookIds, setNotebookIndexEnabled } = useNotesIndexSync({
@@ -643,15 +629,6 @@ function App() {
       if (notebookId !== task.notebookId) await relocateTask(task, notebookId)
     },
     [tasksById, resolveProject, relocateTask]
-  )
-
-  const deleteProjectTask = useCallback(
-    async (id: string) => {
-      const task = tasksById.get(id)
-      await deleteTask(id)
-      if (task?.noteId) await removeNote(task.noteId)
-    },
-    [tasksById, deleteTask, removeNote]
   )
 
   // Antes de excluir/mover um caderno: as tasks dele (com as notas-corpo) vão
@@ -1049,6 +1026,24 @@ function App() {
     () => (activeId ? tasks.find((t) => t.noteId === activeId) ?? null : null),
     [tasks, activeId]
   )
+
+  // Apaga as tasks e as notas-corpo. Se a task aberta no editor está entre
+  // elas, a nota fecha antes.
+  const deleteProjectTasks = useCallback(
+    async (ids: string[]) => {
+      const list = ids.map((id) => tasksById.get(id)).filter((t): t is Task => !!t)
+      if (activeTask && ids.includes(activeTask.id)) {
+        if (tasksViewOpen) showTaskNote(null)
+        else setActiveId(null)
+      }
+      await deleteTasks(ids)
+      for (const task of list) {
+        if (task.noteId) await removeNote(task.noteId)
+      }
+    },
+    [tasksById, activeTask, tasksViewOpen, showTaskNote, deleteTasks, removeNote]
+  )
+
   // Dia da nota diária do Calendar aberta (bloco "Due today").
   const activeCalendarDay = useMemo(() => {
     if (!activeNote || activeNote.notebookId !== CALENDAR_NOTEBOOK_ID) return null
@@ -1187,6 +1182,15 @@ function App() {
     }
   }, [activeNote, responses])
 
+  const resolveNoteTitle = useCallback(
+    (noteId: string) => notes.find((n) => n.id === noteId)?.title,
+    [notes]
+  )
+  const resolveNoteContent = useCallback(
+    (noteId: string) => notes.find((n) => n.id === noteId)?.content,
+    [notes]
+  )
+
   const handleCommand = useCallback(
     async ({ cmd, query, commandId }: CommandExecutionRequest) => {
       if (!activeId) return false
@@ -1234,6 +1238,21 @@ function App() {
       }
 
       const noteContent = activeNote?.content ?? ''
+      const anchor = activeNote ? parseCalendarTitle(activeNote.title) : null
+      const weekNotes = cmd === '/week' && anchor ? getWeekCalendarNotes(notes, anchor) : []
+      const datedNotes =
+        activeNote?.notebookId === CALENDAR_NOTEBOOK_ID && anchor ? getDatedNotes(notes, anchor) : []
+      const embeds = await loadEmbedResponses(
+        [noteContent, ...weekNotes.map((e) => e.note.content), ...datedNotes.map((n) => n.content)],
+        resolveNoteContent
+      )
+      const toAiText = (content: string) =>
+        cleanNoteContentForAi(content, {
+          resolveNoteTitle,
+          resolveEmbed: (id) => embeds.get(id),
+          resolveLinkedNoteContent: resolveNoteContent,
+        })
+      const noteText = toAiText(noteContent)
       let searchContext: string | undefined
       if (def.usesSearch && query.trim()) {
         try {
@@ -1294,7 +1313,7 @@ function App() {
       let ragSources: AiSource[] | undefined
       if (visibleDocIds.length > 0 && !docsListFailed) {
         try {
-          const queryText = query.trim() || stripCommandLines(noteContent).slice(0, 500)
+          const queryText = query.trim() || noteText.slice(0, 500)
           if (queryText) {
             const embedding = await embedText(queryText)
             const topK = isDocsOnly ? 8 : 5
@@ -1324,8 +1343,6 @@ function App() {
         return true
       }
 
-      const anchor = activeNote ? parseCalendarTitle(activeNote.title) : null
-
       const isWeekOnly = cmd === '/week'
       let weekContext: string | undefined
       if (isWeekOnly) {
@@ -1338,7 +1355,9 @@ function App() {
           )
           return true
         }
-        const weekEntries = getWeekCalendarNotes(notes, anchor)
+        const weekEntries = weekNotes
+          .map((e) => ({ dateLabel: e.dateLabel, content: toAiText(e.note.content) }))
+          .filter((e) => e.content)
         if (weekEntries.length === 0) {
           addErrorCard(
             activeId,
@@ -1352,8 +1371,10 @@ function App() {
       }
 
       let datedNotesContext: string | undefined
-      if (activeNote?.notebookId === CALENDAR_NOTEBOOK_ID && anchor) {
-        const datedEntries = getDatedNotes(notes, anchor)
+      if (datedNotes.length > 0) {
+        const datedEntries = datedNotes
+          .map((n) => ({ title: n.title.trim() || 'Untitled', content: toAiText(n.content) }))
+          .filter((e) => e.content)
         if (datedEntries.length > 0) {
           datedNotesContext = formatDatedNotesContext(datedEntries)
         }
@@ -1363,7 +1384,7 @@ function App() {
         ? buildUserMessage(cmd, def.description, query, '', undefined, ragContext, undefined, datedNotesContext)
         : isWeekOnly
           ? buildUserMessage(cmd, def.description, query, '', searchContext, ragContext, weekContext, datedNotesContext)
-          : buildUserMessage(cmd, def.description, query, noteContent, searchContext, ragContext, undefined, datedNotesContext)
+          : buildUserMessage(cmd, def.description, query, noteText, searchContext, ragContext, undefined, datedNotesContext)
 
       // Log dos contextos montados para o slash command (complementa o log
       // do payload final em useAi.ts).
@@ -1391,7 +1412,7 @@ function App() {
       })
       return true
     },
-    [activeId, activeNote, modelId, models.length, start, addErrorCard, notes, setRightTab]
+    [activeId, activeNote, modelId, models.length, start, addErrorCard, notes, setRightTab, resolveNoteTitle, resolveNoteContent]
   )
 
   const effectiveNotebookWidth = notebookCollapsed ? COLLAPSED_PANEL_WIDTH : notebookWidth
@@ -1823,11 +1844,6 @@ function App() {
     [chatNotebookId, disabledNotebookIds, tasks, today]
   )
 
-  const resolveNoteTitle = useCallback(
-    (noteId: string) => notes.find((n) => n.id === noteId)?.title,
-    [notes]
-  )
-
   const handleEditorReady = useCallback((editor: TiptapEditor | null) => {
     notesEditorRef.current = editor
     setHasEditor(!!editor)
@@ -2087,6 +2103,7 @@ function App() {
             onToggleTask={handleToggleLinkedTask}
             onUpdateTasks={(changes) => void updateTasks(changes)}
             onConvertPipeTitles={(list) => void convertPipeTitles(list)}
+            onDeleteTasks={(ids) => void deleteProjectTasks(ids)}
             checklist={taskChecklist}
           />
         ) : tasksBoardOpen ? (
@@ -2113,6 +2130,7 @@ function App() {
             onSchedule={(id, scheduledDate) => void updateTask(id, { scheduledDate })}
             onUpdateTasks={(changes) => void updateTasks(changes)}
             onConvertPipeTitles={(list) => void convertPipeTitles(list)}
+            onDeleteTasks={(ids) => void deleteProjectTasks(ids)}
             checklist={taskChecklist}
           />
         ) : !focusMode && (tasksViewOpen ? (
@@ -2139,6 +2157,7 @@ function App() {
             }}
             onToggleTask={handleToggleLinkedTask}
             onUpdateTasks={(changes) => void updateTasks(changes)}
+            onDeleteTasks={(ids) => void deleteProjectTasks(ids)}
             checklist={taskChecklist}
           />
         ) : activeNotebookId === calendarNotebookId ? (
@@ -2280,11 +2299,7 @@ function App() {
                 onOpenSourceNote={() => {
                   if (activeTask.sourceNoteId) handleNoteLinkNavigation(activeTask.sourceNoteId)
                 }}
-                onDelete={() => {
-                  if (tasksViewOpen) showTaskNote(null)
-                  else setActiveId(null)
-                  void deleteProjectTask(activeTask.id)
-                }}
+                onDelete={() => void deleteProjectTasks([activeTask.id])}
               />
             ) : activeCalendarDay ? (
               <DueTodayBlock
@@ -2331,6 +2346,9 @@ function App() {
               todayKey={today}
               taskChecklist={taskChecklist}
               resolveNoteTitle={resolveNoteTitle}
+              resolveNoteContent={resolveNoteContent}
+              tasks={tasks}
+              notebooks={orderedNotebooks}
               getSelectionText={getNotesSelectionText}
               visible={aiOpen && rightTab === 'chat'}
               pendingQuote={pendingNotesQuote}

@@ -40,9 +40,10 @@ export interface ChatToolsMenuProps {
   onToggle: (key: keyof ChatTools, value: boolean) => void
   folderMemory: { enabled: boolean } | null
   onToggleFolderMemory: (value: boolean) => void
+  folderMemoryLabel?: string
   folderWebResearch?: { enabled: boolean } | null
   onToggleFolderWebResearch?: (value: boolean) => void
-  // Tool "Tasks": só no chat principal; `supported` = o modelo aceita tools.
+  // Tool "Tasks": chat principal e NotesChat; `supported` = o modelo aceita tools.
   tasksTool?: { supported: boolean } | null
 }
 
@@ -51,6 +52,7 @@ export function ChatToolsMenu({
   onToggle,
   folderMemory,
   onToggleFolderMemory,
+  folderMemoryLabel = 'Folder memory',
   folderWebResearch = null,
   onToggleFolderWebResearch = () => {},
   tasksTool = null,
@@ -165,7 +167,7 @@ export function ChatToolsMenu({
                   <Brain size={16} />
                 </span>
                 <div className={styles.toolText}>
-                  <span className={styles.toolName}>Folder memory</span>
+                  <span className={styles.toolName}>{folderMemoryLabel}</span>
                   <span className={styles.toolDescription}>
                     Lets the AI remember context across conversations in this folder.
                   </span>

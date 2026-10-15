@@ -4,6 +4,7 @@ import {
   computeTaskSummary,
   filterBySummary,
   groupTasksBy,
+  isOpen,
   type ChecklistProgress,
   type TaskGroupBy,
   type TaskSummaryKey,
@@ -41,6 +42,7 @@ interface TasksViewProps {
   onCreateTask: (draft: NewTaskDraft) => Promise<void>
   onToggleTask: (id: string, done: boolean) => void
   onUpdateTasks: (changes: TaskChanges) => void
+  onDeleteTasks: (ids: string[]) => void
   // Progresso do checklist da nota-corpo, por task.
   checklist: Map<string, ChecklistProgress>
 }
@@ -68,6 +70,7 @@ export function TasksView({
   onCreateTask,
   onToggleTask,
   onUpdateTasks,
+  onDeleteTasks,
   checklist,
 }: TasksViewProps) {
   // Seções recolhíveis (Done/Dropped) abertas pelo usuário.
@@ -107,6 +110,7 @@ export function TasksView({
     todayKey,
     onOpen: onSelectTask,
     onUpdateTasks,
+    onDeleteTasks,
   })
 
   function renderTask(t: Task, showDoing: boolean) {
@@ -126,8 +130,19 @@ export function TasksView({
           if (kb.handleClick(e, t.id)) onSelectTask(t)
         }}
         onToggle={(done) => onToggleTask(t.id, done)}
+        onDelete={() => void kb.requestDelete([t.id], 'Delete task')}
       />
     )
+  }
+
+  // "Clear done": o escopo inteiro do grupo Done (filtro de projeto atual,
+  // sem o corte de exibição). No Group by status são só as concluídas; nos
+  // demais o grupo também inclui as dropped.
+  function clearDone() {
+    const ids = projectTasks
+      .filter((t) => (groupBy === 'status' ? t.status === 'done' : !isOpen(t)))
+      .map((t) => t.id)
+    void kb.requestDelete(ids, 'Clear done')
   }
 
   function toggleSection(key: string) {
@@ -181,24 +196,31 @@ export function TasksView({
             const collapsed = section.collapsible && !openSections.has(key)
             return (
               <section key={key} className={styles.group}>
-                <button
-                  type="button"
-                  className={`${styles.groupHeader} ${section.tone === 'overdue' ? styles.groupOverdue : ''}`}
-                  onClick={section.collapsible ? () => toggleSection(key) : undefined}
-                  disabled={!section.collapsible}
-                >
-                  {section.collapsible && <span className={styles.caret}>{collapsed ? '▸' : '▾'}</span>}
-                  {label}
-                  <span className={styles.count}>{list.length}</span>
-                  {key === 'inProgress' && list.length > IN_PROGRESS_SOFT_LIMIT && (
-                    <span
-                      className={styles.groupWarning}
-                      title="More than 3 in progress — consider finishing before starting more"
-                    >
-                      <Warning size={11} aria-hidden />
-                    </span>
+                <div className={styles.groupHeaderRow}>
+                  <button
+                    type="button"
+                    className={`${styles.groupHeader} ${section.tone === 'overdue' ? styles.groupOverdue : ''}`}
+                    onClick={section.collapsible ? () => toggleSection(key) : undefined}
+                    disabled={!section.collapsible}
+                  >
+                    {section.collapsible && <span className={styles.caret}>{collapsed ? '▸' : '▾'}</span>}
+                    {label}
+                    <span className={styles.count}>{list.length}</span>
+                    {key === 'inProgress' && list.length > IN_PROGRESS_SOFT_LIMIT && (
+                      <span
+                        className={styles.groupWarning}
+                        title="More than 3 in progress — consider finishing before starting more"
+                      >
+                        <Warning size={11} aria-hidden />
+                      </span>
+                    )}
+                  </button>
+                  {key === 'done' && (
+                    <button type="button" className={styles.clearDone} onClick={clearDone}>
+                      Clear done
+                    </button>
                   )}
-                </button>
+                </div>
                 {!collapsed &&
                   (section.subgroups
                     ? section.subgroups.map((g) => (

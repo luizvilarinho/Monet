@@ -112,6 +112,9 @@ export class BrowserStorage implements StorageAdapter {
   async getResponses(_noteId: string): Promise<AiResponse[]> {
     throw new Error('BrowserStorage.getResponses not implemented')
   }
+  async getResponsesByIds(_ids: string[]): Promise<AiResponse[]> {
+    throw new Error('BrowserStorage.getResponsesByIds not implemented')
+  }
   async saveResponse(_response: AiResponse): Promise<void> {
     throw new Error('BrowserStorage.saveResponse not implemented')
   }

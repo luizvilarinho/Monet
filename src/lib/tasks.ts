@@ -93,6 +93,12 @@ export function applyTaskPatch(prev: Task, patch: TaskPatch, now: number): Task 
   return next
 }
 
+// Confirmação de exclusão: a task leva a nota-corpo junto e não há desfazer.
+export function deleteTasksMessage(tasks: Task[]): string {
+  if (tasks.length === 1) return `Delete task "${tasks[0].title}" and its note? This can't be undone.`
+  return `Delete ${tasks.length} tasks and their notes? This can't be undone.`
+}
+
 export function isOpen(t: Task): boolean {
   return t.status === 'todo' || t.status === 'doing'
 }

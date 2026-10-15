@@ -1,4 +1,4 @@
-import { CalendarBlank, Flag, Repeat, Target } from '@phosphor-icons/react'
+import { CalendarBlank, Flag, Repeat, Target, Trash } from '@phosphor-icons/react'
 import {
   describeRecurrence,
   formatDueShort,
@@ -35,6 +35,8 @@ interface TaskLineProps {
   // Recebe as teclas modificadoras do clique (Ctrl/Shift = seleção).
   onSelect: (e: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) => void
   onToggle: (done: boolean) => void
+  // Exclusão (pede confirmação no chamador); ausente = sem botão.
+  onDelete?: () => void
 }
 
 export function TaskLine({
@@ -51,6 +53,7 @@ export function TaskLine({
   inSelection = false,
   onSelect,
   onToggle,
+  onDelete,
 }: TaskLineProps) {
   const closed = !isOpen(task)
   return (
@@ -92,6 +95,23 @@ export function TaskLine({
           checklist={checklist}
         />
       </div>
+      {onDelete && (
+        <button
+          type="button"
+          className={styles.deleteBtn}
+          aria-label="Delete task"
+          title="Delete task"
+          // Não inicia o arraste do card (Kanban/Week) nem abre a task.
+          onMouseDown={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation()
+            onDelete()
+          }}
+        >
+          <Trash size={13} aria-hidden />
+        </button>
+      )}
     </div>
   )
 }

@@ -5,15 +5,18 @@ import {
   useChat,
   type ChatMessage,
   type ChatConversation,
+  type TasksSnapshot,
+  NO_RESPONSE_MESSAGE,
 } from '../../hooks/useChat'
 import { renderMarkdown } from '../../lib/markdown'
 import { notesFolderDocId } from '../../lib/documents'
+import { loadEmbedResponses } from '../../lib/noteFileText'
 import type { ChecklistProgress } from '../../lib/tasks'
 import {
   listOpenRouterModels,
   OPENROUTER_KEY_MISSING,
 } from '../../lib/openrouter'
-import type { AiModel, Note, Task } from '../../types'
+import type { AiModel, Note, Notebook, Task } from '../../types'
 import { ModelSelector } from '../AiPanel/ModelSelector'
 import { ChatToolsMenu } from '../ChatPanel/ChatToolsMenu'
 import { FolderSystemPromptModal } from '../ChatPanel/FolderSystemPromptModal'
@@ -39,12 +42,16 @@ interface NotesChatPanelProps {
   notebook: { id: string; name: string } | null
   activeNote: Note | null
   resolveNoteTitle: (noteId: string) => string | undefined
+  resolveNoteContent: (noteId: string) => string | undefined
   getSelectionText: () => string
   // Tasks do caderno, anexadas ao contexto efêmero (vazio se o caderno está
   // fora da IA).
   projectTasks?: Task[]
   todayKey: string
   taskChecklist: Map<string, ChecklistProgress>
+  // Todas as tasks e cadernos, para a tool "Tasks" (query_tasks).
+  tasks: Task[]
+  notebooks: Notebook[]
   // Visual apenas — o painel permanece montado quando escondido.
   visible: boolean
   // Trecho vindo do "Ask AI" da toolbar de seleção do editor.
@@ -58,10 +65,13 @@ export function NotesChatPanel({
   notebook,
   activeNote,
   resolveNoteTitle,
+  resolveNoteContent,
   getSelectionText,
   projectTasks,
   todayKey,
   taskChecklist,
+  tasks,
+  notebooks,
   visible,
   pendingQuote,
   onPendingQuoteConsumed,
@@ -71,6 +81,8 @@ export function NotesChatPanel({
   const [models, setModels] = useState<AiModel[]>([])
   const [modelsLoading, setModelsLoading] = useState(false)
   const [modelsError, setModelsError] = useState<string | null>(null)
+  const tasksSnapshotRef = useRef<TasksSnapshot>({ tasks, notebooks, todayKey, checklist: taskChecklist })
+  tasksSnapshotRef.current = { tasks, notebooks, todayKey, checklist: taskChecklist }
 
   const {
     activeId,
@@ -96,7 +108,8 @@ export function NotesChatPanel({
     getFolderVisibleDocumentIds,
     setFolderMemory,
     setFolderMemoryEnabled,
-  } = useChat(models, { mode: 'notes' })
+    setFolderWebResearchEnabled,
+  } = useChat(models, { mode: 'notes', getTasksSnapshot: () => tasksSnapshotRef.current })
 
   const [draft, setDraft] = useState('')
   const [notebookFolderId, setNotebookFolderId] = useState<string | null>(null)
@@ -319,7 +332,9 @@ export function NotesChatPanel({
     models.length > 0 &&
     !!activeId
 
-  function handleSend() {
+  const selectedModel = models.find((m) => m.id === model)
+
+  async function handleSend() {
     if (!canSend || !notebook) return
     // Idempotente; recria a pasta (e refresca o ref usado pelo fallback do
     // send) caso ela tenha sido apagada em outra janela durante a sessão.
@@ -328,18 +343,23 @@ export function NotesChatPanel({
     setDraft('')
     // Contexto montado NO MOMENTO do envio: trocar de nota depois não afeta
     // a resposta em streaming.
+    const note = activeNote
+    const selectionText = getSelectionText()
+    const embeds = await loadEmbedResponses(note ? [note.content] : [], resolveNoteContent)
     const ephemeralContext = buildNotesContext({
       notebookName: notebook.name,
-      note: activeNote,
-      selectionText: getSelectionText(),
+      note,
+      selectionText,
       resolveNoteTitle,
+      resolveLinkedNoteContent: resolveNoteContent,
+      resolveEmbed: (id) => embeds.get(id),
       projectTasks,
       todayKey,
       checklist: taskChecklist,
     })
     void send(text, undefined, undefined, {
       ephemeralContext,
-      excludeNoteId: activeNote?.id ?? null,
+      excludeNoteId: note?.id ?? null,
     })
   }
 
@@ -378,8 +398,8 @@ export function NotesChatPanel({
               <button
                 type="button"
                 className={styles.iconBtn}
-                aria-label="Folder memory"
-                title="Folder memory"
+                aria-label="Notebook memory"
+                title="Notebook memory"
                 onClick={() => setMemoryOpen(true)}
               >
                 <Brain size={14} />
@@ -394,6 +414,14 @@ export function NotesChatPanel({
                   onToggleFolderMemory={(v) =>
                     notebookFolder && setFolderMemoryEnabled(notebookFolder.id, v)
                   }
+                  folderMemoryLabel="Notebook memory"
+                  folderWebResearch={
+                    notebookFolder ? { enabled: notebookFolder.webResearchEnabled } : null
+                  }
+                  onToggleFolderWebResearch={(v) =>
+                    notebookFolder && setFolderWebResearchEnabled(notebookFolder.id, v)
+                  }
+                  tasksTool={{ supported: selectedModel?.supportsTools ?? false }}
                 />
               </div>
               <ModelSelector
@@ -510,7 +538,7 @@ export function NotesChatPanel({
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.ctrlKey && !e.shiftKey) {
                   e.preventDefault()
-                  handleSend()
+                  void handleSend()
                 }
               }}
               placeholder={
@@ -532,7 +560,7 @@ export function NotesChatPanel({
                 <button
                   type="button"
                   className={styles.sendBtn}
-                  onClick={handleSend}
+                  onClick={() => void handleSend()}
                   disabled={!canSend}
                 >
                   Send
@@ -582,7 +610,7 @@ interface NotesChatBubbleProps {
 
 function NotesChatBubble({ message, isStreaming, canInsert, onInsert }: NotesChatBubbleProps) {
   const isUser = message.role === 'user'
-  const isStreamingPlaceholder = !isUser && message.content.length === 0
+  const isEmpty = !isUser && message.content.length === 0
   const segments = useMemo(
     () => (isUser ? [] : splitMessageBlocks(message.content)),
     [isUser, message.content]
@@ -592,13 +620,16 @@ function NotesChatBubble({ message, isStreaming, canInsert, onInsert }: NotesCha
     return <div className={styles.bubbleUser}>{message.content}</div>
   }
 
-  if (isStreamingPlaceholder) {
-    return (
+  if (isEmpty) {
+    // Pontinhos só durante o streaming; vazia fora dele = turno sem resposta.
+    return isStreaming ? (
       <span className={styles.streamingDots} aria-hidden="true">
         <span />
         <span />
         <span />
       </span>
+    ) : (
+      <div className={styles.bubbleAssistant}>{NO_RESPONSE_MESSAGE}</div>
     )
   }
 

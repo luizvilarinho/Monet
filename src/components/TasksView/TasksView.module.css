@@ -104,3 +104,23 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.groupHeaderRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.clearDone {
+  background: transparent;
+  border: none;
+  padding: 2px 4px;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.clearDone:hover {
+  color: var(--accent-danger);
+}

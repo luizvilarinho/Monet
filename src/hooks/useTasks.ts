@@ -151,10 +151,15 @@ export function useTasks() {
     [updateTasks]
   )
 
-  const deleteTask = useCallback(
-    async (id: string) => {
-      setTasks((list) => list.filter((t) => t.id !== id))
-      await persist(() => storage.deleteTask(id), 'delete task')
+  // Deletes sequenciais, sem BEGIN/COMMIT (o tauri-plugin-sql usa pool).
+  const deleteTasks = useCallback(
+    async (ids: string[]) => {
+      if (ids.length === 0) return
+      const set = new Set(ids)
+      setTasks((list) => list.filter((t) => !set.has(t.id)))
+      await persist(async () => {
+        for (const id of ids) await storage.deleteTask(id)
+      }, 'delete tasks')
     },
     [persist]
   )
@@ -171,6 +176,6 @@ export function useTasks() {
     createTasks,
     updateTask,
     updateTasks,
-    deleteTask,
+    deleteTasks,
   }
 }

@@ -162,6 +162,10 @@ const LEGACY_HISTORY_KEY = 'monet:chat-history'
 const RESPONSE_LINK_KEY = 'monet:ai-response-chat-link'
 const READER_BOOK_FOLDER_LINK_KEY = 'monet:reader-book-folder-link'
 const NOTEBOOK_CHAT_FOLDER_LINK_KEY = 'monet:notes-notebook-folder-link'
+const NOTEBOOK_MEMORY_MIGRATION_KEY = 'monet:notebook-memory-default-migrated'
+
+// Texto do assistant quando o turno termina sem resposta.
+export const NO_RESPONSE_MESSAGE = "The model didn't return a response. Please try again."
 
 export interface ChatMessage {
   id: string
@@ -425,7 +429,18 @@ function parseFolders(raw: string | null): ChatFolder[] {
 }
 
 function loadFolders(): ChatFolder[] {
-  return parseFolders(readChatKey(FOLDERS_KEY))
+  const folders = parseFolders(readChatKey(FOLDERS_KEY))
+  // Migração única: a "Notebook memory" passou a nascer ligada; liga também
+  // nas pastas de caderno que já existiam.
+  if (localStorage.getItem(NOTEBOOK_MEMORY_MIGRATION_KEY) !== null) return folders
+  localStorage.setItem(NOTEBOOK_MEMORY_MIGRATION_KEY, '1')
+  const notebookFolderIds = new Set(Object.values(loadNotebookChatFolderLinks()))
+  if (!folders.some((f) => notebookFolderIds.has(f.id) && !f.memoryEnabled)) return folders
+  const migrated = folders.map((f) =>
+    notebookFolderIds.has(f.id) ? { ...f, memoryEnabled: true } : f
+  )
+  saveFolders(migrated)
+  return migrated
 }
 
 function saveFolders(list: ChatFolder[]) {
@@ -978,7 +993,7 @@ export function useChat(
   models: AiModel[] = [],
   options?: {
     mode?: 'main' | 'assistant' | 'reader' | 'notes'
-    // Só o ChatPanel principal passa: habilita a tool "Tasks".
+    // ChatPanel principal e NotesChat passam: habilita a tool "Tasks".
     getTasksSnapshot?: () => TasksSnapshot
   }
 ): UseChatResult {
@@ -1022,7 +1037,13 @@ export function useChat(
   const [model, setModelState] = useState<string | null>(
     () => localStorage.getItem(MODEL_KEY)
   )
-  const [tools, setToolsState] = useState<ChatTools>(() => loadTools())
+  const [storedTools, setToolsState] = useState<ChatTools>(() => loadTools())
+  // O estado das tools é compartilhado entre os chats (localStorage), mas o
+  // NotesChat não tem UI de Deep Research: força desligado só aqui, sem gravar.
+  const tools =
+    mode === 'notes' && storedTools.deepResearch
+      ? { ...storedTools, deepResearch: false }
+      : storedTools
   const toolsRef = useRef<ChatTools>(tools)
   toolsRef.current = tools
   const [hasApiKey, setHasApiKey] = useState<boolean>(false)
@@ -1455,6 +1476,7 @@ export function useChat(
       } else {
         const title = scope.title.trim().slice(0, 90) || 'Untitled notebook'
         folder = makeNewFolder(`Notebook - ${title}`)
+        folder.memoryEnabled = true
       }
       pendingScopedFolderIds.current.set(pendingKey, folder.id)
       setFolders((prev) => [folder, ...prev])
@@ -1888,10 +1910,7 @@ export function useChat(
                   ...m,
                   model: doneModel ?? stream.model,
                   tokensPerSecond: tps,
-                  content:
-                    m.content === ''
-                      ? "The model didn't return a response. Please try again."
-                      : m.content,
+                  content: m.content === '' ? NO_RESPONSE_MESSAGE : m.content,
                 }
               : m
           )
@@ -1969,7 +1988,30 @@ export function useChat(
         setWebSearchActive(false)
         librarianContextRef.current = null
       })
-      const toolCall = await onOpenRouterToolCall((p) => toolCallHandlerRef.current?.(p))
+      const toolCall = await onOpenRouterToolCall((p) => {
+        const handler = toolCallHandlerRef.current
+        if (handler) {
+          handler(p)
+          return
+        }
+        // Tool call sem handler (ex.: a 2ª rodada, enviada sem tools, em que o
+        // modelo ainda tenta chamar uma tool): o backend não emite done nem
+        // error, então o turno é encerrado aqui — senão fica vazio para sempre.
+        const stream = activeStreamRef.current
+        if (!stream || stream.requestId !== p.requestId) return
+        updateMessages(stream.convId, (msgs) =>
+          msgs.map((m) =>
+            m.id === stream.assistantId && m.content === ''
+              ? { ...m, model: stream.model, content: NO_RESPONSE_MESSAGE }
+              : m
+          )
+        )
+        activeStreamRef.current = null
+        setIsStreaming(false)
+        setDeepResearchPhase(null)
+        setWebSearchActive(false)
+        librarianContextRef.current = null
+      })
       if (cancelled) {
         chunk()
         reasoning()
@@ -2653,6 +2695,12 @@ export function useChat(
               ...(ragSystemMessage ? [ragSystemMessage] : []),
               ...(toolSearchMessage ? [toolSearchMessage] : []),
               ...(toolTasksMessage ? [toolTasksMessage] : []),
+              // Esta rodada vai sem tools: sem o aviso, prompts como o da
+              // memória levam o modelo a pedir outra tool (e não responder).
+              {
+                role: 'system',
+                content: 'Tools are not available in this step. Answer the user now in plain text using the context above; do not call any tool.',
+              },
               ...historyForApi,
               { role: 'user', content: userContent },
             ]

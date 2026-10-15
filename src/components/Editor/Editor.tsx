@@ -13,7 +13,7 @@ import { nanoid } from 'nanoid'
 import type { Editor as TiptapEditor } from '@tiptap/core'
 import { TextSelection } from '@tiptap/pm/state'
 import { Mapping } from '@tiptap/pm/transform'
-import { getWeekdayName, parseCalendarTitle } from '../../lib/calendar'
+import { formatLocalTimestamp, getWeekdayName, parseCalendarTitle } from '../../lib/calendar'
 import { findClosestHeading, parseHeadings, type Heading } from '../../lib/headingParser'
 import { attachSpellCheckEnforcer } from '../../lib/spellcheck'
 import { HeadingNavigator } from '../HeadingNavigator/HeadingNavigator'
@@ -982,6 +982,22 @@ export function Editor({
               type="button"
             >
               📎
+            </button>
+            <button
+              className={contextMenuStyles.btn}
+              title="Date and time"
+              onMouseDown={() => {
+                if (!editor) return
+                editor
+                  .chain()
+                  .focus()
+                  .insertContent(formatLocalTimestamp(new Date(), { hour24: true, separator: ' - ' }))
+                  .run()
+                setContextMenuPos(null)
+              }}
+              type="button"
+            >
+              🕒
             </button>
           </div>
           <div className={contextMenuStyles.sep} />

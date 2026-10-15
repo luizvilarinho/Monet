@@ -1,11 +1,11 @@
 {
-  "version": "1.4.6",
-  "notes": "Monet v1.4.6 — New Tasks feature: special Tasks folder with status, project and due date; \"Add to Tasks\" from checklist items with synced checkbox; projects are notebooks (with an Inbox); each task is a note with a task properties bar; tasks shown on the Calendar (orange, overdue in red); task metadata and per-project task summaries indexed for AI (chat and slash commands).",
-  "pub_date": "2026-10-11T21:50:29Z",
+  "version": "1.4.7",
+  "notes": "Monet v1.4.7 — Tasks v2: summary counters; do date vs deadline; Week board with drag and drop; Kanban view; quick add with natural language; groups; keyboard shortcuts and batch actions; /tasks block in notes; Due today in daily notes; important flag; recurrence; checklist progress; deadline reminders; weekly review; Tasks tool in chat; Tasks section under the notes list. Fixes: table toolbar now sits above the table; clean copy/paste from tables; \"Turn into notebook\" for subjects.",
+  "pub_date": "2026-10-12T20:00:22Z",
   "platforms": {
     "windows-x86_64": {
-      "url": "https://github.com/luizvilarinho/Monet/releases/download/v1.4.6/monet_1.4.6_x64_en-US.msi",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRlFHSkpLWXhzckhMbXBuU0dWQ0VQZjlLbm9WMEdnSDBPbE5NNUVneENtR2ZCNkgxUmF2Z0cwelpqeE5lRWh5T1pRdWtaaWN6UzM1ak1JYWgrY3ZZVTdzbmdXNm42ZXcwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxNzU1NDI5CWZpbGU6bW9uZXRfMS40LjZfeDY0X2VuLVVTLm1zaQpVbzZpN0NYYjgrS1B4MHlxNjFBQ3A2cHpydlVXVnB5Qnc0TUFxbFduV3l6WlI5OEFheHJ0RzFEMC8wdjVRTWxrbTBkaWNIcDE1Tm1hUGlHQVYyTlZBZz09Cg=="
+      "url": "https://github.com/luizvilarinho/Monet/releases/download/v1.4.7/monet_1.4.7_x64_en-US.msi",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRlFHSkpLWXhzcko4ZHlxcjFDRjRHM1kwS1NnSlNTYUIwWnVlaHVic0crYlJ5M1doMm5ySndRVjFkMUlTK29Bcm4zaktFOTZDQ1RsbDdnRTJNMS9CbVhHQmRnZm1waXdvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxODM1MjIyCWZpbGU6bW9uZXRfMS40LjdfeDY0X2VuLVVTLm1zaQpaVHNGdG5jY1N3ampOK1lPaVp1T3BBWFdtbmpEM0JHeHJWNGJ5M0U4d0I4aTlxTkpTY2VKeCtqOFo1TDFnaHd0RFhvc29NeTZUU1FLNlBuZVFYbWlDQT09Cg=="
     }
   }
 }
