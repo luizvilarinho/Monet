@@ -1,11 +1,11 @@
 {
-  "version": "1.4.7",
-  "notes": "Monet v1.4.7 — Tasks v2: summary counters; do date vs deadline; Week board with drag and drop; Kanban view; quick add with natural language; groups; keyboard shortcuts and batch actions; /tasks block in notes; Due today in daily notes; important flag; recurrence; checklist progress; deadline reminders; weekly review; Tasks tool in chat; Tasks section under the notes list. Fixes: table toolbar now sits above the table; clean copy/paste from tables; \"Turn into notebook\" for subjects.",
-  "pub_date": "2026-10-12T20:00:22Z",
+  "version": "1.4.8",
+  "notes": "Monet v1.4.8 — Tasks v3: new views, task statuses and refinements.",
+  "pub_date": "2026-10-15T16:08:57Z",
   "platforms": {
     "windows-x86_64": {
-      "url": "https://github.com/luizvilarinho/Monet/releases/download/v1.4.7/monet_1.4.7_x64_en-US.msi",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRlFHSkpLWXhzcko4ZHlxcjFDRjRHM1kwS1NnSlNTYUIwWnVlaHVic0crYlJ5M1doMm5ySndRVjFkMUlTK29Bcm4zaktFOTZDQ1RsbDdnRTJNMS9CbVhHQmRnZm1waXdvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxODM1MjIyCWZpbGU6bW9uZXRfMS40LjdfeDY0X2VuLVVTLm1zaQpaVHNGdG5jY1N3ampOK1lPaVp1T3BBWFdtbmpEM0JHeHJWNGJ5M0U4d0I4aTlxTkpTY2VKeCtqOFo1TDFnaHd0RFhvc29NeTZUU1FLNlBuZVFYbWlDQT09Cg=="
+      "url": "https://github.com/luizvilarinho/Monet/releases/download/v1.4.8/monet_1.4.8_x64_en-US.msi",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRlFHSkpLWXhzck85bE1hNkY5UUV2YnZPNUFsR0FGYzUxK1hLR3dHc09zWk1TaXA2NTJZRSt0SnRZcVlaZDUrbkJwSWV2NTdKeTVTYytBRWVYaHVDdWFnSDhPTWNVTkFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMDgwNTMzCWZpbGU6bW9uZXRfMS40LjhfeDY0X2VuLVVTLm1zaQoxMndEMm5WVFNIN1kvT3MzOW45R3Y4enVMUXJOQklwSGY4M2N4RkVNNDZNbWdjRllObGF4ajVxcHA0SFcxRiticDN0b1IxNEVOdFlZazNmWmpDa2hDUT09Cg=="
     }
   }
 }
