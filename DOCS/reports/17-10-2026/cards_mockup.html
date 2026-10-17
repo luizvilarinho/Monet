@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Task Cards Mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Tokens copiados de src/App.css (o Monet só tem tema escuro). */
+:root {
+  --bg-app: #1f1f2f;
+  --bg-panel: #161625;
+  --surface-1: #1d1d34;
+  --surface-2: #292959;
+  --surface-3: #2e2e36;
+  --text-primary: #ddddf1;
+  --text-secondary: #9898a4;
+  --text-muted: #7c7c93;
+  --accent: #7b6ed4;
+  --accent-task: #ef9f27;
+  --accent-warn: #ef9f27;
+  --accent-danger: #e05555;
+  --accent-late: #e6c449;
+  --status-todo: #9a9aae;
+  --status-doing: #5b9cf0;
+  --status-done: #5cc185;
+  --status-waiting: #f0883e; /* status custom do usuário (laranja) */
+  --border: #2e2f2cb3;
+  --hair: #34344f;
+  color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-size: 14px;
+  color: var(--text-primary);
+  background: var(--bg-panel);
+  -webkit-font-smoothing: antialiased;
+  line-height: 1.45;
+}
+.page { max-width: 1180px; margin: 0 auto; padding: 32px 16px 64px; }
+h1 { font-size: 22px; font-weight: 600; margin: 0 0 6px; }
+h2 { font-size: 17px; font-weight: 600; margin: 0; }
+h3 { font-size: 13px; font-weight: 600; margin: 0 0 8px; color: var(--text-secondary); }
+p { margin: 0 0 8px; max-width: 76ch; color: var(--text-secondary); }
+.lead { font-size: 14px; }
+.nav { display: flex; flex-wrap: wrap; gap: 6px; margin: 16px 0 28px; }
+.nav a { color: var(--text-secondary); text-decoration: none; font-size: 12px; border: 1px solid var(--hair); border-radius: 4px; padding: 3px 8px; }
+.nav a:hover, .nav a:focus-visible { color: var(--text-primary); border-color: var(--accent-task); outline: none; }
+
+section.variant { border-top: 1px solid var(--hair); padding-top: 22px; margin-top: 30px; }
+.vhead { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+.vletter { font-size: 12px; font-weight: 600; color: var(--bg-panel); background: var(--text-primary); padding: 1px 6px; }
+.vsub { color: var(--text-muted); font-size: 12px; }
+
+.stage { display: grid; grid-template-columns: 260px 1fr; gap: 20px; margin-top: 16px; align-items: start; }
+@media (max-width: 860px) { .stage { grid-template-columns: 1fr; } }
+.frame { background: var(--bg-app); border: 1px solid var(--hair); border-radius: 6px; padding: 10px; min-width: 0; }
+.frame-label { font-size: 11px; color: var(--text-muted); margin: 0 0 8px 2px; }
+.col { background: var(--surface-1); border-radius: 6px; padding: 6px; display: flex; flex-direction: column; gap: 4px; width: 240px; max-width: 100%; }
+.col-head { display: flex; gap: 6px; align-items: center; padding: 2px 4px 4px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-secondary); }
+.col-head .n { color: var(--text-muted); }
+.state { font-size: 10px; color: var(--text-muted); margin: 6px 2px 1px; }
+.list-scroll { overflow-x: auto; }
+.list { display: flex; flex-direction: column; gap: 2px; min-width: 800px; }
+
+/* Comuns */
+.ic { width: 11px; height: 11px; flex-shrink: 0; vertical-align: -1px; }
+.chip { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
+.late { color: var(--accent-danger); }
+.resched-hi { color: var(--accent-danger); font-weight: 600; }
+.muted { color: var(--text-muted); }
+.sw { width: 7px; height: 7px; flex-shrink: 0; display: inline-block; }
+.cb { width: 13px; height: 13px; border: 1.5px solid var(--text-muted); border-radius: 3px; flex-shrink: 0; margin-top: 2px; }
+.title { font-size: 13px; line-height: 1.35; color: var(--text-primary); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.ctx { display: flex; gap: 6px; align-items: center; min-width: 0; font-size: 11px; color: var(--text-secondary); }
+.ctx .p, .ctx .g { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctx .slash { color: var(--text-muted); }
+.card { cursor: pointer; outline: none; position: relative; }
+.is-selected { box-shadow: inset 0 0 0 1px var(--accent-task); background: var(--surface-1) !important; }
+
+/* ── Variante A: Status edge ─────────────────────────────── */
+.A.card { background: var(--bg-app); border-radius: 4px; padding: 7px 8px 7px 11px; display: flex; flex-direction: column; gap: 3px; box-shadow: inset 3px 0 0 var(--st); }
+.A.card.is-selected { box-shadow: inset 3px 0 0 var(--st), inset 0 0 0 1px var(--accent-task); }
+.A .row { display: flex; gap: 8px; align-items: center; font-size: 11px; color: var(--text-muted); flex-wrap: wrap; row-gap: 2px; }
+.A .st { color: var(--st); font-weight: 600; }
+.A .cf { display: flex; gap: 8px; flex-wrap: wrap; font-size: 11px; color: var(--text-secondary); row-gap: 1px; }
+.A .cf .k { color: var(--text-muted); margin-right: 3px; }
+.A.line { display: grid; grid-template-columns: 13px minmax(120px, 1fr) 92px 112px 56px 56px 28px 26px 124px 64px; gap: 10px; align-items: center; padding: 6px 8px 6px 12px; border-radius: 4px; background: var(--bg-app); font-size: 11px; color: var(--text-muted); box-shadow: inset 3px 0 0 var(--st); cursor: pointer; }
+.A.line.is-selected { box-shadow: inset 3px 0 0 var(--st), inset 0 0 0 1px var(--accent-task); }
+.A.line .title { -webkit-line-clamp: 1; }
+.A.line .cb { margin-top: 0; }
+.A.line .cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-secondary); }
+.A.line .st { text-align: right; }
+.A.line:hover, .A.card:hover { background: var(--surface-1); }
+
+/* ── Variante B: Status block (quadrado, sólido) ─────────── */
+.B.card { background: var(--bg-app); border: 1px solid var(--hair); border-radius: 4px; padding: 0 0 6px; display: flex; flex-direction: column; gap: 4px; overflow: hidden; }
+.B.card.is-selected { border-color: var(--accent-task); box-shadow: none; }
+.B .top { display: flex; align-items: stretch; justify-content: space-between; gap: 8px; font-size: 11px; }
+.B .blk { background: var(--st); color: #161625; font-weight: 600; font-size: 11px; padding: 2px 7px 2px 8px; border-radius: 0; display: inline-flex; gap: 5px; align-items: center; white-space: nowrap; }
+.B .blk .el { font-weight: 500; opacity: .78; }
+.B .due { padding: 2px 8px 0 0; color: var(--text-secondary); display: inline-flex; gap: 3px; align-items: center; white-space: nowrap; }
+.B .due.late { color: var(--accent-danger); font-weight: 600; }
+.B .body { padding: 0 8px; display: flex; flex-direction: column; gap: 3px; }
+.B .kv { display: grid; grid-template-columns: auto 1fr; column-gap: 10px; row-gap: 1px; font-size: 11px; padding: 4px 8px 0; margin-top: 1px; border-top: 1px solid var(--hair); }
+.B .kv .k { color: var(--text-muted); }
+.B .kv .v { color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.B .foot { display: flex; gap: 10px; align-items: center; font-size: 11px; color: var(--text-muted); padding: 0 8px; flex-wrap: wrap; row-gap: 2px; }
+.B .bar { display: inline-flex; gap: 2px; margin-left: 2px; }
+.B .bar i { width: 6px; height: 6px; background: var(--hair); display: block; }
+.B .bar i.on { background: var(--text-secondary); }
+.B.line { display: grid; grid-template-columns: 13px 92px minmax(170px, 1fr) 190px 140px 64px 64px; gap: 10px; align-items: center; padding: 0 8px 0 8px; min-height: 30px; border-radius: 4px; background: var(--bg-app); font-size: 11px; color: var(--text-muted); cursor: pointer; border: 1px solid transparent; }
+.B.line.is-selected { border-color: var(--accent-task); box-shadow: none; }
+.B.line .cb { margin-top: 0; }
+.B.line .blk { justify-content: space-between; align-self: center; }
+.B.line .title { -webkit-line-clamp: 1; }
+.B.line .cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-secondary); }
+.B.line .r { text-align: right; justify-self: end; }
+.B.line:hover, .B.card:hover { background: var(--surface-1); }
+
+/* ── Variante C: Status field (cartão tingido) ───────────── */
+.C.card { background: color-mix(in srgb, var(--st) 11%, var(--bg-app)); border-radius: 4px; border-top: 2px solid var(--st); padding: 6px 8px 6px; display: flex; flex-direction: column; gap: 4px; }
+.C.card.is-selected { box-shadow: inset 0 0 0 1px var(--accent-task); background: color-mix(in srgb, var(--st) 11%, var(--bg-app)) !important; }
+.C .props { display: grid; grid-template-columns: 58px 1fr; row-gap: 1px; font-size: 11px; }
+.C .props .k { color: var(--text-muted); }
+.C .props .v { color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-flex; gap: 6px; align-items: center; }
+.C .stline { display: flex; justify-content: space-between; align-items: center; font-size: 11px; margin-top: 1px; }
+.C .st { color: var(--st); font-weight: 600; display: inline-flex; gap: 5px; align-items: center; }
+.C .st .sq { width: 7px; height: 7px; background: var(--st); }
+.C.line { display: grid; grid-template-columns: 13px 190px minmax(150px, 1fr) 210px 140px 80px; gap: 10px; align-items: center; padding: 6px 8px; border-radius: 4px; background: color-mix(in srgb, var(--st) 9%, var(--bg-app)); box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--st) 30%, transparent); font-size: 11px; color: var(--text-muted); cursor: pointer; }
+.C.line.is-selected { box-shadow: inset 0 0 0 1px var(--accent-task); }
+.C.line .cb { margin-top: 0; }
+.C.line .title { -webkit-line-clamp: 1; }
+.C.line .cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-secondary); display: flex; gap: 10px; }
+.C.line .st { justify-self: end; }
+.C.card:hover, .C.line:hover { filter: brightness(1.12); }
+
+.line .cell.late { color: var(--accent-danger); font-weight: 600; }
+.line .cell.resched-hi { color: var(--accent-danger); font-weight: 600; }
+
+/* Notas por variante */
+.notes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 16px; }
+@media (max-width: 860px) { .notes { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 520px) { .notes { grid-template-columns: 1fr; } }
+.notes div { font-size: 12.5px; color: var(--text-secondary); }
+.notes b { display: block; color: var(--text-primary); font-weight: 600; font-size: 12px; margin-bottom: 3px; }
+
+/* Week */
+.weekwrap { width: min(1480px, calc(100vw - 32px)); position: relative; left: 50%; transform: translateX(-50%); }
+.weekframe { background: var(--bg-app); border: 1px solid var(--hair); border-radius: 6px; padding: 12px; margin-top: 10px; overflow-x: auto; }
+.wnav { display: flex; align-items: center; gap: 4px; margin-bottom: 10px; }
+.wbtn { display: inline-flex; align-items: center; gap: 5px; background: transparent; border: 1px solid var(--border); border-radius: 4px; padding: 3px 7px; font: inherit; font-size: 12px; color: var(--text-secondary); cursor: pointer; }
+.wbtn:hover, .wbtn:focus-visible { color: var(--text-primary); outline: none; border-color: var(--hair); }
+.wbtn.on { border-color: var(--accent-task); color: var(--text-primary); }
+.wrange { margin-left: 6px; font-size: 12px; color: var(--text-muted); }
+.wsp { flex: 1; }
+.wcols { display: grid; gap: 8px; }
+.wcol { background: var(--surface-1); border-radius: 6px; padding: 6px; display: flex; flex-direction: column; gap: 4px; min-width: 0; min-height: 210px; border: 1px solid transparent; }
+.wcol.today { border-color: var(--accent-task); }
+.wcol.today .col-head { color: var(--accent-task); }
+.wcol.over .col-head { color: var(--accent-danger); }
+.wrail { background: var(--surface-1); border-radius: 6px; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 8px 0; min-height: 210px; border: 1px dashed var(--hair); cursor: pointer; color: var(--text-secondary); font: inherit; }
+.wrail:hover, .wrail:focus-visible { border-color: var(--accent-task); color: var(--text-primary); outline: none; }
+.wrail .vt { writing-mode: vertical-rl; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+.wrail .cnt { background: var(--accent-task); color: #161625; font-size: 11px; font-weight: 600; padding: 1px 5px; }
+.dim .col-head { opacity: .9; }
+.cap { font-size: 11px; color: var(--text-muted); margin-top: 6px; }
+
+.rec { border: 1px solid var(--accent-task); border-radius: 6px; padding: 16px 18px; margin-top: 34px; background: var(--bg-app); }
+.rec p { color: var(--text-primary); }
+.rec ul { margin: 6px 0 0 18px; padding: 0; color: var(--text-secondary); font-size: 13px; max-width: 80ch; }
+.rec li { margin-bottom: 4px; }
+code { font-size: 12px; color: var(--text-primary); background: var(--surface-3); padding: 0 4px; border-radius: 3px; }
+:focus-visible { outline: 1px solid var(--accent-task); outline-offset: 1px; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-cal" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M2 6.5h12M5 1.5v3M11 1.5v3" stroke="currentColor" stroke-width="1.4"/></symbol>
+  <symbol id="i-due" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="8" r="2.6" fill="none" stroke="currentColor" stroke-width="1.4"/></symbol>
+  <symbol id="i-chk" viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5 8.2l2 2 4-4.4" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+  <symbol id="i-flag" viewBox="0 0 16 16"><path d="M3 15V2h9l-2 3.5 2 3.5H3" fill="currentColor"/></symbol>
+  <symbol id="i-rep" viewBox="0 0 16 16"><path d="M3 7a5 5 0 0 1 8.6-3.4L13 5M13 2v3h-3M13 9a5 5 0 0 1-8.6 3.4L3 11M3 14v-3h3" fill="none" stroke="currentColor" stroke-width="1.4"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 16 16"><path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="8" r="2" fill="currentColor"/><path d="M2 14L14 2" stroke="currentColor" stroke-width="1.4"/></symbol>
+</svg>
+
+<main class="page">
+  <h1>Task cards: three directions</h1>
+  <p class="lead">Mockups for requirement 2 (cards in every view, status stands out) and requirement 3 (wider Week, hide weekends). Colors, font and spacing come straight from <code>src/App.css</code> and the TasksView CSS modules. Monet ships a single dark theme, so there is no light version here. The data mirrors real usage: short titles that only make sense with project and group, a due date on almost every task, rescheduling, checklists and the custom Waiting status.</p>
+  <nav class="nav" aria-label="Sections">
+    <a href="#A">A · Status edge</a><a href="#B">B · Status block</a><a href="#C">C · Status field</a><a href="#week">Week</a><a href="#rec">Recommendation</a>
+  </nav>
+
+  <section class="variant" id="A">
+    <div class="vhead"><span class="vletter">A</span><h2>Status edge</h2><span class="vsub">a 3px stripe in the status color, the status name in the meta row</span></div>
+    <p>The left edge, which today shows the project color, becomes the status color. The project gets a small square swatch next to its name. Project and group share the line above the title at equal weight.</p>
+    <div class="stage">
+      <div class="frame"><div class="frame-label">Kanban / Week column · 240px</div><div class="col" data-col="A"></div></div>
+      <div class="frame"><div class="frame-label">List · one row per task</div><div class="list-scroll"><div class="list" data-list="A"></div></div></div>
+    </div>
+    <div class="notes">
+      <div><b>Rationale</b>The quietest change: it reuses the edge the app already draws and adds no new blocks. Status reads as a color pattern down a column, and the name sits in the meta row.</div>
+      <div><b>Reads first</b>Title, then project / group, then a row of dates, checklist and ↻ led by the colored status name. You pick up the stripe color without looking straight at it.</div>
+      <div><b>High density</b>Best of the three. The card is the current TaskLine plus one context line. In List it becomes a real table with aligned columns, easy to scan by date.</div>
+      <div><b>Risks</b>A 3px stripe is the weakest signal: To do grey and Done green are hard to tell apart for color-blind users. The project color loses the edge and shrinks to a 7px swatch.</div>
+    </div>
+  </section>
+
+  <section class="variant" id="B">
+    <div class="vhead"><span class="vletter">B</span><h2>Status block</h2><span class="vsub">a solid, square-cornered status tag that opens the card, due date on the right</span></div>
+    <p>The card opens with a solid status block flush to the top-left corner, with no rounding, carrying the time in status. The due date, the one date set on every task, sits on the right of the same line. Custom fields get their own key/value area below a hairline.</p>
+    <div class="stage">
+      <div class="frame"><div class="frame-label">Kanban / Week column · 240px</div><div class="col" data-col="B"></div></div>
+      <div class="frame"><div class="frame-label">List · one row per task</div><div class="list-scroll"><div class="list" data-list="B"></div></div></div>
+    </div>
+    <div class="notes">
+      <div><b>Rationale</b>Follows the brief literally: a status tag with square corners. The solid fill makes it the one loud element in the card. Everything else stays muted, and the due date sits next to it because it is the other thing you check first.</div>
+      <div><b>Reads first</b>Status and time in status, and the due date on the same line. Then the title, then project / group. Custom fields and checklist come last, below the rule.</div>
+      <div><b>High density</b>In List the block becomes a fixed-width column, which reads like a status lane. In Kanban the block repeats the column name, so there it could show only the elapsed time.</div>
+      <div><b>Risks</b>The tallest card when custom fields are present. Waiting orange sits close to the selection accent. Eight solid blocks stacked in one column get loud if the status palette grows.</div>
+    </div>
+  </section>
+
+  <section class="variant" id="C">
+    <div class="vhead"><span class="vletter">C</span><h2>Status field</h2><span class="vsub">the whole card is tinted with the status color, properties as a mini table</span></div>
+    <p>The status colors the whole card surface with a faint tint and a 2px top rule. Project and group sit above the title like a path. Dates, checklist and custom fields share one aligned property list, so built-in and custom metadata look the same.</p>
+    <div class="stage">
+      <div class="frame"><div class="frame-label">Kanban / Week column · 240px</div><div class="col" data-col="C"></div></div>
+      <div class="frame"><div class="frame-label">List · one row per task</div><div class="list-scroll"><div class="list" data-list="C"></div></div></div>
+    </div>
+    <div class="notes">
+      <div><b>Rationale</b>Status as an area rather than a label: in Week, a day full of blue cards tells you it is in progress at a glance. The property list gives custom metadata a natural slot with no special styling.</div>
+      <div><b>Reads first</b>The card tint (status), then project / group, then the title. The property labels slow down reading a little but make every value unambiguous.</div>
+      <div><b>High density</b>The weakest. The property table adds 2 to 4 lines per card, and List rows with alternating tints look striped and busy.</div>
+      <div><b>Risks</b>Tints shift the text contrast for each status and become muddy on the dark background. To do grey barely tints at all. It needs per-status contrast checks and ignores the brief's bubble idea.</div>
+    </div>
+  </section>
+
+  <section class="variant" id="week">
+    <div class="vhead"><h2>Week: wider columns, hide weekends</h2><span class="vsub">cards in variant B, compact mode (the column already shows the scheduled date)</span></div>
+    <p>Today each column has a minimum of 168px, with 8 columns (Overdue plus 7 days). Proposal: a minimum of 200px, which with weekends hidden leaves Mon–Fri at roughly 1.5× today's width. The <em>Weekends</em> toggle sits in the week nav next to the week arrows and is saved as a preference. With weekends hidden, Saturday and Sunday shrink into a single 36px rail that shows how many tasks are hidden. Clicking the rail shows the weekend again, so nothing disappears silently.</p>
+
+    <h3 style="margin-top:14px">Weekends visible</h3>
+    <div class="weekwrap"><div class="weekframe"><div class="wnav" data-wnav="show"></div><div class="wcols" data-week="show"></div></div></div>
+    <h3 style="margin-top:18px">Weekends hidden: Mon–Fri take the freed space, the rail shows 2 hidden tasks</h3>
+    <div class="weekwrap"><div class="weekframe"><div class="wnav" data-wnav="hide"></div><div class="wcols" data-week="hide"></div></div></div>
+    <p class="cap">Edge cases: when today is a Saturday or Sunday, show the weekend columns that week even if the preference says hide. While dragging, the rail is a valid drop target: holding a card over it for about 400ms expands the weekend.</p>
+  </section>
+
+  <section class="rec" id="rec">
+    <h2 style="margin-bottom:8px">Recommendation: B</h2>
+    <p>B is the only option that gives status a dedicated, recognizable element in every view, and it does so the way the brief asked: a tag with square corners. It also puts the due date, present on 100% of tasks, right next to it. A is the safe fallback if density wins. C looks good in Week but costs too much space and contrast.</p>
+    <ul>
+      <li><b>Kanban:</b> the column already names the status, so the block shrinks to a 7px square of the status color plus the time in status (<code>3d</code>). Keep the full block in List, Week, Today, Projects, Groups and Review.</li>
+      <li><b>Custom fields:</b> show at most 3 key/value rows in the card, then <code>+N more</code>. In List, show the first 2 inline. Checkbox values appear as ✓/–. Hide fields with no value.</li>
+      <li>Rare fields (important, recurrence, Plan today) stay as small icons in the footer, never in the top line.</li>
+      <li>Built-in statuses have <code>color = null</code>. Use the existing <code>--status-*</code> tokens as the block fill, and use dark text (#161625) on every fill for contrast. A custom status with a null color falls back to <code>--text-muted</code>.</li>
+      <li>Selection keeps the app's orange (<code>--accent-task</code>) as a 1px border. Because Waiting is also orange, consider a warning when someone picks a status color close to the accent.</li>
+    </ul>
+  </section>
+</main>
+
+<script>
+const ST = {
+  todo: { name: 'To do', c: 'var(--status-todo)' },
+  doing: { name: 'Doing', c: 'var(--status-doing)' },
+  waiting: { name: 'Waiting', c: 'var(--status-waiting)' },
+  done: { name: 'Done', c: 'var(--status-done)' },
+};
+const PC = { 'APUC': '#b07cd8', 'Migração': '#4fb3bf', 'Inbox': null };
+const T = [
+  { s: 'Normal', title: 'Write rollback plan', p: 'Migração', g: 'autoFrotaWeb', st: 'todo', sched: 'Oct 19', due: 'Oct 23', imp: true },
+  { s: 'Overdue', title: 'Publish', p: 'APUC', g: 'premioFrotaWeb', st: 'todo', due: 'Oct 16', late: true },
+  { s: 'Doing for 3 days', title: 'Collect screenshots for QA', p: 'Migração', g: 'autoFrotaWeb', st: 'doing', el: '3d', sched: 'Oct 19', due: 'Oct 21' },
+  { s: 'Custom status: Waiting', title: 'Deploy to staging', p: 'APUC', g: 'ajustepremioautoweb', st: 'waiting', el: '2d', due: 'Oct 20' },
+  { s: 'Checklist 2/5, rescheduled 3×', title: 'Test and prints', p: 'Inbox', g: 'autoFrotaWeb', st: 'todo', sched: 'Oct 19', due: 'Oct 23', chk: [2, 5], rs: 3 },
+  { s: 'Long title, repeats', title: 'Review premium calculation rules with the finance team before merging the integration branch', p: 'Migração', g: 'premioFrotaWeb', st: 'todo', due: 'Oct 22', rep: true },
+  { s: '3 custom fields', title: 'Renew hosting contract', p: 'APUC', g: 'infra', st: 'doing', el: '5h', due: 'Oct 30', cf: [['Budget', '1,200'], ['Ticket', 'MIG-42'], ['Signed', true]] },
+  { s: 'Selected / focused', title: 'Publish', p: 'Migração', g: 'autoFrotaWeb', st: 'todo', sched: 'Oct 20', due: 'Oct 23', sel: true },
+];
+const ic = (id) => `<svg class="ic"><use href="#i-${id}"/></svg>`;
+const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+const cfv = (v) => v === true ? '✓' : v === false ? '–' : esc(v);
+const sw = (p) => PC[p] ? `<span class="sw" style="background:${PC[p]}"></span>` : `<span class="sw" style="border:1px solid var(--text-muted)"></span>`;
+const ctx = (t) => `<div class="ctx"><span class="p">${sw(t.p)}${esc(t.p)}</span><span class="slash">/</span><span class="g">${esc(t.g)}</span></div>`;
+const stName = (t) => ST[t.st].name + (t.el ? ' ' + t.el : '');
+const dueTxt = (t, compact) => t.late ? `${t.due}${compact ? '' : ', 1d late'}` : t.due;
+const attrs = (t, cls) => `class="${cls}${t.sel ? ' is-selected' : ''}" style="--st:${ST[t.st].c}" tabindex="0" role="button" aria-label="${esc(t.title)}"`;
+const rare = (t) => (t.imp ? `<span class="chip" style="color:var(--accent-task)" title="Important">${ic('flag')}</span>` : '') + (t.rep ? `<span class="chip" title="Repeats weekly">${ic('rep')}</span>` : '');
+
+// ── A ──
+function cardA(t) {
+  const row = [
+    `<span class="st">${stName(t)}</span>`,
+    `<span class="chip ${t.late ? 'late' : ''}" title="Due">${ic('due')}${dueTxt(t)}</span>`,
+    t.sched ? `<span class="chip" title="Scheduled">${ic('cal')}${t.sched}</span>` : '',
+    t.chk ? `<span class="chip">${ic('chk')}${t.chk[0]}/${t.chk[1]}</span>` : '',
+    t.rs ? `<span class="chip ${t.rs >= 3 ? 'resched-hi' : ''}" title="Rescheduled ${t.rs}×">↻${t.rs}</span>` : '',
+    rare(t),
+  ].join('');
+  const cf = t.cf ? `<div class="cf">${t.cf.map(([k, v]) => `<span><span class="k">${k}</span>${cfv(v)}</span>`).join('')}</div>` : '';
+  return `<div ${attrs(t, 'A card')}>${ctx(t)}<span class="title" title="${esc(t.title)}">${esc(t.title)}</span><div class="row">${row}</div>${cf}</div>`;
+}
+function lineA(t) {
+  const cf = t.cf ? t.cf.slice(0, 2).map(([k, v]) => `<span class="muted">${k}</span> ${cfv(v)}`).join('  ') + (t.cf.length > 2 ? ` <span class="muted">+${t.cf.length - 2}</span>` : '') : '';
+  return `<div ${attrs(t, 'A line')}><span class="cb"></span><span class="title" title="${esc(t.title)}">${esc(t.title)}${t.imp || t.rep ? ' ' : ''}${rare(t)}</span>
+    <span class="cell" style="display:flex;gap:4px;align-items:center">${sw(t.p)}${esc(t.p)}</span><span class="cell">${esc(t.g)}</span>
+    <span class="cell">${t.sched ? ic('cal') + ' ' + t.sched : ''}</span><span class="cell ${t.late ? 'late' : ''}">${ic('due')} ${t.due}</span>
+    <span class="cell">${t.chk ? t.chk.join('/') : ''}</span><span class="cell ${t.rs >= 3 ? 'resched-hi' : ''}">${t.rs ? '↻' + t.rs : ''}</span>
+    <span class="cell">${cf}</span><span class="st">${stName(t)}</span></div>`;
+}
+
+// ── B ──
+const bar = (c) => `<span class="bar">${Array.from({ length: c[1] }, (_, i) => `<i class="${i < c[0] ? 'on' : ''}"></i>`).join('')}</span>`;
+function cardB(t, compact) {
+  const foot = [
+    !compact && t.sched ? `<span class="chip" title="Scheduled">${ic('cal')}${t.sched}</span>` : '',
+    t.chk ? `<span class="chip">${t.chk[0]}/${t.chk[1]}${bar(t.chk)}</span>` : '',
+    t.rs ? `<span class="chip ${t.rs >= 3 ? 'resched-hi' : ''}" title="Rescheduled ${t.rs}×">↻${t.rs}</span>` : '',
+    rare(t),
+  ].join('');
+  const kv = t.cf && !compact ? `<div class="kv">${t.cf.map(([k, v]) => `<span class="k">${k}</span><span class="v">${cfv(v)}</span>`).join('')}</div>` : '';
+  return `<div ${attrs(t, 'B card')}><div class="top"><span class="blk">${ST[t.st].name}${t.el ? `<span class="el">${t.el}</span>` : ''}</span>
+    <span class="due ${t.late ? 'late' : ''}" title="Due">${ic('due')}${dueTxt(t, true)}</span></div>
+    <div class="body"><span class="title" title="${esc(t.title)}">${esc(t.title)}</span>${ctx(t)}</div>${kv}${foot ? `<div class="foot">${foot}</div>` : ''}</div>`;
+}
+function lineB(t) {
+  const cf = t.cf ? t.cf.slice(0, 2).map(([k, v]) => `<span class="muted">${k}</span> ${cfv(v)}`).join('  ') + (t.cf.length > 2 ? ` <span class="muted">+${t.cf.length - 2}</span>` : '') : [t.chk ? `${t.chk.join('/')}` : '', t.rs ? `<span class="${t.rs >= 3 ? 'resched-hi' : ''}">↻${t.rs}</span>` : ''].filter(Boolean).join('  ');
+  return `<div ${attrs(t, 'B line')}><span class="cb"></span><span class="blk">${ST[t.st].name}${t.el ? `<span class="el">${t.el}</span>` : ''}</span>
+    <span class="title" title="${esc(t.title)}">${esc(t.title)} ${rare(t)}</span>${ctx(t)}<span class="cell">${cf}</span>
+    <span class="cell">${t.sched ? ic('cal') + ' ' + t.sched : ''}</span><span class="cell r ${t.late ? 'late' : ''}" style="${t.late ? 'font-weight:600' : ''}">${ic('due')} ${t.due}</span></div>`;
+}
+
+// ── C ──
+function cardC(t) {
+  const props = [
+    ['Due', `<span class="${t.late ? 'late' : ''}">${dueTxt(t)}</span>`],
+    t.sched ? ['Scheduled', t.sched] : null,
+    t.chk || t.rs ? ['Progress', `${t.chk ? t.chk.join('/') : ''}${t.rs ? ` <span class="${t.rs >= 3 ? 'resched-hi' : ''}">↻${t.rs}</span>` : ''}`] : null,
+    ...(t.cf || []).map(([k, v]) => [k, cfv(v)]),
+  ].filter(Boolean);
+  return `<div ${attrs(t, 'C card')}>${ctx(t)}<span class="title" title="${esc(t.title)}">${esc(t.title)}</span>
+    <div class="props">${props.map(([k, v]) => `<span class="k">${k}</span><span class="v">${v}</span>`).join('')}</div>
+    <div class="stline"><span class="st"><span class="sq"></span>${stName(t)}</span><span class="muted">${rare(t)}</span></div></div>`;
+}
+function lineC(t) {
+  const extra = [t.chk ? t.chk.join('/') : '', t.rs ? `<span class="${t.rs >= 3 ? 'resched-hi' : ''}">↻${t.rs}</span>` : '', ...(t.cf || []).slice(0, 2).map(([k, v]) => `<span><span class="muted">${k}</span> ${cfv(v)}</span>`), t.cf && t.cf.length > 2 ? `<span class="muted">+${t.cf.length - 2}</span>` : ''].filter(Boolean).join('');
+  return `<div ${attrs(t, 'C line')}><span class="cb"></span>${ctx(t)}<span class="title" title="${esc(t.title)}">${esc(t.title)} ${rare(t)}</span>
+    <span class="cell">${extra}</span><span class="cell"><span class="${t.late ? 'late' : ''}">${ic('due')} ${dueTxt(t)}</span>${t.sched ? `<span>${ic('cal')} ${t.sched}</span>` : ''}</span>
+    <span class="st" style="color:var(--st);font-weight:600;display:inline-flex;gap:5px;align-items:center"><span style="width:7px;height:7px;background:var(--st)"></span>${stName(t)}</span></div>`;
+}
+
+const R = { A: [cardA, lineA], B: [cardB, lineB], C: [cardC, lineC] };
+for (const k of ['A', 'B', 'C']) {
+  const col = document.querySelector(`[data-col="${k}"]`);
+  col.innerHTML = `<div class="col-head"><span>Mixed states</span><span class="n">${T.length}</span></div>` + T.map((t) => `<div class="state">${t.s}</div>${R[k][0](t)}`).join('');
+  document.querySelector(`[data-list="${k}"]`).innerHTML = T.map((t) => R[k][1](t)).join('');
+}
+
+// ── Week ──
+const W = {
+  over: [T[1]],
+  Mon: [T[0], T[4]],
+  Tue: [T[3], T[7]],
+  Wed: [T[2]],
+  Thu: [T[5]],
+  Fri: [T[6]],
+  Sat: [{ title: 'Back up servers', p: 'Inbox', g: 'infra', st: 'todo', due: 'Oct 24' }, { title: 'Read rollout notes', p: 'Migração', g: 'autoFrotaWeb', st: 'todo', due: 'Oct 24' }],
+  Sun: [],
+};
+const DAYS = [['Overdue', 'over'], ['Mon 19', 'Mon'], ['Tue 20', 'Tue'], ['Wed 21', 'Wed'], ['Thu 22', 'Thu'], ['Fri 23', 'Fri'], ['Sat 24', 'Sat'], ['Sun 25', 'Sun']];
+function wcol([label, key]) {
+  const ts = W[key];
+  const tone = key === 'over' ? ' over' : key === 'Mon' ? ' today' : '';
+  return `<div class="wcol${tone}"><div class="col-head"><span>${label}</span><span class="n">${ts.length}</span></div>${ts.map((t) => cardB({ ...t, sel: false }, true)).join('')}</div>`;
+}
+function wnav(hidden) {
+  return `<button class="wbtn" aria-label="previous week">‹</button><button class="wbtn on">This week</button><button class="wbtn" aria-label="next week">›</button>
+    <span class="wrange">Oct 19 – ${hidden ? 'Oct 23' : 'Oct 25'}</span><span class="wsp"></span>
+    <button class="wbtn ${hidden ? 'on' : ''}" aria-pressed="${hidden}" title="${hidden ? 'Show Saturday and Sunday' : 'Hide Saturday and Sunday'}">${ic('eye')} ${hidden ? 'Show weekends' : 'Hide weekends'}</button>`;
+}
+const show = document.querySelector('[data-week="show"]');
+show.style.gridTemplateColumns = DAYS.map(([, k]) => (k === 'Sun' && !W.Sun.length ? '36px' : 'minmax(168px, 1fr)')).join(' ');
+show.innerHTML = DAYS.map((d) => d[1] === 'Sun' && !W.Sun.length
+  ? `<div class="wrail" style="border-style:solid;border-color:transparent"><span class="vt">Sun 25</span><span class="muted" style="font-size:11px">0</span></div>`
+  : wcol(d)).join('');
+document.querySelector('[data-wnav="show"]').innerHTML = wnav(false);
+const hide = document.querySelector('[data-week="hide"]');
+hide.style.gridTemplateColumns = 'repeat(6, minmax(200px, 1fr)) 36px';
+hide.innerHTML = DAYS.slice(0, 6).map(wcol).join('') +
+  `<button class="wrail" title="2 tasks on Sat 24 – Sun 25. Click to show weekends"><span class="cnt">2</span><span class="vt">Sat–Sun hidden</span></button>`;
+document.querySelector('[data-wnav="hide"]').innerHTML = wnav(true);
+</script>
+</body>
+</html>

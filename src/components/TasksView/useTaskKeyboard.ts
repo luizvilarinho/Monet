@@ -170,7 +170,7 @@ export function useTaskKeyboard({
         moveCursor(e.currentTarget, e.key === 'ArrowDown' ? 1 : -1, e.shiftKey)
         break
       case 'Enter': {
-        // Linha focada trata o próprio Enter (TaskLine).
+        // Linha focada trata o próprio Enter (TaskCard).
         if (e.target !== e.currentTarget || !cursor) return
         const t = tasksById.get(cursor)
         if (t) onOpen(t)

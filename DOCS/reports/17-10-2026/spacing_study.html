@@ -1,0 +1,651 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spacing Study</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Tokens de cor copiados de src/App.css (o Monet só tem tema escuro). */
+:root {
+  --bg-app: #1f1f2f;
+  --bg-panel: #161625;
+  --surface-1: #1d1d34;
+  --surface-2: #292959;
+  --surface-3: #2e2e36;
+  --text-primary: #ddddf1;
+  --text-secondary: #9898a4;
+  --text-muted: #7c7c93;
+  --accent: #7b6ed4;
+  --accent-ai: #5dcaa5;
+  --accent-task: #ef9f27;
+  --accent-danger: #e05555;
+  --accent-late: #e6c449;
+  --status-todo: #9a9aae;
+  --status-doing: #5b9cf0;
+  --status-done: #5cc185;
+  --status-waiting: #f0883e;
+  --border: #2e2f2cb3;
+  --hair: #34344f;
+  color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: var(--bg-panel);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- Página do estudo ---------- */
+.page { max-width: 1440px; margin: 0 auto; padding: 40px 16px 80px; }
+.intro { max-width: 760px; }
+h1 { font-size: 24px; font-weight: 600; letter-spacing: -0.01em; margin: 0 0 12px; }
+h2 { font-size: 18px; font-weight: 600; margin: 0 0 8px; }
+h3 { font-size: 13px; font-weight: 600; margin: 0 0 8px; color: var(--text-secondary); }
+p { margin: 0 0 12px; color: var(--text-secondary); max-width: 76ch; }
+.nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 20px 0 8px; }
+.nav a {
+  color: var(--text-secondary); text-decoration: none; font-size: 12px;
+  border: 1px solid var(--hair); border-radius: 4px; padding: 4px 10px;
+}
+.nav a:hover, .nav a:focus-visible { color: var(--text-primary); border-color: var(--accent); outline: none; }
+
+section.study { border-top: 1px solid var(--hair); margin-top: 48px; padding-top: 32px; }
+.pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin-top: 20px; align-items: start; }
+@media (max-width: 1100px) { .pair { grid-template-columns: 1fr; } }
+.side h3 { display: flex; gap: 8px; align-items: baseline; }
+.side h3 .tag { font-weight: 500; color: var(--text-muted); }
+.side.new h3 { color: var(--text-primary); }
+.side.new h3::before { content: ''; width: 8px; height: 8px; background: var(--accent); align-self: center; }
+.side.now h3::before { content: ''; width: 8px; height: 8px; background: var(--text-muted); align-self: center; }
+.frame { border: 1px solid var(--hair); border-radius: 6px; overflow: hidden; background: var(--bg-app); }
+.changes { margin: 16px 0 0; padding: 0 0 0 18px; color: var(--text-secondary); font-size: 13px; max-width: 90ch; }
+.changes li { margin: 0 0 6px; }
+.changes b { color: var(--text-primary); font-weight: 500; }
+.metric { font-size: 12px; color: var(--text-muted); margin-top: 8px; }
+.metric b { color: var(--text-secondary); font-weight: 500; }
+
+/* Escala */
+.scale { display: grid; grid-template-columns: 120px 64px 120px 220px; gap: 6px 16px; align-items: center; margin-top: 20px; font-size: 12px; max-width: 980px; }
+.scale .hd { color: var(--text-muted); font-weight: 500; padding-bottom: 4px; border-bottom: 1px solid var(--hair); }
+.scale code { font-family: inherit; color: var(--text-primary); }
+.scale .px { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.swatchbar { height: 12px; background: var(--accent); }
+.usage { display: flex; align-items: center; gap: 8px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.usage i { display: block; height: 6px; background: var(--text-muted); opacity: .6; }
+.usage.off i { background: var(--accent-danger); opacity: .7; }
+.offgrid { margin-top: 16px; font-size: 12px; color: var(--text-muted); }
+.offgrid span { color: var(--accent-danger); }
+
+.rules { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px 32px; margin-top: 20px; }
+.rule { border-left: 2px solid var(--accent); padding: 4px 0 4px 14px; }
+.rule h3 { color: var(--text-primary); margin-bottom: 4px; }
+.rule p { margin: 0; font-size: 13px; }
+
+/* =========================================================
+   Reconstruções. Mesma marcação nos dois lados; só mudam as
+   variáveis de .now (valores de hoje, lidos dos .module.css)
+   e .new (tokens propostos).
+   ========================================================= */
+
+/* ---- Tela 1: Notas (NotebookList + Sidebar + Editor) ---- */
+.now .ws {
+  --nb-pad: 12px; --nb-sec-gap: 14px; --head-list: 8px;
+  --row-py: 8px; --row-px: 12px; --row-gap: 2px; --row-lh: normal;
+  --sub-py: 5px; --sub-px: 8px; --sub-gap: 1px; --sub-lh: normal; --sub-indent: 8px;
+  --notes-gap: 10px;
+  --ed-x: 32px; --ed-body-l: 30px; --ed-body-r: 32px; --ed-label-top: 20px;
+  --title-pt: 6px; --title-pb: 8px; --tags-pb: 16px; --tag-py: 3px; --tag-px: 8px;
+  --p-gap: .4em; --body-lh: 1.6; --h-top: .9em; --h-bot: .3em; --task-gap: .15em;
+}
+.new .ws {
+  --nb-pad: 16px; --nb-sec-gap: 24px; --head-list: 8px;
+  --row-py: 7px; --row-px: 10px; --row-gap: 2px; --row-lh: 20px;
+  --sub-py: 5px; --sub-px: 10px; --sub-gap: 2px; --sub-lh: 18px; --sub-indent: 12px;
+  --notes-gap: 12px;
+  --ed-x: 40px; --ed-body-l: 40px; --ed-body-r: 40px; --ed-label-top: 32px;
+  --title-pt: 8px; --title-pb: 12px; --tags-pb: 28px; --tag-py: 4px; --tag-px: 10px;
+  --p-gap: .75em; --body-lh: 1.65; --h-top: 1.6em; --h-bot: .5em; --task-gap: .3em;
+}
+.ws { display: grid; grid-template-columns: 148px 172px minmax(0, 1fr); height: 560px; font-size: 14px; }
+.ws .nb { background: var(--bg-panel); border-right: 1px solid var(--border); padding: var(--nb-pad); display: flex; flex-direction: column; gap: var(--nb-sec-gap); min-width: 0; overflow: hidden; }
+.ws .notes { background: var(--bg-app); border-right: 1px solid var(--border); padding: var(--nb-pad); display: flex; flex-direction: column; gap: var(--notes-gap); min-width: 0; overflow: hidden; }
+.ws .sec { display: flex; flex-direction: column; gap: var(--head-list); }
+.ws .head { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); padding: 0 4px; display: flex; justify-content: space-between; }
+.ws ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--row-gap); }
+.ws li.row { padding: var(--row-py) var(--row-px); border-radius: 6px; font-size: 13px; line-height: var(--row-lh); color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; justify-content: space-between; gap: 6px; }
+.ws li.row.active { background: var(--surface-2); color: var(--text-primary); }
+.ws li.row .prog { font-size: 11px; color: var(--text-muted); }
+.ws ul.subs { padding: 0 0 4px var(--sub-indent); gap: var(--sub-gap); }
+.ws li.sub { padding: var(--sub-py) var(--sub-px); border-radius: 5px; font-size: 12px; line-height: var(--sub-lh); color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ws li.sub.active { color: var(--text-primary); background: var(--surface-1); }
+.ws .ed { overflow: hidden; min-width: 0; }
+.ws .nblabel { padding: var(--ed-label-top) var(--ed-x) 0; font-size: 11px; font-weight: 500; letter-spacing: .03em; text-transform: uppercase; color: rgba(124,106,245,.6); }
+.ws .title { padding: var(--title-pt) var(--ed-x) var(--title-pb); font-size: 24px; font-weight: 600; letter-spacing: -.01em; line-height: 1.25; }
+.ws .tags { display: flex; gap: 6px; padding: 0 var(--ed-x) var(--tags-pb); flex-wrap: wrap; }
+.ws .tags span { padding: var(--tag-py) var(--tag-px); border-radius: 999px; background: var(--surface-1); color: var(--text-secondary); font-size: 12px; line-height: 1.4; }
+.ws .tags span.add { background: transparent; border: 1px dashed var(--hair); color: var(--text-muted); }
+.ws .prose { padding: 0 var(--ed-body-r) 0 var(--ed-body-l); font-size: 14px; line-height: var(--body-lh); max-width: calc(68ch + var(--ed-body-l) + var(--ed-body-r)); }
+.ws .prose p { margin: var(--p-gap) 0; color: var(--text-primary); }
+.ws .prose p:first-child { margin-top: 0; }
+.ws .prose h2 { font-size: 1.35em; font-weight: 600; letter-spacing: -.01em; line-height: 1.25; margin: var(--h-top) 0 var(--h-bot); }
+.ws .prose ul.tl { gap: 0; }
+.ws .prose ul.tl li { display: flex; gap: 8px; align-items: flex-start; margin: var(--task-gap) 0; }
+.ws .prose ul.tl input { margin: 4px 0 0; accent-color: var(--accent-task); width: 14px; height: 14px; flex-shrink: 0; }
+.ws .prose ul.tl li.done span { color: var(--text-muted); text-decoration: line-through; }
+
+/* ---- Tela 2: Week (WeekBoard + TaskCard variante B) ---- */
+.now .wk {
+  --board-pad: 12px; --cols-gap: 8px; --col-pad: 6px; --col-inner: 6px; --cards-gap: 12px;
+  --card-px: 8px; --card-pb: 6px; --card-gap: 4px; --body-gap: 3px; --top-pt: 3px; --block-py: 2px;
+  --foot-gap: 10px; --top-gap: 10px; --kv-pt: 4px;
+}
+.new .wk {
+  --board-pad: 16px; --cols-gap: 12px; --col-pad: 12px; --col-inner: 12px; --cards-gap: 12px;
+  --card-px: 12px; --card-pb: 10px; --card-gap: 6px; --body-gap: 4px; --top-pt: 4px; --block-py: 3px;
+  --foot-gap: 12px; --top-gap: 16px; --kv-pt: 6px;
+}
+.wk { padding: var(--board-pad); display: flex; flex-direction: column; gap: var(--top-gap); height: 560px; overflow: hidden; }
+.wk .bar { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary); }
+.wk .bar .btn { border: 1px solid var(--border); border-radius: 4px; padding: 3px 8px; color: var(--text-secondary); }
+.wk .bar .btn.on { border-color: var(--accent-task); }
+.wk .bar .range { color: var(--text-muted); margin-left: 4px; }
+.wk .bar .right { margin-left: auto; color: var(--text-muted); font-size: 11px; }
+.wk .cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--cols-gap); min-height: 0; flex: 1; }
+.wk .col { background: var(--surface-1); border: 1px solid transparent; border-radius: 6px; padding: var(--col-pad); display: flex; flex-direction: column; gap: var(--col-inner); min-width: 0; overflow: hidden; }
+.wk .col.today { border-color: var(--accent-task); }
+.wk .ch { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); padding: 2px 4px; display: flex; justify-content: space-between; }
+.wk .col.today .ch { color: var(--accent-task); }
+.wk .cards { display: flex; flex-direction: column; gap: var(--cards-gap); }
+.card { position: relative; display: flex; flex-direction: column; gap: var(--card-gap); padding: 0 0 var(--card-pb); background: var(--bg-app); border: 1px solid var(--hair); border-radius: 0 4px 4px 4px; }
+.card .top { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; line-height: 1.5; }
+.card .block { margin: -1px 0 0 -1px; background: var(--st); color: var(--bg-panel); font-weight: 600; padding: var(--block-py) var(--card-px); display: inline-flex; gap: 5px; white-space: nowrap; }
+.card .block .el { font-weight: 500; opacity: .78; }
+.card .due { padding: var(--top-pt) var(--card-px) 0 0; color: var(--text-secondary); white-space: nowrap; }
+.card .due.late { color: var(--accent-danger); font-weight: 600; }
+.card .body { padding: 0 var(--card-px); display: flex; flex-direction: column; gap: var(--body-gap); }
+.card .tr { display: flex; gap: 6px; align-items: flex-start; }
+.card .tr input { margin: 4px 0 0; accent-color: var(--accent-task); flex-shrink: 0; }
+.card .t { font-size: 13px; line-height: 1.5; }
+.card .ctx { display: flex; gap: 6px; align-items: center; font-size: 11px; line-height: 1.5; color: var(--text-secondary); white-space: nowrap; overflow: hidden; }
+.card .ctx .sw { width: 7px; height: 7px; background: var(--sw); flex-shrink: 0; }
+.card .ctx .sep { color: var(--text-muted); }
+.card .kv { margin: 0 var(--card-px); padding-top: var(--kv-pt); border-top: 1px solid var(--hair); font-size: 11px; line-height: 1.5; display: grid; grid-template-columns: auto 1fr; gap: 0 10px; }
+.card .kv .k { color: var(--text-muted); }
+.card .kv .v { color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card .foot { display: flex; gap: var(--foot-gap); font-size: 11px; line-height: 1.5; padding: 0 var(--card-px); color: var(--text-muted); flex-wrap: wrap; }
+.card .foot .pb { display: inline-flex; gap: 2px; margin-left: 3px; vertical-align: middle; }
+.card .foot .pb i { width: 6px; height: 6px; background: var(--hair); display: block; }
+.card .foot .pb i.on { background: var(--text-secondary); }
+.card .foot .hi { color: var(--accent-danger); font-weight: 600; }
+
+/* ---- Tela 3: nota de task (título + TaskPropertiesBar) ---- */
+.now .tp {
+  --ed-x: 32px; --title-pt: 26px; --title-pb: 8px; --bar-mb: 8px; --bar-py: 4px; --bar-pl: 8px;
+  --bar-gap: 4px; --row-gap: 4px; --col-gap: 16px; --field-h: 24px; --label-w: 88px; --fs: 11px;
+  --ctl-py: 2px; --ctl-px: 4px; --pill-py: 2px; --pill-px: 10px; --head-mb: 0px; --p-gap: .4em;
+}
+.new .tp {
+  --ed-x: 40px; --title-pt: 40px; --title-pb: 12px; --bar-mb: 28px; --bar-py: 10px; --bar-pl: 14px;
+  --bar-gap: 6px; --row-gap: 6px; --col-gap: 24px; --field-h: 28px; --label-w: 96px; --fs: 12px;
+  --ctl-py: 4px; --ctl-px: 8px; --pill-py: 3px; --pill-px: 10px; --head-mb: 4px; --p-gap: .75em;
+}
+.tp { height: 520px; overflow: hidden; font-size: 14px; }
+.tp .title { padding: var(--title-pt) var(--ed-x) var(--title-pb); font-size: 24px; font-weight: 600; letter-spacing: -.01em; line-height: 1.25; }
+.tp .pbar { margin: 0 var(--ed-x) var(--bar-mb); padding: var(--bar-py) 0 var(--bar-py) var(--bar-pl); border-left: 2px solid var(--accent-task); font-size: var(--fs); color: var(--text-muted); display: flex; flex-direction: column; gap: var(--bar-gap); }
+.tp .phead { display: flex; gap: 8px; align-items: center; margin-bottom: var(--head-mb); }
+.tp .badge { color: var(--accent-task); font-weight: 500; letter-spacing: .03em; text-transform: uppercase; }
+.tp .link { color: var(--text-muted); }
+.tp .prow { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: var(--col-gap); row-gap: var(--row-gap); }
+.tp .prow.one { grid-template-columns: 1fr; }
+.tp .field { display: flex; align-items: center; gap: 12px; min-height: var(--field-h); min-width: 0; }
+.tp .lbl { width: var(--label-w); flex-shrink: 0; color: var(--text-muted); }
+.tp .ctl { border: 1px solid var(--border); border-radius: 4px; padding: var(--ctl-py) var(--ctl-px); color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; line-height: 1.4; }
+.tp .ctl.ghost { border-color: transparent; color: var(--text-muted); }
+.tp .pills { display: flex; gap: 4px; }
+.tp .pill { padding: var(--pill-py) var(--pill-px); border: 1px solid var(--hair); color: var(--text-muted); line-height: 1.4; }
+.tp .pill.on { background: var(--status-doing); border-color: var(--status-doing); color: var(--bg-panel); font-weight: 500; }
+.tp .add { color: var(--text-muted); }
+.tp .prose { padding: 0 var(--ed-x); line-height: 1.6; }
+.new .tp .prose { line-height: 1.65; }
+.tp .prose p { margin: var(--p-gap) 0; }
+.tp .prose p:first-child { margin-top: 0; }
+
+/* ---- Tela 4: Calendar (coluna de 220px) + janela keep ---- */
+.now .cal {
+  --pad: 10px; --grid-gap: 1px; --cell-h: 22px; --dl-fs: 9px; --dl-pb: 3px; --sec-gap: 8px;
+  --grp-gap: 8px; --cards-gap: 6px; --card-py: 6px; --card-px: 8px; --ct-fs: 12px; --ct-lh: 1.3; --cm-fs: 10px; --st-fs: 10px; --nav-mb: 0px;
+}
+.new .cal {
+  --pad: 16px; --grid-gap: 2px; --cell-h: 28px; --dl-fs: 10px; --dl-pb: 6px; --sec-gap: 16px;
+  --grp-gap: 8px; --cards-gap: 8px; --card-py: 8px; --card-px: 10px; --ct-fs: 12px; --ct-lh: 1.45; --cm-fs: 11px; --st-fs: 11px; --nav-mb: 4px;
+}
+.duo { display: grid; grid-template-columns: 220px minmax(0, 1fr); height: 560px; }
+.cal { background: var(--bg-panel); border-right: 1px solid var(--border); padding: var(--pad); display: flex; flex-direction: column; gap: var(--sec-gap); overflow: hidden; }
+.cal .mh { display: flex; justify-content: space-between; align-items: center; font-size: 12px; font-weight: 600; margin-bottom: var(--nav-mb); }
+.cal .mh .nv { color: var(--text-muted); font-weight: 400; letter-spacing: 4px; }
+.cal .grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: var(--grid-gap); }
+.cal .dl { font-size: var(--dl-fs); text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); text-align: center; padding: 1px 0 var(--dl-pb); }
+.cal .c { min-height: var(--cell-h); border-radius: 4px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 11px; line-height: 1; color: var(--text-secondary); }
+.cal .c.out { color: var(--text-muted); opacity: .5; }
+.cal .c.td { background: var(--surface-2); color: var(--text-primary); font-weight: 600; }
+.cal .c i { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); display: block; }
+.cal .c i.t { width: 10px; height: 2px; border-radius: 1px; background: var(--accent-task); }
+.cal .stt { font-size: var(--st-fs); letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); padding: 0 2px; }
+.cal .grp { display: flex; flex-direction: column; gap: var(--grp-gap); }
+.cal .cards { display: flex; flex-direction: column; gap: var(--cards-gap); }
+.cal .cd { background: var(--surface-1); border-radius: 4px; padding: var(--card-py) var(--card-px); display: flex; gap: 6px; align-items: flex-start; }
+.cal .cd input { margin: 2px 0 0; accent-color: var(--accent-task); flex-shrink: 0; }
+.cal .cd .ct { font-size: var(--ct-fs); line-height: var(--ct-lh); }
+.cal .cd .cm { font-size: var(--cm-fs); color: var(--text-muted); line-height: 1.4; margin-top: 2px; }
+.cal .cd .cm.late { color: var(--accent-danger); }
+
+.now .keep { --tb-py: 8px; --tb-px: 12px; --b-py: 12px; --b-px: 16px; --p-gap: 6px; }
+.new .keep { --tb-py: 10px; --tb-px: 16px; --b-py: 16px; --b-px: 20px; --p-gap: 10px; }
+.keepwrap { display: flex; align-items: flex-start; justify-content: center; padding: 24px 16px; background: color-mix(in srgb, var(--bg-panel) 60%, #000); }
+.keep { width: 100%; max-width: 360px; background: var(--bg-app); border: 1px solid var(--hair); border-radius: 8px; overflow: hidden; }
+.keep .tb { display: flex; align-items: center; gap: 8px; padding: var(--tb-py) var(--tb-px); border-bottom: 1px solid var(--border); font-size: 12px; letter-spacing: .5px; color: var(--text-secondary); }
+.keep .tb .open { margin-left: auto; border: 1px solid var(--border); border-radius: 4px; padding: 3px 8px; font-size: 11px; letter-spacing: 0; }
+.keep .bd { padding: var(--b-py) var(--b-px); font-size: 13px; line-height: 1.6; }
+.keep .bd p { margin: 0 0 var(--p-gap); }
+.keep .bd ul { list-style: none; margin: 0 0 var(--p-gap); padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.keep .bd li { display: flex; gap: 8px; }
+.keep .bd li input { margin: 4px 0 0; accent-color: var(--accent-task); }
+.keep .bd .muted { color: var(--text-muted); }
+</style>
+</head>
+<body>
+<main class="page">
+
+<div class="intro">
+  <h1>Estudo de espaçamento</h1>
+  <p>Telas do Monet reconstruídas com as cores e fontes reais de <code>src/App.css</code>. Os valores do lado "Hoje" foram lidos dos <code>*.module.css</code> da working tree de 17/10/2026, com os cards variante B e o gap de 12px. O lado "Proposto" usa a mesma marcação e muda só as variáveis de espaçamento.</p>
+  <p>A ideia central: <b style="color:var(--text-primary);font-weight:500">gastar espaço nas fronteiras entre grupos, não em cada linha.</b> As listas continuam densas. As bordas dos painéis, o espaço entre seções e o ritmo do texto é que respiram.</p>
+</div>
+<nav class="nav" aria-label="Seções">
+  <a href="#escala">Escala</a>
+  <a href="#notas">Notas e editor</a>
+  <a href="#week">Week e cards</a>
+  <a href="#props">Propriedades da task</a>
+  <a href="#cal">Calendar e keep</a>
+  <a href="#regras">Regras</a>
+</nav>
+
+<!-- ============ ESCALA ============ -->
+<section class="study" id="escala">
+  <h2>A escala</h2>
+  <p>Hoje o app não tem nenhum token de espaçamento. São 25 valores diferentes em padding, margin e gap, e 120 combinações distintas de padding. A proposta é uma escala de 4px com um único passo intermediário (6px), reservado ao interior de controles e chips.</p>
+  <div class="scale" role="table" aria-label="Escala proposta e uso atual">
+    <div class="hd">Token</div><div class="hd">Valor</div><div class="hd">Tamanho</div><div class="hd">Ocorrências hoje</div>
+    <div><code>--space-0</code></div><div class="px">2px</div><div><div class="swatchbar" style="width:2px"></div></div><div class="usage"><i style="width:23px"></i>114</div>
+    <div><code>--space-1</code></div><div class="px">4px</div><div><div class="swatchbar" style="width:4px"></div></div><div class="usage"><i style="width:37px"></i>187</div>
+    <div><code>--space-1h</code></div><div class="px">6px</div><div><div class="swatchbar" style="width:6px"></div></div><div class="usage"><i style="width:37px"></i>185</div>
+    <div><code>--space-2</code></div><div class="px">8px</div><div><div class="swatchbar" style="width:8px"></div></div><div class="usage"><i style="width:44px"></i>221</div>
+    <div><code>--space-3</code></div><div class="px">12px</div><div><div class="swatchbar" style="width:12px"></div></div><div class="usage"><i style="width:25px"></i>126</div>
+    <div><code>--space-4</code></div><div class="px">16px</div><div><div class="swatchbar" style="width:16px"></div></div><div class="usage"><i style="width:13px"></i>64</div>
+    <div><code>--space-5</code></div><div class="px">20px</div><div><div class="swatchbar" style="width:20px"></div></div><div class="usage"><i style="width:4px"></i>22</div>
+    <div><code>--space-6</code></div><div class="px">24px</div><div><div class="swatchbar" style="width:24px"></div></div><div class="usage"><i style="width:2px"></i>9</div>
+    <div><code>--space-8</code></div><div class="px">32px</div><div><div class="swatchbar" style="width:32px"></div></div><div class="usage"><i style="width:3px"></i>14</div>
+    <div><code>--space-10</code></div><div class="px">40px</div><div><div class="swatchbar" style="width:40px"></div></div><div class="usage"><i style="width:0"></i>0</div>
+    <div><code>--space-12</code></div><div class="px">48px</div><div><div class="swatchbar" style="width:48px"></div></div><div class="usage"><i style="width:0"></i>0</div>
+  </div>
+  <p class="offgrid">Fora da escala hoje: <span>10px (137)</span>, <span>5px (59)</span>, <span>1px (35)</span>, <span>3px (33)</span>, <span>14px (28)</span>, <span>7px (22)</span>, <span>9px (6)</span>, <span>18px</span>, <span>28px</span>. Quase todo o espaço do app vive entre 2 e 12px, e os passos de 16px para cima quase não aparecem. É daí que vem a sensação de "tudo colado": não há nível de separação maior que o de dentro dos componentes.</p>
+</section>
+
+<!-- ============ TELA 1 ============ -->
+<section class="study" id="notas">
+  <h2>Notas e editor</h2>
+  <p>NotebookList (180px), lista de notas (220px) e editor. Aqui estão reduzidos para caber lado a lado.</p>
+  <div class="pair">
+    <div class="side now"><h3>Hoje <span class="tag">valores atuais</span></h3>
+      <div class="frame"><div class="ws">
+        <aside class="nb">
+          <div class="sec"><div class="head">Notebooks <span>+</span></div>
+            <ul>
+              <li class="row">All notes</li>
+              <li class="row">Inbox <span class="prog">3</span></li>
+              <li class="row active">Work <span class="prog">4/9</span></li>
+            </ul>
+            <ul class="subs"><li class="sub">Migration</li><li class="sub active">Hiring</li><li class="sub">Ops review</li></ul>
+            <ul>
+              <li class="row">Reading</li>
+              <li class="row">Personal</li>
+              <li class="row">Calendar</li>
+            </ul>
+          </div>
+          <div class="sec"><div class="head">Tasks</div>
+            <ul><li class="row">Today</li><li class="row">Week</li></ul>
+          </div>
+        </aside>
+        <aside class="notes">
+          <div class="head">Notes <span>+</span></div>
+          <ul>
+            <li class="row active">Rollout plan</li>
+            <li class="row">Vendor call, Oct 14</li>
+            <li class="row">Fleet data cleanup</li>
+            <li class="row">Driver app feedback</li>
+            <li class="row">Budget draft</li>
+            <li class="row">Risks and open questions</li>
+            <li class="row">Retro notes</li>
+            <li class="row">Interview loop</li>
+            <li class="row">1:1 with Ana</li>
+            <li class="row">Weekly sync</li>
+          </ul>
+        </aside>
+        <div class="ed">
+          <div class="nblabel">Work</div>
+          <div class="title">Rollout plan</div>
+          <div class="tags"><span>migration</span><span>q4</span><span class="add">+ tag</span></div>
+          <div class="prose">
+            <p>Move the remaining 40 vehicles to the new tracking stack before the November billing cycle. Ops signs off each wave.</p>
+            <p>The old dashboard stays read-only for 30 days so the support team can compare numbers.</p>
+            <h2>Waves</h2>
+            <ul class="tl">
+              <li class="done"><input type="checkbox" checked><span>Wave 1: south depot (12)</span></li>
+              <li><input type="checkbox"><span>Wave 2: airport shuttles (16)</span></li>
+              <li><input type="checkbox"><span>Wave 3: leased vans</span></li>
+            </ul>
+            <h2>Open questions</h2>
+            <p>Who owns the device returns?</p>
+          </div>
+        </div>
+      </div></div>
+    </div>
+    <div class="side new"><h3>Proposto</h3>
+      <div class="frame"><div class="ws">
+        <aside class="nb">
+          <div class="sec"><div class="head">Notebooks <span>+</span></div>
+            <ul>
+              <li class="row">All notes</li>
+              <li class="row">Inbox <span class="prog">3</span></li>
+              <li class="row active">Work <span class="prog">4/9</span></li>
+            </ul>
+            <ul class="subs"><li class="sub">Migration</li><li class="sub active">Hiring</li><li class="sub">Ops review</li></ul>
+            <ul>
+              <li class="row">Reading</li>
+              <li class="row">Personal</li>
+              <li class="row">Calendar</li>
+            </ul>
+          </div>
+          <div class="sec"><div class="head">Tasks</div>
+            <ul><li class="row">Today</li><li class="row">Week</li></ul>
+          </div>
+        </aside>
+        <aside class="notes">
+          <div class="head">Notes <span>+</span></div>
+          <ul>
+            <li class="row active">Rollout plan</li>
+            <li class="row">Vendor call, Oct 14</li>
+            <li class="row">Fleet data cleanup</li>
+            <li class="row">Driver app feedback</li>
+            <li class="row">Budget draft</li>
+            <li class="row">Risks and open questions</li>
+            <li class="row">Retro notes</li>
+            <li class="row">Interview loop</li>
+            <li class="row">1:1 with Ana</li>
+            <li class="row">Weekly sync</li>
+          </ul>
+        </aside>
+        <div class="ed">
+          <div class="nblabel">Work</div>
+          <div class="title">Rollout plan</div>
+          <div class="tags"><span>migration</span><span>q4</span><span class="add">+ tag</span></div>
+          <div class="prose">
+            <p>Move the remaining 40 vehicles to the new tracking stack before the November billing cycle. Ops signs off each wave.</p>
+            <p>The old dashboard stays read-only for 30 days so the support team can compare numbers.</p>
+            <h2>Waves</h2>
+            <ul class="tl">
+              <li class="done"><input type="checkbox" checked><span>Wave 1: south depot (12)</span></li>
+              <li><input type="checkbox"><span>Wave 2: airport shuttles (16)</span></li>
+              <li><input type="checkbox"><span>Wave 3: leased vans</span></li>
+            </ul>
+            <h2>Open questions</h2>
+            <p>Who owns the device returns?</p>
+          </div>
+        </div>
+      </div></div>
+    </div>
+  </div>
+  <ul class="changes">
+    <li><b>Linhas das listas quase com a mesma altura</b> (≈32px → 34px): o padding vertical cai 1px e o line-height passa de <i>normal</i> (≈16px) para 20px explícito. O texto ganha folga própria e a lista perde só uma nota por tela.</li>
+    <li><b>Painéis com 16px de borda</b> (hoje 12px) e <b>24px entre seções</b> (hoje 14px). Os sub-itens do caderno ganham recuo de 12px, o que deixa a hierarquia mais clara.</li>
+    <li><b>Editor alinhado num só eixo</b>: rótulo, título, tags e corpo começam em 40px. Hoje o corpo começa em 30px e o título em 32px.</li>
+    <li><b>Cabeçalho da nota com mais ar</b>: 32px acima do rótulo e 28px entre as tags e o corpo (hoje 20 e 16).</li>
+    <li><b>Ritmo do texto</b>: parágrafos com 0,75em entre si (hoje 0,4em), line-height de 1,65 e headings com 1,6em acima e 0,5em abaixo, o que liga o heading ao seu conteúdo. Medida máxima de 68ch no corpo, que em telas largas evita linhas de 150+ caracteres.</li>
+  </ul>
+  <p class="metric">Linhas de nota visíveis numa coluna de 700px: <b>≈20 hoje → ≈19 proposto</b>. A densidade das listas praticamente não muda.</p>
+</section>
+
+<!-- ============ TELA 2 ============ -->
+<section class="study" id="week">
+  <h2>Week e cards</h2>
+  <p>Três colunas da Week com cards variante B. É a tela onde o "colado" mais aparece: o card tem 8px de borda interna, e a coluna tem 6px de padding mas 12px entre os cards. Os cards ficam mais perto da borda da coluna do que uns dos outros.</p>
+  <div class="pair">
+    <div class="side now"><h3>Hoje <span class="tag">valores atuais</span></h3>
+      <div class="frame"><div class="wk">
+        <div class="bar"><span class="btn">‹</span><span class="btn">›</span><span class="btn on">This week</span><span class="range">Oct 11 – 17</span><span class="right">Hide weekends</span></div>
+        <div class="cols">
+          <div class="col"><div class="ch">Thu 15 <span>3</span></div><div class="cards">
+            <div class="card" style="--st:var(--status-doing)"><div class="top"><span class="block">Doing <span class="el">3d</span></span><span class="due">Fri</span></div>
+              <div class="body"><div class="tr"><input type="checkbox"><span class="t">Export fleet report for finance</span></div>
+              <div class="ctx"><span class="sw" style="--sw:#5b9cf0"></span>Migration <span class="sep">|</span> autofrota</div></div>
+              <div class="foot"><span>Thu</span><span>2/5<span class="pb"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></span></span><span class="hi">↻3</span></div></div>
+            <div class="card" style="--st:var(--status-todo)"><div class="top"><span class="block">To do</span><span class="due late">Oct 14</span></div>
+              <div class="body"><div class="tr"><input type="checkbox"><span class="t">Call vendor about device returns</span></div>
+              <div class="ctx"><span class="sw" style="--sw:#5cc185"></span>Ops</div></div>
+              <div class="kv"><span class="k">Ticket</span><span class="v">OPS-2231</span><span class="k">Budget</span><span class="v">R$ 4.800</span></div>
+              <div class="foot"><span>Thu</span></div></div>
+          </div></div>
+          <div class="col"><div class="ch">Fri 16 <span>2</span></div><div class="cards">
+            <div class="card" style="--st:var(--status-waiting)"><div class="top"><span class="block">Waiting</span><span class="due">Fri</span></div>
+              <div class="body"><div class="tr"><input type="checkbox"><span class="t">Legal review of the new driver contract</span></div>
+              <div class="ctx"><span class="sw" style="--sw:#7b6ed4"></span>Hiring <span class="sep">|</span> contracts</div></div>
+              <div class="foot"><span>Fri</span><span>↻1</span></div></div>
+            <div class="card" style="--st:var(--status-todo)"><div class="top"><span class="block">To do</span><span class="due">Fri</span></div>
+              <div class="body"><div class="tr"><input type="checkbox"><span class="t">Weekly numbers</span></div></div>
+              <div class="foot"><span>Fri</span><span>weekly</span></div></div>
+          </div></div>
+          <div class="col today"><div class="ch">Sat 17 <span>1</span></div><div class="cards">
+            <div class="card" style="--st:var(--status-todo)"><div class="top"><span class="block">To do</span><span class="due">Mon</span></div>
+              <div class="body"><div class="tr"><input type="checkbox"><span class="t">Draft Q4 rollout timeline for ops sign-off</span></div>
+              <div class="ctx"><span class="sw" style="--sw:#5b9cf0"></span>Migration <span class="sep">|</span> planning</div></div>
+              <div class="foot"><span>Sat</span><span>0/3<span class="pb"><i></i><i></i><i></i></span></span></div></div>
+          </div></div>
+        </div>
+      </div></div>
+    </div>
+    <div class="side new"><h3>Proposto</h3>
+      <div class="frame"><div class="wk">
+        <div class="bar"><span class="btn">‹</span><span class="btn">›</span><span class="btn on">This week</span><span class="range">Oct 11 – 17</span><span class="right">Hide weekends</span></div>
+        <div class="cols">
+          <div class="col"><div class="ch">Thu 15 <span>3</span></div><div class="cards">
+            <div class="card" style="--st:var(--status-doing)"><div class="top"><span class="block">Doing <span class="el">3d</span></span><span class="due">Fri</span></div>
+              <div class="body"><div class="tr"><input type="checkbox"><span class="t">Export fleet report for finance</span></div>
+              <div class="ctx"><span class="sw" style="--sw:#5b9cf0"></span>Migration <span class="sep">|</span> autofrota</div></div>
+              <div class="foot"><span>Thu</span><span>2/5<span class="pb"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></span></span><span class="hi">↻3</span></div></div>
+            <div class="card" style="--st:var(--status-todo)"><div class="top"><span class="block">To do</span><span class="due late">Oct 14</span></div>
+              <div class="body"><div class="tr"><input type="checkbox"><span class="t">Call vendor about device returns</span></div>
+              <div class="ctx"><span class="sw" style="--sw:#5cc185"></span>Ops</div></div>
+              <div class="kv"><span class="k">Ticket</span><span class="v">OPS-2231</span><span class="k">Budget</span><span class="v">R$ 4.800</span></div>
+              <div class="foot"><span>Thu</span></div></div>
+          </div></div>
+          <div class="col"><div class="ch">Fri 16 <span>2</span></div><div class="cards">
+            <div class="card" style="--st:var(--status-waiting)"><div class="top"><span class="block">Waiting</span><span class="due">Fri</span></div>
+              <div class="body"><div class="tr"><input type="checkbox"><span class="t">Legal review of the new driver contract</span></div>
+              <div class="ctx"><span class="sw" style="--sw:#7b6ed4"></span>Hiring <span class="sep">|</span> contracts</div></div>
+              <div class="foot"><span>Fri</span><span>↻1</span></div></div>
+            <div class="card" style="--st:var(--status-todo)"><div class="top"><span class="block">To do</span><span class="due">Fri</span></div>
+              <div class="body"><div class="tr"><input type="checkbox"><span class="t">Weekly numbers</span></div></div>
+              <div class="foot"><span>Fri</span><span>weekly</span></div></div>
+          </div></div>
+          <div class="col today"><div class="ch">Sat 17 <span>1</span></div><div class="cards">
+            <div class="card" style="--st:var(--status-todo)"><div class="top"><span class="block">To do</span><span class="due">Mon</span></div>
+              <div class="body"><div class="tr"><input type="checkbox"><span class="t">Draft Q4 rollout timeline for ops sign-off</span></div>
+              <div class="ctx"><span class="sw" style="--sw:#5b9cf0"></span>Migration <span class="sep">|</span> planning</div></div>
+              <div class="foot"><span>Sat</span><span>0/3<span class="pb"><i></i><i></i><i></i></span></span></div></div>
+          </div></div>
+        </div>
+      </div></div>
+    </div>
+  </div>
+  <ul class="changes">
+    <li><b>Uma grade só de 12px</b>: padding da coluna, gap entre colunas, cabeçalho→cards e cards entre si. Hoje são 6, 8, 6 e 12. Com tudo igual, as colunas leem como trilhos e os cards como peças soltas dentro deles.</li>
+    <li><b>Card com 12px de borda interna</b> (hoje 8px) e 10px embaixo (hoje 6px). O bloco de status acompanha o mesmo recuo, então o texto do bloco, o título e o rodapé ficam alinhados.</li>
+    <li><b>6px entre as faixas do card</b> (topo, corpo, kv, rodapé; hoje 4px) e 6px acima da divisória dos metadados. A divisória deixa de encostar no texto.</li>
+    <li><b>Board com 16px de borda e 16px</b> entre a barra da semana e as colunas.</li>
+  </ul>
+  <p class="metric">Altura do card "título + contexto + rodapé": <b>≈76px hoje → ≈88px proposto</b> (+16%). Numa coluna de 700px, de ≈8 para ≈7 cards visíveis. É o lugar onde a proposta custa tela. Se pesar, a primeira coisa a cortar é o padding inferior do card (10 → 8).</p>
+</section>
+
+<!-- ============ TELA 3 ============ -->
+<section class="study" id="props">
+  <h2>Propriedades da task</h2>
+  <p>Topo de uma nota de task: título, TaskPropertiesBar e começo do corpo. Hoje o painel inteiro usa 11px com controles de ≈20px de altura e 4px entre as linhas, e encosta no corpo com só 8px.</p>
+  <div class="pair">
+    <div class="side now"><h3>Hoje <span class="tag">valores atuais</span></h3>
+      <div class="frame"><div class="tp">
+        <div class="title">Export fleet report for finance</div>
+        <div class="pbar">
+          <div class="phead"><span class="badge">Task</span><span class="link">Open in Tasks</span></div>
+          <div class="prow"><div class="field"><span class="lbl">Project</span><span class="ctl">Migration</span></div><div class="field"><span class="lbl">Group</span><span class="ctl">autofrota</span></div></div>
+          <div class="prow one"><div class="field"><span class="lbl">Status</span><span class="pills"><span class="pill">To do</span><span class="pill on">Doing</span><span class="pill">Waiting</span><span class="pill">Done</span></span></div></div>
+          <div class="prow"><div class="field"><span class="lbl">Do date</span><span class="ctl">Thu, Oct 15</span></div><div class="field"><span class="lbl">Deadline</span><span class="ctl">Fri, Oct 16</span></div></div>
+          <div class="prow"><div class="field"><span class="lbl">Important</span><span class="ctl ghost">No</span></div><div class="field"><span class="lbl">Repeat</span><span class="ctl ghost">Never</span></div></div>
+          <div class="prow one"><div class="field"><span class="lbl">Ticket</span><span class="ctl">FIN-118</span></div></div>
+          <div class="prow one"><div class="field"><span class="add">+ Add property</span></div></div>
+        </div>
+        <div class="prose">
+          <p>Finance needs the per-vehicle cost split by depot for October.</p>
+          <p>Use the new tracking export; the old one double counts idle hours.</p>
+        </div>
+      </div></div>
+    </div>
+    <div class="side new"><h3>Proposto</h3>
+      <div class="frame"><div class="tp">
+        <div class="title">Export fleet report for finance</div>
+        <div class="pbar">
+          <div class="phead"><span class="badge">Task</span><span class="link">Open in Tasks</span></div>
+          <div class="prow"><div class="field"><span class="lbl">Project</span><span class="ctl">Migration</span></div><div class="field"><span class="lbl">Group</span><span class="ctl">autofrota</span></div></div>
+          <div class="prow one"><div class="field"><span class="lbl">Status</span><span class="pills"><span class="pill">To do</span><span class="pill on">Doing</span><span class="pill">Waiting</span><span class="pill">Done</span></span></div></div>
+          <div class="prow"><div class="field"><span class="lbl">Do date</span><span class="ctl">Thu, Oct 15</span></div><div class="field"><span class="lbl">Deadline</span><span class="ctl">Fri, Oct 16</span></div></div>
+          <div class="prow"><div class="field"><span class="lbl">Important</span><span class="ctl ghost">No</span></div><div class="field"><span class="lbl">Repeat</span><span class="ctl ghost">Never</span></div></div>
+          <div class="prow one"><div class="field"><span class="lbl">Ticket</span><span class="ctl">FIN-118</span></div></div>
+          <div class="prow one"><div class="field"><span class="add">+ Add property</span></div></div>
+        </div>
+        <div class="prose">
+          <p>Finance needs the per-vehicle cost split by depot for October.</p>
+          <p>Use the new tracking export; the old one double counts idle hours.</p>
+        </div>
+      </div></div>
+    </div>
+  </div>
+  <ul class="changes">
+    <li><b>12px no painel</b> (hoje 11px): é texto de leitura e edição, não metadado de canto.</li>
+    <li><b>Controles com 28px de linha</b> (hoje 24px) e padding 4/8 nos inputs (hoje 2/4). O alvo de clique fica confortável e o texto deixa de encostar na borda do input.</li>
+    <li><b>28px entre o painel e o corpo</b> (hoje 8px). É a fronteira mais importante da tela: metadados acima, conteúdo abaixo.</li>
+    <li><b>24px entre as duas colunas</b> de propriedades (hoje 16px), para "Project" e "Group" não lerem como um campo só.</li>
+  </ul>
+  <p class="metric">Altura do painel com 6 linhas: <b>≈190px hoje → ≈245px proposto</b>. O corpo da nota desce ≈90px. Como esse painel aparece só no topo da nota de task, o custo é aceitável.</p>
+</section>
+
+<!-- ============ TELA 4 ============ -->
+<section class="study" id="cal">
+  <h2>Calendar e janela keep</h2>
+  <p>A coluna do Calendar (220px) é a superfície mais apertada do app: rótulo dos dias em 9px, células de 22px com 1px entre elas e cards com line-height de 1,3. À direita, a janela keep (Ctrl+K).</p>
+  <div class="pair">
+    <div class="side now"><h3>Hoje <span class="tag">valores atuais</span></h3>
+      <div class="frame"><div class="duo">
+        <aside class="cal">
+          <div class="mh"><span>October 2026</span><span class="nv">‹ ›</span></div>
+          <div class="grid">
+            <div class="dl">Sun</div><div class="dl">Mon</div><div class="dl">Tue</div><div class="dl">Wed</div><div class="dl">Thu</div><div class="dl">Fri</div><div class="dl">Sat</div>
+            <div class="c out">27</div><div class="c out">28</div><div class="c out">29</div><div class="c out">30</div><div class="c">1</div><div class="c">2</div><div class="c">3</div>
+            <div class="c">4</div><div class="c">5<i></i></div><div class="c">6</div><div class="c">7<i class="t"></i></div><div class="c">8</div><div class="c">9</div><div class="c">10</div>
+            <div class="c">11</div><div class="c">12</div><div class="c">13<i></i></div><div class="c">14<i class="t"></i></div><div class="c">15<i class="t"></i></div><div class="c">16<i class="t"></i></div><div class="c td">17</div>
+            <div class="c">18</div><div class="c">19<i></i></div><div class="c">20</div><div class="c">21</div><div class="c">22</div><div class="c">23<i class="t"></i></div><div class="c">24</div>
+            <div class="c">25</div><div class="c">26</div><div class="c">27</div><div class="c">28</div><div class="c">29</div><div class="c">30</div><div class="c">31</div>
+          </div>
+          <div class="grp"><div class="stt">Overdue</div>
+          <div class="cards">
+            <div class="cd"><input type="checkbox"><div><div class="ct">Call vendor about device returns</div><div class="cm late">Deadline Oct 14</div></div></div>
+          </div></div>
+          <div class="grp"><div class="stt">Saturday, Oct 17</div>
+          <div class="cards">
+            <div class="cd"><input type="checkbox"><div><div class="ct">Draft Q4 rollout timeline</div><div class="cm">Do Sat</div></div></div>
+            <div class="cd"><div><div class="cm">Work</div><div class="ct">Weekly sync notes</div></div></div>
+          </div></div>
+        </aside>
+        <div class="keepwrap"><div class="keep">
+          <div class="tb"><span>Today, Oct 17</span><span class="open">Open</span></div>
+          <div class="bd">
+            <p>Check the airport shuttle wave before Monday.</p>
+            <ul><li><input type="checkbox" checked><span class="muted">Reply to Ana</span></li><li><input type="checkbox"><span>Book vendor call</span></li></ul>
+            <p>Idea: show idle hours per depot in the finance export.</p>
+            <p class="muted">Ask legal about the contract template.</p>
+          </div>
+        </div></div>
+      </div></div>
+    </div>
+    <div class="side new"><h3>Proposto</h3>
+      <div class="frame"><div class="duo">
+        <aside class="cal">
+          <div class="mh"><span>October 2026</span><span class="nv">‹ ›</span></div>
+          <div class="grid">
+            <div class="dl">Sun</div><div class="dl">Mon</div><div class="dl">Tue</div><div class="dl">Wed</div><div class="dl">Thu</div><div class="dl">Fri</div><div class="dl">Sat</div>
+            <div class="c out">27</div><div class="c out">28</div><div class="c out">29</div><div class="c out">30</div><div class="c">1</div><div class="c">2</div><div class="c">3</div>
+            <div class="c">4</div><div class="c">5<i></i></div><div class="c">6</div><div class="c">7<i class="t"></i></div><div class="c">8</div><div class="c">9</div><div class="c">10</div>
+            <div class="c">11</div><div class="c">12</div><div class="c">13<i></i></div><div class="c">14<i class="t"></i></div><div class="c">15<i class="t"></i></div><div class="c">16<i class="t"></i></div><div class="c td">17</div>
+            <div class="c">18</div><div class="c">19<i></i></div><div class="c">20</div><div class="c">21</div><div class="c">22</div><div class="c">23<i class="t"></i></div><div class="c">24</div>
+            <div class="c">25</div><div class="c">26</div><div class="c">27</div><div class="c">28</div><div class="c">29</div><div class="c">30</div><div class="c">31</div>
+          </div>
+          <div class="grp"><div class="stt">Overdue</div>
+          <div class="cards">
+            <div class="cd"><input type="checkbox"><div><div class="ct">Call vendor about device returns</div><div class="cm late">Deadline Oct 14</div></div></div>
+          </div></div>
+          <div class="grp"><div class="stt">Saturday, Oct 17</div>
+          <div class="cards">
+            <div class="cd"><input type="checkbox"><div><div class="ct">Draft Q4 rollout timeline</div><div class="cm">Do Sat</div></div></div>
+            <div class="cd"><div><div class="cm">Work</div><div class="ct">Weekly sync notes</div></div></div>
+          </div></div>
+        </aside>
+        <div class="keepwrap"><div class="keep">
+          <div class="tb"><span>Today, Oct 17</span><span class="open">Open</span></div>
+          <div class="bd">
+            <p>Check the airport shuttle wave before Monday.</p>
+            <ul><li><input type="checkbox" checked><span class="muted">Reply to Ana</span></li><li><input type="checkbox"><span>Book vendor call</span></li></ul>
+            <p>Idea: show idle hours per depot in the finance export.</p>
+            <p class="muted">Ask legal about the contract template.</p>
+          </div>
+        </div></div>
+      </div></div>
+    </div>
+  </div>
+  <ul class="changes">
+    <li><b>Calendar com 16px de borda e 16px entre blocos</b> (mês, Overdue, dia). Hoje são 10px e 8px.</li>
+    <li><b>Células de 28px com 2px de gap</b> (hoje 22px e 1px), e <b>rótulo dos dias em 10px</b> (hoje 9px, abaixo do legível). O mês fica ≈40px mais alto.</li>
+    <li><b>Cards com line-height de 1,45</b> (hoje 1,3) e meta em 11px (hoje 10px). Títulos de duas linhas deixam de encostar.</li>
+    <li><b>Keep com 20px de borda e 10px entre parágrafos</b> (hoje 16px e 6px). É uma janela de captura rápida, e o ar ajuda a ler o que já foi escrito no dia.</li>
+  </ul>
+</section>
+
+<!-- ============ REGRAS ============ -->
+<section class="study" id="regras">
+  <h2>Regras de uso</h2>
+  <div class="rules">
+    <div class="rule"><h3>Dentro menor que fora</h3><p>O espaço dentro de um grupo é sempre menor que o espaço entre grupos. Item→item 2–4px, faixa→faixa num card 6px, card→card 12px, seção→seção 24px.</p></div>
+    <div class="rule"><h3>Borda do container igual ao gap</h3><p>Num container de cards (coluna, board), o padding é igual ao gap entre os filhos (12px). Nunca menor.</p></div>
+    <div class="rule"><h3>Painéis</h3><p>Painéis laterais: 16px de borda. Conteúdo principal (editor, Library, Settings): 24–40px. Modais: 24px.</p></div>
+    <div class="rule"><h3>Linhas densas ficam densas</h3><p>Linhas de lista: 32–34px de altura, line-height explícito de 20px. A calma vem do espaço entre seções, não de linhas mais altas.</p></div>
+    <div class="rule"><h3>Ritmo do texto</h3><p>UI: line-height 1,45 como padrão no <code>:root</code>. Corpo de nota e chat: 1,65 com 0,75em entre parágrafos. Headings: 1,25, com mais espaço acima do que abaixo.</p></div>
+    <div class="rule"><h3>Pisos</h3><p>Texto mínimo de 11px (10px só em rótulo de calendário e badge). Controles com no mínimo 24px de altura. Ícone clicável com no mínimo 24px de área.</p></div>
+  </div>
+</section>
+
+</main>
+</body>
+</html>

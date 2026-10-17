@@ -20,6 +20,7 @@
   --dot-content: var(--accent);
   --dot-activity: var(--accent-ai);
   --border: #2e2f2cb3;
+  --hair: #34344f;
 
   font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
   font-size: 14px;

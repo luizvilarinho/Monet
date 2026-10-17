@@ -54,15 +54,32 @@
   color: var(--text-primary, #e8e8f0);
 }
 
+.row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 16px;
+  row-gap: 4px;
+}
+
+.row > .field:only-child {
+  grid-column: 1 / -1;
+}
+
+/* Base das container queries (notas curtas em coluna estreita). */
+.row > .field {
+  container-type: inline-size;
+}
+
 .field {
   display: flex;
   align-items: center;
   gap: 12px;
   min-height: 24px;
+  min-width: 0;
 }
 
 .label {
-  flex: 0 0 64px;
+  flex: 0 0 88px;
   color: var(--text-muted, #606070);
 }
 
@@ -74,6 +91,19 @@
   min-width: 0;
 }
 
+/* Duas propriedades na linha: os campos de texto encolhem com a coluna. */
+.row > .field:not(:only-child) .control {
+  flex: 1;
+}
+
+.row > .field:not(:only-child) .project,
+.row > .field:not(:only-child) .project select,
+.row > .field:not(:only-child) .project input,
+.row > .field:not(:only-child) .textInput {
+  min-width: 0;
+  width: 100%;
+}
+
 .pills {
   display: inline-flex;
   flex-wrap: wrap;
@@ -83,7 +113,7 @@
 .pill {
   background: transparent;
   border: 1px solid var(--border, #333340);
-  border-radius: 999px;
+  border-radius: 0;
   padding: 2px 10px;
   font-family: inherit;
   font-size: 11px;
@@ -155,6 +185,42 @@
   opacity: 0;
   width: 0;
   padding: 0;
+}
+
+/* Data + Clear + nota numa linha só: a altura da linha não muda com a nota. */
+.dateControl {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.dateWrapper,
+.dateControl .link {
+  flex-shrink: 0;
+}
+
+.note {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+}
+
+.noteShort {
+  display: none;
+}
+
+@container (max-width: 340px) {
+  .noteFull {
+    display: none;
+  }
+
+  .noteShort {
+    display: inline;
+  }
 }
 
 .hint {
@@ -249,5 +315,128 @@
 }
 
 .textInput:focus {
+  border-color: var(--accent-task);
+}
+
+/* Metadados personalizados */
+.metaField .label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.checkbox {
+  accent-color: var(--accent-task);
+  cursor: pointer;
+  margin: 0 4px;
+}
+
+.metaAction {
+  display: inline-flex;
+  align-items: center;
+  background: transparent;
+  border: none;
+  padding: 2px;
+  color: var(--text-muted, #606070);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.metaField:hover .metaAction,
+.metaAction:focus-visible {
+  opacity: 1;
+}
+
+.metaAction:hover {
+  color: var(--text-primary);
+}
+
+.metaRemove:hover {
+  color: var(--accent-danger);
+}
+
+.addWrap {
+  position: relative;
+  display: inline-flex;
+  margin-left: -4px;
+}
+
+.addMenu {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 2px);
+  z-index: 20;
+  min-width: 260px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+.addItem {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.addItem:hover {
+  background: var(--surface-3);
+}
+
+.addItemName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.addItemType {
+  color: var(--text-muted);
+}
+
+.addTitle {
+  margin: 4px 0 0 4px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.addCreate {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+}
+
+.addInput {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 3px 6px;
+  outline: none;
+}
+
+.addInput:focus {
   border-color: var(--accent-task);
 }

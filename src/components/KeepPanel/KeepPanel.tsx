@@ -100,6 +100,7 @@ export function KeepPanel() {
   // quase juntos (e o StrictMode duplica efeitos em dev) — duas execuções
   // concorrentes poderiam criar a nota de hoje em duplicata.
   const loadChainRef = useRef<Promise<void>>(Promise.resolve())
+  const titlebarRef = useRef<HTMLDivElement>(null)
 
   // Carrega (ou cria) a nota diária de hoje e sincroniza o editor. Roda no
   // mount e a cada `keep-shown` — recomputa "hoje" a cada chamada, então a
@@ -147,8 +148,15 @@ export function KeepPanel() {
       }
     }
 
-    function loadOrCreateTodayNote() {
+    // `focus`: foca o editor só DEPOIS do setContent da recarga. A posição
+    // explícita ('end') força o view.focus() mesmo com hasFocus() já true.
+    function loadOrCreateTodayNote(opts: { focus?: boolean } = {}) {
       loadChainRef.current = loadChainRef.current.then(doLoadOrCreateTodayNote)
+      if (opts.focus) {
+        loadChainRef.current = loadChainRef.current.then(() => {
+          editorRef.current?.commands.focus('end')
+        })
+      }
     }
 
     loadOrCreateTodayNote()
@@ -156,10 +164,9 @@ export function KeepPanel() {
 
     let unlisten: (() => void) | undefined
     void listen('keep-shown', () => {
-      loadOrCreateTodayNote()
+      loadOrCreateTodayNote({ focus: true })
       loadNotebooksRef.current()
       void reloadTasksRef.current()
-      editorRef.current?.commands.focus()
     }).then((fn) => {
       if (cancelled) fn()
       else unlisten = fn
@@ -175,10 +182,28 @@ export function KeepPanel() {
       else unlistenUpdated = fn
     })
 
+    // Volta à janela por clique ou Alt+Tab: devolve o foco ao editor. A
+    // posição numérica força o view.focus() (o focus() sem posição é ignorado
+    // quando o ProseMirror já se considera focado).
+    let unlistenFocus: (() => void) | undefined
+    void getCurrentWindow()
+      .onFocusChanged(({ payload: focused }) => {
+        if (!focused) return
+        const ed = editorRef.current
+        if (!ed) return
+        if (titlebarRef.current?.contains(document.activeElement)) return
+        ed.commands.focus(ed.state.selection.anchor)
+      })
+      .then((fn) => {
+        if (cancelled) fn()
+        else unlistenFocus = fn
+      })
+
     return () => {
       cancelled = true
       unlisten?.()
       unlistenUpdated?.()
+      unlistenFocus?.()
     }
   }, [editor])
 
@@ -264,7 +289,7 @@ export function KeepPanel() {
   return (
     <TasksEnvProvider value={tasksEnv}>
     <div className={styles.window}>
-      <div className={styles.titlebar} data-tauri-drag-region>
+      <div ref={titlebarRef} className={styles.titlebar} data-tauri-drag-region>
         <span className={styles.title}>
           {headerDate} — {headerWeekday}
         </span>
@@ -292,10 +317,18 @@ export function KeepPanel() {
           </button>
         </div>
       </div>
-      <div className={styles.body}>
+      <div
+        className={styles.body}
+        onMouseDown={(e) => {
+          // Clique no padding do corpo (fora do ProseMirror) foca o editor.
+          if (!editor || editor.view.dom.contains(e.target as Node)) return
+          e.preventDefault()
+          editor.commands.focus('end')
+        }}
+      >
         <RemindersProvider value={remindersValue}>
           <TasksProvider value={tasksValue}>
-            <EditorContent editor={editor} />
+            <EditorContent editor={editor} className={styles.editorHost} />
           </TasksProvider>
         </RemindersProvider>
       </div>

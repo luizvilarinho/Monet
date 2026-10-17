@@ -1,0 +1,11 @@
+.type {
+  flex: 0 0 64px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}

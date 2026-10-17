@@ -7,6 +7,9 @@ import type {
   BookHighlight,
   BookHighlightRect,
   BookQuote,
+  MetadataDef,
+  MetadataType,
+  MetadataValue,
   Note,
   Notebook,
   Subject,
@@ -291,6 +294,15 @@ interface TaskRow {
   sort_order: number
   doing_since: number | null
   planned_day: string | null
+  metadata: string | null
+}
+
+interface MetadataDefRow {
+  id: string
+  name: string
+  type: string
+  sort_order: number
+  created_at: number
 }
 
 interface TaskStatusRow {
@@ -361,6 +373,32 @@ function parseRecurrence(raw: string | null): TaskRecurrence | null {
   return null
 }
 
+// Metadados gravados como JSON; só aceita objeto com valores primitivos.
+function parseMetadata(raw: string | null): Record<string, MetadataValue> {
+  if (!raw) return {}
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    const out: Record<string, MetadataValue> = {}
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (v === null || typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') out[k] = v
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+
+function rowToMetadataDef(r: MetadataDefRow): MetadataDef {
+  return {
+    id: r.id,
+    name: r.name,
+    type: r.type as MetadataType,
+    sortOrder: r.sort_order,
+    createdAt: r.created_at,
+  }
+}
+
 function rowToTask(r: TaskRow): Task {
   return {
     id: r.id,
@@ -382,6 +420,7 @@ function rowToTask(r: TaskRow): Task {
     sortOrder: r.sort_order ?? 0,
     doingSince: r.doing_since ?? null,
     plannedDay: r.planned_day ?? null,
+    metadata: parseMetadata(r.metadata),
   }
 }
 
@@ -421,6 +460,13 @@ const TASKS_TABLES_SQL = [
     config TEXT NOT NULL,
     sort_order INTEGER NOT NULL DEFAULT 0
   )`,
+  `CREATE TABLE IF NOT EXISTS metadata_defs (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+  )`,
 ]
 
 // Colunas de notebook_tasks posteriores à v18. Entram aqui, e não em
@@ -435,6 +481,7 @@ const TASKS_EXTRA_COLUMNS = [
   { name: 'recurrence_next_id', ddl: 'recurrence_next_id TEXT' },
   { name: 'doing_since', ddl: 'doing_since INTEGER' },
   { name: 'planned_day', ddl: 'planned_day TEXT' },
+  { name: 'metadata', ddl: 'metadata TEXT' },
 ]
 
 // O banco roda em modo WAL (default do SQLite). Com o pool de múltiplas
@@ -774,8 +821,8 @@ export class TauriStorage implements StorageAdapter {
     const db = await this.db()
     await this.ensureTasksTables(db)
     await db.execute(
-      `INSERT INTO notebook_tasks (id, title, status, notebook_id, note_id, due_date, created_at, updated_at, completed_at, source_note_id, reschedule_count, sort_order, scheduled_date, task_group, important, recurrence, recurrence_next_id, doing_since, planned_day)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+      `INSERT INTO notebook_tasks (id, title, status, notebook_id, note_id, due_date, created_at, updated_at, completed_at, source_note_id, reschedule_count, sort_order, scheduled_date, task_group, important, recurrence, recurrence_next_id, doing_since, planned_day, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
        ON CONFLICT(id) DO UPDATE SET
          title = excluded.title,
          status = excluded.status,
@@ -793,7 +840,8 @@ export class TauriStorage implements StorageAdapter {
          recurrence = excluded.recurrence,
          recurrence_next_id = excluded.recurrence_next_id,
          doing_since = excluded.doing_since,
-         planned_day = excluded.planned_day`,
+         planned_day = excluded.planned_day,
+         metadata = excluded.metadata`,
       [
         t.id,
         t.title,
@@ -814,6 +862,7 @@ export class TauriStorage implements StorageAdapter {
         t.recurrenceNextId,
         t.doingSince,
         t.plannedDay,
+        Object.keys(t.metadata).length > 0 ? JSON.stringify(t.metadata) : null,
       ]
     )
     this.scheduleCheckpoint()
@@ -858,6 +907,44 @@ export class TauriStorage implements StorageAdapter {
     await this.ensureTasksTables(db)
     await db.execute("UPDATE notebook_tasks SET status = 'todo' WHERE status = $1", [id])
     await db.execute('DELETE FROM task_statuses WHERE id = $1 AND builtin = 0', [id])
+    this.scheduleCheckpoint()
+  }
+
+  async getMetadataDefs(): Promise<MetadataDef[]> {
+    const db = await this.db()
+    await this.ensureTasksTables(db)
+    const rows = await db.select<MetadataDefRow[]>(
+      'SELECT * FROM metadata_defs ORDER BY sort_order ASC, id ASC'
+    )
+    return rows.map(rowToMetadataDef)
+  }
+
+  async saveMetadataDef(d: MetadataDef): Promise<void> {
+    const db = await this.db()
+    await this.ensureTasksTables(db)
+    await db.execute(
+      `INSERT INTO metadata_defs (id, name, type, sort_order, created_at)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT(id) DO UPDATE SET
+         name = excluded.name,
+         type = excluded.type,
+         sort_order = excluded.sort_order`,
+      [d.id, d.name, d.type, d.sortOrder, d.createdAt]
+    )
+    this.scheduleCheckpoint()
+  }
+
+  // Duas execuções separadas (sem BEGIN/COMMIT: pool sqlx): tira a chave do
+  // JSON das tasks e depois apaga a definição; reexecutar é idempotente.
+  async deleteMetadataDef(id: string): Promise<void> {
+    const db = await this.db()
+    await this.ensureTasksTables(db)
+    await db.execute(
+      `UPDATE notebook_tasks SET metadata = json_remove(metadata, '$."' || $1 || '"')
+       WHERE metadata IS NOT NULL AND json_valid(metadata)`,
+      [id]
+    )
+    await db.execute('DELETE FROM metadata_defs WHERE id = $1', [id])
     this.scheduleCheckpoint()
   }
 

@@ -91,6 +91,23 @@ export interface Task {
   doingSince: number | null
   // Dia (YYYY-MM-DD) em que a task foi planejada em "Plan today".
   plannedDay: string | null
+  // Metadados personalizados: chave = id da MetadataDef; ausente = não anexado.
+  metadata: Record<string, MetadataValue>
+}
+
+export type MetadataType = 'text' | 'number' | 'date' | 'checkbox'
+
+// Text: string; Number: number; Date: YYYY-MM-DD; Checkbox: boolean.
+// null = propriedade anexada e sem valor.
+export type MetadataValue = string | number | boolean | null
+
+// Definição global de metadado (não exclusiva de tasks).
+export interface MetadataDef {
+  id: string
+  name: string
+  type: MetadataType
+  sortOrder: number
+  createdAt: number
 }
 
 export type DocumentStatus = 'indexing' | 'available' | 'error'

@@ -11,7 +11,7 @@ import type { BoardColumn } from './BoardColumns'
 // na virada do dia, porque compara `plannedDay` com a chave de hoje.
 type TodayBoardProps = Omit<
   BoardViewProps,
-  'ariaLabel' | 'columnsFor' | 'onDrop' | 'showProject' | 'showDoing'
+  'ariaLabel' | 'columnsFor' | 'onDrop' | 'showProject' | 'compactStatus'
 >
 
 const TODAY = 'today'

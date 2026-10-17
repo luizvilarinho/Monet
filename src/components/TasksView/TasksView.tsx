@@ -15,7 +15,7 @@ import type { Notebook, Task } from '../../types'
 import { SUMMARY_LABEL, TasksHeader, type NewTaskDraft } from './TasksHeader'
 import { useTasksEnv } from './TasksEnv'
 import type { TasksMainView } from './views'
-import { TaskLine } from './TaskLine'
+import { TaskCard } from './TaskCard'
 import { TaskBatchBar } from './TaskBatchBar'
 import { useTaskKeyboard, type TaskChanges } from './useTaskKeyboard'
 import { useSidebarResize } from '../../hooks/useSidebarResize'
@@ -126,17 +126,18 @@ export function TasksView({
     onDeleteTasks,
   })
 
-  function renderTask(t: Task, showDoing: boolean) {
+  function renderTask(t: Task) {
     return (
-      <TaskLine
+      <TaskCard
         key={t.id}
         task={t}
         todayKey={todayKey}
         projectName={filter === null && groupBy !== 'project' && groupBy !== 'group' ? notebookNameById.get(t.notebookId) : undefined}
-        showDoing={showDoing}
         projectColor={notebookColorById.get(t.notebookId) ?? null}
         showGroup={summaryFilter !== null || (groupBy !== 'project' && groupBy !== 'group')}
         checklist={checklist.get(t.id)}
+        maxMetadata={2}
+        list
         selected={t.id === selectedTaskId}
         cursor={t.id === kb.cursorId}
         inSelection={kb.selectedIds.has(t.id)}
@@ -208,7 +209,7 @@ export function TasksView({
             {filtered.length === 0 ? (
               <span className={styles.empty}>no tasks</span>
             ) : (
-              filtered.map((t) => renderTask(t, summaryFilter !== 'doing'))
+              filtered.map(renderTask)
             )}
           </section>
         ) : (
@@ -247,14 +248,17 @@ export function TasksView({
                     ? section.subgroups.map((g) => (
                         <div key={g.label ?? ''} className={styles.subgroup}>
                           {g.label !== null && (
-                            <span className={styles.subgroupLabel} title={g.label}>
+                            <span
+                              className={`${styles.subgroupLabel} ${groupBy === 'project' ? styles.subgroupGroup : ''}`}
+                              title={g.label}
+                            >
                               {g.label}
                             </span>
                           )}
-                          {g.tasks.map((t) => renderTask(t, true))}
+                          {g.tasks.map(renderTask)}
                         </div>
                       ))
-                    : list.map((t) => renderTask(t, key !== 'inProgress' && groupBy !== 'status')))}
+                    : list.map(renderTask))}
               </section>
             )
           })

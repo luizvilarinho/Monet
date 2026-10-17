@@ -8,7 +8,7 @@ import type { BoardColumn } from './BoardColumns'
 // filtrados), "No group" ao final. Arrastar para outra coluna muda o group.
 type GroupsBoardProps = Omit<
   BoardViewProps,
-  'ariaLabel' | 'columnsFor' | 'onDrop' | 'showProject' | 'showDoing'
+  'ariaLabel' | 'columnsFor' | 'onDrop' | 'showProject' | 'compactStatus'
 >
 
 const NO_GROUP_KEY = '__none__'

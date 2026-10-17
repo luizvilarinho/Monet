@@ -636,6 +636,15 @@ export function getNotebookIdForChatFolder(folderId: string): string | null {
   return null
 }
 
+// Pastas automáticas (vinculadas a livro do Reader ou a caderno), por id —
+// o nome é cosmético. Usado só para agrupar visualmente na sidebar do chat.
+export function getAutoFolderGroups(): { library: Set<string>; notebook: Set<string> } {
+  return {
+    library: new Set(Object.values(loadReaderBookFolderLinks())),
+    notebook: new Set(Object.values(loadNotebookChatFolderLinks())),
+  }
+}
+
 export function linkNotebookToChatFolder(notebookId: string, folderId: string): void {
   const links = loadNotebookChatFolderLinks()
   links[notebookId] = folderId

@@ -1,5 +1,4 @@
-import { useState } from 'react'
-import { CalendarBlank, Clock, Flag, Repeat, Sun, Target, Trash } from '@phosphor-icons/react'
+import { CalendarBlank, Flag, Repeat, Target } from '@phosphor-icons/react'
 import {
   describeRecurrence,
   formatDueShort,
@@ -9,86 +8,39 @@ import {
   isOpen,
   overdueKind,
   planDate,
-  SNOOZE_OPTIONS,
   statusColor,
   statusName,
   type ChecklistProgress,
-  type SnoozeKind,
 } from '../../lib/tasks'
 import type { Task } from '../../types'
 import { useTasksEnv } from './TasksEnv'
 import styles from './TaskLine.module.css'
 
-// Linha de task compartilhada pelas visões de Tasks: o título ocupa a largura
-// inteira (quebra em até `lines` linhas, tooltip com o texto completo) e os
-// metadados ficam numa segunda linha compacta.
+// Linha compacta das listas embutidas: bloco `/tasks` e sidebar do caderno; as
+// visões de Tasks usam TaskCard. O título quebra em até 2 linhas (tooltip com
+// o texto completo) e os metadados ficam numa segunda linha compacta.
 interface TaskLineProps {
   task: Task
   todayKey: string
   // Nome do projeto (só quando a lista mostra todos os projetos).
   projectName?: string
-  // Mostra o indicador de status em andamento (falso onde o grupo já diz isso).
-  showDoing?: boolean
-  // Cor do projeto (borda esquerda); null = neutra.
-  projectColor?: string | null
-  // Mostra a data de planejamento (falso no Week board, onde a coluna é a data).
-  showDate?: boolean
-  // Mostra o group (falso no Group by projeto, que já usa subtítulos).
-  showGroup?: boolean
   // Progresso do checklist da nota-corpo (`2/5`).
   checklist?: ChecklistProgress | null
-  lines?: 2 | 3
-  // Task aberta no editor.
-  selected?: boolean
-  // Cursor do teclado e multi-seleção (useTaskKeyboard).
-  cursor?: boolean
-  inSelection?: boolean
-  // Recebe as teclas modificadoras do clique (Ctrl/Shift = seleção).
-  onSelect: (e: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) => void
+  onSelect: () => void
   onToggle: (done: boolean) => void
-  // Exclusão (pede confirmação no chamador); ausente = sem botão.
-  onDelete?: () => void
-  // Adia a data de planejamento; ausente = sem botão.
-  onSnooze?: (kind: SnoozeKind) => void
-  // Plan today: adiciona/remove a task de hoje; ausente = sem botão.
-  planned?: boolean
-  onTogglePlan?: () => void
 }
 
-export function TaskLine({
-  task,
-  todayKey,
-  projectName,
-  showDoing = true,
-  projectColor = null,
-  showDate = true,
-  showGroup = true,
-  checklist = null,
-  lines = 2,
-  selected = false,
-  cursor = false,
-  inSelection = false,
-  onSelect,
-  onToggle,
-  onDelete,
-  onSnooze,
-  planned = false,
-  onTogglePlan,
-}: TaskLineProps) {
+export function TaskLine({ task, todayKey, projectName, checklist = null, onSelect, onToggle }: TaskLineProps) {
   const closed = !isOpen(task)
-  const [snoozeOpen, setSnoozeOpen] = useState(false)
   return (
     <div
-      className={`${styles.line} ${selected ? styles.selected : ''} ${cursor ? styles.cursor : ''} ${
-        inSelection ? styles.inSelection : ''
-      }`}
+      className={styles.line}
       data-task-id={task.id}
-      style={projectColor && !selected ? { borderLeftColor: projectColor } : undefined}
       onClick={onSelect}
       role="button"
       tabIndex={0}
       onKeyDown={(e) => {
-        if (e.key === 'Enter') onSelect(e)
+        if (e.key === 'Enter') onSelect()
       }}
     >
       <input
@@ -100,97 +52,11 @@ export function TaskLine({
         aria-label="done"
       />
       <div className={styles.body}>
-        <span
-          className={`${styles.title} ${closed ? styles.titleClosed : ''}`}
-          style={{ WebkitLineClamp: lines }}
-          title={task.title}
-        >
+        <span className={`${styles.title} ${closed ? styles.titleClosed : ''}`} title={task.title}>
           {task.title}
         </span>
-        <TaskMeta
-          task={task}
-          todayKey={todayKey}
-          projectName={projectName}
-          showDoing={showDoing}
-          showDate={showDate}
-          showGroup={showGroup}
-          checklist={checklist}
-        />
+        <TaskMeta task={task} todayKey={todayKey} projectName={projectName} checklist={checklist} />
       </div>
-      {onTogglePlan && isOpen(task) && (
-        <button
-          type="button"
-          className={`${styles.deleteBtn} ${planned ? styles.planned : ''}`}
-          aria-label={planned ? 'Remove from today' : 'Add to today'}
-          aria-pressed={planned}
-          title={planned ? 'Remove from today' : 'Add to today'}
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation()
-            onTogglePlan()
-          }}
-        >
-          <Sun size={13} weight={planned ? 'fill' : 'regular'} aria-hidden />
-        </button>
-      )}
-      {onSnooze && isOpen(task) && (
-        <span
-          className={styles.snoozeWrap}
-          onMouseDown={(e) => e.stopPropagation()}
-          onBlur={(e) => {
-            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setSnoozeOpen(false)
-          }}
-        >
-          <button
-            type="button"
-            className={styles.deleteBtn}
-            aria-label="Snooze task"
-            title="Snooze"
-            onClick={(e) => {
-              e.stopPropagation()
-              setSnoozeOpen((v) => !v)
-            }}
-          >
-            <Clock size={13} aria-hidden />
-          </button>
-          {snoozeOpen && (
-            <div className={styles.snoozeMenu} role="menu">
-              {SNOOZE_OPTIONS.map((o) => (
-                <button
-                  key={o.kind}
-                  type="button"
-                  role="menuitem"
-                  className={styles.snoozeItem}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    setSnoozeOpen(false)
-                    onSnooze(o.kind)
-                  }}
-                >
-                  {o.label}
-                </button>
-              ))}
-            </div>
-          )}
-        </span>
-      )}
-      {onDelete && (
-        <button
-          type="button"
-          className={styles.deleteBtn}
-          aria-label="Delete task"
-          title="Delete task"
-          // Não inicia o arraste do card (Kanban/Week) nem abre a task.
-          onMouseDown={(e) => e.stopPropagation()}
-          onKeyDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation()
-            onDelete()
-          }}
-        >
-          <Trash size={13} aria-hidden />
-        </button>
-      )}
     </div>
   )
 }
@@ -199,22 +65,19 @@ interface TaskMetaProps {
   task: Task
   todayKey: string
   projectName?: string
-  showDoing: boolean
-  showDate: boolean
-  showGroup: boolean
   checklist: ChecklistProgress | null
 }
 
-function TaskMeta({ task, todayKey, projectName, showDoing, showDate, showGroup, checklist }: TaskMetaProps) {
+function TaskMeta({ task, todayKey, projectName, checklist }: TaskMetaProps) {
   const { statuses } = useTasksEnv()
   const plan = planDate(task)
   const late = overdueKind(task, todayKey)
-  const date = showDate ? plan : null
+  const date = plan
   // Deadline à parte só quando difere da data de planejamento.
   const deadline = task.dueDate !== null && task.dueDate !== plan ? task.dueDate : null
   const postponed = task.rescheduleCount
-  const doing = showDoing && isInProgress(task)
-  const group = showGroup ? task.group : null
+  const doing = isInProgress(task)
+  const group = task.group
   if (
     !date &&
     !deadline &&

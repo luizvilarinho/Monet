@@ -3,6 +3,7 @@ import type {
   Book,
   BookHighlight,
   BookQuote,
+  MetadataDef,
   Note,
   Notebook,
   Subject,
@@ -55,6 +56,9 @@ export interface StorageAdapter {
   getTaskViews(): Promise<TaskView[]>
   saveTaskView(view: TaskView): Promise<void>
   deleteTaskView(id: string): Promise<void>
+  getMetadataDefs(): Promise<MetadataDef[]>
+  saveMetadataDef(def: MetadataDef): Promise<void>
+  deleteMetadataDef(id: string): Promise<void>
 
   getResponses(noteId: string): Promise<AiResponse[]>
   getResponsesByIds(ids: string[]): Promise<AiResponse[]>

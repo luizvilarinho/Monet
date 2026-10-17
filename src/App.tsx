@@ -31,6 +31,7 @@ import { TasksView } from './components/TasksView/TasksView'
 import type { NewTaskDraft } from './components/TasksView/TasksHeader'
 import { TasksEnvProvider, type TasksEnv } from './components/TasksView/TasksEnv'
 import { StatusManagerModal } from './components/TasksView/StatusManagerModal'
+import { MetadataManagerModal } from './components/TasksView/MetadataManagerModal'
 import { ProjectsBoard } from './components/TasksView/ProjectsBoard'
 import { GroupsBoard } from './components/TasksView/GroupsBoard'
 import { TodayBoard } from './components/TasksView/TodayBoard'
@@ -63,6 +64,7 @@ import { useReminders } from './hooks/useReminders'
 import { useSubjects } from './hooks/useSubjects'
 import { useTasks } from './hooks/useTasks'
 import { useTaskStatuses } from './hooks/useTaskStatuses'
+import { useMetadataDefs } from './hooks/useMetadataDefs'
 import { SIDEBAR_WIDTH_KEY, SIDEBAR_WIDE_WIDTH_KEY, WIDE_MAX_WIDTH } from './hooks/useSidebarResize'
 import { useTaskViews } from './hooks/useTaskViews'
 import { useToday } from './hooks/useToday'
@@ -429,6 +431,8 @@ function App() {
   // Busca de texto (título/group) aplicada a todas as visões de Tasks.
   const [tasksSearch, setTasksSearch] = useState('')
   const [statusManagerOpen, setStatusManagerOpen] = useState(false)
+  // "Manage properties" aberto (focusId = definição focada ao abrir, pelo lápis da task).
+  const [metadataManager, setMetadataManager] = useState<{ focusId: string | null } | null>(null)
   // Group by da lista de tasks.
   const [tasksGroupBy, setTasksGroupByState] = useState<TaskGroupBy>(() => {
     try {
@@ -473,6 +477,7 @@ function App() {
     updateTasks,
     deleteTasks,
     reassignStatus,
+    stripMetadata,
     saveError: tasksSaveError,
   } = useTasks()
   // Registro de status e visões salvas (SQLite, compartilhados entre janelas).
@@ -484,6 +489,8 @@ function App() {
     remove: removeStatus,
     saveError: statusSaveError,
   } = useTaskStatuses({ onRemoved: (id) => reassignStatus(id, 'todo') })
+  // Definições de metadados personalizados (globais, compartilhadas entre janelas).
+  const metadata = useMetadataDefs({ onRemoved: (id) => stripMetadata(id) })
   const {
     views: savedViews,
     create: createSavedView,
@@ -2038,6 +2045,7 @@ function App() {
   const tasksEnv: TasksEnv = {
     statuses: statusRegistry,
     onManageStatuses: () => setStatusManagerOpen(true),
+    metadataDefs: metadata.defs,
     savedViews,
     currentViewConfig,
     activeSavedViewId,
@@ -2109,9 +2117,9 @@ function App() {
         previewMode={previewMode}
         onTogglePreview={() => setPreviewMode((v) => !v)}
       />
-      {(noteSaveError || notebookSaveError || subjectSaveError || tasksSaveError || statusSaveError || taskCreateError || subjectConvertError) && (
+      {(noteSaveError || notebookSaveError || subjectSaveError || tasksSaveError || statusSaveError || metadata.saveError || taskCreateError || subjectConvertError) && (
         <div className="saveErrorBanner" role="alert">
-          {noteSaveError || notebookSaveError || subjectSaveError || tasksSaveError || statusSaveError || taskCreateError || subjectConvertError}
+          {noteSaveError || notebookSaveError || subjectSaveError || tasksSaveError || statusSaveError || metadata.saveError || taskCreateError || subjectConvertError}
         </div>
       )}
       {activeMode === 'library' ? (
@@ -2433,6 +2441,9 @@ function App() {
                   if (activeTask.sourceNoteId) handleNoteLinkNavigation(activeTask.sourceNoteId)
                 }}
                 onDelete={() => void deleteProjectTasks([activeTask.id])}
+                metadataDefs={metadata.defs}
+                onCreateMetadataDef={metadata.create}
+                onManageMetadata={(focusId) => setMetadataManager({ focusId: focusId ?? null })}
               />
             ) : activeCalendarDay ? (
               <DueTodayBlock
@@ -2559,6 +2570,15 @@ function App() {
         onRename={(id, name) => void renameStatus(id, name)}
         onUpdate={(id, change) => void updateStatus(id, change)}
         onRemove={(id) => void removeStatus(id)}
+      />
+      <MetadataManagerModal
+        open={metadataManager !== null}
+        onClose={() => setMetadataManager(null)}
+        focusId={metadataManager?.focusId}
+        defs={metadata.defs}
+        tasks={tasks}
+        onRename={metadata.rename}
+        onRemove={(id) => void metadata.remove(id)}
       />
     </div>
     </TasksEnvProvider>

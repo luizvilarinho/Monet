@@ -1,5 +1,5 @@
-import { CaretLeft, CaretRight } from '@phosphor-icons/react'
-import { useMemo, useState } from 'react'
+import { CaretLeft, CaretRight, Eye, EyeSlash } from '@phosphor-icons/react'
+import { useEffect, useMemo, useState } from 'react'
 import { dateKeyFromMs } from '../../lib/calendar'
 import {
   addDaysKey,
@@ -10,9 +10,9 @@ import {
   isInProgress,
   isOpen,
   isOverdue,
+  mondayOfWeekKey,
   planDate,
   snoozeDate,
-  startOfWeekKey,
   weekDayKeys,
   type ChecklistProgress,
   type TaskSummaryKey,
@@ -21,7 +21,7 @@ import type { Notebook, Task } from '../../types'
 import { TasksHeader, type NewTaskDraft } from './TasksHeader'
 import { useTasksEnv } from './TasksEnv'
 import type { TasksMainView } from './views'
-import { TaskLine } from './TaskLine'
+import { TaskCard } from './TaskCard'
 import { TaskBatchBar } from './TaskBatchBar'
 import { useCardDrag } from './useCardDrag'
 import { useTaskKeyboard, type TaskChanges } from './useTaskKeyboard'
@@ -51,6 +51,8 @@ interface WeekBoardProps {
 }
 
 const NO_DATE = 'nodate'
+const WEEKEND = 'weekend'
+const HIDE_WEEKEND_KEY = 'monet:tasks-week-hide-weekend'
 const DAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
 interface Column {
@@ -62,6 +64,8 @@ interface Column {
   // Coluna vazia que vira um trilho estreito (Overdue / No date).
   collapsible: boolean
   tone?: 'today' | 'overdue'
+  // Trilho do fim de semana oculto (contagem em `open.length`).
+  kind?: 'weekend'
 }
 
 // Important primeiro, depois `doing`, depois a ordem manual.
@@ -91,8 +95,35 @@ export function WeekBoard({
   onConvertPipeTitles,
   checklist,
 }: WeekBoardProps) {
-  const [weekStart, setWeekStart] = useState(() => startOfWeekKey(todayKey))
-  const currentWeek = startOfWeekKey(todayKey)
+  const [weekStart, setWeekStartState] = useState(() => mondayOfWeekKey(todayKey))
+  const currentWeek = mondayOfWeekKey(todayKey)
+  const [hideWeekend, setHideWeekendState] = useState(() => {
+    try {
+      return localStorage.getItem(HIDE_WEEKEND_KEY) === '1'
+    } catch {
+      return false
+    }
+  })
+  // Fim de semana exibido temporariamente (drag segurado sobre o trilho).
+  const [peek, setPeek] = useState(false)
+  // A semana começa na segunda: days[0] = segunda, days[5] = sábado, days[6] = domingo.
+  const days = useMemo(() => weekDayKeys(weekStart), [weekStart])
+  const weekendHidden = hideWeekend && !peek
+
+  function setWeekStart(update: (w: string) => string) {
+    setWeekStartState(update)
+    setPeek(false)
+  }
+
+  function setHideWeekend(hide: boolean) {
+    setHideWeekendState(hide)
+    setPeek(false)
+    try {
+      localStorage.setItem(HIDE_WEEKEND_KEY, hide ? '1' : '0')
+    } catch {
+      /* ignorar */
+    }
+  }
 
   const notebookNameById = useMemo(
     () => new Map(notebooks.map((nb) => [nb.id, nb.name || 'unnamed'])),
@@ -110,7 +141,6 @@ export function WeekBoard({
   const summary = useMemo(() => computeTaskSummary(projectTasks, todayKey), [projectTasks, todayKey])
 
   const columns = useMemo((): Column[] => {
-    const days = weekDayKeys(weekStart)
     const byDay = new Map(days.map((d) => [d, { open: [] as Task[], done: [] as Task[] }]))
     const overdue: Task[] = []
     const noDate: Task[] = []
@@ -124,6 +154,22 @@ export function WeekBoard({
         byDay.get(dateKeyFromMs(t.completedAt))?.done.push(t)
       }
     }
+    const visibleDays = weekendHidden ? days.slice(0, 5) : days
+    const weekendRail: Column[] = weekendHidden
+      ? [
+          {
+            key: WEEKEND,
+            label: 'Sat–Sun hidden',
+            open: [...byDay.get(days[5])!.open, ...byDay.get(days[6])!.open],
+            done: [],
+            droppable: false,
+            collapsible: false,
+            kind: 'weekend',
+            // Hoje é sábado/domingo desta semana: o rail sinaliza onde está hoje.
+            tone: days[5] === todayKey || days[6] === todayKey ? 'today' : undefined,
+          },
+        ]
+      : []
     return [
       {
         key: 'overdue',
@@ -134,7 +180,7 @@ export function WeekBoard({
         collapsible: true,
         tone: 'overdue',
       },
-      ...days.map((d): Column => {
+      ...visibleDays.map((d): Column => {
         const day = byDay.get(d)!
         const date = new Date(`${d}T00:00:00`)
         return {
@@ -147,6 +193,7 @@ export function WeekBoard({
           tone: d === todayKey ? 'today' : undefined,
         }
       }),
+      ...weekendRail,
       {
         key: NO_DATE,
         label: 'No date',
@@ -156,11 +203,15 @@ export function WeekBoard({
         collapsible: true,
       },
     ]
-  }, [projectTasks, weekStart, todayKey])
+  }, [projectTasks, days, todayKey, weekendHidden])
 
   const tasksById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks])
   const orderedIds = useMemo(
-    () => columns.flatMap((c) => [...c.open, ...c.done]).map((t) => t.id),
+    () =>
+      columns
+        .filter((c) => c.kind !== 'weekend')
+        .flatMap((c) => [...c.open, ...c.done])
+        .map((t) => t.id),
     [columns]
   )
   const kb = useTaskKeyboard({
@@ -174,7 +225,7 @@ export function WeekBoard({
 
   const { draggingId, overKey, onCardMouseDown } = useCardDrag((id, dropKey) => {
     const task = tasksById.get(id)
-    if (!task) return
+    if (!task || dropKey === WEEKEND) return
     const target = dropKey === NO_DATE ? null : dropKey
     // Soltar na própria coluna não muda nada.
     if (!isOverdue(task, todayKey) && planDate(task) === target) return
@@ -182,7 +233,18 @@ export function WeekBoard({
     onSchedule(id, target)
   })
 
-  const rangeLabel = `${formatDueShort(weekStart)} – ${formatDueShort(addDaysKey(weekStart, 6))}`
+  // Segurar um card ~400ms sobre o trilho expande o fim de semana.
+  useEffect(() => {
+    if (!draggingId || overKey !== WEEKEND) return
+    const timer = setTimeout(() => setPeek(true), 400)
+    return () => clearTimeout(timer)
+  }, [draggingId, overKey])
+
+  const todayOnHiddenWeekend = columns.some((c) => c.kind === 'weekend' && c.tone === 'today')
+
+  const rangeLabel = weekendHidden
+    ? `${formatDueShort(days[0])} – ${formatDueShort(days[4])}`
+    : `${formatDueShort(weekStart)} – ${formatDueShort(addDaysKey(weekStart, 6))}`
 
   function renderCard(t: Task, draggable: boolean) {
     return (
@@ -193,14 +255,13 @@ export function WeekBoard({
         }`}
         onMouseDown={draggable ? (e) => onCardMouseDown(e, t.id) : undefined}
       >
-        <TaskLine
+        <TaskCard
           task={t}
           todayKey={todayKey}
           projectName={filter === null ? notebookNameById.get(t.notebookId) : undefined}
-          showDate={false}
+          showScheduled={false}
           projectColor={notebookColorById.get(t.notebookId) ?? null}
           checklist={checklist.get(t.id)}
-          lines={3}
           cursor={t.id === kb.cursorId}
           inSelection={kb.selectedIds.has(t.id)}
           onSelect={(e) => {
@@ -245,7 +306,12 @@ export function WeekBoard({
           <button
             type="button"
             className={`${styles.thisWeek} ${weekStart === currentWeek ? styles.thisWeekActive : ''}`}
-            onClick={() => setWeekStart(currentWeek)}
+            onClick={() => setWeekStart(() => currentWeek)}
+            title={
+              todayOnHiddenWeekend
+                ? 'Today is on the hidden weekend. Click the Sat–Sun rail or "Show weekends" to see it'
+                : undefined
+            }
           >
             This week
           </button>
@@ -258,17 +324,48 @@ export function WeekBoard({
             <CaretRight size={13} weight="bold" />
           </button>
           <span className={styles.range}>{rangeLabel}</span>
+          <button
+            type="button"
+            className={`${styles.thisWeek} ${styles.weekendToggle} ${hideWeekend ? styles.thisWeekActive : ''}`}
+            aria-pressed={hideWeekend}
+            title={hideWeekend ? 'Show Saturday and Sunday' : 'Hide Saturday and Sunday'}
+            onClick={() => setHideWeekend(!hideWeekend)}
+          >
+            {hideWeekend ? <Eye size={13} aria-hidden /> : <EyeSlash size={13} aria-hidden />}
+            {hideWeekend ? 'Show weekends' : 'Hide weekends'}
+          </button>
         </div>
       </div>
       <div
         className={styles.columns}
         style={{
           gridTemplateColumns: columns
-            .map((c) => (c.collapsible && c.open.length === 0 ? '36px' : 'minmax(168px, 1fr)'))
+            .map((c) =>
+              c.kind === 'weekend' || (c.collapsible && c.open.length === 0) ? '36px' : 'minmax(200px, 1fr)'
+            )
             .join(' '),
         }}
       >
         {columns.map((c) => {
+          if (c.kind === 'weekend') {
+            const n = c.open.length
+            const hasToday = c.tone === 'today'
+            return (
+              <button
+                key={c.key}
+                type="button"
+                data-drop-key={WEEKEND}
+                className={`${styles.weekendRail} ${hasToday ? styles.weekendRailToday : ''} ${
+                  draggingId && overKey === WEEKEND ? styles.columnOver : ''
+                }`}
+                onClick={() => setHideWeekend(false)}
+                title={`${hasToday ? 'Today is hidden here. ' : ''}${n} task${n === 1 ? '' : 's'} on Sat – Sun. Click to show weekends`}
+              >
+                <span className={`${styles.weekendCount} ${n === 0 ? styles.weekendCountEmpty : ''}`}>{n}</span>
+                <span className={styles.weekendLabel}>{hasToday ? `Today · ${c.label}` : c.label}</span>
+              </button>
+            )
+          }
           const rail = c.collapsible && c.open.length === 0
           return (
             <div
@@ -280,6 +377,8 @@ export function WeekBoard({
                 c.tone === 'today' ? styles.columnToday : '',
                 c.tone === 'overdue' ? styles.columnOverdue : '',
                 draggingId && overKey === c.key ? styles.columnOver : '',
+                // Durante o arraste, colunas que não aceitam drop (Overdue e dias passados) esmaecem.
+                draggingId && !c.droppable ? styles.columnBlocked : '',
               ].join(' ')}
             >
               <div className={styles.columnHeader}>

@@ -44,6 +44,62 @@
   border-color: var(--accent-task);
 }
 
+.weekendToggle {
+  margin-left: auto;
+  gap: 5px;
+}
+
+/* Fim de semana oculto: sábado e domingo viram um trilho com a contagem. */
+.weekendRail {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-radius: 6px;
+  background: var(--surface-1);
+  border: 1px dashed var(--hair);
+  font-family: inherit;
+  color: var(--text-secondary);
+  cursor: pointer;
+  outline: none;
+}
+
+.weekendRail:hover,
+.weekendRail:focus-visible {
+  border-color: var(--accent-task);
+  color: var(--text-primary);
+}
+
+.weekendRailToday {
+  border-style: solid;
+  border-color: var(--accent-task);
+  color: var(--accent-task);
+}
+
+.weekendCount {
+  background: var(--accent-task);
+  color: var(--bg-panel);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 0;
+}
+
+.weekendCountEmpty {
+  background: transparent;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.weekendLabel {
+  writing-mode: vertical-rl;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 .range {
   margin-left: 6px;
   font-size: 12px;
@@ -72,6 +128,10 @@
 
 .columnToday {
   border-color: var(--accent-task);
+}
+
+.columnBlocked {
+  opacity: 0.45;
 }
 
 .columnOver {
@@ -119,12 +179,10 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 12px;
 }
 
 .card {
-  border-radius: 4px;
-  background: var(--bg-app);
   cursor: grab;
 }
 

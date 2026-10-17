@@ -1,0 +1,347 @@
+/* Card de task, variante B: bloco de status sólido de cantos quadrados.
+   O canto superior esquerdo é quadrado para o bloco encostar nele sem
+   overflow: hidden (que cortaria o menu de snooze). */
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 0 6px;
+  background: var(--bg-app);
+  border: 1px solid var(--hair);
+  border-radius: 0 4px 4px 4px;
+  cursor: pointer;
+  outline: none;
+}
+
+.card:hover {
+  background: var(--surface-1);
+}
+
+/* O laranja de seleção nunca é preenchimento sólido (só o status é). */
+.selected {
+  border-color: var(--accent-task);
+  background: var(--surface-1);
+}
+
+.cursor {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-task) 55%, transparent);
+}
+
+.inSelection,
+.inSelection:hover {
+  background: color-mix(in srgb, var(--accent-task) 14%, var(--bg-app));
+}
+
+.top {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.block {
+  margin: -1px 0 0 -1px;
+  background: var(--st);
+  color: var(--bg-panel);
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 0;
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.blockFixed {
+  width: 92px;
+  flex-shrink: 0;
+}
+
+.elapsed {
+  font-weight: 500;
+  opacity: 0.78;
+}
+
+.stCompact {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  padding: 3px 0 0 8px;
+  color: var(--text-muted);
+}
+
+.stSquare {
+  width: 7px;
+  height: 7px;
+  background: var(--st);
+}
+
+.due {
+  padding: 3px 8px 0 0;
+  flex-shrink: 0;
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.late {
+  color: var(--accent-danger);
+  font-weight: 600;
+}
+
+.body {
+  padding: 0 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.titleRow {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.checkbox {
+  flex-shrink: 0;
+  accent-color: var(--accent-task);
+  cursor: pointer;
+  margin: 4px 0 0;
+}
+
+.title {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.titleClosed {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.ctx {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.project {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex-shrink: 1;
+}
+
+.group {
+  min-width: 0;
+  flex-shrink: 1;
+}
+
+.groupList {
+  color: var(--accent);
+}
+
+.ellipsis {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sep {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.swatch {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 10px;
+  row-gap: 1px;
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 4px 8px 0;
+  border-top: 1px solid var(--hair);
+}
+
+.k {
+  color: var(--text-muted);
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.v {
+  min-width: 0;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.more {
+  grid-column: 1 / -1;
+  color: var(--text-muted);
+}
+
+.foot {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  row-gap: 2px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  padding: 0 8px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+
+.bar {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: 2px;
+}
+
+.bar i {
+  width: 6px;
+  height: 6px;
+  background: var(--hair);
+  display: block;
+}
+
+.bar i.on {
+  background: var(--text-secondary);
+}
+
+.latePlan {
+  color: var(--accent-late);
+}
+
+.postponedHigh {
+  color: var(--accent-danger);
+  font-weight: 600;
+}
+
+.checklistDone {
+  color: var(--status-done);
+}
+
+.important {
+  color: var(--accent-task);
+}
+
+/* Ações no topo, antes do deadline: só aparecem no hover/foco (fora do
+   fluxo no resto do tempo, para não espremer o bloco nem criar linha vazia). */
+.actions {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding-top: 2px;
+}
+
+.actions:last-child {
+  padding-right: 6px;
+}
+
+.action {
+  flex-shrink: 0;
+  display: none;
+  align-items: center;
+  background: transparent;
+  border: none;
+  padding: 1px 2px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.card:hover .action,
+.card:focus-within .action {
+  display: inline-flex;
+}
+
+.action:hover {
+  color: var(--text-primary);
+}
+
+.deleteAction:hover {
+  color: var(--accent-danger);
+}
+
+/* Planejada para hoje: o botão fica visível e destacado. */
+.planned,
+.planned:hover {
+  display: inline-flex;
+  color: var(--accent-task);
+}
+
+.snoozeWrap {
+  position: relative;
+  flex-shrink: 0;
+  display: inline-flex;
+}
+
+.snoozeMenu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 2px);
+  z-index: 20;
+  min-width: 110px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+.snoozeItem {
+  display: block;
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.snoozeItem:hover {
+  background: var(--surface-3);
+}

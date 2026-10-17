@@ -19,7 +19,7 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import { useConfirm } from '../../hooks/useConfirm'
 import type { ChatConversation, ChatFolder } from '../../hooks/useChat'
-import { ASSISTANT_FOLDER_NAME } from '../../hooks/useChat'
+import { ASSISTANT_FOLDER_NAME, getAutoFolderGroups } from '../../hooks/useChat'
 import styles from './ChatSidebar.module.css'
 
 export interface ChatSidebarProps {
@@ -109,6 +109,24 @@ const RemoveFromFolderIcon = () => (
 )
 
 type ActiveDragKind = 'folder' | 'conv' | null
+
+// Grupos visuais das pastas automáticas (Library / Notebook): estado recolhido
+// persistido; começam recolhidos sem preferência salva.
+const GROUP_COLLAPSED_KEY = 'monet:chat-group-collapsed'
+type GroupCollapsed = { library: boolean; notebook: boolean }
+
+function loadGroupCollapsed(): GroupCollapsed {
+  try {
+    const raw = localStorage.getItem(GROUP_COLLAPSED_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      return { library: parsed?.library !== false, notebook: parsed?.notebook !== false }
+    }
+  } catch {
+    /* ignore */
+  }
+  return { library: true, notebook: true }
+}
 
 export function ChatSidebar({
   conversations,
@@ -201,6 +219,47 @@ export function ChatSidebar({
   }, [conversations])
 
   const folderIds = useMemo(() => folders.map((f) => `folder:${f.id}`), [folders])
+
+  // Criar uma pasta automática sempre altera `folders`, então recalcula aqui.
+  const autoGroups = useMemo(() => getAutoFolderGroups(), [folders])
+  const { manualFolders, libraryFolders, notebookFolders } = useMemo(() => {
+    const manual: ChatFolder[] = []
+    const library: ChatFolder[] = []
+    const notebook: ChatFolder[] = []
+    for (const f of folders) {
+      if (autoGroups.library.has(f.id)) library.push(f)
+      else if (autoGroups.notebook.has(f.id)) notebook.push(f)
+      else manual.push(f)
+    }
+    return { manualFolders: manual, libraryFolders: library, notebookFolders: notebook }
+  }, [folders, autoGroups])
+
+  const [groupCollapsed, setGroupCollapsedState] = useState<GroupCollapsed>(loadGroupCollapsed)
+  const setGroupCollapsed = useCallback((next: GroupCollapsed) => {
+    setGroupCollapsedState(next)
+    try {
+      localStorage.setItem(GROUP_COLLAPSED_KEY, JSON.stringify(next))
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
+  // Ativar uma conversa de pasta automática expande o grupo dela. Depende só
+  // da pasta ativa: recolher o grupo manualmente depois continua possível.
+  const activeFolderId = useMemo(
+    () => folders.find((f) => activeId && f.conversationIds.includes(activeId))?.id ?? null,
+    [folders, activeId]
+  )
+  useEffect(() => {
+    if (!activeFolderId) return
+    const group = autoGroups.library.has(activeFolderId)
+      ? 'library'
+      : autoGroups.notebook.has(activeFolderId)
+        ? 'notebook'
+        : null
+    if (group && groupCollapsed[group]) setGroupCollapsed({ ...groupCollapsed, [group]: false })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeFolderId])
 
   // Auto-foco no input quando entra em modo edicao
   useEffect(() => {
@@ -303,12 +362,17 @@ export function ChatSidebar({
     const overId = String(over.id)
     if (activeId === overId) return
 
-    // Folder reorder
+    // Folder reorder (só dentro do mesmo grupo: manual / Library / Notebook)
     if (activeId.startsWith('folder:') && overId.startsWith('folder:')) {
-      const oldIndex = folderIds.indexOf(activeId)
-      const newIndex = folderIds.indexOf(overId)
-      if (oldIndex === -1 || newIndex === -1) return
-      const reordered = arrayMove(folderIds, oldIndex, newIndex)
+      const folderGroups = [manualFolders, libraryFolders, notebookFolders].map((g) =>
+        g.map((f) => `folder:${f.id}`)
+      )
+      const group = folderGroups.find((g) => g.includes(activeId))
+      if (!group || !group.includes(overId)) return
+      const reorderedGroup = arrayMove(group, group.indexOf(activeId), group.indexOf(overId))
+      // Recompõe a ordem global: as posições do grupo recebem a nova sequência.
+      let next = 0
+      const reordered = folderIds.map((id) => (group.includes(id) ? reorderedGroup[next++] : id))
       onReorderFolders(reordered.map((s) => s.replace(/^folder:/, '')))
       return
     }
@@ -401,6 +465,76 @@ export function ChatSidebar({
     }
   }
 
+  function renderFolder(folder: ChatFolder) {
+    return (
+      <SortableFolder
+        key={folder.id}
+        folder={folder}
+        conversationById={conversationById}
+        activeId={activeId}
+        editing={editingFolderId === folder.id}
+        editingName={editingFolderName}
+        onEditingNameChange={setEditingFolderName}
+        inputRef={editingInputRef}
+        onCommitEdit={commitFolderEdit}
+        onCancelEdit={cancelFolderEdit}
+        onStartEdit={(f) => {
+          if (editingConvId) cancelConvEdit()
+          setEditingFolderId(f.id)
+          setEditingFolderName(f.name)
+        }}
+        onSelectConv={onSelect}
+        onDeleteConv={onDelete}
+        onRemoveFromFolder={onRemoveConversationFromFolder}
+        onNewConversation={() => onNewConversationInFolder(folder.id)}
+        onToggleExpanded={() =>
+          onToggleFolderExpanded(folder.id, !folder.expanded)
+        }
+        onDeleteFolder={() => handleDeleteFolder(folder)}
+        onOpenSystemPrompt={() => onOpenFolderSystemPrompt(folder)}
+        onOpenFolderMemory={() => onOpenFolderMemory(folder)}
+        onOpenFolderDocuments={() => onOpenFolderDocuments(folder)}
+        visibleDocumentCount={getFolderVisibleDocumentCount(folder.id)}
+        isAnyConvDragging={activeDragKind === 'conv'}
+        editingConvId={editingConvId}
+        editingConvName={editingConvName}
+        onEditingConvNameChange={setEditingConvName}
+        convEditingInputRef={convEditingInputRef}
+        onCommitConvEdit={commitConvEdit}
+        onCancelConvEdit={cancelConvEdit}
+        onStartConvEdit={startConvEdit}
+      />
+    )
+  }
+
+  function renderFolderGroup(group: 'library' | 'notebook', label: string, list: ChatFolder[]) {
+    if (list.length === 0) return null
+    const isCollapsed = groupCollapsed[group]
+    return (
+      <>
+        <button
+          type="button"
+          className={styles.groupHeader}
+          aria-expanded={!isCollapsed}
+          onClick={() => setGroupCollapsed({ ...groupCollapsed, [group]: !isCollapsed })}
+        >
+          <span aria-hidden="true">{isCollapsed ? '▸' : '▾'}</span>
+          {label}
+          <span className={styles.groupCount}>{list.length}</span>
+        </button>
+        {!isCollapsed && (
+          <SortableContext
+            id={`__group_${group}__`}
+            items={list.map((f) => `folder:${f.id}`)}
+            strategy={verticalListSortingStrategy}
+          >
+            {list.map(renderFolder)}
+          </SortableContext>
+        )}
+      </>
+    )
+  }
+
   return (
     <aside className={`${styles.sidebar} ${collapsed ? styles.collapsed : ''}`} aria-label="Conversations" style={{ width }}>
       {modal}
@@ -456,49 +590,13 @@ export function ChatSidebar({
           {/* Folders */}
           <SortableContext
             id="__folders__"
-            items={folderIds}
+            items={manualFolders.map((f) => `folder:${f.id}`)}
             strategy={verticalListSortingStrategy}
           >
-            {folders.map((folder) => (
-              <SortableFolder
-                key={folder.id}
-                folder={folder}
-                conversationById={conversationById}
-                activeId={activeId}
-                editing={editingFolderId === folder.id}
-                editingName={editingFolderName}
-                onEditingNameChange={setEditingFolderName}
-                inputRef={editingInputRef}
-                onCommitEdit={commitFolderEdit}
-                onCancelEdit={cancelFolderEdit}
-                onStartEdit={(f) => {
-                  if (editingConvId) cancelConvEdit()
-                  setEditingFolderId(f.id)
-                  setEditingFolderName(f.name)
-                }}
-                onSelectConv={onSelect}
-                onDeleteConv={onDelete}
-                onRemoveFromFolder={onRemoveConversationFromFolder}
-                onNewConversation={() => onNewConversationInFolder(folder.id)}
-                onToggleExpanded={() =>
-                  onToggleFolderExpanded(folder.id, !folder.expanded)
-                }
-                onDeleteFolder={() => handleDeleteFolder(folder)}
-                onOpenSystemPrompt={() => onOpenFolderSystemPrompt(folder)}
-                onOpenFolderMemory={() => onOpenFolderMemory(folder)}
-                onOpenFolderDocuments={() => onOpenFolderDocuments(folder)}
-                visibleDocumentCount={getFolderVisibleDocumentCount(folder.id)}
-                isAnyConvDragging={activeDragKind === 'conv'}
-                editingConvId={editingConvId}
-                editingConvName={editingConvName}
-                onEditingConvNameChange={setEditingConvName}
-                convEditingInputRef={convEditingInputRef}
-                onCommitConvEdit={commitConvEdit}
-                onCancelConvEdit={cancelConvEdit}
-                onStartConvEdit={startConvEdit}
-              />
-            ))}
+            {manualFolders.map(renderFolder)}
           </SortableContext>
+          {renderFolderGroup('library', 'Library', libraryFolders)}
+          {renderFolderGroup('notebook', 'Notebook', notebookFolders)}
 
           {/* Loose conversations */}
           {(looseConversationIds.length > 0 || folders.length > 0) && (

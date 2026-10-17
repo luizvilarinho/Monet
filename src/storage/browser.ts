@@ -3,6 +3,7 @@ import type {
   Book,
   BookHighlight,
   BookQuote,
+  MetadataDef,
   Note,
   Notebook,
   Subject,
@@ -130,6 +131,15 @@ export class BrowserStorage implements StorageAdapter {
   }
   async deleteTaskView(_id: string): Promise<void> {
     throw new Error('BrowserStorage.deleteTaskView not implemented')
+  }
+  async getMetadataDefs(): Promise<MetadataDef[]> {
+    throw new Error('BrowserStorage.getMetadataDefs not implemented')
+  }
+  async saveMetadataDef(_def: MetadataDef): Promise<void> {
+    throw new Error('BrowserStorage.saveMetadataDef not implemented')
+  }
+  async deleteMetadataDef(_id: string): Promise<void> {
+    throw new Error('BrowserStorage.deleteMetadataDef not implemented')
   }
 
   async getResponses(_noteId: string): Promise<AiResponse[]> {

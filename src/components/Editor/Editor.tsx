@@ -963,7 +963,12 @@ export function Editor({
             left: Math.min(contextMenuPos.x, window.innerWidth - 290),
             zIndex: 300,
           }}
-          onMouseDown={(e) => e.stopPropagation()}
+          onMouseDown={(e) => {
+            e.stopPropagation()
+            // Os botões não tiram o foco do editor: o cursor fica logo após o
+            // conteúdo inserido (ex.: data e hora) e a digitação continua.
+            e.preventDefault()
+          }}
         >
           {/* Inserir link de nota */}
           <div className={contextMenuStyles.group}>

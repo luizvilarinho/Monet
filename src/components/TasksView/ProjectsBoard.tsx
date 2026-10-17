@@ -12,7 +12,7 @@ import { useTasksEnv } from './TasksEnv'
 // nota-corpo para o projeto.
 type ProjectsBoardProps = Omit<
   BoardViewProps,
-  'ariaLabel' | 'columnsFor' | 'onDrop' | 'showProject' | 'showDoing'
+  'ariaLabel' | 'columnsFor' | 'onDrop' | 'showProject' | 'compactStatus'
 >
 
 const NO_GROUP = 'No group'

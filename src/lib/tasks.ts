@@ -120,6 +120,7 @@ export type TaskPatch = Partial<
     | 'recurrence'
     | 'recurrenceNextId'
     | 'plannedDay'
+    | 'metadata'
   >
 >
 
@@ -268,6 +269,11 @@ export function addDaysKey(key: string, n: number): string {
 // Domingo da semana de `key` (a semana começa no domingo, como no Calendar).
 export function startOfWeekKey(key: string): string {
   return addDaysKey(key, -parseKey(key).getDay())
+}
+
+// Segunda-feira da semana de `key` (usada só pela visão Week das Tasks).
+export function mondayOfWeekKey(key: string): string {
+  return addDaysKey(key, -((parseKey(key).getDay() + 6) % 7))
 }
 
 // As 7 chaves de dia da semana que começa em `startKey`.
@@ -801,7 +807,7 @@ export function nextOccurrenceDate(rec: TaskRecurrence, anchorKey: string, today
 }
 
 // Próxima ocorrência de uma task recorrente concluída: mesmo título, projeto,
-// group, important e regra; nasce em To do, sem nota-corpo. Mantém o formato
+// group, important, metadados e regra; nasce em To do, sem nota-corpo. Mantém o formato
 // das datas da original (só do date, só deadline, ou ambos com o mesmo
 // intervalo entre eles).
 export function buildNextOccurrence(
@@ -842,6 +848,7 @@ export function buildNextOccurrence(
     sortOrder,
     doingSince: null,
     plannedDay: null,
+    metadata: { ...task.metadata },
   }
 }
 

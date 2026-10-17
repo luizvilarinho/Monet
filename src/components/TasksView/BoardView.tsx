@@ -9,7 +9,7 @@ import {
 import type { Notebook, Task } from '../../types'
 import { BoardColumns, type BoardColumn } from './BoardColumns'
 import { TasksHeader, type NewTaskDraft } from './TasksHeader'
-import { TaskLine } from './TaskLine'
+import { TaskCard } from './TaskCard'
 import { TaskBatchBar } from './TaskBatchBar'
 import { useTaskKeyboard, type TaskChanges } from './useTaskKeyboard'
 import { useTasksEnv } from './TasksEnv'
@@ -43,8 +43,8 @@ export interface BoardViewProps {
   onDrop: (taskId: string, columnKey: string, tasksById: Map<string, Task>) => void
   // Mostra o chip do projeto nos cards (falso onde a coluna já é o projeto).
   showProject?: boolean
-  // Esconde o status "doing" no card (falso onde a coluna é o status).
-  showDoing?: boolean
+  // Kanban: a coluna já é o status; o card mostra só o quadrado de cor + tempo.
+  compactStatus?: boolean
 }
 
 export function BoardView({
@@ -67,7 +67,7 @@ export function BoardView({
   columnsFor,
   onDrop,
   showProject = true,
-  showDoing = true,
+  compactStatus = false,
 }: BoardViewProps) {
   const { search } = useTasksEnv()
   const notebookById = useMemo(() => new Map(notebooks.map((nb) => [nb.id, nb])), [notebooks])
@@ -114,14 +114,13 @@ export function BoardView({
         renderCard={(t) => {
           const nb = notebookById.get(t.notebookId)
           return (
-            <TaskLine
+            <TaskCard
               task={t}
               todayKey={todayKey}
               projectName={showProject && filter === null ? (nb?.name || 'unnamed') : undefined}
               projectColor={nb?.color ?? null}
-              showDoing={showDoing}
+              compactStatus={compactStatus}
               checklist={checklist.get(t.id)}
-              lines={3}
               cursor={t.id === kb.cursorId}
               inSelection={kb.selectedIds.has(t.id)}
               onSelect={(e) => {

@@ -87,6 +87,7 @@ export function useTasks() {
           sortOrder: order,
           doingSince: status === 'doing' ? now : null,
           plannedDay: null,
+          metadata: {},
         }
       })
       setTasks((prev) => [...prev, ...created])
@@ -160,6 +161,18 @@ export function useTasks() {
     setTasks((list) => list.map((t) => (t.status === from ? { ...t, status: to } : t)))
   }, [])
 
+  // Definição de metadado excluída: tira a chave só em memória; o banco já foi
+  // limpo por `deleteMetadataDef`.
+  const stripMetadata = useCallback((defId: string) => {
+    setTasks((list) =>
+      list.map((t) => {
+        if (!(defId in t.metadata)) return t
+        const { [defId]: _removed, ...rest } = t.metadata
+        return { ...t, metadata: rest }
+      })
+    )
+  }, [])
+
   const tasksById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks])
 
   return {
@@ -174,5 +187,6 @@ export function useTasks() {
     updateTasks,
     deleteTasks,
     reassignStatus,
+    stripMetadata,
   }
 }

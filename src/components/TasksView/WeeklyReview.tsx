@@ -18,7 +18,7 @@ import type { Notebook, Task } from '../../types'
 import { TasksHeader, type NewTaskDraft } from './TasksHeader'
 import { useTasksEnv } from './TasksEnv'
 import type { TasksMainView } from './views'
-import { TaskLine } from './TaskLine'
+import { TaskCard } from './TaskCard'
 import type { TaskChanges } from './useTaskKeyboard'
 import styles from './WeeklyReview.module.css'
 
@@ -69,6 +69,10 @@ export function WeeklyReview({
 
   const notebookNameById = useMemo(
     () => new Map(notebooks.map((nb) => [nb.id, nb.name || 'unnamed'])),
+    [notebooks]
+  )
+  const notebookColorById = useMemo(
+    () => new Map(notebooks.map((nb) => [nb.id, nb.color ?? null])),
     [notebooks]
   )
   const { search } = useTasksEnv()
@@ -145,10 +149,11 @@ export function WeeklyReview({
 
   function renderLine(t: Task) {
     return (
-      <TaskLine
+      <TaskCard
         task={t}
         todayKey={todayKey}
         projectName={filter === null ? notebookNameById.get(t.notebookId) : undefined}
+        projectColor={notebookColorById.get(t.notebookId) ?? null}
         checklist={checklist.get(t.id)}
         onSelect={() => onOpenTask(t)}
         onToggle={(isDone) => onToggleTask(t.id, isDone)}

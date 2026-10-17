@@ -17,7 +17,7 @@ import { useTasksEnv } from './TasksEnv'
 // Visão Kanban: uma coluna por status aberto (registro de status, na ordem)
 // + Done (concluídas nesta semana, esmaecidas). Arrastar um card entre colunas
 // muda o status; coluna acima do limite WIP só ganha aviso.
-type KanbanBoardProps = Omit<BoardViewProps, 'ariaLabel' | 'columnsFor' | 'onDrop' | 'showProject' | 'showDoing'>
+type KanbanBoardProps = Omit<BoardViewProps, 'ariaLabel' | 'columnsFor' | 'onDrop' | 'showProject' | 'compactStatus'>
 
 export function KanbanBoard(props: KanbanBoardProps) {
   const { statuses } = useTasksEnv()
@@ -90,7 +90,7 @@ export function KanbanBoard(props: KanbanBoardProps) {
       ariaLabel="kanban board"
       columnsFor={columnsFor}
       onDrop={onDrop}
-      showDoing={false}
+      compactStatus
     />
   )
 }

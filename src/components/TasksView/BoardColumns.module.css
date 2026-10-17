@@ -71,13 +71,13 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 12px;
 }
 
 .section {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 12px;
 }
 
 .sectionLabel {
@@ -90,8 +90,6 @@
 }
 
 .card {
-  border-radius: 4px;
-  background: var(--bg-app);
   cursor: grab;
 }
 

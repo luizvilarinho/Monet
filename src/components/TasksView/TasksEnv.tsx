@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react'
-import type { TaskStatusDef, TaskView, TaskViewConfig } from '../../types'
+import type { MetadataDef, TaskStatusDef, TaskView, TaskViewConfig } from '../../types'
 import { BUILTIN_STATUS_DEFS } from '../../lib/tasks'
 
 // Estado compartilhado das visões de Tasks (registro de status, visões
@@ -8,6 +8,8 @@ import { BUILTIN_STATUS_DEFS } from '../../lib/tasks'
 export interface TasksEnv {
   statuses: TaskStatusDef[]
   onManageStatuses: () => void
+  // Definições de metadados personalizados (exibidos nos cards).
+  metadataDefs: MetadataDef[]
   // Visões salvas e a configuração atual da TasksView (para "Save current view").
   savedViews: TaskView[]
   currentViewConfig: TaskViewConfig
@@ -30,6 +32,7 @@ const noop = () => {}
 export const DEFAULT_TASKS_ENV: TasksEnv = {
   statuses: BUILTIN_STATUS_DEFS,
   onManageStatuses: noop,
+  metadataDefs: [],
   savedViews: [],
   currentViewConfig: { base: 'list', project: null, summary: null, text: '', groupBy: null },
   onApplyView: noop,
