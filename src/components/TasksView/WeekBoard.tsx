@@ -10,9 +10,9 @@ import {
   isInProgress,
   isOpen,
   isOverdue,
-  mondayOfWeekKey,
   planDate,
   snoozeDate,
+  startOfWeekKey,
   weekDayKeys,
   type ChecklistProgress,
   type TaskSummaryKey,
@@ -95,8 +95,8 @@ export function WeekBoard({
   onConvertPipeTitles,
   checklist,
 }: WeekBoardProps) {
-  const [weekStart, setWeekStartState] = useState(() => mondayOfWeekKey(todayKey))
-  const currentWeek = mondayOfWeekKey(todayKey)
+  const [weekStart, setWeekStartState] = useState(() => startOfWeekKey(todayKey))
+  const currentWeek = startOfWeekKey(todayKey)
   const [hideWeekend, setHideWeekendState] = useState(() => {
     try {
       return localStorage.getItem(HIDE_WEEKEND_KEY) === '1'
@@ -239,6 +239,11 @@ export function WeekBoard({
     const timer = setTimeout(() => setPeek(true), 400)
     return () => clearTimeout(timer)
   }, [draggingId, overKey])
+
+  // Ao soltar o card, o fim de semana volta ao estado do toggle.
+  useEffect(() => {
+    if (!draggingId) setPeek(false)
+  }, [draggingId])
 
   const todayOnHiddenWeekend = columns.some((c) => c.kind === 'weekend' && c.tone === 'today')
 

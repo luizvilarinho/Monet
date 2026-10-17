@@ -37,8 +37,13 @@ export function MetadataManagerModal({
   tasksRef.current = tasks
   // Esc no input descarta o rascunho (o blur que segue não grava).
   const cancelRef = useRef(false)
+  // Foco do lápis só na primeira montagem: renomear remonta o input (key).
+  const focusedRef = useRef(false)
 
-  if (!open) return null
+  if (!open) {
+    focusedRef.current = false
+    return null
+  }
 
   async function commitRename(d: MetadataDef, input: HTMLInputElement) {
     if (cancelRef.current) {
@@ -101,7 +106,12 @@ export function MetadataManagerModal({
                 key={d.name}
                 defaultValue={d.name}
                 maxLength={MAX_METADATA_NAME}
-                autoFocus={d.id === focusId}
+                ref={(el) => {
+                  if (el && d.id === focusId && !focusedRef.current) {
+                    focusedRef.current = true
+                    el.focus()
+                  }
+                }}
                 aria-label={`rename ${d.name}`}
                 onBlur={(e) => void commitRename(d, e.currentTarget)}
                 onKeyDown={(e) => {

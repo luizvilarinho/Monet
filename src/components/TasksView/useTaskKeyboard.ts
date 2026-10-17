@@ -247,7 +247,7 @@ export function useTaskKeyboard({
     requestDelete,
     deleteSelected: () => void requestDelete(targets),
     confirmModal,
-    nextMonday: addDaysKey(startOfWeekKey(todayKey), 8),
+    nextMonday: addDaysKey(startOfWeekKey(todayKey), 7),
     datePickerAt,
     openDatePicker,
     closeDatePicker,

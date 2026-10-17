@@ -396,11 +396,6 @@
   min-height: 24px;
 }
 
-/* ─── Folder draggable wrapper ────────────────────────────────────────────── */
-.folderDragging {
-  opacity: 0.4;
-}
-
 /* ─── Collapsed state ─────────────────────────────────────────────────────── */
 .collapsed {
   overflow: hidden;

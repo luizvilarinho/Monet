@@ -100,7 +100,6 @@ export function KeepPanel() {
   // quase juntos (e o StrictMode duplica efeitos em dev) — duas execuções
   // concorrentes poderiam criar a nota de hoje em duplicata.
   const loadChainRef = useRef<Promise<void>>(Promise.resolve())
-  const titlebarRef = useRef<HTMLDivElement>(null)
 
   // Carrega (ou cria) a nota diária de hoje e sincroniza o editor. Roda no
   // mount e a cada `keep-shown` — recomputa "hoje" a cada chamada, então a
@@ -182,17 +181,17 @@ export function KeepPanel() {
       else unlistenUpdated = fn
     })
 
-    // Volta à janela por clique ou Alt+Tab: devolve o foco ao editor. A
-    // posição numérica força o view.focus() (o focus() sem posição é ignorado
-    // quando o ProseMirror já se considera focado).
+    // Volta à janela por clique ou Alt+Tab: devolve o foco ao editor só se
+    // nada mais o tem (ex.: TimePicker aberto). view.focus() preserva a seleção.
     let unlistenFocus: (() => void) | undefined
     void getCurrentWindow()
       .onFocusChanged(({ payload: focused }) => {
         if (!focused) return
         const ed = editorRef.current
         if (!ed) return
-        if (titlebarRef.current?.contains(document.activeElement)) return
-        ed.commands.focus(ed.state.selection.anchor)
+        const active = document.activeElement
+        if (active && active !== document.body && active !== ed.view.dom) return
+        ed.view.focus()
       })
       .then((fn) => {
         if (cancelled) fn()
@@ -289,7 +288,7 @@ export function KeepPanel() {
   return (
     <TasksEnvProvider value={tasksEnv}>
     <div className={styles.window}>
-      <div ref={titlebarRef} className={styles.titlebar} data-tauri-drag-region>
+      <div className={styles.titlebar} data-tauri-drag-region>
         <span className={styles.title}>
           {headerDate} — {headerWeekday}
         </span>
@@ -320,10 +319,22 @@ export function KeepPanel() {
       <div
         className={styles.body}
         onMouseDown={(e) => {
-          // Clique no padding do corpo (fora do ProseMirror) foca o editor.
+          // Clique no padding do corpo (fora do ProseMirror) foca o editor:
+          // abaixo do conteúdo vai para o fim; nas laterais/topo, para a linha
+          // mais próxima. A barra de rolagem é ignorada.
           if (!editor || editor.view.dom.contains(e.target as Node)) return
+          if (e.nativeEvent.offsetX >= e.currentTarget.clientWidth) return
           e.preventDefault()
-          editor.commands.focus('end')
+          const rect = editor.view.dom.getBoundingClientRect()
+          if (e.clientY > rect.bottom) {
+            editor.commands.focus('end', { scrollIntoView: false })
+            return
+          }
+          const hit = editor.view.posAtCoords({
+            left: Math.min(Math.max(e.clientX, rect.left + 1), rect.right - 1),
+            top: Math.min(Math.max(e.clientY, rect.top + 1), rect.bottom - 1),
+          })
+          editor.commands.focus(hit ? hit.pos : 'end', { scrollIntoView: false })
         }}
       >
         <RemindersProvider value={remindersValue}>

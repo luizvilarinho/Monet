@@ -107,7 +107,8 @@ export function TaskCard({
       role="button"
       tabIndex={0}
       onKeyDown={(e) => {
-        if (e.key === 'Enter') onSelect(e)
+        // Enter nos botões internos (Plan today/Snooze) não abre a task.
+        if (e.key === 'Enter' && e.target === e.currentTarget) onSelect(e)
       }}
     >
       <div className={styles.top}>

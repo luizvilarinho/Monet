@@ -199,9 +199,8 @@ export function snoozeDate(t: Task, kind: SnoozeKind, todayKey: string): string 
   const base = current > todayKey ? current : todayKey
   if (kind === '1d') return addDaysKey(base, 1)
   if (kind === '1w') return addDaysKey(base, 7)
-  // Semana começa no domingo: de domingo, amanhã; senão, domingo + 8.
-  const sunday = startOfWeekKey(base)
-  return addDaysKey(sunday, base === sunday ? 1 : 8)
+  // Semana começa na segunda: a próxima segunda é sempre início + 7.
+  return addDaysKey(startOfWeekKey(base), 7)
 }
 
 // "3d" / "5h" / "<1h" a partir de uma duração em ms.
@@ -266,13 +265,8 @@ export function addDaysKey(key: string, n: number): string {
   return toDateKey(d.getFullYear(), d.getMonth(), d.getDate())
 }
 
-// Domingo da semana de `key` (a semana começa no domingo, como no Calendar).
+// Segunda-feira da semana de `key` (nas Tasks a semana vai de segunda a domingo).
 export function startOfWeekKey(key: string): string {
-  return addDaysKey(key, -parseKey(key).getDay())
-}
-
-// Segunda-feira da semana de `key` (usada só pela visão Week das Tasks).
-export function mondayOfWeekKey(key: string): string {
   return addDaysKey(key, -((parseKey(key).getDay() + 6) % 7))
 }
 
@@ -281,7 +275,7 @@ export function weekDayKeys(startKey: string): string[] {
   return Array.from({ length: 7 }, (_, i) => addDaysKey(startKey, i))
 }
 
-// Sábado da semana corrente.
+// Domingo da semana corrente.
 export function endOfWeekKey(todayKey: string): string {
   return addDaysKey(startOfWeekKey(todayKey), 6)
 }

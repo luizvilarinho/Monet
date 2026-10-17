@@ -84,7 +84,7 @@ export function WeeklyReview({
 
   const weekStart = startOfWeekKey(todayKey)
   const weekEnd = endOfWeekKey(todayKey)
-  const nextMonday = addDaysKey(weekStart, 8)
+  const nextMonday = addDaysKey(weekStart, 7)
   const weekLabel = `${formatDueShort(weekStart)} – ${formatDueShort(weekEnd)}`
 
   const done = useMemo(() => filterBySummary(projectTasks, 'doneWeek', todayKey), [projectTasks, todayKey])

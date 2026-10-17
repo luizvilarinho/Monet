@@ -6,7 +6,7 @@
 - Explorer report (código): DOCS/reports/17-10-2026/explorerreport_20261017024405_code.md
 - Explorer report (uso em produção): DOCS/reports/17-10-2026/explorerreport_20261017024224_usage.md
 - Plan report: DOCS/reports/17-10-2026/planreport_20261017030338.md
-- Review report: não gerado
+- Review report: DOCS/reports/17-10-2026/reviewreport_20261017043122.md
 
 ## Sessions
 ### Orchestrator — abertura — 20261017023427
@@ -131,3 +131,43 @@
 - Files removed:
   - nenhum
 - Left behind: "this week" nas demais superfícies (summary, Kanban, Weekly Review) continua dom–sáb, divergindo da Week (seg–dom), decisão do Coordenador se quiser alinhar. Sem verificação visual (só tsc).
+
+### CodeAgent — implementação inicial (semana seg–dom em todas as Tasks) — 2026-10-17
+- Summary: helper único `startOfWeekKey` em `src/lib/tasks.ts` passa a retornar a SEGUNDA (fórmula da antiga `mondayOfWeekKey`, que foi removida; WeekBoard migrada para `startOfWeekKey`). `endOfWeekKey` vira domingo (start + 6). "Next Monday" = início da semana + 7 em `snoozeDate`, `useTaskKeyboard` (TaskBatchBar) e WeeklyReview (domingo → amanhã; segunda → próxima segunda). Por derivação ficam seg–dom: `computeTaskSummary`/`summaryMatches` (week, doneWeek, weekTotal), `groupTasks` (thisWeek), Kanban (done this week), WeeklyReview (rótulo/listas), bloco `/tasks` (`filterTasksForBlock`), tool de chat `query_tasks` (this_week/next_week/done_this_week) e contexto do chat de notas (done this week via `summaryMatches`). Descrição da tool no `useChat.ts` corrigida para "Weeks start on Monday". Coerência: "This week" do summary = abertas não vencidas com plan ∈ [hoje, domingo], exatamente o que a Week corrente mostra nas colunas de dia. Calendar mensal (`CalendarView`, grade começando no domingo via `getDay()`) NÃO alterado: convenção própria de exibição, não usa os helpers. Quick add (dia da semana = próxima ocorrência incluindo hoje) e recorrência semanal (0 = domingo) independem do início da semana. `npx tsc --noEmit` e `npm run build` ok.
+- Files changed:
+  - src/lib/tasks.ts
+  - src/components/TasksView/WeekBoard.tsx
+  - src/components/TasksView/WeeklyReview.tsx
+  - src/components/TasksView/useTaskKeyboard.ts
+  - src/hooks/useChat.ts
+- Files created:
+  - nenhum
+- Files removed:
+  - nenhum
+- Left behind: Calendar mensal segue com semana começando no domingo (divergência visual intencional, decisão do Coordenador). Sem verificação visual.
+
+### CodeReviewAgent — 20261017043122
+- Summary: Review do commit 5fe86f7 + working tree (semana seg–dom). Contas de semana, persistência de metadados via ensureTasksTables (sem BEGIN/COMMIT), exclusão de definição, cópia na recorrência e agrupamento do Chat corretos; sem críticos. 1 importante: o onMouseDown do corpo da keep trata clique na barra de rolagem/padding como "focar no fim" (focus('end') com scrollIntoView salta para o fim da nota). Nits: onFocusChanged rouba foco do TimePicker/colapsa seleção; create/rename de metadado sem rollback em falha; peek do fim de semana não reseta após o drag; key={d.name}+autoFocus no MetadataManagerModal; Enter em Plan/Snooze do TaskCard também abre a task.
+- Verdict: APROVADO COM RESSALVAS
+- Output: DOCS/reports/17-10-2026/reviewreport_20261017043122.md
+
+### CodeAgent — ajuste final — 20261017050000
+- Summary: Ajustes do review 20261017043122. (1) [importante] KeepPanel `.body` onMouseDown: ignora clique na barra de rolagem (`offsetX >= clientWidth`); abaixo do conteúdo foca o fim, nas laterais/topo foca a linha mais próxima via `posAtCoords` (coords limitadas ao retângulo do ProseMirror), sempre com `scrollIntoView: false`. (2) `onFocusChanged` só refoca quando `activeElement` é `body` ou o próprio `view.dom` (não rouba foco do TimePicker/titlebar) e usa `view.focus()`, que preserva seleção de intervalo; `titlebarRef` ficou sem uso e foi removido. (3) WeekBoard: `peek` volta a `false` quando o drag termina. (4) MetadataManagerModal: `autoFocus` trocado por ref callback que foca só uma vez por abertura (reset quando fecha), então renomear não refoca o input. (5) TaskCard: Enter só abre a task quando o alvo é o próprio card. (6) Dead code: `.folderDragging` removido de `ChatSidebar.module.css`. `npx tsc --noEmit` e `npm run build` ok. Alterações seg–dom da working tree preservadas.
+- Files changed:
+  - src/components/KeepPanel/KeepPanel.tsx
+  - src/components/TasksView/WeekBoard.tsx
+  - src/components/TasksView/MetadataManagerModal.tsx
+  - src/components/TasksView/TaskCard.tsx
+  - src/components/ChatPanel/ChatSidebar.module.css
+- Files created:
+  - nenhum
+- Files removed:
+  - nenhum
+- Left behind: rollback otimista de `useMetadataDefs.create/rename` não implementado — segue o padrão de `useTaskStatuses` (regra de consistência), e a chave órfã resultante é inofensiva (invisível por `visibleMetadata`, sem uso em filtros). Etapa Ctrl+K e os ajustes acima sem validação manual em `tauri:dev` (só tsc/build).
+
+### Orchestrator — encerramento — 20261017050000
+- Summary: Rodada concluída. Commit 5fe86f7 (cards/metadados/Week/Chat/Ctrl+K) + working tree com semana seg–dom unificada em todas as superfícies de Tasks e ajustes do review (KeepPanel clique/foco, peek da Week, foco do MetadataManagerModal, Enter nos botões do card, CSS morto). Ficou para trás: rollback otimista em useMetadataDefs (mesmo padrão de useTaskStatuses); CalendarView mensal segue começando no domingo; validação manual em tauri:dev dos ajustes finais.
+- Inputs:
+  - DOCS/reports/17-10-2026/reviewreport_20261017043122.md
+- Decision: encerrar; próxima task = implementar o estudo de espaçamento (spacingreport_20261017041524.md) em sessão nova.
+- Next step: concluído

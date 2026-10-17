@@ -2547,7 +2547,7 @@ export function useChat(
           type: 'function',
           function: {
             name: 'query_tasks',
-            description: "Query the user's tasks (personal task list of Monet notes). Use it when the user asks about their tasks, deadlines, what is due, overdue or done. Dates are YYYY-MM-DD; 'do' is when the user plans to do it, 'deadline' is the delivery date. Weeks start on Sunday.",
+            description: "Query the user's tasks (personal task list of Monet notes). Use it when the user asks about their tasks, deadlines, what is due, overdue or done. Dates are YYYY-MM-DD; 'do' is when the user plans to do it, 'deadline' is the delivery date. Weeks start on Monday.",
             parameters: {
               type: 'object',
               properties: {
