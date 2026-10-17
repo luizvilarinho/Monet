@@ -1,28 +1,31 @@
 .bar {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin: 0 32px 8px;
-  padding: 4px 0 4px 8px;
+  gap: var(--space-1h);
+  /* Barra laranja no eixo do Editor. Embaixo vêm as tags da nota, que já
+     fazem a fronteira de 28px até o corpo; aqui só 16px até elas. */
+  margin: 0 var(--pad-content-x) var(--space-4);
+  /* 10px vertical e 14px após a barra (14 + 2px da borda = conteúdo a 16px
+     do eixo) são valores do estudo de espaçamento. */
+  padding: 10px 0 10px 14px;
   border-left: 2px solid var(--accent-task);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-muted, #606070);
 }
 
 .header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
 }
 
 .badge {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
   color: var(--accent-task);
   font-weight: 500;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
 }
 
 .project select,
@@ -31,9 +34,9 @@
   border: 1px solid transparent;
   border-radius: 4px;
   color: var(--text-secondary, #a0a0b8);
-  font-size: 11px;
+  font-size: 12px;
   font-family: inherit;
-  padding: 2px 4px;
+  padding: var(--space-1) var(--space-2);
   outline: none;
   cursor: pointer;
   min-width: 240px;
@@ -57,8 +60,8 @@
 .row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  column-gap: 16px;
-  row-gap: 4px;
+  column-gap: var(--space-6);
+  row-gap: var(--space-1h);
 }
 
 .row > .field:only-child {
@@ -74,12 +77,12 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  min-height: 24px;
+  min-height: var(--control-md);
   min-width: 0;
 }
 
 .label {
-  flex: 0 0 88px;
+  flex: 0 0 96px;
   color: var(--text-muted, #606070);
 }
 
@@ -114,9 +117,9 @@
   background: transparent;
   border: 1px solid var(--border, #333340);
   border-radius: 0;
-  padding: 2px 10px;
+  padding: var(--space-1) var(--space-2);
   font-family: inherit;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-muted, #606070);
   cursor: pointer;
   outline: none;
@@ -153,7 +156,7 @@
   gap: 4px;
   border: 1px solid transparent;
   border-radius: 4px;
-  padding: 2px 4px;
+  padding: var(--space-1) var(--space-2);
   cursor: pointer;
 }
 
@@ -174,7 +177,7 @@
   background: transparent;
   border: none;
   color: var(--text-secondary, #a0a0b8);
-  font-size: 11px;
+  font-size: 12px;
   font-family: inherit;
   padding: 0;
   outline: none;
@@ -241,9 +244,9 @@
   gap: 4px;
   background: transparent;
   border: none;
-  padding: 2px 4px;
+  padding: var(--space-1) var(--space-1h);
   font-family: inherit;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-muted, #606070);
   cursor: pointer;
 }
@@ -257,7 +260,7 @@
   align-items: center;
   background: transparent;
   border: none;
-  padding: 2px 4px;
+  padding: var(--space-1) var(--space-1h);
   color: var(--text-muted, #606070);
   cursor: pointer;
 }
@@ -271,9 +274,9 @@
   border: 1px solid transparent;
   border-radius: 4px;
   color: var(--text-secondary, #a0a0b8);
-  font-size: 11px;
+  font-size: 12px;
   font-family: inherit;
-  padding: 2px 4px;
+  padding: var(--space-1) var(--space-2);
   outline: none;
   cursor: pointer;
 }
@@ -292,8 +295,8 @@
 }
 
 .dayPill {
-  padding: 2px 0;
-  width: 22px;
+  padding: var(--space-1) 0;
+  width: var(--control-sm);
   text-align: center;
 }
 
@@ -302,9 +305,9 @@
   border: 1px solid transparent;
   border-radius: 4px;
   color: var(--text-secondary, #a0a0b8);
-  font-size: 11px;
+  font-size: 12px;
   font-family: inherit;
-  padding: 2px 4px;
+  padding: var(--space-1) var(--space-2);
   outline: none;
   min-width: 240px;
   max-width: 420px;
@@ -358,35 +361,40 @@
 .addWrap {
   position: relative;
   display: inline-flex;
-  margin-left: -4px;
+  /* Compensa o padding do .link: "+ Add property" alinha com os rótulos. */
+  margin-left: calc(-1 * var(--space-1h));
 }
 
+/* Popover em três blocos (propriedades existentes, nova, gerenciar) separados
+   por hairline. Todo texto alinha a 16px da borda: 8 do menu + 8 do item. */
 .addMenu {
   position: absolute;
   left: 0;
-  top: calc(100% + 2px);
+  top: calc(100% + var(--space-1));
   z-index: 20;
-  min-width: 260px;
+  min-width: 300px;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  padding: 6px;
+  align-items: stretch;
+  gap: var(--space-0);
+  padding: var(--space-2);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-lg);
   background: var(--surface-2);
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
 }
 
 .addItem {
   display: flex;
+  align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-3);
   width: 100%;
+  min-height: var(--control-md);
   background: transparent;
   border: none;
-  border-radius: 4px;
-  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  padding: var(--space-1h) var(--space-2);
   font-family: inherit;
   font-size: 12px;
   color: var(--text-primary);
@@ -410,18 +418,44 @@
 }
 
 .addTitle {
-  margin: 4px 0 0 4px;
-  font-size: 10px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  /* Rótulo 8px acima do formulário; texto no eixo dos .addItem. */
+  margin: 0;
+  padding: var(--space-1) var(--space-2) var(--space-1h);
+  font-size: 12px;
+  font-weight: 500;
   color: var(--text-muted);
+}
+
+/* Fronteira lista → "New property" (só quando há propriedades acima). */
+.addItem + .addTitle {
+  margin-top: var(--space-1h);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
 }
 
 .addCreate {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   width: 100%;
+}
+
+.addCreate > * {
+  min-height: var(--control-md);
+}
+
+.addMenu > .warning {
+  padding: var(--space-1h) var(--space-2) 0;
+}
+
+/* "Manage properties…": bloco próprio, separado do formulário. */
+.addMenu > .link:last-child {
+  justify-content: flex-start;
+  margin-top: var(--space-2);
+  padding: var(--space-2);
+  min-height: var(--control-md);
+  border-top: 1px solid var(--border);
+  border-radius: 0;
 }
 
 .addInput {
@@ -433,7 +467,7 @@
   color: var(--text-primary);
   font-size: 12px;
   font-family: inherit;
-  padding: 3px 6px;
+  padding: var(--space-1) var(--space-2);
   outline: none;
 }
 

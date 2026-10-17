@@ -54,10 +54,14 @@ interface CalendarViewProps {
   collapsed?: boolean
   onToggleCollapsed?: () => void
   onWidthChange?: (w: number) => void
+  // Falso na janela keep: a largura é fixa e o arrasto gravaria a largura da
+  // sidebar da main (localStorage compartilhado entre janelas).
+  resizable?: boolean
   tasks: Task[]
   todayKey: string
   onToggleTaskDone: (id: string, done: boolean) => void
-  onCreateTask: (scheduledDate: string, title: string, project: ProjectChoice) => void
+  /** Ausente (janela keep): esconde o "+ task". */
+  onCreateTask?: (scheduledDate: string, title: string, project: ProjectChoice) => void
   onOpenTask: (id: string) => void
 }
 
@@ -73,6 +77,7 @@ export function CalendarView({
   collapsed = false,
   onToggleCollapsed,
   onWidthChange,
+  resizable = true,
   tasks,
   todayKey,
   onToggleTaskDone,
@@ -267,7 +272,7 @@ export function CalendarView({
 
   function commitTaskDraft() {
     const title = taskDraft.trim()
-    if (title && selectedDay) onCreateTask(selectedDay, title, taskProject)
+    if (title && selectedDay) onCreateTask?.(selectedDay, title, taskProject)
     cancelTaskDraft()
   }
 
@@ -310,7 +315,7 @@ export function CalendarView({
 
   return (
     <aside className={`${styles.calendar} ${collapsed ? styles.collapsed : ''}`} style={{ width }}>
-      {!collapsed && <div className={styles.resizeHandle} onMouseDown={onMouseDown} />}
+      {!collapsed && resizable && <div className={styles.resizeHandle} onMouseDown={onMouseDown} />}
       {collapsed ? (
         <div className={styles.collapsedTop}>
           <button
@@ -425,13 +430,15 @@ export function CalendarView({
               )}
               <div className={styles.sectionTitle}>
                 <span>Tasks</span>
-                <button
-                  type="button"
-                  className={styles.addTaskBtn}
-                  onClick={() => setAddingTask(true)}
-                >
-                  + task
-                </button>
+                {onCreateTask && (
+                  <button
+                    type="button"
+                    className={styles.addTaskBtn}
+                    onClick={() => setAddingTask(true)}
+                  >
+                    + task
+                  </button>
+                )}
               </div>
               {addingTask && (
                 <div

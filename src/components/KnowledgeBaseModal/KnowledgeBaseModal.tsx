@@ -212,10 +212,10 @@ export function KnowledgeBaseModal({ open, onClose }: KnowledgeBaseModalProps) {
               <table className={styles.table}>
                 <thead>
                   <tr>
-                    <th className={styles.colName}>name</th>
-                    <th className={styles.colStatus}>status</th>
-                    <th className={styles.colCount}>files</th>
-                    <th className={styles.colActions}>actions</th>
+                    <th className={styles.colName}>Name</th>
+                    <th className={styles.colStatus}>Status</th>
+                    <th className={styles.colCount}>Files</th>
+                    <th className={styles.colActions}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>

@@ -13,7 +13,7 @@
   width: min(520px, 90vw);
   background: var(--bg-panel, #161618);
   border: 1px solid var(--border, #333340);
-  border-radius: 10px;
+  border-radius: var(--radius-xl);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -24,7 +24,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
+  padding: var(--space-3) var(--pad-modal);
   border-bottom: 1px solid var(--border, #333340);
 }
 
@@ -36,6 +36,15 @@
 }
 
 .close {
+  /* Área clicável mínima de 24×24 */
+  flex-shrink: 0;
+  width: var(--control-sm);
+  height: var(--control-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: var(--radius-sm);
   background: transparent;
   border: none;
   color: var(--text-muted, #606070);
@@ -49,24 +58,23 @@
 }
 
 .body {
-  padding: 16px;
+  padding: var(--pad-modal);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 .versions {
   display: grid;
   grid-template-columns: max-content 1fr;
-  gap: 4px 12px;
+  gap: var(--space-1) var(--space-3);
   align-items: baseline;
 }
 
 .versionLabel {
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 500;
   color: var(--text-muted, #606070);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
 .versionValue {
@@ -86,8 +94,8 @@
   overflow-y: auto;
   background: var(--surface-1, #1e1e22);
   border: 1px solid var(--border, #333340);
-  border-radius: 6px;
-  padding: 10px;
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
 }
 
 .notesContent {
@@ -108,7 +116,7 @@
 .progressArea {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-1h);
 }
 
 .downloadingText {
@@ -151,17 +159,17 @@
 
 .footer {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
   align-items: center;
-  padding: 12px 16px;
+  padding: var(--space-3) var(--pad-modal);
   border-top: 1px solid var(--border, #333340);
 }
 
 .primary,
 .secondary,
 .tertiary {
-  border-radius: 6px;
-  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  padding: var(--space-1h) var(--space-3);
   font-size: 12px;
   cursor: pointer;
   border: 1px solid var(--border, #333340);

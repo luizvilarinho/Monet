@@ -24,11 +24,12 @@
 }
 
 .header {
-  padding: 12px;
+  padding: var(--space-3) var(--pad-panel);
   flex-shrink: 0;
   border-bottom: 1px solid var(--border, #333340);
   display: flex;
-  gap: 6px;
+  align-items: center;
+  gap: var(--space-1h);
 }
 
 .newBtn,
@@ -36,12 +37,12 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 8px 10px;
+  gap: var(--space-1h);
+  padding: var(--space-2) var(--space-3);
   background: var(--accent, #7c6af5);
   color: #fff;
   border: 1px solid var(--accent, #7c6af5);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   font-size: 12px;
   font-family: inherit;
   cursor: pointer;
@@ -57,7 +58,6 @@
   background: transparent;
   color: var(--accent, #7c6af5);
   flex-shrink: 0;
-  padding: 8px 10px;
 }
 
 .newBtn:hover,
@@ -78,14 +78,14 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 8px;
+  padding: var(--pad-panel);
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-0);
 }
 
 .empty {
-  margin: 16px 8px;
+  margin: var(--space-4) var(--space-2);
   font-size: 12px;
   color: var(--text-muted, #606070);
   text-align: center;
@@ -95,15 +95,15 @@
 .folder {
   display: flex;
   flex-direction: column;
-  margin-bottom: 2px;
+  margin-bottom: var(--space-0);
 }
 
 .folderHeader {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  border-radius: 6px;
+  gap: var(--space-1h);
+  padding: var(--space-1h) var(--space-2);
+  border-radius: var(--radius-md);
   font-size: 12px;
   /* color: var(--text-secondary, #a0a0b8); */
   cursor: pointer;
@@ -148,10 +148,10 @@
   min-width: 0;
   background: var(--surface-2, #26262c);
   border: 1px solid var(--accent, #7c6af5);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--text-primary, #e8e8f0);
   font-size: 12px;
-  padding: 2px 6px;
+  padding: var(--space-0) var(--space-1h);
   outline: none;
   font-family: inherit;
 }
@@ -159,7 +159,7 @@
 .folderActions {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-0);
   opacity: 0;
   flex-shrink: 0;
 }
@@ -168,14 +168,29 @@
   opacity: 1;
 }
 
+/* Área clicável mínima de 24×24 sem crescer as linhas: os botões visíveis
+   continuam pequenos e o ::after centraliza uma caixa de 24px sobre eles. */
+.folderActionBtn::after,
+.folderSysPromptBtn::after,
+.convActionBtn::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: var(--control-sm);
+  height: var(--control-sm);
+  transform: translate(-50%, -50%);
+}
+
 .folderActionBtn {
+  position: relative;
   background: transparent;
   border: none;
   color: var(--text-muted, #606070);
   font-size: 14px;
   line-height: 1;
-  padding: 2px 4px;
-  border-radius: 4px;
+  padding: var(--space-0) var(--space-1);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -195,12 +210,13 @@
 /* System prompt icon — sempre visivel.
    Cinza muted no estado padrao, verde quando ha prompt salvo. */
 .folderSysPromptBtn {
+  position: relative;
   flex-shrink: 0;
   background: transparent;
   border: none;
   color: var(--text-muted, #606070);
-  padding: 2px 4px;
-  border-radius: 4px;
+  padding: var(--space-0) var(--space-1);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -232,32 +248,34 @@
   opacity: 1;
 }
 
+/* Corpo da pasta: 4px entre as conversas (antes 2px) para separar o
+   terceiro nível (grupo → pasta → conversa) */
 .folderBody {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding-left: 14px;
-  margin-top: 2px;
+  gap: var(--space-1);
+  padding-left: var(--space-3);
+  margin-top: var(--space-0);
   background-color: var(--surface-1);
 }
 
 .folderEmpty {
   font-size: 11px;
   color: var(--text-muted, #606070);
-  padding: 6px 10px;
+  padding: var(--space-1h) var(--space-2);
   font-style: italic;
 }
 
 .folderDropZone {
-  min-height: 8px;
+  min-height: var(--space-2);
 }
 
 .folderDropZoneActive {
   background: rgba(124, 106, 245, 0.1);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   outline: 1px dashed rgba(124, 106, 245, 0.4);
   outline-offset: -2px;
-  min-height: 24px;
+  min-height: var(--control-sm);
 }
 
 /* ─── Conversa ────────────────────────────────────────────────────────────── */
@@ -265,9 +283,11 @@
 .convActive {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
-  border-radius: 6px;
+  gap: var(--space-1h);
+  /* linha densa: 20px de line-height + 6px + 1px de borda = 34px */
+  padding: var(--space-1h) var(--space-2);
+  line-height: var(--lh-row);
+  border-radius: var(--radius-md);
   font-size: 12px;
   color: var(--text-secondary, #a0a0b8);
   background: transparent;
@@ -304,10 +324,12 @@
   min-width: 0;
   background: var(--surface-2, #26262c);
   border: 1px solid var(--accent, #7c6af5);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--text-primary, #e8e8f0);
   font-size: 12px;
-  padding: 2px 6px;
+  /* 1px de padding vertical + borda: cabe na linha de 20px */
+  padding: 1px var(--space-1h);
+  line-height: 16px;
   outline: none;
   font-family: inherit;
 }
@@ -315,7 +337,7 @@
 .convActions {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-0);
   opacity: 0;
   flex-shrink: 0;
 }
@@ -326,14 +348,15 @@
 }
 
 .convActionBtn {
+  position: relative;
   background: transparent;
   border: none;
   color: var(--text-muted, #606070);
   font-size: 14px;
   line-height: 1;
-  padding: 0 4px;
+  padding: 0 var(--space-1);
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -350,30 +373,36 @@
 }
 
 /* ─── Loose section ───────────────────────────────────────────────────────── */
+/* Rótulos de grupo: 16px acima (12 de margem + 4 de padding) e 8px até o
+   conteúdo (6 de padding + 2 do gap da lista) */
 .looseLabel {
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: 12px;
+  font-weight: 500;
   color: var(--text-muted, #606070);
-  padding: 8px 10px 4px;
-  margin-top: 8px;
+  padding: var(--space-1) var(--space-2) var(--space-1h);
+  margin-top: var(--space-3);
 }
 
 .groupHeader {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-1h);
   width: 100%;
   background: transparent;
   border: none;
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: 12px;
+  font-weight: 500;
   color: var(--text-muted, #606070);
-  padding: 8px 10px 4px;
-  margin-top: 8px;
+  padding: var(--space-1) var(--space-2) var(--space-1h);
+  margin-top: var(--space-3);
   text-align: left;
   cursor: pointer;
+}
+
+/* Primeiro elemento da lista: o padding de 16px da lista já basta */
+.list > .looseLabel:first-child,
+.list > .groupHeader:first-child {
+  margin-top: 0;
 }
 
 .groupHeader:hover {
@@ -385,15 +414,15 @@
 }
 
 .looseDropZone {
-  min-height: 8px;
+  min-height: var(--space-2);
 }
 
 .looseDropZoneActive {
   background: rgba(124, 106, 245, 0.1);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   outline: 1px dashed rgba(124, 106, 245, 0.4);
   outline-offset: -2px;
-  min-height: 24px;
+  min-height: var(--control-sm);
 }
 
 /* ─── Collapsed state ─────────────────────────────────────────────────────── */
@@ -402,7 +431,7 @@
 }
 
 .collapsedTop {
-  padding: 10px 0 0;
+  padding: var(--space-3) 0 0;
   display: flex;
   justify-content: center;
 }
@@ -411,8 +440,9 @@
   background: transparent;
   border: none;
   color: var(--text-muted, #606070);
-  padding: 2px 4px;
-  border-radius: 4px;
+  /* glifo de 16px + 4px de cada lado = área clicável de 24×24 */
+  padding: var(--space-1);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   display: inline-flex;
   align-items: center;

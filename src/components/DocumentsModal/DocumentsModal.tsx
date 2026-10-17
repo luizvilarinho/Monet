@@ -221,10 +221,10 @@ export function DocumentsModal({
             <table className={styles.table}>
               <thead>
                 <tr>
-                  <th className={styles.colName}>name</th>
-                  <th className={styles.colType}>type</th>
-                  <th className={styles.colStatus}>status</th>
-                  <th className={styles.colVisible}>visible</th>
+                  <th className={styles.colName}>Name</th>
+                  <th className={styles.colType}>Type</th>
+                  <th className={styles.colStatus}>Status</th>
+                  <th className={styles.colVisible}>Visible</th>
                 </tr>
               </thead>
               <tbody>

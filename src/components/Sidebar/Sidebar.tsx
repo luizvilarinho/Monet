@@ -264,7 +264,7 @@ export function Sidebar({
       ) : (
         <>
           <div className={styles.header}>
-            <span>notes</span>
+            <span>Notes</span>
             <div className={styles.headerActions}>
               <button
                 className={styles.headerToggle}

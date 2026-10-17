@@ -12,7 +12,8 @@
 .panel {
   background: var(--surface-1);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  /* Paleta é popover, não modal: raio de menu */
+  border-radius: var(--radius-lg);
   width: 520px;
   max-width: 90vw;
   overflow: hidden;
@@ -21,7 +22,7 @@
 
 .input {
   width: 100%;
-  padding: 12px 16px;
+  padding: var(--space-3) var(--space-4);
   font-size: 15px;
   background: transparent;
   border: none;
@@ -57,7 +58,7 @@
 .itemNotebook {
   font-size: 11px;
   color: var(--text-muted);
-  margin-bottom: 2px;
+  margin-bottom: var(--space-0);
 }
 
 .itemTitle {
@@ -68,14 +69,14 @@
 .itemPreview {
   font-size: 12px;
   color: var(--text-muted);
-  margin-top: 2px;
+  margin-top: var(--space-0);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .empty {
-  padding: 16px;
+  padding: var(--space-4);
   color: var(--text-muted);
   text-align: center;
   font-size: 13px;

@@ -4,21 +4,23 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 12px;
+  /* Barra da semana a 16px das colunas: separa como cabeçalho, acima da
+     grade de 12px das colunas. */
+  gap: var(--space-4);
+  padding: var(--space-4);
   background: var(--bg-app);
 }
 
 .top {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 .weekNav {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .navBtn,
@@ -27,8 +29,8 @@
   align-items: center;
   background: transparent;
   border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 3px 6px;
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-1h);
   font-family: inherit;
   font-size: 12px;
   color: var(--text-secondary);
@@ -46,7 +48,7 @@
 
 .weekendToggle {
   margin-left: auto;
-  gap: 5px;
+  gap: var(--space-1h);
 }
 
 /* Fim de semana oculto: sábado e domingo viram um trilho com a contagem. */
@@ -55,9 +57,10 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 8px 0;
-  border-radius: 6px;
+  /* Segue o padding da coluna (12px), como os demais containers de cards. */
+  gap: var(--gap-cards);
+  padding: var(--gap-cards) 0;
+  border-radius: var(--radius-md);
   background: var(--surface-1);
   border: 1px dashed var(--hair);
   font-family: inherit;
@@ -83,7 +86,7 @@
   color: var(--bg-panel);
   font-size: 11px;
   font-weight: 600;
-  padding: 1px 5px;
+  padding: var(--space-0) var(--space-1h);
   border-radius: 0;
 }
 
@@ -95,13 +98,12 @@
 
 .weekendLabel {
   writing-mode: vertical-rl;
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .range {
-  margin-left: 6px;
+  margin-left: var(--space-1h);
   font-size: 12px;
   color: var(--text-muted);
 }
@@ -110,18 +112,19 @@
   flex: 1;
   min-height: 0;
   display: grid;
-  gap: 8px;
+  gap: var(--gap-cards);
   overflow-x: auto;
 }
 
+/* Grade única de 12px: borda da coluna = cabeçalho→cards = card→card. */
 .column {
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 6px;
-  border-radius: 6px;
+  gap: var(--gap-cards);
+  padding: var(--gap-cards);
+  border-radius: var(--radius-md);
   background: var(--surface-1);
   border: 1px solid transparent;
 }
@@ -143,11 +146,10 @@
 .columnHeader {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 2px 4px;
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  gap: var(--space-1h);
+  padding: 0 var(--space-1);
+  font-size: 12px;
+  font-weight: 500;
   color: var(--text-secondary);
 }
 
@@ -164,13 +166,13 @@
 }
 
 .rail {
-  padding: 6px 0;
+  padding: var(--gap-cards) 0;
   align-items: center;
 }
 
 .rail .columnHeader {
   writing-mode: vertical-rl;
-  padding: 4px 0;
+  padding: var(--space-1) 0;
 }
 
 .cards {
@@ -179,7 +181,7 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--gap-cards);
 }
 
 .card {

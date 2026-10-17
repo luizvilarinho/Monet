@@ -31,8 +31,8 @@
       {
         "label": "keep",
         "title": "Monet Keep",
-        "width": 420,
-        "height": 520,
+        "width": 760,
+        "height": 600,
         "visible": false,
         "alwaysOnTop": true,
         "skipTaskbar": true,

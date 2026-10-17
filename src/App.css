@@ -22,8 +22,52 @@
   --border: #2e2f2cb3;
   --hair: #34344f;
 
+  /* Espaço: escala de 4px; 6px só no interior de controles e chips */
+  --space-0: 2px;    /* micro: ícone↔texto, barras de progresso */
+  --space-1: 4px;    /* item↔item em lista densa, padding de chip */
+  --space-1h: 6px;   /* interior de controle, faixa↔faixa no card */
+  --space-2: 8px;    /* rótulo↔conteúdo, gap de toolbar */
+  --space-3: 12px;   /* card↔card, padding de card e de coluna */
+  --space-4: 16px;   /* borda de painel lateral, bloco↔bloco */
+  --space-5: 20px;
+  --space-6: 24px;   /* seção↔seção, padding de modal */
+  --space-8: 32px;
+  --space-10: 40px;  /* margem lateral do editor */
+  --space-12: 48px;
+
+  /* Semânticos (o que os componentes devem usar primeiro) */
+  --pad-panel: var(--space-4);        /* NotebookList, Sidebar, Calendar, ChatSidebar */
+  --pad-content-x: var(--space-10);   /* Editor (título, tags, corpo, barra de propriedades) */
+  --pad-modal: var(--space-6);
+  --gap-section: var(--space-6);
+  --gap-cards: var(--space-3);
+  --pad-card: var(--space-3);
+
+  /* Line-height e ritmo */
+  --lh-tight: 1.25;   /* títulos e headings */
+  --lh-ui: 1.45;      /* padrão de UI */
+  --lh-body: 1.65;    /* corpo de nota, keep, chat */
+  --lh-row: 20px;     /* linhas de lista de 13px */
+  --flow-p: 0.75em;   /* parágrafo↔parágrafo */
+  --measure: 68ch;    /* largura máxima do corpo */
+
+  /* Raio (0 continua deliberado nos blocos de status e pills da task) */
+  --radius-sm: 4px;   /* inputs, chips, botões pequenos */
+  --radius-md: 6px;   /* linhas, botões, colunas */
+  --radius-lg: 8px;   /* popovers e menus */
+  --radius-xl: 10px;  /* modais */
+
+  /* Controles */
+  --control-sm: 24px; /* ícones de linha (área clicável), propriedades compactas */
+  --control-md: 28px; /* padrão */
+  --control-lg: 32px; /* inputs de modal, botões do composer */
+  --control-xl: 40px; /* send/stop do chat */
+
   font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
   font-size: 14px;
+  /* Padrão de UI explícito (antes herdava `normal` ≈ 1.2 do Inter). Botões e
+     inputs mantêm o line-height do user agent (não herdam). */
+  line-height: var(--lh-ui);
   color: var(--text-primary);
   background: var(--bg-app);
   color-scheme: dark;

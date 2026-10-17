@@ -600,7 +600,7 @@ export function ChatSidebar({
 
           {/* Loose conversations */}
           {(looseConversationIds.length > 0 || folders.length > 0) && (
-            <div className={styles.looseLabel}>conversations</div>
+            <div className={styles.looseLabel}>Conversations</div>
           )}
           <SortableContext
             id="__loose__"

@@ -69,6 +69,7 @@ Quando perceber uma dessas situações, implemente a solução simples e mencion
 - Alteração mínima. O diff deve conter APENAS o que foi planejado. Nada de formatação extra, imports reorganizados, ou linhas em branco removidas fora do escopo.
 - Use os padrões de código já existentes no projeto, mesmo que pareçam subótimos. Consistência com o codebase vale mais que qualidade local. Se um padrão existente parecer errado para o caso atual, pare e consulte antes de divergir.
 - Se encontrar complexidade injustificada em código existente, **não refatore**. Sinalize ao Orquestrador e siga o padrão atual no escopo da tarefa.
+- Espaçamento: ao editar um `.module.css`, use os tokens do `:root` de `src/App.css` (`--space-*`, `--pad-*`, `--gap-*`, `--lh-*`, `--radius-*`, `--control-*`) e troque os valores fora da escala (1, 3, 5, 7, 9, 10, 14px) das regras que tocar. Regras de uso em `DOCS/reports/17-10-2026/spacingreport_20261017041524.md` (seção 4).
 
 ## Não toque em:
 - Configuração do projeto

@@ -1179,6 +1179,43 @@ function App() {
     }
   }, [refreshNotes, createNote, saveNote])
 
+  // Cards do calendário da keep: abre a nota ou a task clicada. A nota é
+  // buscada na lista recém-lida do banco (pode ter sido criada pela keep).
+  const openTaskRef = useRef(openTask)
+  openTaskRef.current = openTask
+  useEffect(() => {
+    let cancelled = false
+    const unlisteners: Array<() => void> = []
+    const track = (p: Promise<() => void>) =>
+      void p.then((fn) => {
+        if (cancelled) fn()
+        else unlisteners.push(fn)
+      })
+    track(
+      listen<string>('open-note', (event) => {
+        void (async () => {
+          try {
+            const fresh = await refreshNotes()
+            const note = fresh.find((n) => n.id === event.payload)
+            if (!note) return
+            setTasksViewOpen(false)
+            setActiveMode('notebook')
+            setActiveSubjectId(null)
+            if (note.notebookId) setActiveNotebookId(note.notebookId)
+            setActiveId(note.id)
+          } catch (err) {
+            console.error('open-note failed', err)
+          }
+        })()
+      })
+    )
+    track(listen<string>('open-task', (event) => openTaskRef.current(event.payload)))
+    return () => {
+      cancelled = true
+      unlisteners.forEach((fn) => fn())
+    }
+  }, [refreshNotes])
+
   // ─── Lembretes ───────────────────────────────────────────────────────────
   // Estado "disparado" da nota diária ativa, para o Editor riscar os chips.
   const [firedReminderIds, setFiredReminderIds] = useState<Set<string>>(new Set())

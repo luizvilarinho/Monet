@@ -3,8 +3,9 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px;
+  /* Cabeçalho→lista com 16px, como a barra do Week; borda de 16px. */
+  gap: var(--space-4);
+  padding: var(--space-4);
   min-height: 0;
   background: var(--bg-app);
   border-right: 1px solid var(--border);
@@ -32,27 +33,25 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--gap-cards);
 }
 
 .group {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--gap-cards);
 }
 
 .groupHeader {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-1h);
   background: transparent;
   border: none;
-  padding: 2px 4px;
+  padding: var(--space-0) var(--space-1);
   font-family: inherit;
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 500;
   color: var(--accent-task);
   text-align: left;
   cursor: pointer;
@@ -67,7 +66,7 @@
 }
 
 .caret {
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .count {
@@ -81,7 +80,7 @@
 }
 
 .empty {
-  padding: 2px 4px;
+  padding: var(--space-0) var(--space-1);
   font-size: 12px;
   color: var(--text-muted);
 }
@@ -93,11 +92,11 @@
 .subgroup {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--gap-cards);
 }
 
 .subgroupLabel {
-  padding: 4px 8px 0;
+  padding: var(--space-1) var(--space-2) 0;
   font-size: 11px;
   font-weight: 600;
   color: var(--text-secondary);
@@ -120,7 +119,7 @@
 .clearDone {
   background: transparent;
   border: none;
-  padding: 2px 4px;
+  padding: var(--space-0) var(--space-1);
   font-family: inherit;
   font-size: 11px;
   color: var(--text-muted);

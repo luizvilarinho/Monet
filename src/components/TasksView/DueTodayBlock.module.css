@@ -1,28 +1,27 @@
 .block {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  margin: 0 32px 8px;
-  padding: 4px 0 4px 8px;
+  gap: var(--space-0);
+  /* Mesmo eixo lateral do editor (título, tags e corpo). */
+  margin: 0 var(--pad-content-x) var(--space-2);
+  padding: var(--space-1) 0 var(--space-1) var(--space-2);
   border-left: 2px solid var(--accent-task);
 }
 
 .heading {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
   color: var(--accent-task);
 }
 
 .item {
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  gap: var(--space-1h);
   min-width: 0;
   background: transparent;
   border: none;
-  padding: 1px 0;
+  padding: var(--space-0) 0;
   font-family: inherit;
   font-size: 13px;
   color: var(--text-primary);

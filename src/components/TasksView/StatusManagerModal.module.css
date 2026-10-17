@@ -11,13 +11,13 @@
 .card {
   background: var(--surface-2, #26262c);
   border: 1px solid var(--border, #333340);
-  border-radius: 10px;
-  padding: 20px;
+  border-radius: var(--radius-xl);
+  padding: var(--pad-modal);
   width: 90%;
   max-width: 520px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--space-4);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
 }
 
@@ -35,10 +35,13 @@
 }
 
 .close {
+  display: inline-flex;
+  align-items: center;
+  height: var(--control-sm);
   background: transparent;
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 4px 12px;
+  border-radius: var(--radius-md);
+  padding: 0 var(--space-3);
   font-family: inherit;
   font-size: 12px;
   color: var(--text-secondary);
@@ -52,7 +55,7 @@
 .list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-1h);
   max-height: 50vh;
   overflow-y: auto;
 }
@@ -61,7 +64,7 @@
 .create {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .swatch {
@@ -83,8 +86,9 @@
   min-width: 0;
   background: var(--surface-1);
   border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 4px 6px;
+  height: var(--control-md);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-1h);
   font-family: inherit;
   font-size: 13px;
   color: var(--text-primary);
@@ -100,8 +104,9 @@
   width: 56px;
   background: var(--surface-1);
   border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 4px 6px;
+  height: var(--control-md);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-1h);
   font-family: inherit;
   font-size: 12px;
   color: var(--text-primary);
@@ -112,15 +117,24 @@
   width: 56px;
 }
 
+/* Mesma largura do botão de excluir, para alinhar as linhas */
 .deleteSpacer {
-  width: 21px;
+  flex-shrink: 0;
+  width: var(--control-sm);
 }
 
+/* Área clicável mínima de 24×24 (glifo de 13px) */
 .delete {
+  flex-shrink: 0;
   display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-sm);
+  height: var(--control-sm);
+  border-radius: var(--radius-sm);
   background: transparent;
   border: none;
-  padding: 3px;
+  padding: 0;
   color: var(--text-muted);
   cursor: pointer;
 }
@@ -132,8 +146,9 @@
 .add {
   background: var(--accent);
   border: none;
-  border-radius: 6px;
-  padding: 5px 12px;
+  height: var(--control-md);
+  border-radius: var(--radius-md);
+  padding: 0 var(--space-3);
   font-family: inherit;
   font-size: 12px;
   color: #fff;

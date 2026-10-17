@@ -6,8 +6,9 @@
   flex-direction: column;
   min-height: 0;
   position: relative;
-  padding: 12px;
-  gap: 10px;
+  padding: var(--pad-panel);
+  /* rótulo → lista com 8px; a seção de tasks soma 16px de margem (24px) */
+  gap: var(--space-2);
 }
 
 .collapsed {
@@ -33,11 +34,10 @@
 }
 
 .header {
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: 12px;
+  font-weight: 500;
   color: var(--text-muted, #606070);
-  padding: 0 4px;
+  padding: 0 var(--space-1);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -47,7 +47,7 @@
 .headerActions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .headerAdd,
@@ -55,8 +55,9 @@
   background: transparent;
   border: none;
   color: var(--text-muted, #606070);
-  padding: 2px 4px;
-  border-radius: 4px;
+  /* glifo de 16px + 4px de cada lado = área clicável de 24×24 */
+  padding: var(--space-1);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -78,7 +79,7 @@
 .collapsedTop {
   display: flex;
   justify-content: center;
-  padding-top: 2px;
+  padding-top: var(--space-0);
 }
 
 .empty {
@@ -95,17 +96,19 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-0);
   overflow-y: auto;
   min-height: 0;
 }
 
+/* Linha densa: line-height explícito de 20px + 7px de padding = 34px */
 .list li {
-  padding: 8px 12px;
-  border-radius: 6px;
+  padding: 7px var(--space-3);
+  border-radius: var(--radius-md);
   color: var(--text-secondary, #a0a0b8);
   cursor: pointer;
   font-size: 13px;
+  line-height: var(--lh-row);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -119,7 +122,7 @@
 .row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-1h);
 }
 
 .list .row {
@@ -135,8 +138,8 @@
   color: var(--text-muted, #606070);
   cursor: grab;
   opacity: 0;
-  padding: 2px;
-  border-radius: 3px;
+  padding: var(--space-0);
+  border-radius: var(--radius-sm);
 }
 
 .dragHandle:active {
@@ -156,6 +159,7 @@
 }
 
 .rowMerge {
+  position: relative;
   flex-shrink: 0;
   width: 18px;
   height: 18px;
@@ -165,12 +169,23 @@
   background: transparent;
   border: none;
   color: var(--text-muted, #606070);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 14px;
   line-height: 1;
   opacity: 0;
   padding: 0;
+}
+
+/* Área clicável de 24×24 sem crescer a linha: o botão visível fica com 18px
+   e o pseudo-elemento estende 3px para cada lado (cabe no gap de 6px). */
+.rowMerge::after,
+.rowMove::after,
+.rowDelete::after,
+.rowAssign::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
 }
 
 .row:hover .rowMerge,
@@ -184,6 +199,7 @@
 }
 
 .rowMove {
+  position: relative;
   flex-shrink: 0;
   width: 18px;
   height: 18px;
@@ -193,7 +209,7 @@
   background: transparent;
   border: none;
   color: var(--text-muted, #606070);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 14px;
   line-height: 1;
@@ -212,6 +228,7 @@
 }
 
 .rowDelete {
+  position: relative;
   flex-shrink: 0;
   width: 18px;
   height: 18px;
@@ -221,7 +238,7 @@
   background: transparent;
   border: none;
   color: var(--text-muted, #606070);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 14px;
   line-height: 1;
@@ -245,6 +262,7 @@
 }
 
 .rowAssign {
+  position: relative;
   flex-shrink: 0;
   width: 18px;
   height: 18px;
@@ -254,7 +272,7 @@
   background: transparent;
   border: none;
   color: var(--text-muted, #606070);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 14px;
   line-height: 1;
@@ -280,10 +298,10 @@
 .subjectDropdown {
   position: absolute;
   right: 0;
-  top: calc(100% + 4px);
+  top: calc(100% + var(--space-1));
   background: var(--surface-2, #26262c);
   border: 1px solid var(--border, #333340);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   z-index: 100;
   min-width: 140px;
   overflow: hidden;
@@ -293,7 +311,8 @@
   display: block;
   width: 100%;
   text-align: left;
-  padding: 7px 10px;
+  padding: var(--space-1h) var(--space-3);
+  line-height: var(--lh-row);
   background: transparent;
   border: none;
   color: var(--text-secondary, #a0a0b8);

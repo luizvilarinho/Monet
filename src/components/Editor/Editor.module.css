@@ -11,12 +11,13 @@
 
 .notebookLabel {
   display: block;
-  padding: 20px 32px 0;
-  font-size: 11px;
+  /* Eixo único: rótulo, título, tags e corpo começam em --pad-content-x.
+     --editor-pad-top pode ser sobrescrito por quem embute o Editor
+     (ex.: coluna estreita do Reader). */
+  padding: var(--editor-pad-top, var(--space-8)) var(--pad-content-x) 0;
+  font-size: 12px;
   font-weight: 500;
   color: rgba(124, 106, 245, 0.6);
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
 }
 
 .titleRow {
@@ -32,10 +33,15 @@
   color: var(--text-primary, #e8e8f0);
   border: none;
   outline: none;
-  padding: 6px 32px 8px;
+  padding: var(--space-2) var(--pad-content-x) var(--space-3);
   font-size: 24px;
   font-weight: 600;
   letter-spacing: -0.01em;
+}
+
+/* Sem rótulo do caderno, o título abre a nota e herda o respiro do topo. */
+.titleRow:first-child > .title {
+  padding-top: var(--editor-pad-top, var(--space-8));
 }
 
 /* Nota diária do Calendar: título tem largura fixa (DD/MM/YYYY) para o dia
@@ -51,7 +57,7 @@
   font-size: 20px;
   font-weight: 500;
   white-space: nowrap;
-  padding-right: 32px;
+  padding-right: var(--pad-content-x);
 }
 
 .title::placeholder {
@@ -63,8 +69,10 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  padding: 0 32px 16px;
+  gap: var(--space-1h);
+  /* 28px entre as tags e o corpo (12 aqui + 16 no topo do corpo), com a
+     borda no meio: fronteira cabeçalho → conteúdo. */
+  padding: 0 var(--pad-content-x) var(--space-3);
   border-bottom: 1px solid var(--border, #333340);
 }
 
@@ -75,7 +83,7 @@
   background: transparent;
   border: 1px dashed var(--border, #333340);
   color: var(--text-muted, #606070);
-  padding: 3px 8px;
+  padding: var(--space-1) var(--space-2);
   border-radius: 999px;
   font-size: 12px;
   cursor: pointer;
@@ -92,7 +100,7 @@
   gap: 4px;
   background: var(--surface-1, #1e1e22);
   color: var(--text-secondary, #a0a0b8);
-  padding: 3px 8px;
+  padding: var(--space-1) var(--space-2);
   border-radius: 999px;
   font-size: 12px;
 }
@@ -115,7 +123,7 @@
   background: var(--surface-1, #1e1e22);
   border: 1px solid var(--accent, #7c6af5);
   color: var(--text-primary, #e8e8f0);
-  padding: 3px 8px;
+  padding: var(--space-1) var(--space-2);
   border-radius: 999px;
   font-size: 12px;
   outline: none;
@@ -194,17 +202,36 @@
 .proseEditor {
   outline: none;
   min-height: 100%;
-  padding: 20px 72px 14px 30px;
-  padding-bottom: 50vh;
+  /* Esquerda no eixo do cabeçalho; 72px à direita reservam a faixa do
+     HeadingNavigator; 50vh embaixo deixam rolar a última linha até o meio. */
+  padding: var(--space-4) 72px 50vh var(--pad-content-x);
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   font-size: 14px;
-  line-height: 1.6;
+  line-height: var(--lh-body);
   color: var(--text-primary, #e8e8f0);
   caret-color: var(--text-primary, #e8e8f0);
 }
 
+/* Medida: blocos de texto com no máximo --measure, alinhados à esquerda.
+   O ch é medido na fonte de cada bloco, então os headings dividem pela
+   própria escala para manter a largura do parágrafo. */
+.proseEditor > :global(*) {
+  max-width: var(--measure);
+}
+.proseEditor > :global(h1) { max-width: calc(var(--measure) / 1.6); }
+.proseEditor > :global(h2) { max-width: calc(var(--measure) / 1.35); }
+.proseEditor > :global(h3) { max-width: calc(var(--measure) / 1.15); }
+/* Tabelas e embeds (respostas de /comando, PDFs, consulta de tasks) usam a
+   largura toda do editor (node views do Tiptap vêm como div.node-<nome>). */
+.proseEditor > :global(.tableWrapper),
+.proseEditor > :global(table),
+.proseEditor > :global(.node-embedBlock),
+.proseEditor > :global(.node-tasksQueryBlock) {
+  max-width: none;
+}
+
 .proseEditor :global(p) {
-  margin: 0.4em 0;
+  margin: var(--flow-p) 0;
 }
 .proseEditor :global(p:first-child) {
   margin-top: 0;
@@ -219,8 +246,13 @@
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--text-primary, #e8e8f0);
-  line-height: 1.25;
-  margin: 0.9em 0 0.3em;
+  line-height: var(--lh-tight);
+  margin: 1.6em 0 0.5em;
+}
+.proseEditor :global(h1:first-child),
+.proseEditor :global(h2:first-child),
+.proseEditor :global(h3:first-child) {
+  margin-top: 0;
 }
 .proseEditor :global(h1) { font-size: 1.6em; }
 .proseEditor :global(h2) { font-size: 1.35em; }
@@ -259,9 +291,9 @@
 
 .proseEditor :global(pre) {
   background: var(--surface-2, #26262c);
-  border-radius: 6px;
-  padding: 12px 14px;
-  margin: 0.7em 0;
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  margin: var(--flow-p) 0;
   overflow-x: auto;
 }
 .proseEditor :global(pre code) {
@@ -272,7 +304,7 @@
 }
 
 .proseEditor :global(blockquote) {
-  margin: 0.6em 0;
+  margin: var(--flow-p) 0;
   padding: 0.2em 0.9em;
   border-left: 2px solid var(--accent, #7c6af5);
   color: var(--text-secondary, #a0a0b8);
@@ -286,7 +318,7 @@
 
 .proseEditor :global(ul),
 .proseEditor :global(ol) {
-  margin: 0.4em 0;
+  margin: var(--flow-p) 0;
   padding-left: 1.4em;
 }
 .proseEditor :global(ul) { list-style: disc; }
@@ -304,8 +336,8 @@
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
-  gap: 8px;
-  margin: 0.15em 0;
+  gap: var(--space-2);
+  margin: 0.3em 0;
 }
 /* label (checkbox) fica fixo na primeira posição */
 .proseEditor :global(ul[data-type="taskList"] li > label) {
@@ -330,6 +362,7 @@
   position: relative;
   vertical-align: middle;
   margin: 0;
+  /* Nudge óptico: centra o checkbox na primeira linha do texto. */
   margin-top: 3px;
   flex-shrink: 0;
 }
@@ -392,7 +425,8 @@
   display: none;
 }
 
-/* /comando executado com sucesso */
+/* /comando executado com sucesso — recuo pendurado: 2px de borda + 10px de
+   padding = -12px de margem, então o texto continua no eixo do corpo. */
 .proseEditor :global(p.monetCmdExecuted) {
   color: var(--accent-ai, #5dcaa5);
   background-color: rgba(93, 202, 165, 0.12);
@@ -576,8 +610,8 @@
   display: block;
   max-width: 100%;
   height: auto;
-  border-radius: 4px;
-  margin: 0.6em 0;
+  border-radius: var(--radius-sm);
+  margin: var(--flow-p) 0;
   background: var(--surface-1, #1e1e22);
 }
 
@@ -592,13 +626,13 @@
   border-collapse: collapse;
   table-layout: fixed;
   width: 100%;
-  margin: 0.7em 0;
+  margin: var(--flow-p) 0;
   overflow: hidden;
 }
 .proseEditor :global(table td),
 .proseEditor :global(table th) {
   border: 1px solid var(--border, #333340);
-  padding: 6px 10px;
+  padding: var(--space-1h) var(--space-2);
   vertical-align: top;
   position: relative;
   min-width: 60px;
@@ -627,12 +661,12 @@
 }
 .proseEditor :global(.tableWrapper) {
   overflow-x: auto;
-  margin: 0.7em 0;
+  margin: var(--flow-p) 0;
 }
 /* Tabela como 1º bloco: reserva espaço para a barra de tabela (ancorada
    acima do <table>) não ser cortada pelo topo do container de scroll. */
 .proseEditor > :global(.tableWrapper:first-child) {
-  margin-top: 32px;
+  margin-top: var(--space-8);
 }
 .proseEditor :global(.resize-cursor) {
   cursor: col-resize;

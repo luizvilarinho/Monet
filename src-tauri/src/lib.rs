@@ -70,6 +70,20 @@ fn open_main_window(app: AppHandle) {
     show_and_focus_window(&app, "main");
     let _ = app.emit_to("main", "open-today-note", ());
 }
+
+// Cards do calendario da keep: mostra/foca a main e pede a ela para abrir a
+// nota (ou a task) clicada.
+#[tauri::command]
+fn open_note_in_main(app: AppHandle, note_id: String) {
+    show_and_focus_window(&app, "main");
+    let _ = app.emit_to("main", "open-note", note_id);
+}
+
+#[tauri::command]
+fn open_task_in_main(app: AppHandle, task_id: String) {
+    show_and_focus_window(&app, "main");
+    let _ = app.emit_to("main", "open-task", task_id);
+}
 use tokio::sync::oneshot;
 use tokio::time::timeout;
 
@@ -1727,6 +1741,8 @@ pub fn run() {
             delete_chat_doc,
             export_markdown,
             open_main_window,
+            open_note_in_main,
+            open_task_in_main,
             vec_db::vec_db_smoke_test,
             documents::documents_upload_global,
             documents::documents_reindex,

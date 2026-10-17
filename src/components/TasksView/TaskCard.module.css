@@ -5,11 +5,13 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 0 0 6px;
+  /* Grade de espaço: 6px entre faixas, 12px nas laterais, 10px embaixo
+     (o padding inferior é o primeiro recuo se a densidade pesar). */
+  gap: var(--space-1h);
+  padding: 0 0 10px;
   background: var(--bg-app);
   border: 1px solid var(--hair);
-  border-radius: 0 4px 4px 4px;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) var(--radius-sm);
   cursor: pointer;
   outline: none;
 }
@@ -37,20 +39,23 @@
   display: flex;
   align-items: stretch;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-2);
   font-size: 11px;
   line-height: 1.5;
 }
 
+/* Bloco de status: cantos quadrados de propósito. O -1px encosta o bloco
+   na borda do card; o padding vertical de 3px mantém o texto do bloco 2px
+   acima do deadline (padding-top 4px), como antes (nudge óptico). */
 .block {
   margin: -1px 0 0 -1px;
   background: var(--st);
   color: var(--bg-panel);
   font-weight: 600;
-  padding: 2px 8px;
+  padding: 3px var(--pad-card);
   border-radius: 0;
   display: inline-flex;
-  gap: 5px;
+  gap: var(--space-1h);
   align-items: center;
   white-space: nowrap;
   min-width: 0;
@@ -70,9 +75,9 @@
 
 .stCompact {
   display: inline-flex;
-  gap: 5px;
+  gap: var(--space-1h);
   align-items: center;
-  padding: 3px 0 0 8px;
+  padding: var(--space-1) 0 0 var(--pad-card);
   color: var(--text-muted);
 }
 
@@ -83,10 +88,10 @@
 }
 
 .due {
-  padding: 3px 8px 0 0;
+  padding: var(--space-1) var(--pad-card) 0 0;
   flex-shrink: 0;
   display: inline-flex;
-  gap: 3px;
+  gap: var(--space-1);
   align-items: center;
   color: var(--text-secondary);
   white-space: nowrap;
@@ -98,15 +103,15 @@
 }
 
 .body {
-  padding: 0 8px;
+  padding: 0 var(--pad-card);
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--space-1);
 }
 
 .titleRow {
   display: flex;
-  gap: 6px;
+  gap: var(--space-1h);
   align-items: flex-start;
 }
 
@@ -135,7 +140,7 @@
 
 .ctx {
   display: flex;
-  gap: 6px;
+  gap: var(--space-1h);
   align-items: center;
   min-width: 0;
   font-size: 11px;
@@ -146,7 +151,7 @@
 .project {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
   min-width: 0;
   flex-shrink: 1;
 }
@@ -182,11 +187,13 @@
 .kv {
   display: grid;
   grid-template-columns: auto 1fr;
-  column-gap: 10px;
-  row-gap: 1px;
+  column-gap: var(--space-3);
+  row-gap: 0;
   font-size: 11px;
   line-height: 1.5;
-  padding: 4px 8px 0;
+  /* Divisória recuada no eixo do texto, 6px acima dos metadados. */
+  margin: 0 var(--pad-card);
+  padding: var(--space-1h) 0 0;
   border-top: 1px solid var(--hair);
 }
 
@@ -213,27 +220,27 @@
 
 .foot {
   display: flex;
-  gap: 10px;
+  gap: var(--space-3);
   align-items: center;
   flex-wrap: wrap;
-  row-gap: 2px;
+  row-gap: var(--space-0);
   font-size: 11px;
   line-height: 1.5;
   color: var(--text-muted);
-  padding: 0 8px;
+  padding: 0 var(--pad-card);
 }
 
 .chip {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: var(--space-1);
   white-space: nowrap;
 }
 
 .bar {
   display: inline-flex;
-  gap: 2px;
-  margin-left: 2px;
+  gap: var(--space-0);
+  margin-left: var(--space-0);
 }
 
 .bar i {
@@ -269,22 +276,30 @@
 .actions {
   margin-left: auto;
   display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  padding-top: 2px;
+  align-items: flex-start;
 }
 
+/* Sem deadline à direita: 6px + a folga interna do botão (≈5px) deixam o
+   ícone no eixo de 12px do card. */
 .actions:last-child {
-  padding-right: 6px;
+  padding-right: var(--space-1h);
 }
 
+/* Área de clique de 24×24 com o glifo de 13px. A margem negativa embaixo
+   faz o botão ocupar só 20px no fluxo, para a faixa do topo não crescer
+   (nem pular) quando as ações aparecem no hover. */
 .action {
   flex-shrink: 0;
   display: none;
   align-items: center;
+  justify-content: center;
+  width: var(--control-sm);
+  height: var(--control-sm);
+  margin-bottom: calc(var(--space-1) * -1);
   background: transparent;
   border: none;
-  padding: 1px 2px;
+  border-radius: var(--radius-sm);
+  padding: 0;
   color: var(--text-muted);
   cursor: pointer;
 }
@@ -318,12 +333,12 @@
 .snoozeMenu {
   position: absolute;
   right: 0;
-  top: calc(100% + 2px);
+  top: calc(100% + var(--space-0));
   z-index: 20;
   min-width: 110px;
-  padding: 3px;
+  padding: var(--space-1);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-lg);
   background: var(--surface-2);
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
 }
@@ -333,8 +348,8 @@
   width: 100%;
   background: transparent;
   border: none;
-  border-radius: 4px;
-  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
   font-family: inherit;
   font-size: 12px;
   color: var(--text-primary);

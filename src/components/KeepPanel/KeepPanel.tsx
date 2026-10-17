@@ -22,6 +22,8 @@ import { RemindersProvider } from '../Editor/RemindersContext'
 import { TasksProvider } from '../Editor/TasksContext'
 import { taskStatusPluginKey, type TaskStatusStorage } from '../Editor/TaskStatus'
 import { TimePicker } from '../Editor/TimePicker'
+import { CalendarView } from '../CalendarView/CalendarView'
+import { isTaskBodyNote } from '../../lib/tasks'
 import styles from './KeepPanel.module.css'
 
 function getMarkdown(editor: TiptapEditor): string {
@@ -29,11 +31,29 @@ function getMarkdown(editor: TiptapEditor): string {
   return storage.markdown?.getMarkdown() ?? editor.getText()
 }
 
-// Janela rápida Ctrl+K: edita a nota diária de HOJE do Calendar. A nota é
-// recarregada do banco a cada exibição da janela (evento `keep-shown` emitido
-// pelo Rust ao mostrar) — cobre edições feitas na main e a virada do dia.
+const CALENDAR_COLLAPSED_KEY = 'monet:keep-calendar-collapsed'
+
+function readCalendarCollapsed(): boolean {
+  try {
+    return localStorage.getItem(CALENDAR_COLLAPSED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+// Janela rápida Ctrl+K: calendário à esquerda e, à direita, o corpo da nota
+// diária do dia escolhido (HOJE ao abrir). A nota é recarregada do banco a cada
+// exibição da janela (evento `keep-shown` emitido pelo Rust ao mostrar) —
+// cobre edições feitas na main e a virada do dia.
 export function KeepPanel() {
   const [note, setNote] = useState<Note | null>(null)
+  // Todas as notas: pontos do calendário e cards do dia selecionado.
+  const [allNotes, setAllNotes] = useState<Note[]>([])
+  const [calendarCollapsed, setCalendarCollapsed] = useState(readCalendarCollapsed)
+  // Remonta o calendário a cada exibição: volta ao mês e ao dia de hoje.
+  const [calendarKey, setCalendarKey] = useState(0)
+  // Dia da nota aberta no editor (recarga por `calendar-note-updated`).
+  const dayRef = useRef<Date>(new Date())
   const [firedIds, setFiredIds] = useState<Set<string>>(new Set())
   const [timePickerPos, setTimePickerPos] = useState<{ top: number; left: number } | null>(null)
   const timePickerInsertPosRef = useRef<number>(0)
@@ -87,6 +107,7 @@ export function KeepPanel() {
       const updated: Note = { ...current, content: md, updatedAt: Date.now() }
       noteRef.current = updated
       setNote(updated)
+      setAllNotes((prev) => prev.map((n) => (n.id === updated.id ? updated : n)))
       void storage.saveNote(updated).catch((err) => {
         console.error('keep: failed to save note', err)
       })
@@ -98,20 +119,22 @@ export function KeepPanel() {
 
   // Serializa as cargas da nota do dia: mount e `keep-shown` podem disparar
   // quase juntos (e o StrictMode duplica efeitos em dev) — duas execuções
-  // concorrentes poderiam criar a nota de hoje em duplicata.
+  // concorrentes poderiam criar a nota do dia em duplicata.
   const loadChainRef = useRef<Promise<void>>(Promise.resolve())
+  // Preenchida pelo efeito abaixo; usada pelo clique num dia do calendário.
+  const loadDayRef = useRef<(date: Date, opts?: { focus?: boolean }) => void>(() => {})
 
-  // Carrega (ou cria) a nota diária de hoje e sincroniza o editor. Roda no
-  // mount e a cada `keep-shown` — recomputa "hoje" a cada chamada, então a
-  // virada do dia é coberta na próxima exibição da janela.
+  // Carrega (ou cria) a nota diária do dia e sincroniza o editor. Roda no
+  // mount e a cada `keep-shown` com HOJE — recomputa a data a cada exibição,
+  // então a virada do dia é coberta — e no clique de um dia do calendário.
   useEffect(() => {
     if (!editor) return
 
     let cancelled = false
 
-    async function doLoadOrCreateTodayNote() {
+    async function doLoadOrCreateDayNote(date: Date) {
       try {
-        const title = formatCalendarTitle(new Date())
+        const title = formatCalendarTitle(date)
         const all = await storage.getNotes()
         let today = all.find(
           (n) => n.notebookId === CALENDAR_NOTEBOOK_ID && n.title === title
@@ -129,6 +152,7 @@ export function KeepPanel() {
             updatedAt: now,
           }
           await storage.saveNote(today)
+          all.push(today)
         }
         // Sincroniza o editor ANTES de ler os fired ids: se a leitura de
         // reminder_state falhar (ex.: migration quebrada em builds antigos do
@@ -136,6 +160,10 @@ export function KeepPanel() {
         // continua funcionando. Antes o throw zereava noteRef e o texto
         // digitado se perdia.
         if (cancelled) return
+        dayRef.current = date
+        // Antes do setContent: um onUpdate imediato já grava na nota nova.
+        noteRef.current = today
+        setAllNotes(all)
         setNote(today)
         editorRef.current?.commands.setContent(today.content, { emitUpdate: false })
 
@@ -149,21 +177,27 @@ export function KeepPanel() {
 
     // `focus`: foca o editor só DEPOIS do setContent da recarga. A posição
     // explícita ('end') força o view.focus() mesmo com hasFocus() já true.
-    function loadOrCreateTodayNote(opts: { focus?: boolean } = {}) {
-      loadChainRef.current = loadChainRef.current.then(doLoadOrCreateTodayNote)
+    // `date` null = dia aberto no momento em que a carga roda (recarga): não
+    // volta a um dia anterior se um clique de dia ainda estiver na fila.
+    function loadOrCreateDayNote(date: Date | null, opts: { focus?: boolean } = {}) {
+      loadChainRef.current = loadChainRef.current.then(() =>
+        doLoadOrCreateDayNote(date ?? dayRef.current)
+      )
       if (opts.focus) {
         loadChainRef.current = loadChainRef.current.then(() => {
           editorRef.current?.commands.focus('end')
         })
       }
     }
+    loadDayRef.current = loadOrCreateDayNote
 
-    loadOrCreateTodayNote()
+    loadOrCreateDayNote(new Date())
     loadNotebooksRef.current()
 
     let unlisten: (() => void) | undefined
     void listen('keep-shown', () => {
-      loadOrCreateTodayNote({ focus: true })
+      setCalendarKey((k) => k + 1)
+      loadOrCreateDayNote(new Date(), { focus: true })
       loadNotebooksRef.current()
       void reloadTasksRef.current()
     }).then((fn) => {
@@ -171,11 +205,11 @@ export function KeepPanel() {
       else unlisten = fn
     })
 
-    // A main escreveu na nota de hoje (Weekly review): recarrega para o
+    // A main escreveu na nota aberta (Weekly review): recarrega para o
     // autosave daqui não sobrescrever o texto novo.
     let unlistenUpdated: (() => void) | undefined
     void listen<{ noteId: string }>('calendar-note-updated', (event) => {
-      if (noteRef.current?.id === event.payload.noteId) loadOrCreateTodayNote()
+      if (noteRef.current?.id === event.payload.noteId) loadOrCreateDayNote(null)
     }).then((fn) => {
       if (cancelled) fn()
       else unlistenUpdated = fn
@@ -284,6 +318,24 @@ export function KeepPanel() {
   )
   const headerDate = note?.title ?? formatCalendarTitle(new Date())
   const headerWeekday = getWeekdayName(parseCalendarTitle(headerDate) ?? new Date())
+  const calendarNotes = useMemo(
+    () => allNotes.filter((n) => n.notebookId === CALENDAR_NOTEBOOK_ID),
+    [allNotes]
+  )
+  const datedNotes = useMemo(() => allNotes.filter((n) => !!n.date), [allNotes])
+  const activeNotes = useMemo(() => allNotes.filter((n) => !isTaskBodyNote(n)), [allNotes])
+
+  function toggleCalendarCollapsed() {
+    setCalendarCollapsed((prev) => {
+      const next = !prev
+      try {
+        localStorage.setItem(CALENDAR_COLLAPSED_KEY, next ? '1' : '0')
+      } catch {
+        // preferência de conveniência: sem storage, só não persiste
+      }
+      return next
+    })
+  }
 
   return (
     <TasksEnvProvider value={tasksEnv}>
@@ -316,6 +368,32 @@ export function KeepPanel() {
           </button>
         </div>
       </div>
+      <div className={styles.main}>
+      <CalendarView
+        key={calendarKey}
+        notes={calendarNotes}
+        datedNotes={datedNotes}
+        notebooks={notebooks}
+        recentlyActiveNotes={activeNotes}
+        onDayClick={(date) => loadDayRef.current(date, { focus: true })}
+        onNoteClick={(noteId) => {
+          void invoke('open_note_in_main', { noteId })
+          void getCurrentWindow().hide()
+        }}
+        width={calendarCollapsed ? 48 : 220}
+        collapsed={calendarCollapsed}
+        onToggleCollapsed={toggleCalendarCollapsed}
+        resizable={false}
+        tasks={tasks}
+        todayKey={todayKey}
+        onToggleTaskDone={(id, done) => {
+          void updateTask(id, { status: done ? 'done' : 'todo' })
+        }}
+        onOpenTask={(taskId) => {
+          void invoke('open_task_in_main', { taskId })
+          void getCurrentWindow().hide()
+        }}
+      />
       <div
         className={styles.body}
         onMouseDown={(e) => {
@@ -342,6 +420,7 @@ export function KeepPanel() {
             <EditorContent editor={editor} className={styles.editorHost} />
           </TasksProvider>
         </RemindersProvider>
+      </div>
       </div>
       {timePickerPos && (
         <TimePicker

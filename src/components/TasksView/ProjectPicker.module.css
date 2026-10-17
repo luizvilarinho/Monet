@@ -1,11 +1,11 @@
 .control {
   background: var(--surface-2, #26262c);
   border: 1px solid var(--border, #333340);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--text-primary, #e8e8f0);
   font-size: 12px;
   font-family: inherit;
-  padding: 4px 6px;
+  padding: var(--space-1) var(--space-1h);
   outline: none;
   min-width: 0;
   max-width: 100%;

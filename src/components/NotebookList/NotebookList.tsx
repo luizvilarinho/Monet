@@ -509,7 +509,7 @@ export function NotebookList({
         <div className={styles.scrollArea}>
           <section className={styles.section}>
             <div className={styles.header}>
-              <span>notebooks</span>
+              <span>Notebooks</span>
               <div className={styles.headerActions}>
                 <button
                   className={styles.headerToggle}
@@ -600,7 +600,7 @@ export function NotebookList({
                           {nb.id === activeId && (
                             <>
                               <div className={styles.subjectHeader}>
-                                <span className={styles.subjectHeaderLabel}>subjects</span>
+                                <span className={styles.subjectHeaderLabel}>Subjects</span>
                                 <button
                                   className={styles.subjectAdd}
                                   onClick={onCreateSubject}
@@ -652,7 +652,7 @@ export function NotebookList({
           <hr className={styles.divider} />
 
           <section className={styles.section}>
-            <div className={styles.header}>tags</div>
+            <div className={styles.header}>Tags</div>
             <ul className={styles.list}>
               {tags.length === 0 ? (
                 <li className={styles.empty}>no tags</li>

@@ -11,7 +11,7 @@
 .panel {
   background: var(--surface-1, #1e1e22);
   border: 1px solid var(--border, #333340);
-  border-radius: 8px;
+  border-radius: var(--radius-xl);
   width: 360px;
   max-width: 90vw;
   max-height: 60vh;
@@ -20,7 +20,7 @@
 }
 
 .title {
-  padding: 14px 16px;
+  padding: var(--space-3) var(--pad-modal);
   border-bottom: 1px solid var(--border, #333340);
   font-size: 13px;
   color: var(--text-muted, #606070);
@@ -36,7 +36,7 @@
 }
 
 .item {
-  padding: 8px 16px;
+  padding: var(--space-2) var(--pad-modal);
   cursor: pointer;
   font-size: 13px;
   color: var(--text-primary, #e8e8f0);
@@ -57,10 +57,10 @@
 }
 
 .footer {
-  padding: 10px 16px;
+  padding: var(--space-3) var(--pad-modal);
   border-top: 1px solid var(--border, #333340);
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
   justify-content: flex-end;
   flex-shrink: 0;
 }
@@ -69,8 +69,9 @@
   background: var(--accent, #7c6af5);
   color: #fff;
   border: none;
-  border-radius: 4px;
-  padding: 5px 14px;
+  border-radius: var(--radius-sm);
+  height: var(--control-md);
+  padding: 0 var(--space-3);
   font-size: 12px;
   cursor: pointer;
 }
@@ -88,8 +89,9 @@
   background: transparent;
   border: 1px solid var(--border, #333340);
   color: var(--text-muted, #606070);
-  border-radius: 4px;
-  padding: 5px 14px;
+  border-radius: var(--radius-sm);
+  height: var(--control-md);
+  padding: 0 var(--space-3);
   font-size: 12px;
   cursor: pointer;
 }

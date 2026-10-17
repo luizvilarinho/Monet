@@ -4,13 +4,21 @@
   display: inline-flex;
 }
 
+/* O ::after amplia a área de clique para 24×24 sem crescer o cabeçalho. */
 .swatch {
+  position: relative;
   width: 12px;
   height: 12px;
   padding: 0;
   border-radius: 50%;
   border: 1px solid transparent;
   cursor: pointer;
+}
+
+.swatch::after {
+  content: '';
+  position: absolute;
+  inset: calc((var(--control-sm) - 12px) / -2);
 }
 
 .swatchNone {
@@ -21,11 +29,11 @@
 .popover {
   position: absolute;
   right: 0;
-  top: calc(100% + 4px);
+  top: calc(100% + var(--space-1));
   z-index: 20;
-  padding: 6px 8px;
+  padding: var(--space-1h) var(--space-2);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-lg);
   background: var(--surface-2);
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
 }

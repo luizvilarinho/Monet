@@ -14,7 +14,7 @@
   max-height: 80vh;
   background: var(--bg-panel, #161618);
   border: 1px solid var(--border, #333340);
-  border-radius: 10px;
+  border-radius: var(--radius-xl);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -25,7 +25,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
+  /* 16px horizontal alinha o título com o texto da barra de seções */
+  padding: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--border, #333340);
 }
 
@@ -37,6 +38,14 @@
 }
 
 .close {
+  /* Área clicável mínima de 24×24 */
+  width: var(--control-sm);
+  height: var(--control-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: var(--radius-sm);
   background: transparent;
   border: none;
   color: var(--text-muted, #606070);
@@ -58,7 +67,7 @@
 .sidebar {
   width: 200px;
   border-right: 1px solid var(--border, #333340);
-  padding: 12px 8px;
+  padding: var(--space-3) var(--space-2);
   background: var(--bg-app, #0e0e10);
 }
 
@@ -68,7 +77,7 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .section,
@@ -78,8 +87,8 @@
   background: transparent;
   border: none;
   color: var(--text-secondary, #a0a0b8);
-  padding: 8px 10px;
-  border-radius: 6px;
+  padding: var(--space-2) 10px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   font-size: 13px;
 }
@@ -96,14 +105,16 @@
 
 .content {
   flex: 1;
-  padding: 20px;
+  padding: var(--pad-modal);
   overflow-y: auto;
 }
 
+/* Ritmo do form: gap de 6px (rótulo→controle, título→ajuda);
+   blocos novos (rótulo, ações) somam margem para chegar a 16px do anterior */
 .form {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-1h);
   max-width: 420px;
 }
 
@@ -123,14 +134,16 @@
 .label {
   font-size: 12px;
   color: var(--text-secondary, #a0a0b8);
-  margin-top: 8px;
+  /* 10 + gap de 6 = 16px do campo anterior */
+  margin-top: calc(var(--space-4) - var(--space-1h));
 }
 
 .input {
   background: var(--surface-1, #1e1e22);
   border: 1px solid var(--border, #333340);
-  border-radius: 6px;
-  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  height: var(--control-lg);
+  padding: var(--space-2) 10px;
   color: var(--text-primary, #e8e8f0);
   font-size: 13px;
   outline: none;
@@ -143,14 +156,14 @@
 
 .actions {
   display: flex;
-  gap: 8px;
-  margin-top: 8px;
+  gap: var(--space-2);
+  margin-top: calc(var(--space-4) - var(--space-1h));
 }
 
 .primary,
 .secondary {
-  border-radius: 6px;
-  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  padding: var(--space-1h) var(--space-3);
   font-size: 12px;
   cursor: pointer;
   border: 1px solid var(--border, #333340);
@@ -184,27 +197,29 @@
 
 .statusOk {
   color: var(--accent-ai, #5dcaa5);
-  margin: 4px 0 0;
+  margin: 0;
   font-size: 12px;
 }
 
 .statusError {
   color: var(--accent-warn, #ef9f27);
-  margin: 4px 0 0;
+  margin: 0;
   font-size: 12px;
 }
 
 .footNote {
   color: var(--text-muted, #606070);
   font-size: 11px;
-  margin-top: 8px;
+  /* 6 + gap de 6 = 12px das ações */
+  margin-top: var(--space-1h);
 }
 
 .select {
   background: var(--surface-1, #1e1e22);
   border: 1px solid var(--border, #333340);
-  border-radius: 6px;
-  padding: 7px 10px;
+  border-radius: var(--radius-md);
+  height: var(--control-lg);
+  padding: 0 var(--space-2);
   color: var(--text-primary, #e8e8f0);
   font-size: 13px;
   outline: none;
@@ -219,8 +234,7 @@
 .versionRow {
   display: flex;
   align-items: baseline;
-  gap: 10px;
-  margin-top: 4px;
+  gap: var(--space-2);
 }
 
 .versionText {

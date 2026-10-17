@@ -6,7 +6,9 @@
   min-height: 0;
   max-height: 75%;
   border-top: 1px solid var(--border, #333340);
-  padding-top: 8px;
+  /* 8px do gap da Sidebar + 16px = 24px entre a lista de notas e esta seção */
+  margin-top: var(--space-4);
+  padding-top: var(--space-2);
 }
 
 .emptySection {
@@ -31,16 +33,16 @@
 .header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-1h);
   flex-shrink: 0;
-  padding: 2px 4px;
+  min-height: var(--control-sm);
+  padding: var(--space-0) var(--space-1);
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: 12px;
+  font-weight: 500;
   color: var(--text-muted, #606070);
   text-align: left;
 }
@@ -51,11 +53,6 @@
 
 .count {
   color: var(--text-secondary, #a0a0b8);
-}
-
-.late {
-  text-transform: none;
-  letter-spacing: 0;
 }
 
 .lateDeadline {
@@ -72,15 +69,16 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  margin-top: 4px;
+  gap: var(--space-0);
+  /* rótulo → conteúdo com 8px */
+  margin-top: var(--space-2);
 }
 
 .showAll {
   align-self: flex-start;
   background: transparent;
   border: none;
-  padding: 4px 8px;
+  padding: var(--space-1) var(--space-2);
   font-size: 12px;
   color: var(--text-muted, #606070);
   cursor: pointer;
@@ -94,8 +92,8 @@
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding-top: 4px;
+  gap: var(--space-1);
+  padding-top: var(--space-1);
 }
 
 .addInput {
@@ -103,8 +101,10 @@
   box-sizing: border-box;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 4px;
-  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  /* 4px + 1px de borda: input de 28px com line-height de 18px */
+  padding: var(--space-1) var(--space-2);
+  line-height: 18px;
   font-size: 12px;
   color: var(--text-primary, #e8e8f0);
   outline: none;
@@ -123,14 +123,14 @@
 .tokens {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  padding: 0 4px;
+  gap: var(--space-1);
+  padding: 0 var(--space-1);
 }
 
 .token {
   font-size: 11px;
-  padding: 1px 6px;
-  border-radius: 10px;
+  padding: var(--space-0) var(--space-1h);
+  border-radius: 999px;
   background: color-mix(in srgb, var(--accent-task) 16%, transparent);
   color: var(--accent-task);
 }

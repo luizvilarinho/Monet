@@ -1,10 +1,10 @@
-/* Colunas dividem a largura (min 240px); se n�o couberem, scroll horizontal. */
+/* Colunas dividem a largura (min 240px); se não couberem, scroll horizontal. */
 .columns {
   flex: 1;
   min-width: 0;
   min-height: 0;
   display: flex;
-  gap: 8px;
+  gap: var(--gap-cards);
   overflow-x: auto;
 }
 
@@ -14,9 +14,10 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 6px;
-  border-radius: 6px;
+  /* Grade única de 12px: borda da coluna = cabeçalho→cards = card→card. */
+  gap: var(--gap-cards);
+  padding: var(--gap-cards);
+  border-radius: var(--radius-md);
   background: var(--surface-1);
   border: 1px solid transparent;
 }
@@ -39,11 +40,10 @@
 .columnHeader {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 2px 4px;
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  gap: var(--space-1h);
+  padding: 0 var(--space-1);
+  font-size: 12px;
+  font-weight: 500;
   color: var(--text-secondary);
 }
 
@@ -71,17 +71,17 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--gap-cards);
 }
 
 .section {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--gap-cards);
 }
 
 .sectionLabel {
-  padding: 4px 4px 0;
+  padding: var(--space-1) var(--space-1) 0;
   font-size: 11px;
   color: var(--text-muted);
   overflow: hidden;
@@ -106,11 +106,10 @@
   margin-left: auto;
   background: transparent;
   border: none;
-  padding: 0 2px;
+  padding: 0 var(--space-0);
   font-family: inherit;
   font-size: 11px;
-  letter-spacing: normal;
-  text-transform: none;
+  font-weight: 400;
   color: var(--text-muted);
   cursor: pointer;
 }

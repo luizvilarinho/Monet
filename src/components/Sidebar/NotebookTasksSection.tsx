@@ -199,9 +199,9 @@ export function NotebookTasksSection({
         aria-expanded={!collapsed}
       >
         {collapsed ? <CaretRight size={10} aria-hidden /> : <CaretDown size={10} aria-hidden />}
-        <span>tasks</span>
+        <span>Tasks</span>
         <span className={styles.count}>{open.length}</span>
-        {late.length > 0 && <span className={`${styles.late} ${lateTone}`}>· {late.length} overdue</span>}
+        {late.length > 0 && <span className={lateTone}>· {late.length} overdue</span>}
       </button>
       {!collapsed && (
         <>

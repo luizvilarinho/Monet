@@ -32,22 +32,22 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 12px;
+  /* 12px de cada lado do divisor = 24px entre seções */
+  gap: var(--space-3);
+  padding: var(--pad-panel);
 }
 
 .section {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .header {
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: 12px;
+  font-weight: 500;
   color: var(--text-muted, #606070);
-  padding: 0 4px;
+  padding: 0 var(--space-1);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -56,7 +56,7 @@
 .headerActions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .headerAdd,
@@ -64,8 +64,9 @@
   background: transparent;
   border: none;
   color: var(--text-muted, #606070);
-  padding: 2px 4px;
-  border-radius: 4px;
+  /* glifo de 16px + 4px de cada lado = área clicável de 24×24 */
+  padding: var(--space-1);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -80,7 +81,7 @@
 }
 
 .collapsedTop {
-  padding: 10px 0 0;
+  padding: var(--space-3) 0 0;
   display: flex;
   justify-content: center;
 }
@@ -97,15 +98,17 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-0);
 }
 
+/* Linha densa: line-height explícito de 20px + 7px de padding = 34px */
 .list li {
-  padding: 8px 12px;
-  border-radius: 6px;
+  padding: 7px var(--space-3);
+  border-radius: var(--radius-md);
   color: var(--text-secondary, #a0a0b8);
   cursor: pointer;
   font-size: 13px;
+  line-height: var(--lh-row);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -119,7 +122,7 @@
 .row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-1h);
 }
 
 .dragHandle {
@@ -130,8 +133,8 @@
   color: var(--text-muted, #606070);
   cursor: grab;
   opacity: 0;
-  padding: 2px;
-  border-radius: 3px;
+  padding: var(--space-0);
+  border-radius: var(--radius-sm);
 }
 
 .dragHandle:active {
@@ -162,6 +165,7 @@
 
 .rowDelete,
 .rowDocs {
+  position: relative;
   flex-shrink: 0;
   width: 18px;
   height: 18px;
@@ -171,12 +175,22 @@
   background: transparent;
   border: none;
   color: var(--text-muted, #606070);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 14px;
   line-height: 1;
   opacity: 0;
   padding: 0;
+}
+
+/* Área clicável de 24×24 sem crescer a linha: o botão visível fica com 18px
+   e o pseudo-elemento estende 3px para cada lado (cabe no gap de 6px). */
+.rowDelete::after,
+.rowDocs::after,
+.rowMove::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
 }
 
 .row:hover .rowDelete,
@@ -201,6 +215,7 @@
 }
 
 .rowMove {
+  position: relative;
   flex-shrink: 0;
   width: 18px;
   height: 18px;
@@ -210,7 +225,7 @@
   background: transparent;
   border: none;
   color: var(--text-muted, #606070);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 14px;
   line-height: 1;
@@ -269,7 +284,7 @@
   align-items: center;
   justify-content: center;
   color: var(--accent, #7c6af5);
-  padding: 2px;
+  padding: var(--space-0);
 }
 
 .tasksIcon {
@@ -278,7 +293,7 @@
   align-items: center;
   justify-content: center;
   color: var(--accent-task);
-  padding: 2px;
+  padding: var(--space-0);
 }
 
 .renameInput {
@@ -286,23 +301,24 @@
   min-width: 0;
   background: var(--surface-2, #26262c);
   border: 1px solid var(--accent, #7c6af5);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--text-primary, #e8e8f0);
   font-size: 13px;
-  padding: 1px 5px;
+  /* 1px de padding vertical + borda: cabe na linha de 20px */
+  padding: 1px var(--space-1);
   outline: none;
   font-family: inherit;
 }
 
 .footer {
   border-top: 1px solid var(--border, #333340);
-  padding: 8px 12px;
+  padding: var(--space-2) var(--space-3);
   display: flex;
   justify-content: space-between;
 }
 
 .footerCollapsed {
-  padding: 8px 0;
+  padding: var(--space-2) 0;
   margin-top: auto;
   justify-content: center;
 }
@@ -311,8 +327,8 @@
   background: transparent;
   border: none;
   color: var(--text-muted, #606070);
-  padding: 6px;
-  border-radius: 6px;
+  padding: var(--space-1h);
+  border-radius: var(--radius-md);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -325,10 +341,11 @@
 }
 
 .version {
-  font-size: 10px;
-  margin-top: 10px;
+  font-size: 11px;
+  /* alinha o texto com os ícones de 28px do rodapé */
+  margin-top: var(--space-2);
   color: var(--text-muted, #606070);
-  margin-left: 4px;
+  margin-left: var(--space-1);
   letter-spacing: 0.02em;
 }
 
@@ -338,7 +355,7 @@
   background: transparent !important;
   border-radius: 0 !important;
   border-left: 2px solid var(--border, #333340);
-  margin-left: 10px;
+  margin-left: var(--space-2);
   padding-left: 0 !important;
   /* animation */
   overflow: hidden;
@@ -354,7 +371,7 @@
 .subjectContainer.open {
   max-height: 600px;
   opacity: 1;
-  margin-bottom: 6px !important;
+  margin-bottom: var(--space-1h) !important;
 }
 
 .subjectContainer:hover {
@@ -364,22 +381,25 @@
 
 .subjectList {
   list-style: none;
-  margin: 2px 0 0 0;
-  padding: 0 0 4px 8px;
+  margin: var(--space-0) 0 0 0;
+  /* sub-itens recuados 12px da linha-guia, com 2px entre eles */
+  padding: 0 0 var(--space-1) var(--space-3);
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: var(--space-0);
 }
 
+/* Sub-item: 20px de line-height + 4px de padding = 28px */
 .subjectRow {
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 5px 8px;
-  border-radius: 5px;
+  gap: var(--space-1h);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-md);
   color: var(--text-secondary, #a0a0b8);
   cursor: pointer;
   font-size: 12px;
+  line-height: var(--lh-row);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -417,6 +437,7 @@
 
 .subjectDelete,
 .subjectMove {
+  position: relative;
   flex-shrink: 0;
   width: 16px;
   height: 16px;
@@ -426,11 +447,19 @@
   background: transparent;
   border: none;
   color: var(--text-muted, #606070);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   line-height: 1;
   opacity: 0;
   padding: 0;
+}
+
+/* Área clicável de 24×24: o botão visível tem 16px e o pseudo estende 4px */
+.subjectDelete::after,
+.subjectMove::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
 }
 
 .subjectRow:hover .subjectDelete,
@@ -454,15 +483,14 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  padding: 2px 8px 2px 8px;
+  padding: var(--space-0) var(--space-1) var(--space-0) var(--space-3);
   margin-top: 0;
 }
 
 .subjectHeaderLabel {
   flex: 1;
-  font-size: 10px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-size: 12px;
+  font-weight: 500;
   color: var(--text-muted, #606070);
   opacity: 0.6;
   user-select: none;
@@ -472,8 +500,9 @@
   background: transparent;
   border: none;
   color: var(--text-muted, #606070);
-  padding: 2px 3px;
-  border-radius: 3px;
+  /* glifo de 12px + 6px de cada lado = área clicável de 24×24 */
+  padding: var(--space-1h);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -494,8 +523,8 @@
   color: var(--text-muted, #606070);
   cursor: grab;
   opacity: 0;
-  padding: 1px;
-  border-radius: 2px;
+  padding: var(--space-0);
+  border-radius: var(--radius-sm);
 }
 
 .subjectDragHandle:active {
@@ -511,10 +540,11 @@
   min-width: 0;
   background: var(--surface-2, #26262c);
   border: 1px solid var(--accent, #7c6af5);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--text-primary, #e8e8f0);
   font-size: 12px;
-  padding: 1px 4px;
+  /* 1px de padding vertical + borda: cabe na linha de 20px */
+  padding: 1px var(--space-1);
   outline: none;
   font-family: inherit;
 }

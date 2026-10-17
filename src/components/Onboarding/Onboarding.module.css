@@ -14,7 +14,7 @@
   width: min(820px, 100%);
   background: var(--bg-panel, #161625);
   border: 1px solid var(--border, #2e2f2cb3);
-  border-radius: 14px;
+  border-radius: var(--radius-xl);
   box-shadow: 0 30px 60px rgba(0, 0, 0, 0.45);
   display: flex;
   flex-direction: column;
@@ -25,7 +25,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 22px;
+  /* 32px horizontal alinha o logo com o corpo */
+  padding: var(--space-4) var(--space-8);
   border-bottom: 1px solid var(--border, #2e2f2cb3);
 }
 
@@ -38,7 +39,7 @@
 .progress {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .dot,
@@ -68,20 +69,20 @@
 
 .progressLabel {
   color: var(--text-muted, #7c7c93);
-  font-size: 11px;
-  margin-left: 6px;
-  letter-spacing: 0.4px;
-  text-transform: uppercase;
+  font-size: 12px;
+  font-weight: 500;
+  margin-left: var(--space-1h);
 }
 
+/* Onboarding é tela de boas-vindas: mais respiro que os modais comuns */
 .body {
-  padding: 28px 32px 24px;
+  padding: var(--space-8) var(--space-8) var(--space-6);
 }
 
 .section {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--space-4);
 }
 
 .title {
@@ -150,7 +151,8 @@
 }
 
 .label {
-  margin: 8px 0 -6px;
+  /* Compensa o gap da seção: rótulo→controle fica com 6px */
+  margin: 0 0 calc(var(--space-1h) - var(--space-4));
   font-size: 12px;
   color: var(--text-muted, #7c7c93);
   letter-spacing: 0.2px;
@@ -159,8 +161,9 @@
 .input {
   background: var(--surface-1, #1d1d34);
   border: 1px solid var(--border, #2e2f2cb3);
-  border-radius: 8px;
-  padding: 10px 12px;
+  border-radius: var(--radius-lg);
+  height: var(--control-lg);
+  padding: var(--space-2) 10px;
   color: var(--text-primary, #ddddf1);
   font-size: 13px;
   outline: none;
@@ -237,16 +240,16 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  margin-top: 14px;
-  padding-top: 16px;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding-top: var(--space-4);
   border-top: 1px solid var(--border, #2e2f2cb3);
 }
 
 .actionsRight {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .primaryBtn,
@@ -254,8 +257,8 @@
 .skipBtn {
   font: inherit;
   font-size: 13px;
-  padding: 8px 16px;
-  border-radius: 7px;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-lg);
   cursor: pointer;
   transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
