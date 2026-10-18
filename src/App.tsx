@@ -495,6 +495,7 @@ function App() {
     rename: renameStatus,
     update: updateStatus,
     remove: removeStatus,
+    reorder: reorderStatuses,
     saveError: statusSaveError,
   } = useTaskStatuses({ onRemoved: (id) => reassignStatus(id, 'todo') })
   // Definições de metadados personalizados (globais, compartilhadas entre janelas).
@@ -2694,6 +2695,7 @@ function App() {
         onRename={(id, name) => void renameStatus(id, name)}
         onUpdate={(id, change) => void updateStatus(id, change)}
         onRemove={(id) => void removeStatus(id)}
+        onReorder={(openIds) => void reorderStatuses(openIds)}
       />
       <MetadataManagerModal
         open={metadataManager !== null}

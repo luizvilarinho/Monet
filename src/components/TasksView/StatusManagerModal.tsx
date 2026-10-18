@@ -1,15 +1,49 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { Trash } from '@phosphor-icons/react'
+import {
+  closestCenter,
+  DndContext,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  arrayMove,
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+import { DotsSixVertical, Trash } from '@phosphor-icons/react'
 import { useConfirm } from '../../hooks/useConfirm'
-import { statusColor } from '../../lib/tasks'
+import { isTerminalStatus, openStatuses, statusColor } from '../../lib/tasks'
 import type { Task, TaskStatusDef } from '../../types'
 import { ColorDots } from './ColorDots'
 import styles from './StatusManagerModal.module.css'
 
-// "Manage statuses": criar (nome + cor), editar cor e limite WIP, renomear e
-// excluir status custom. Built-ins só aceitam cor e WIP (Done/Dropped sem WIP).
+// "Manage statuses": criar (nome + cor), editar cor e limite WIP, renomear,
+// excluir status custom e reordenar os abertos pelo handle. Built-ins só aceitam
+// cor e WIP (Done/Dropped sem WIP, fixos no fim).
 const MAX_NAME = 24
+
+// Linha arrastável: só o handle inicia o drag (inputs e cores seguem clicáveis).
+function SortableStatusRow({ id, children }: { id: string; children: ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : undefined,
+  }
+  return (
+    <div ref={setNodeRef} style={style} className={styles.row}>
+      <span className={styles.dragHandle} {...attributes} {...listeners} aria-label="drag to reorder">
+        <DotsSixVertical size={12} weight="bold" aria-hidden />
+      </span>
+      {children}
+    </div>
+  )
+}
 
 interface StatusManagerModalProps {
   open: boolean
@@ -20,6 +54,7 @@ interface StatusManagerModalProps {
   onRename: (id: string, name: string) => void
   onUpdate: (id: string, change: { color?: string | null; wipLimit?: number | null }) => void
   onRemove: (id: string) => void
+  onReorder: (openIds: string[]) => void
 }
 
 export function StatusManagerModal({
@@ -31,6 +66,7 @@ export function StatusManagerModal({
   onRename,
   onUpdate,
   onRemove,
+  onReorder,
 }: StatusManagerModalProps) {
   const { confirm, modal } = useConfirm()
   const [newName, setNewName] = useState('')
@@ -39,8 +75,20 @@ export function StatusManagerModal({
   // Contagem recalculada no momento do confirm (não a do render).
   const tasksRef = useRef(tasks)
   tasksRef.current = tasks
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
 
   if (!open) return null
+
+  const openList = openStatuses(statuses)
+  const terminal = statuses.filter((s) => isTerminalStatus(s.id))
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const oldIndex = openList.findIndex((s) => s.id === active.id)
+    const newIndex = openList.findIndex((s) => s.id === over.id)
+    onReorder(arrayMove(openList, oldIndex, newIndex).map((s) => s.id))
+  }
 
   // Erro de validação do nome (null = válido); `selfId` ignora o próprio status.
   function validateName(raw: string, selfId?: string): string | null {
@@ -94,6 +142,71 @@ export function StatusManagerModal({
     if (ok) onRemove(s.id)
   }
 
+  function renderCells(s: TaskStatusDef) {
+    const hasWip = !isTerminalStatus(s.id)
+    return (
+      <>
+        <span
+          className={styles.swatch}
+          style={{ background: statusColor(s.id, statuses) }}
+          aria-hidden
+        />
+        {s.builtin ? (
+          <span className={styles.name}>{s.name}</span>
+        ) : (
+          <input
+            className={styles.nameInput}
+            key={s.name}
+            defaultValue={s.name}
+            maxLength={MAX_NAME}
+            aria-label={`rename ${s.name}`}
+            onBlur={(e) => commitRename(s, e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') e.currentTarget.blur()
+            }}
+          />
+        )}
+        <ColorDots
+          value={s.color}
+          onChange={(color) => onUpdate(s.id, { color })}
+          label={`${s.name} color`}
+          allowNone={s.builtin}
+        />
+        {hasWip ? (
+          <input
+            className={styles.wip}
+            type="number"
+            key={s.wipLimit ?? 'none'}
+            min={1}
+            defaultValue={s.wipLimit ?? ''}
+            placeholder="WIP"
+            title="WIP limit (warns when exceeded)"
+            aria-label={`${s.name} WIP limit`}
+            onBlur={(e) => commitWip(s, e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') e.currentTarget.blur()
+            }}
+          />
+        ) : (
+          <span className={styles.wipSpacer} />
+        )}
+        {s.builtin ? (
+          <span className={styles.deleteSpacer} />
+        ) : (
+          <button
+            type="button"
+            className={styles.delete}
+            onClick={() => void handleRemove(s)}
+            aria-label={`delete ${s.name}`}
+            title="Delete status"
+          >
+            <Trash size={13} aria-hidden />
+          </button>
+        )}
+      </>
+    )
+  }
+
   return createPortal(
     <div
       className={styles.backdrop}
@@ -121,70 +234,21 @@ export function StatusManagerModal({
           </button>
         </div>
         <div className={styles.list}>
-          {statuses.map((s) => {
-            const hasWip = s.id !== 'done' && s.id !== 'dropped'
-            return (
-              <div key={s.id} className={styles.row}>
-                <span
-                  className={styles.swatch}
-                  style={{ background: statusColor(s.id, statuses) }}
-                  aria-hidden
-                />
-                {s.builtin ? (
-                  <span className={styles.name}>{s.name}</span>
-                ) : (
-                  <input
-                    className={styles.nameInput}
-                    key={s.name}
-                    defaultValue={s.name}
-                    maxLength={MAX_NAME}
-                    aria-label={`rename ${s.name}`}
-                    onBlur={(e) => commitRename(s, e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') e.currentTarget.blur()
-                    }}
-                  />
-                )}
-                <ColorDots
-                  value={s.color}
-                  onChange={(color) => onUpdate(s.id, { color })}
-                  label={`${s.name} color`}
-                  allowNone={s.builtin}
-                />
-                {hasWip ? (
-                  <input
-                    className={styles.wip}
-                    type="number"
-                    key={s.wipLimit ?? 'none'}
-                    min={1}
-                    defaultValue={s.wipLimit ?? ''}
-                    placeholder="WIP"
-                    title="WIP limit (warns when exceeded)"
-                    aria-label={`${s.name} WIP limit`}
-                    onBlur={(e) => commitWip(s, e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') e.currentTarget.blur()
-                    }}
-                  />
-                ) : (
-                  <span className={styles.wipSpacer} />
-                )}
-                {s.builtin ? (
-                  <span className={styles.deleteSpacer} />
-                ) : (
-                  <button
-                    type="button"
-                    className={styles.delete}
-                    onClick={() => void handleRemove(s)}
-                    aria-label={`delete ${s.name}`}
-                    title="Delete status"
-                  >
-                    <Trash size={13} aria-hidden />
-                  </button>
-                )}
-              </div>
-            )
-          })}
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <SortableContext items={openList.map((s) => s.id)} strategy={verticalListSortingStrategy}>
+              {openList.map((s) => (
+                <SortableStatusRow key={s.id} id={s.id}>
+                  {renderCells(s)}
+                </SortableStatusRow>
+              ))}
+            </SortableContext>
+          </DndContext>
+          {terminal.map((s) => (
+            <div key={s.id} className={styles.row}>
+              <span className={styles.dragSpacer} />
+              {renderCells(s)}
+            </div>
+          ))}
         </div>
         <div className={styles.create}>
           <input

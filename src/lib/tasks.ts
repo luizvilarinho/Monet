@@ -92,9 +92,14 @@ export function nextStatus(id: TaskStatus, statuses: TaskStatusDef[]): TaskStatu
   return i >= 0 && i < open.length - 1 ? open[i + 1].id : 'done'
 }
 
+// Done e Dropped: terminais, sempre depois dos abertos.
+export function isTerminalStatus(id: TaskStatus): boolean {
+  return id === 'done' || id === 'dropped'
+}
+
 // Status abertos (todo, doing, custom) na ordem do registro.
 export function openStatuses(statuses: TaskStatusDef[]): TaskStatusDef[] {
-  return statuses.filter((s) => s.id !== 'done' && s.id !== 'dropped')
+  return statuses.filter((s) => !isTerminalStatus(s.id))
 }
 
 // Nota-corpo de task: fica no subject "Tasks" do próprio caderno.

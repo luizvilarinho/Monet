@@ -164,3 +164,28 @@
   font-size: 12px;
   color: var(--accent-danger);
 }
+
+/* Handle de reordenar dos abertos; Done/Dropped usam o spacer (fixos no fim) */
+.dragHandle,
+.dragSpacer {
+  flex-shrink: 0;
+  width: var(--space-4);
+}
+
+.dragHandle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--control-sm);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: grab;
+}
+
+.dragHandle:hover {
+  color: var(--text-primary);
+}
+
+.dragHandle:active {
+  cursor: grabbing;
+}
