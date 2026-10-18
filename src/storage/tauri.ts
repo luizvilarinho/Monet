@@ -12,6 +12,7 @@ import type {
   MetadataValue,
   Note,
   Notebook,
+  NoteSummary,
   Subject,
   Task,
   TaskRecurrence,
@@ -21,6 +22,7 @@ import type {
   TaskViewConfig,
 } from '../types'
 import { BUILTIN_STATUS_DEFS } from '../lib/tasks'
+import { CALENDAR_NOTEBOOK_ID, parseCalendarTitle } from '../lib/calendar'
 import type { StorageAdapter } from './index'
 
 const DB_URL = 'sqlite:monet.db'
@@ -676,6 +678,39 @@ export class TauriStorage implements StorageAdapter {
       [id]
     )
     return rows[0] ? rowToNote(rows[0]) : null
+  }
+
+  async getNotesByDateRange(from: string, to: string): Promise<Note[]> {
+    const db = await this.db()
+    // Título do Calendar `dd/mm/yyyy` → `yyyy-mm-dd` para comparar no SQL; o
+    // parseCalendarTitle descarta datas inválidas (ex.: 31/02).
+    const rows = await db.select<NoteRow[]>(
+      `SELECT * FROM notes
+        WHERE (notebook_id IS NOT $3 AND date >= $1 AND date <= $2)
+           OR (notebook_id = $3
+               AND TRIM(title) GLOB '[0-9][0-9]/[0-9][0-9]/[0-9][0-9][0-9][0-9]'
+               AND substr(TRIM(title), 7, 4) || '-' || substr(TRIM(title), 4, 2) || '-' || substr(TRIM(title), 1, 2)
+                   BETWEEN $1 AND $2)`,
+      [from, to, CALENDAR_NOTEBOOK_ID]
+    )
+    return rows
+      .map(rowToNote)
+      .filter((n) => n.notebookId !== CALENDAR_NOTEBOOK_ID || parseCalendarTitle(n.title) !== null)
+  }
+
+  async getNoteSummaries(): Promise<NoteSummary[]> {
+    const db = await this.db()
+    const rows = await db.select<Array<Omit<NoteRow, 'content' | 'tags' | 'subject_id'>>>(
+      'SELECT id, notebook_id, title, date, created_at, updated_at FROM notes ORDER BY updated_at DESC'
+    )
+    return rows.map((r) => ({
+      id: r.id,
+      notebookId: r.notebook_id,
+      title: r.title,
+      date: r.date ?? null,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    }))
   }
 
   async saveNote(n: Note): Promise<void> {

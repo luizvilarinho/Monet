@@ -51,7 +51,7 @@ function FolderRow({ folder, checked, disabled, alwaysOn, onToggle }: FolderRowP
   return (
     <tr>
       <td className={styles.cellName} title={folder.originalPath ?? folder.name}>
-        {folder.name}
+        {folder.alias ?? folder.name}
         {alwaysOn && <span className={styles.alwaysOn}> (always on)</span>}
       </td>
       <td>📁 Folder</td>
@@ -64,7 +64,7 @@ function FolderRow({ folder, checked, disabled, alwaysOn, onToggle }: FolderRowP
           checked={checked}
           disabled={disabled}
           onChange={onToggle}
-          aria-label={`toggle visibility for folder ${folder.name}`}
+          aria-label={`toggle visibility for folder ${folder.alias ?? folder.name}`}
           title={
             alwaysOn
               ? "This notebook's notes are always searched"

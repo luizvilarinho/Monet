@@ -28,6 +28,9 @@ export interface Note {
   updatedAt: number
 }
 
+// Nota sem o conteúdo (listas e títulos de notas linkadas).
+export type NoteSummary = Pick<Note, 'id' | 'notebookId' | 'title' | 'date' | 'createdAt' | 'updatedAt'>
+
 // Id de um status do registro `task_statuses`: built-ins (todo/doing/done/
 // dropped) ou custom (`st_<id>`).
 export type TaskStatus = string
@@ -127,6 +130,8 @@ export interface Document {
   lastModifiedMs?: number
   isExternal: boolean
   origin: 'user' | 'ai' | 'notes'
+  // Apelido de exibição de pasta indexada (folder_aliases); ausente = `name`.
+  alias?: string
 }
 
 // PDF e EPUB dividem a MESMA tabela `books`; `format` é o discriminante que

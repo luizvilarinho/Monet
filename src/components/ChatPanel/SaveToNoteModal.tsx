@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { nanoid } from 'nanoid'
 import type { Note, Notebook } from '../../types'
 import { formatLocalTimestamp } from '../../lib/calendar'
 import styles from './SaveToNoteModal.module.css'
@@ -12,11 +13,16 @@ export interface SaveToNoteModalProps {
   content: string
   notebooks: Notebook[]
   notes: Note[]
-  onCreateNotebook: (name: string) => Promise<Notebook>
+  /** `requestId` is one per user action and is reused by "Try again", so a
+   *  caller can make the write idempotent (Assistant window). */
+  onCreateNotebook: (name: string, requestId: string) => Promise<Notebook>
   /** Creates a note inside the notebook with the given title. */
-  onCreateNote: (notebookId: string, title: string, content: string) => Promise<Note>
+  onCreateNote: (notebookId: string, title: string, content: string, requestId: string) => Promise<Note>
   /** Saves an existing note (upsert). */
   onSaveNote: (note: Note) => Promise<void>
+  /** Appends the block to an existing note; replaces `onSaveNote` when the
+   *  caller does not have the note content (Assistant window). */
+  onAppendToNote?: (note: Note, block: string, requestId: string) => Promise<void>
   onNavigateToNote: (notebookId: string, noteId: string) => void
   onClose: () => void
 }
@@ -77,6 +83,7 @@ export function SaveToNoteModal({
   onCreateNotebook,
   onCreateNote,
   onSaveNote,
+  onAppendToNote,
   onNavigateToNote,
   onClose,
 }: SaveToNoteModalProps) {
@@ -88,6 +95,8 @@ export function SaveToNoteModal({
   const [recentlyPickedNotebookId, setRecentlyPickedNotebookId] = useState<string | null>(null)
 
   const newNotebookInputRef = useRef<HTMLInputElement | null>(null)
+  /** Notebook creation that failed: retrying the same name reuses its requestId. */
+  const failedNotebookRef = useRef<{ name: string; requestId: string } | null>(null)
   const newNoteTitleInputRef = useRef<HTMLInputElement | null>(null)
 
   function initialStage(notebookCount: number): Stage {
@@ -103,6 +112,7 @@ export function SaveToNoteModal({
     setNewNoteTitle('')
     setTitleError(null)
     setRecentlyPickedNotebookId(null)
+    failedNotebookRef.current = null
   }, [open, notebooks.length])
 
   // Auto-foco em campos de input quando aplicável
@@ -160,11 +170,15 @@ export function SaveToNoteModal({
   async function handleCreateNotebookFromEmpty() {
     const name = newNotebookName.trim()
     if (!name) return
+    const failed = failedNotebookRef.current
+    const requestId = failed?.name === name ? failed.requestId : nanoid()
     try {
-      const nb = await onCreateNotebook(name)
+      const nb = await onCreateNotebook(name, requestId)
+      failedNotebookRef.current = null
       setNewNotebookName('')
       setStage({ kind: 'new-note-title', notebookId: nb.id })
     } catch (err) {
+      failedNotebookRef.current = { name, requestId }
       setStage({
         kind: 'error',
         message: err instanceof Error ? err.message : 'Failed to create notebook.',
@@ -173,16 +187,24 @@ export function SaveToNoteModal({
     }
   }
 
-  async function appendToExistingNote(notebookId: string, note: Note) {
+  // O "Try again" reenvia o mesmo bloco com o mesmo requestId.
+  async function appendToExistingNote(
+    notebookId: string,
+    note: Note,
+    block = buildToggleBlock(content),
+    requestId = nanoid()
+  ) {
     setStage({ kind: 'saving', notebookId })
-    const block = buildToggleBlock(content)
-    const newContent = appendToggleToContent(note.content, block)
     try {
-      await onSaveNote({
-        ...note,
-        content: newContent,
-        updatedAt: Date.now(),
-      })
+      if (onAppendToNote) {
+        await onAppendToNote(note, block, requestId)
+      } else {
+        await onSaveNote({
+          ...note,
+          content: appendToggleToContent(note.content, block),
+          updatedAt: Date.now(),
+        })
+      }
       saveLastNotebookId(notebookId)
       const nb = notebooks.find((n) => n.id === notebookId)
       setStage({
@@ -198,16 +220,20 @@ export function SaveToNoteModal({
       setStage({
         kind: 'error',
         message,
-        retry: () => void appendToExistingNote(notebookId, note),
+        retry: () => void appendToExistingNote(notebookId, note, block, requestId),
       })
     }
   }
 
-  async function createAndSaveNewNote(notebookId: string, title: string) {
+  async function createAndSaveNewNote(
+    notebookId: string,
+    title: string,
+    block = buildToggleBlock(content),
+    requestId = nanoid()
+  ) {
     setStage({ kind: 'saving', notebookId })
-    const block = buildToggleBlock(content)
     try {
-      const note = await onCreateNote(notebookId, title, block)
+      const note = await onCreateNote(notebookId, title, block, requestId)
       saveLastNotebookId(notebookId)
       const nb = notebooks.find((n) => n.id === notebookId)
       setStage({
@@ -223,7 +249,7 @@ export function SaveToNoteModal({
       setStage({
         kind: 'error',
         message,
-        retry: () => void createAndSaveNewNote(notebookId, title),
+        retry: () => void createAndSaveNewNote(notebookId, title, block, requestId),
       })
     }
   }

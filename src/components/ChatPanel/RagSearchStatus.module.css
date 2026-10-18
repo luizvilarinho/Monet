@@ -1,0 +1,27 @@
+/* Mesmo visual do "Searching the web..." do ChatComposer */
+.status {
+  font-size: 11px;
+  color: var(--accent-ai, #5dcaa5);
+  background: rgba(93, 202, 165, 0.07);
+  border: 1px solid rgba(93, 202, 165, 0.25);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+  margin-bottom: var(--space-1);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-ai, #5dcaa5);
+  animation: ragPulse 1.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes ragPulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1); }
+}

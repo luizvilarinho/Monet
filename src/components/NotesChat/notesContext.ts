@@ -21,6 +21,8 @@ export interface NotesContextInput {
   resolveLinkedNoteContent: (noteId: string) => string | undefined
   // Respostas da IA embutidas na nota (e nas linkadas).
   resolveEmbed: (commandId: string) => AiResponse | undefined
+  // dataUrl → texto do OCR das imagens da nota (resolvido antes do envio).
+  resolveImageText?: (dataUrl: string) => string | undefined
   // Tasks do caderno (abertas + concluídas na semana), já filtradas pela
   // visibilidade de IA do caderno.
   projectTasks?: Task[]
@@ -51,6 +53,7 @@ export function buildNotesContext(input: NotesContextInput): string {
       resolveNoteTitle: input.resolveNoteTitle,
       resolveEmbed: input.resolveEmbed,
       resolveLinkedNoteContent: input.resolveLinkedNoteContent,
+      resolveImageText: input.resolveImageText,
     })
     lines.push(
       `Current note content: ${content ? truncateWithMarker(content, NOTE_TEXT_BUDGET) : '(empty)'}`

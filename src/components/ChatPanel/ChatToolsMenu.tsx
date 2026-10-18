@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Brain, Globe, ListChecks } from '@phosphor-icons/react'
+import { Brain, CalendarBlank, Globe, ListChecks, ListMagnifyingGlass } from '@phosphor-icons/react'
 import type { ChatTools } from '../../hooks/useChat'
+import { useRagDetailed } from '../../hooks/useRagDetailed'
 import styles from './ChatToolsMenu.module.css'
 
 interface ToolDef {
@@ -45,6 +46,8 @@ export interface ChatToolsMenuProps {
   onToggleFolderWebResearch?: (value: boolean) => void
   // Tool "Tasks": chat principal e NotesChat; `supported` = o modelo aceita tools.
   tasksTool?: { supported: boolean } | null
+  // Tool "Daily notes" (get_day, notes_by_date); `supported` = o modelo aceita tools.
+  dailyNotesTool?: { supported: boolean } | null
 }
 
 export function ChatToolsMenu({
@@ -56,8 +59,10 @@ export function ChatToolsMenu({
   folderWebResearch = null,
   onToggleFolderWebResearch = () => {},
   tasksTool = null,
+  dailyNotesTool = null,
 }: ChatToolsMenuProps) {
   const [open, setOpen] = useState(false)
+  const [ragDetailed, setRagDetailed] = useRagDetailed()
   const wrapRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
@@ -74,7 +79,8 @@ export function ChatToolsMenu({
     TOOLS.filter((t) => tools[t.key]).length +
     (folderMemory?.enabled ? 1 : 0) +
     (folderWebResearch?.enabled ? 1 : 0) +
-    (tasksTool && tools.tasks ? 1 : 0)
+    (tasksTool && tools.tasks ? 1 : 0) +
+    (dailyNotesTool && tools.dailyNotes ? 1 : 0)
 
   return (
     <div className={styles.wrap} ref={wrapRef}>
@@ -161,6 +167,33 @@ export function ChatToolsMenu({
                 </button>
               </div>
             )}
+            {dailyNotesTool && (
+              <div
+                className={styles.toolRow}
+                title={dailyNotesTool.supported ? undefined : 'This model does not support tools'}
+              >
+                <span className={styles.toolIcon}>
+                  <CalendarBlank size={16} />
+                </span>
+                <div className={styles.toolText}>
+                  <span className={styles.toolName}>Daily notes</span>
+                  <span className={styles.toolDescription}>
+                    Lets the AI read your daily and dated notes from any notebook when you ask about a day or period (&quot;what do I have today?&quot;).
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={tools.dailyNotes}
+                  aria-label="toggle daily notes"
+                  disabled={!dailyNotesTool.supported}
+                  className={tools.dailyNotes ? styles.toggleOn : styles.toggleOff}
+                  onClick={() => onToggle('dailyNotes', !tools.dailyNotes)}
+                >
+                  <span className={styles.toggleKnob} aria-hidden="true" />
+                </button>
+              </div>
+            )}
             {folderMemory && (
               <div className={styles.toolRow}>
                 <span className={styles.toolIcon}>
@@ -207,6 +240,27 @@ export function ChatToolsMenu({
                 </button>
               </div>
             )}
+            <div className={styles.toolRow}>
+              <span className={styles.toolIcon}>
+                <ListMagnifyingGlass size={16} />
+              </span>
+              <div className={styles.toolText}>
+                <span className={styles.toolName}>Retrieval details</span>
+                <span className={styles.toolDescription}>
+                  Shows how the knowledge base search picked each answer&apos;s sources: queries, scores and the excerpts sent. Applies to new answers.
+                </span>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={ragDetailed}
+                aria-label="toggle retrieval details"
+                className={ragDetailed ? styles.toggleOn : styles.toggleOff}
+                onClick={() => setRagDetailed(!ragDetailed)}
+              >
+                <span className={styles.toggleKnob} aria-hidden="true" />
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -1,5 +1,8 @@
 mod books;
 mod documents;
+mod ocr;
+pub mod rag;
+mod screenshot;
 mod vec_db;
 
 use std::collections::HashMap;
@@ -686,49 +689,8 @@ async fn deep_research_rerank(
 ) -> Result<Vec<usize>, String> {
     let key = read_key(&app, "openrouter_key")
         .ok_or_else(|| "OPENROUTER_KEY_MISSING".to_string())?;
-
-    let body = serde_json::json!({
-        "model": model,
-        "query": query,
-        "documents": documents,
-        "top_n": top_n,
-    });
-
-    let client = reqwest::Client::new();
-    let resp = client
-        .post("https://openrouter.ai/api/v1/rerank")
-        .bearer_auth(&key)
-        .header("Content-Type", "application/json")
-        .header("HTTP-Referer", "https://monet.local")
-        .header("X-Title", "Monet")
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("network error: {}", e))?;
-
-    let status = resp.status();
-    if !status.is_success() {
-        let body_text = resp.text().await.unwrap_or_default();
-        eprintln!("OpenRouter rerank {} body: {}", status, body_text);
-        return Err(format!("OpenRouter responded {}", status));
-    }
-
-    let data: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("invalid response: {}", e))?;
-
-    let results = data
-        .get("results")
-        .and_then(|r| r.as_array())
-        .ok_or_else(|| "missing results".to_string())?;
-
-    let indices: Vec<usize> = results
-        .iter()
-        .filter_map(|r| r.get("index").and_then(|i| i.as_u64()).map(|i| i as usize))
-        .collect();
-
-    Ok(indices)
+    let scored = rag::rerank(&key, &model, &query, &documents, top_n).await?;
+    Ok(scored.into_iter().map(|(i, _)| i).collect())
 }
 
 #[tauri::command]
@@ -1658,14 +1620,12 @@ pub fn run() {
             app.manage(vec_db);
             app.manage(documents::DocDb::new());
 
-            let cleanup_handle = app.handle().clone();
+            // Em sequência: o cleanup não pode ver como "interrompido" um
+            // documento que o scan acabou de marcar 'indexing'.
+            let startup_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                documents::cleanup_stuck_indexing(cleanup_handle).await;
-            });
-
-            let scan_handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                documents::scan_all_watched_folders_on_startup(scan_handle).await;
+                documents::cleanup_stuck_indexing(startup_handle.clone()).await;
+                documents::scan_all_watched_folders_on_startup(startup_handle).await;
             });
 
             // ─── Atalho global Ctrl+M → toggle da janela assistant ─────────
@@ -1746,13 +1706,27 @@ pub fn run() {
             vec_db::vec_db_smoke_test,
             documents::documents_upload_global,
             documents::documents_reindex,
+            documents::documents_index_outdated_count,
+            documents::documents_reindex_outdated,
             documents::documents_delete,
+            documents::documents_open_file,
             documents::documents_list_global,
+            documents::documents_set_folder_alias,
+            documents::document_sets_list,
+            documents::document_sets_save,
+            documents::document_sets_rename,
+            documents::document_sets_delete,
+            ocr::ocr_cached,
+            ocr::ocr_image,
+            screenshot::capture_screen_without_assistant,
             documents::documents_set_notebook_visibility,
             documents::documents_replace_notebook_visibility,
             documents::documents_get_notebook_visible_ids,
             documents::documents_get_notebooks_with_visible_docs,
             documents::documents_search_by_ids,
+            documents::documents_resolve_searchable_ids,
+            rag::rag_retrieve,
+            rag::rag_get_chunks,
             documents::documents_pick_file,
             documents::documents_pick_folder,
             documents::documents_add_watched_folder,

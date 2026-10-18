@@ -1,0 +1,411 @@
+.composer {
+  /* Container das regras de largura estreita (janela do Assistant). */
+  container: composer / inline-size;
+  display: flex;
+  justify-content: flex-start;
+  padding: var(--space-3) max(var(--space-4), calc((100% - 1100px) / 2)) var(--space-4);
+  background: var(--bg-panel, #161618);
+  border-top: 1px solid var(--border, #333340);
+  flex-shrink: 0;
+}
+
+.composerInner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+  max-width: 925px;
+}
+
+/* Quebra de linha só como último recurso (janela muito estreita); antes
+   disso o Deep Research vira só ícone (regra @container no fim do arquivo). */
+.composerActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.input {
+  flex: 1;
+  resize: none;
+  min-height: 64px;
+  max-height: 220px;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-1, #1e1e22);
+  border: 1px solid var(--border, #333340);
+  border-radius: var(--radius-lg);
+  color: var(--text-primary, #e8e8f0);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  outline: none;
+}
+
+.input:focus {
+  border-color: var(--accent, #7c6af5);
+}
+
+.input::placeholder {
+  color: var(--text-muted, #606070);
+}
+
+.input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.sendBtn {
+  background: var(--accent, #7c6af5);
+  color: #fff;
+  border: 1px solid var(--accent, #7c6af5);
+  border-radius: var(--radius-lg);
+  padding: 0 var(--space-4);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  flex-shrink: 0;
+  height: var(--control-xl);
+}
+
+.sendBtn:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.sendBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.stopBtn {
+  background: rgba(220, 80, 80, 0.15);
+  color: #e07070;
+  border: 1px solid rgba(220, 80, 80, 0.4);
+  border-radius: var(--radius-lg);
+  padding: 0 var(--space-4);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  flex-shrink: 0;
+  height: var(--control-xl);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+}
+
+.stopBtn:hover {
+  background: rgba(220, 80, 80, 0.25);
+}
+
+.thinkingBtn,
+.thinkingBtnOn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-lg);
+  height: var(--control-lg);
+  border-radius: var(--radius-md);
+  background: transparent;
+  border: 1px solid var(--border, #333340);
+  color: var(--text-muted, #606070);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.thinkingBtn:hover {
+  color: var(--text-secondary, #a0a0b8);
+  border-color: var(--text-secondary, #a0a0b8);
+}
+
+.thinkingBtnOn {
+  color: var(--accent-ai, #5dcaa5);
+  border-color: var(--accent-ai, #5dcaa5);
+  background: rgba(93, 202, 165, 0.08);
+}
+
+.thinkingBtnOn:hover {
+  background: rgba(93, 202, 165, 0.15);
+}
+
+.deepResearchIcon {
+  width: 25px;
+  height: 15px;
+  flex-shrink: 0;
+}
+
+.deepResearchBtn,
+.deepResearchBtnOn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1h);
+  width: auto;
+  padding: 0 var(--space-3);
+  height: var(--control-lg);
+  border-radius: var(--radius-md);
+  background: transparent;
+  border: 1px solid var(--border, #333340);
+  color: var(--text-muted, #606070);
+  font-size: 12px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.deepResearchBtn:hover {
+  color: var(--text-secondary, #a0a0b8);
+  border-color: var(--text-secondary, #a0a0b8);
+}
+
+.deepResearchBtnOn {
+  color: var(--accent-ai, #5dcaa5);
+  border-color: var(--accent-ai, #5dcaa5);
+  background: rgba(93, 202, 165, 0.08);
+}
+
+.deepResearchBtnOn:hover {
+  background: rgba(93, 202, 165, 0.15);
+}
+
+/* Container de previews de anexos */
+.attachmentPreviews {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 4px;
+  align-items: flex-start;
+}
+
+/* Pill de documento anexado */
+.docPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface-2, #26262c);
+  border: 1px solid var(--border, #333340);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--text-secondary, #a0a0b8);
+  max-width: 200px;
+}
+
+.docPillName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.docPillRemove {
+  background: transparent;
+  border: none;
+  color: var(--text-muted, #606070);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.docPillRemove:hover {
+  color: var(--text-primary, #e8e8f0);
+}
+
+/* Preview de imagem no composer */
+.imagePreview {
+  position: relative;
+  display: inline-flex;
+  align-items: flex-start;
+  margin-bottom: 4px;
+}
+
+.imagePreviewThumb {
+  max-width: 80px;
+  max-height: 80px;
+  border-radius: 6px;
+  border: 1px solid var(--border, #333340);
+  object-fit: cover;
+}
+
+.imagePreviewRemove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--surface-2, #26262c);
+  border: 1px solid var(--border, #333340);
+  color: var(--text-secondary, #a0a0b8);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.imagePreviewRemove:hover {
+  color: var(--text-primary, #e8e8f0);
+}
+
+/* Indicador de progresso do Deep Research */
+.deepResearchProgress {
+  font-size: 11px;
+  color: var(--accent-ai, #5dcaa5);
+  background: rgba(93, 202, 165, 0.07);
+  border: 1px solid rgba(93, 202, 165, 0.25);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+  margin-bottom: var(--space-1);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.deepResearchDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-ai, #5dcaa5);
+  animation: chatPulse 1.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+/* Indicador de web search via tool use */
+.webSearchProgress {
+  font-size: 11px;
+  color: var(--accent-ai, #5dcaa5);
+  background: rgba(93, 202, 165, 0.07);
+  border: 1px solid rgba(93, 202, 165, 0.25);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+  margin-bottom: var(--space-1);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.webSearchDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-ai, #5dcaa5);
+  animation: chatPulse 1.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+/* Aviso de vision incompativel */
+.visionWarning {
+  font-size: 11px;
+  color: var(--accent-warn, #ef9f27);
+  background: rgba(239, 159, 39, 0.08);
+  border: 1px solid rgba(239, 159, 39, 0.3);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+  margin-bottom: var(--space-1);
+}
+
+/* Botao de attach */
+.attachBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-lg);
+  height: var(--control-lg);
+  border-radius: var(--radius-md);
+  background: transparent;
+  border: 1px solid var(--border, #333340);
+  color: var(--text-muted, #606070);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.attachBtn:hover:not(:disabled) {
+  color: var(--text-secondary, #a0a0b8);
+  border-color: var(--text-secondary, #a0a0b8);
+}
+
+.attachBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Print de tela (só no Assistant): fica no canto esquerdo da linha de ações */
+.captureBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-lg);
+  height: var(--control-lg);
+  margin-right: auto;
+  border-radius: var(--radius-md);
+  background: transparent;
+  border: 1px solid var(--border, #333340);
+  color: var(--text-muted, #606070);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.captureBtn:hover:not(:disabled) {
+  color: var(--text-secondary, #a0a0b8);
+  border-color: var(--text-secondary, #a0a0b8);
+}
+
+.captureBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.captureBtn[aria-busy='true'] {
+  cursor: progress;
+  animation: pdfPulse 1.4s ease-in-out infinite;
+}
+
+/* Indicador de processamento de PDF */
+.pdfProcessing {
+  font-size: 11px;
+  color: var(--text-muted, #606070);
+  padding: 4px 0;
+  animation: pdfPulse 1.4s ease-in-out infinite;
+}
+
+/* Rótulo do Deep Research: some na largura estreita, mas fica para o leitor
+   de tela (o botão continua com o title). */
+.deepResearchLabel {
+  white-space: nowrap;
+}
+
+@container composer (max-width: 360px) {
+  .deepResearchBtn,
+  .deepResearchBtnOn {
+    padding: 0 var(--space-1h);
+  }
+
+  .deepResearchLabel {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+}
+
+@keyframes pdfPulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+@keyframes chatPulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1); }
+}

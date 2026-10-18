@@ -1,0 +1,111 @@
+/* Inspetor do RAG por resposta ("Retrieval details", modo detalhado) */
+.inspector {
+  border: 1px solid var(--border, #333340);
+  border-radius: var(--radius-md);
+  font-size: 11px;
+  line-height: var(--lh-ui);
+  color: var(--text-secondary, #a0a0b8);
+  min-width: 0;
+}
+
+.summary {
+  padding: var(--space-1) var(--space-2);
+  color: var(--text-muted, #7c7c93);
+  cursor: pointer;
+  user-select: none;
+}
+
+.summary:hover {
+  color: var(--accent-ai, #5dcaa5);
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: 0 var(--space-2) var(--space-2);
+}
+
+.facts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-0) var(--space-2);
+}
+
+.facts dt {
+  color: var(--text-muted, #7c7c93);
+}
+
+.facts dd {
+  margin: 0;
+  color: var(--text-primary, #e8e8f0);
+  word-break: break-word;
+}
+
+.flags {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.flag {
+  padding: var(--space-0) var(--space-1h);
+  border: 1px solid rgba(239, 159, 39, 0.35);
+  border-radius: var(--radius-sm);
+  background: rgba(239, 159, 39, 0.08);
+  color: var(--accent-warn, #ef9f27);
+}
+
+.count {
+  margin: 0;
+  color: var(--text-muted, #7c7c93);
+}
+
+.tableWrap {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.table th,
+.table td {
+  padding: var(--space-0) var(--space-1h);
+  text-align: right;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border, #333340);
+}
+
+.table th {
+  font-weight: 500;
+  color: var(--text-muted, #7c7c93);
+}
+
+.table th:nth-child(2),
+.table td:nth-child(2),
+.table th:nth-child(3),
+.table td:nth-child(3) {
+  text-align: left;
+}
+
+.source {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rowSent td {
+  color: var(--text-primary, #e8e8f0);
+  background: rgba(93, 202, 165, 0.07);
+}
+
+.rowSent td:last-child {
+  color: var(--accent-ai, #5dcaa5);
+}

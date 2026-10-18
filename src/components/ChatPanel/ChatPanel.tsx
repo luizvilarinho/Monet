@@ -1,23 +1,22 @@
-import { openUrl } from '@tauri-apps/plugin-opener'
-import { invoke } from '@tauri-apps/api/core'
-import { Brain, Paperclip, Stop } from '@phosphor-icons/react'
-import deepGrayIcon from '../../assets/icons/deep-gray.svg'
-import deepGreenIcon from '../../assets/icons/deep-green.svg'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useChat, type ChatFolder, type ChatMessage, type TasksSnapshot } from '../../hooks/useChat'
-import { renderMarkdown } from '../../lib/markdown'
+import { useChat, type ChatFolder, type TasksSnapshot } from '../../hooks/useChat'
+import { useChatPanelState } from '../../hooks/useChatPanelState'
+import { useStickToBottom } from '../../hooks/useStickToBottom'
 import { notesFolderDocId } from '../../lib/documents'
 import type { ChecklistProgress } from '../../lib/tasks'
 import type { AiModel, Note, Notebook, Task } from '../../types'
 import { ModelSelector } from '../AiPanel/ModelSelector'
 import { useTasksEnv } from '../TasksView/TasksEnv'
 import styles from './ChatPanel.module.css'
+import { ChatComposer } from './ChatComposer'
+import { ChatMessageBubble } from './ChatMessageBubble'
+import { MessageSources } from './MessageSources'
 import { ChatSidebar } from './ChatSidebar'
-import { ChatToolsMenu } from './ChatToolsMenu'
 import { FolderDocumentSelectorModal } from './FolderDocumentSelectorModal'
 import { FolderMemoryModal } from './FolderMemoryModal'
 import { FolderSystemPromptModal } from './FolderSystemPromptModal'
 import { SaveToNoteModal } from './SaveToNoteModal'
+import { ScrollToBottomButton } from './ScrollToBottomButton'
 
 
 export interface ChatPanelProps {
@@ -70,6 +69,8 @@ export function ChatPanel({
     isStreaming,
     deepResearchPhase,
     webSearchActive,
+    ragSearching,
+    ragTraces,
     thinkingEnabled,
     toggleThinking,
     error,
@@ -100,24 +101,23 @@ export function ChatPanel({
     reorderLoose,
   } = useChat(models, { getTasksSnapshot: () => tasksSnapshotRef.current })
 
-  const [draft, setDraft] = useState('')
-  const [draftImage, setDraftImage] = useState<string | null>(null)
-  const [imageError, setImageError] = useState<string | null>(null)
-  const [draftDocs, setDraftDocs] = useState<Array<{ name: string; type: string; data: string }>>([])
-  const [docError, setDocError] = useState<string | null>(null)
-  const [isPdfProcessing, setIsPdfProcessing] = useState(false)
   const [saveTarget, setSaveTarget] = useState<{ messageId: string; content: string } | null>(null)
   const [systemPromptFolderId, setSystemPromptFolderId] = useState<string | null>(
     null,
   )
   const [memoryFolderId, setMemoryFolderId] = useState<string | null>(null)
-  const [memoryToastVisible, setMemoryToastVisible] = useState(false)
-  const [webSourcesToast, setWebSourcesToast] = useState<{ count: number } | null>(null)
+  const { selectedModel, streamingMessageId, memoryToastVisible, webSourcesToast } = useChatPanelState(models, {
+    model,
+    setModel,
+    messages,
+    isStreaming,
+    folderMemoryUpdatedAt,
+    webSourcesSaved,
+  })
   const [folderDocsFolder, setFolderDocsFolder] = useState<ChatFolder | null>(null)
   const folderDocsNotebookId = folderDocsFolder ? getFolderNotebookId(folderDocsFolder.id) : null
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
-  const historyRef = useRef<HTMLDivElement | null>(null)
-  const [atBottom, setAtBottom] = useState(true)
+  const { historyRef, atBottom, onScroll, scrollToBottom } = useStickToBottom({ messages, isStreaming, activeId })
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const saved = parseInt(localStorage.getItem('monet:chat-sidebar-width') ?? '', 10)
     if (isNaN(saved)) return 240
@@ -136,49 +136,6 @@ export function ChatPanel({
     inputRef.current?.focus()
   }, [hasApiKey])
 
-  // Selecionar modelo padrao quando a lista carregar
-  useEffect(() => {
-    if (models.length === 0) return
-    if (model && models.some((m) => m.id === model)) return
-    const fallback = localStorage.getItem('lastModelId')
-    const next =
-      fallback && models.some((m) => m.id === fallback)
-        ? fallback
-        : models[0].id
-    setModel(next)
-  }, [models, model, setModel])
-
-  // Limpa o draft ao trocar de conversa
-  useEffect(() => {
-    setDraft('')
-    setDraftImage(null)
-    setDraftDocs([])
-  }, [activeId])
-
-  const selectedModel = models.find((m) => m.id === model)
-  const modelSupportsVision = selectedModel?.supportsVision ?? false
-  const visionWarning = !!draftImage && !modelSupportsVision
-
-  const canSend =
-    !isStreaming &&
-    !isPdfProcessing &&
-    hasApiKey &&
-    (draft.trim().length > 0 || !!draftImage || draftDocs.length > 0) &&
-    !!model &&
-    models.length > 0 &&
-    !visionWarning
-
-  // Identifica qual mensagem (se alguma) está atualmente em streaming:
-  // sempre a última mensagem do tipo assistant da conversa ativa, quando
-  // isStreaming === true.
-  const streamingMessageId = useMemo(() => {
-    if (!isStreaming) return null
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role === 'assistant') return messages[i].id
-    }
-    return null
-  }, [isStreaming, messages])
-
   const systemPromptFolder: ChatFolder | null = useMemo(() => {
     if (!systemPromptFolderId) return null
     return folders.find((f) => f.id === systemPromptFolderId) ?? null
@@ -193,150 +150,6 @@ export function ChatPanel({
     if (!activeId) return null
     return folders.find((f) => f.conversationIds.includes(activeId)) ?? null
   }, [folders, activeId])
-
-  // Scroll unico ao final do historico quando o usuario envia uma nova mensagem
-  // na mesma conversa. Trocas de conversa nao disparam (cada conversa preserva
-  // sua posicao). Streaming nao dispara (so o id da ultima msg de user importa).
-  const lastUserMessageId = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role === 'user') return messages[i].id
-    }
-    return null
-  }, [messages])
-  const prevActiveIdRef = useRef(activeId)
-  const prevLastUserMessageIdRef = useRef(lastUserMessageId)
-  useEffect(() => {
-    const sameConv = prevActiveIdRef.current === activeId
-    const userMsgChanged =
-      prevLastUserMessageIdRef.current !== lastUserMessageId
-    prevActiveIdRef.current = activeId
-    prevLastUserMessageIdRef.current = lastUserMessageId
-    if (!sameConv || !userMsgChanged || !lastUserMessageId) return
-    const el = historyRef.current
-    if (!el) return
-    requestAnimationFrame(() => {
-      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
-    })
-  }, [activeId, lastUserMessageId])
-
-  // Durante streaming, acompanha o crescimento da resposta rolando para baixo
-  // somente se o usuario nao tiver scrollado para cima manualmente.
-  useEffect(() => {
-    if (!isStreaming) return
-    const el = historyRef.current
-    if (!el) return
-    const isAtBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 48
-    if (isAtBottom) {
-      el.scrollTo({ top: el.scrollHeight, behavior: 'instant' })
-    }
-  }, [messages, isStreaming])
-
-  useEffect(() => {
-    if (folderMemoryUpdatedAt === null) return
-    setMemoryToastVisible(true)
-    const id = window.setTimeout(() => setMemoryToastVisible(false), 4000)
-    return () => window.clearTimeout(id)
-  }, [folderMemoryUpdatedAt])
-
-  useEffect(() => {
-    if (webSourcesSaved === null) return
-    setWebSourcesToast({ count: webSourcesSaved.count })
-    const id = window.setTimeout(() => setWebSourcesToast(null), 4000)
-    return () => window.clearTimeout(id)
-  }, [webSourcesSaved])
-
-  function handleSend() {
-    if (!canSend) return
-    const text = draft
-    const img = draftImage
-    const docs = draftDocs
-    setDraft('')
-    setDraftImage(null)
-    setDraftDocs([])
-    void send(text, img ?? undefined, docs.length > 0 ? docs : undefined)
-  }
-
-  function handleStop() {
-    cancel()
-  }
-
-  function resolveFileType(file: File): string {
-    if (file.type) return file.type
-    if (file.name.endsWith('.md')) return 'text/markdown'
-    if (file.name.endsWith('.docx')) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-    if (file.name.endsWith('.pdf')) return 'application/pdf'
-    return 'text/plain'
-  }
-
-  function handlePickFile() {
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.accept = 'image/*,text/plain,text/markdown,.md,.pdf'
-    input.multiple = true
-    input.onchange = () => {
-      const files = Array.from(input.files ?? [])
-      if (files.length === 0) return
-      setDocError(null)
-      setImageError(null)
-      const errors: string[] = []
-      for (const file of files) {
-        const mime = resolveFileType(file)
-        const isImage = mime.startsWith('image/')
-        const isText = mime.startsWith('text/')
-        const isPdf = mime === 'application/pdf'
-        const isDocx = mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-        if (isDocx) {
-          errors.push('DOCX files are not supported yet. Please convert to PDF, TXT or Markdown.')
-          continue
-        }
-        if (!isImage && !isText && !isPdf) {
-          errors.push(`File type not supported: ${file.name}`)
-          continue
-        }
-        if (file.size > 5 * 1024 * 1024) {
-          errors.push(`File exceeds the 5 MB limit: ${file.name}`)
-          continue
-        }
-        if (isImage) {
-          const reader = new FileReader()
-          reader.onload = () => setDraftImage(reader.result as string)
-          reader.readAsDataURL(file)
-        } else if (isText) {
-          // Text files are sent inline as message text — works with all models
-          const reader = new FileReader()
-          reader.onload = () =>
-            setDraftDocs((prev) => [...prev, { name: file.name, type: mime, data: reader.result as string }])
-          reader.readAsText(file)
-        } else {
-          // PDF — extract text in the backend and send inline as plain text.
-          // This works with any model and avoids provider-specific document formats.
-          const reader = new FileReader()
-          reader.onload = async () => {
-            const buffer = reader.result as ArrayBuffer
-            const bytes = Array.from(new Uint8Array(buffer))
-            setIsPdfProcessing(true)
-            try {
-              const extracted = await invoke<string>('extract_pdf_text', { bytes })
-              setDraftDocs((prev) => [
-                ...prev,
-                { name: file.name, type: 'text/plain', data: extracted },
-              ])
-            } catch (err) {
-              const message = typeof err === 'string' ? err : 'Failed to read PDF'
-              setDocError(`${file.name}: ${message}`)
-            } finally {
-              setIsPdfProcessing(false)
-            }
-          }
-          reader.readAsArrayBuffer(file)
-        }
-      }
-      if (errors.length > 0) {
-        setDocError(errors.join(' '))
-      }
-    }
-    input.click()
-  }
 
   return (
     <section className={styles.panel} aria-label="AI Chat">
@@ -404,11 +217,7 @@ export function ChatPanel({
         <div
           className={styles.history}
           ref={historyRef}
-          onScroll={() => {
-            const el = historyRef.current
-            if (!el) return
-            setAtBottom(el.scrollTop + el.clientHeight >= el.scrollHeight - 32)
-          }}
+          onScroll={onScroll}
         >
           {messages.length === 0 ? (
             <div className={styles.empty}>
@@ -419,34 +228,20 @@ export function ChatPanel({
             </div>
           ) : (
             messages.map((m) => (
-              <ChatBubble
+              <ChatMessageBubble
                 key={m.id}
                 message={m}
                 isStreaming={m.id === streamingMessageId}
                 onSaveToNote={(content) =>
                   setSaveTarget({ messageId: m.id, content })
                 }
+                footer={<MessageSources message={m} trace={ragTraces[m.id]} />}
               />
             ))
           )}
         </div>
 
-        {!atBottom && (
-          <button
-            type="button"
-            className={styles.scrollBtn}
-            aria-label="Scroll to bottom"
-            onClick={() => {
-              const el = historyRef.current
-              if (!el) return
-              el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
-            }}
-          >
-            <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <polyline points="4,6 8,10 12,6" />
-            </svg>
-          </button>
-        )}
+        {!atBottom && <ScrollToBottomButton className={styles.scrollBtn} onClick={scrollToBottom} />}
 
         {error && messages.length > 0 && (
           <div className={styles.errorRow} role="alert">
@@ -454,181 +249,28 @@ export function ChatPanel({
           </div>
         )}
 
-        <footer className={styles.composer}>
-          <div className={styles.composerInner}>
-            {(draftImage || draftDocs.length > 0) && (
-              <div className={styles.attachmentPreviews}>
-                {draftImage && (
-                  <div className={styles.imagePreview}>
-                    <img src={draftImage} alt="attachment preview" className={styles.imagePreviewThumb} />
-                    <button
-                      type="button"
-                      className={styles.imagePreviewRemove}
-                      onClick={() => setDraftImage(null)}
-                      aria-label="Remove image"
-                    >
-                      ×
-                    </button>
-                  </div>
-                )}
-                {draftDocs.map((doc, i) => (
-                  <div key={i} className={styles.docPill}>
-                    <span className={styles.docPillName}>{doc.name}</span>
-                    <button
-                      type="button"
-                      className={styles.docPillRemove}
-                      onClick={() => setDraftDocs((prev) => prev.filter((_, idx) => idx !== i))}
-                      aria-label={`Remove ${doc.name}`}
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-            {isPdfProcessing && (
-              <div className={styles.pdfProcessing} role="status" aria-live="polite">
-                Processing document...
-              </div>
-            )}
-            {deepResearchPhase && (
-              <div className={styles.deepResearchProgress} role="status" aria-live="polite">
-                <span className={styles.deepResearchDot} aria-hidden="true" />
-                {deepResearchPhase === 'searching' && 'Searching the web...'}
-                {deepResearchPhase === 'expanding' && 'Generating sub-queries...'}
-                {deepResearchPhase === 'broadening' && 'Exploring related topics...'}
-                {deepResearchPhase === 'ranking' && 'Ranking results...'}
-                {deepResearchPhase === 'synthesizing' && 'Preparing synthesis...'}
-              </div>
-            )}
-            {webSearchActive && (
-              <div className={styles.webSearchProgress} role="status" aria-live="polite">
-                <span className={styles.webSearchDot} aria-hidden="true" />
-                Searching the web...
-              </div>
-            )}
-            {memoryToastVisible && (
-              <div className={styles.webSearchProgress} role="status" aria-live="polite">
-                <span className={styles.webSearchDot} aria-hidden="true" />
-                Folder memory updated
-              </div>
-            )}
-            {webSourcesToast && (
-              <div className={styles.webSearchProgress} role="status" aria-live="polite">
-                <span className={styles.webSearchDot} aria-hidden="true" />
-                {webSourcesToast.count === 1
-                  ? '1 source saved to the knowledge base'
-                  : `${webSourcesToast.count} sources saved to the knowledge base`}
-              </div>
-            )}
-            {visionWarning && (
-              <div className={styles.visionWarning} role="alert">
-                This model does not support images. Switch to a vision-capable model or remove the image.
-              </div>
-            )}
-            {imageError && (
-              <div className={styles.visionWarning} role="alert">
-                {imageError}
-              </div>
-            )}
-            {docError && (
-              <div className={styles.visionWarning} role="alert">
-                {docError}
-              </div>
-            )}
-            <textarea
-              ref={inputRef}
-              className={styles.input}
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.ctrlKey && !e.shiftKey) {
-                  e.preventDefault()
-                  handleSend()
-                }
-              }}
-              onPaste={(e) => {
-                const items = Array.from(e.clipboardData.items)
-                const imageItem = items.find((item) => item.type.startsWith('image/'))
-                if (!imageItem) return
-                e.preventDefault()
-                const file = imageItem.getAsFile()
-                if (!file) return
-                if (file.size > 5 * 1024 * 1024) return
-                const reader = new FileReader()
-                reader.onload = () => setDraftImage(reader.result as string)
-                reader.readAsDataURL(file)
-              }}
-              placeholder={
-                hasApiKey
-                  ? 'Write a message...'
-                  : 'Configure your OpenRouter key to get started.'
-              }
-              rows={3}
-              disabled={!hasApiKey}
-              aria-label="message"
-            />
-            <div className={styles.composerActions}>
-              <button
-                type="button"
-                className={tools.deepResearch ? styles.deepResearchBtnOn : styles.deepResearchBtn}
-                onClick={() => setTool('deepResearch', !tools.deepResearch)}
-                title={tools.deepResearch ? 'Deep Research enabled — click to disable' : 'Enable Deep Research'}
-                aria-pressed={tools.deepResearch}
-              >
-                <img src={tools.deepResearch ? deepGreenIcon : deepGrayIcon} alt="" aria-hidden="true" className={styles.deepResearchIcon} />
-                Deep Research
-              </button>
-              <button
-                type="button"
-                className={thinkingEnabled ? styles.thinkingBtnOn : styles.thinkingBtn}
-                onClick={toggleThinking}
-                title={thinkingEnabled ? 'Thinking enabled — click to disable' : 'Enable thinking'}
-                aria-pressed={thinkingEnabled}
-              >
-                <Brain size={15} weight={thinkingEnabled ? 'fill' : 'regular'} />
-              </button>
-              <button
-                type="button"
-                className={styles.attachBtn}
-                onClick={handlePickFile}
-                title="Attach file"
-                aria-label="Attach file"
-                disabled={!hasApiKey}
-              >
-                <Paperclip size={15} />
-              </button>
-              <ChatToolsMenu
-                tools={tools}
-                onToggle={setTool}
-                folderMemory={activeFolder ? { enabled: activeFolder.memoryEnabled } : null}
-                onToggleFolderMemory={(v) => activeFolder && setFolderMemoryEnabled(activeFolder.id, v)}
-                folderWebResearch={activeFolder ? { enabled: activeFolder.webResearchEnabled } : null}
-                onToggleFolderWebResearch={(v) => activeFolder && setFolderWebResearchEnabled(activeFolder.id, v)}
-                tasksTool={{ supported: selectedModel?.supportsTools ?? false }}
-              />
-              {isStreaming ? (
-                <button
-                  type="button"
-                  className={styles.stopBtn}
-                  onClick={handleStop}
-                >
-                  <Stop size={14} weight="fill" />
-                  Stop
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  className={styles.sendBtn}
-                  onClick={handleSend}
-                  disabled={!canSend}
-                >
-                  Send
-                </button>
-              )}
-            </div>
-          </div>
-        </footer>
+        <ChatComposer
+          hasApiKey={hasApiKey}
+          isStreaming={isStreaming}
+          selectedModel={selectedModel}
+          tools={tools}
+          setTool={setTool}
+          thinkingEnabled={thinkingEnabled}
+          toggleThinking={toggleThinking}
+          activeFolder={activeFolder}
+          setFolderMemoryEnabled={setFolderMemoryEnabled}
+          setFolderWebResearchEnabled={setFolderWebResearchEnabled}
+          deepResearchPhase={deepResearchPhase}
+          webSearchActive={webSearchActive}
+          ragSearching={ragSearching}
+          memoryToastVisible={memoryToastVisible}
+          webSourcesToast={webSourcesToast}
+          resetKey={activeId}
+          rows={3}
+          onSend={(text, image, docs) => void send(text, image, docs)}
+          onStop={cancel}
+          inputRef={inputRef}
+        />
       </div>
 
       <SaveToNoteModal
@@ -670,167 +312,5 @@ export function ChatPanel({
         onClose={() => setMemoryFolderId(null)}
       />
     </section>
-  )
-}
-
-interface ChatBubbleProps {
-  message: ChatMessage
-  isStreaming: boolean
-  onSaveToNote: (content: string) => void
-}
-
-function ChatBubble({ message, isStreaming, onSaveToNote }: ChatBubbleProps) {
-  const isUser = message.role === 'user'
-  const [html, setHtml] = useState('')
-  const [copied, setCopied] = useState(false)
-  const isStreamingPlaceholder = !isUser && message.content.length === 0
-  const isErrorMessage =
-    !isUser &&
-    message.content.startsWith('Error:')
-  const canSaveToNote =
-    !isUser &&
-    !isStreaming &&
-    !isStreamingPlaceholder &&
-    !isErrorMessage &&
-    message.content.trim().length > 0
-
-  const cacheKey = useMemo(
-    () => (isUser ? null : `${message.id}:${message.content.length}`),
-    [isUser, message.id, message.content]
-  )
-
-  useEffect(() => {
-    if (isUser) return
-    if (!message.content) {
-      setHtml('')
-      return
-    }
-    let cancelled = false
-    renderMarkdown(message.content).then((out) => {
-      if (!cancelled) setHtml(out)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [isUser, message.content, cacheKey])
-
-
-  function handleCopy() {
-    if (isUser) return
-    navigator.clipboard.writeText(message.content).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    })
-  }
-
-  const hasAttachedDocs = isUser && message.attachedDocs && message.attachedDocs.length > 0
-
-  return (
-    <div
-      className={isUser ? (hasAttachedDocs ? styles.bubbleUserWrapper : styles.bubbleUser) : styles.bubbleAssistant}
-      data-role={message.role}
-    >
-      {isUser ? (
-        <>
-          {hasAttachedDocs && (
-            <div className={styles.msgDocLabel}>
-              {message.attachedDocs!.map((d) => (
-                <span key={d.name} className={styles.msgDocChip}>{d.name}</span>
-              ))}
-            </div>
-          )}
-          <div className={hasAttachedDocs ? styles.bubbleUser : undefined}>
-            {message.imageDataUrl && (
-              <img
-                src={message.imageDataUrl}
-                alt="attached image"
-                className={styles.userMessageImage}
-              />
-            )}
-            <p className={styles.userText}>{message.content}</p>
-          </div>
-        </>
-      ) : isStreamingPlaceholder ? (
-        <span className={styles.streamingDots} aria-hidden="true">
-          <span />
-          <span />
-          <span />
-        </span>
-      ) : (
-        <>
-          {message.thinking && (
-            <details className={styles.thinking} open={isStreaming || undefined}>
-              <summary className={styles.thinkingSummary}>Thinking</summary>
-              <div className={styles.thinkingContent}>{message.thinking}</div>
-            </details>
-          )}
-          <div
-            className={styles.assistantBody}
-            dangerouslySetInnerHTML={{ __html: html }}
-            onClick={(e) => {
-              const target = (e.target as HTMLElement).closest('a')
-              if (!target) return
-              const href = target.getAttribute('href')
-              if (!href || !href.startsWith('http')) return
-              e.preventDefault()
-              void openUrl(href)
-            }}
-          />
-          {!isStreaming && message.model && (
-            <div className={styles.msgMeta}>
-              <span>{message.model}</span>
-              {message.tokensPerSecond !== undefined && (
-                <span>{message.tokensPerSecond} tok/s</span>
-              )}
-            </div>
-          )}
-          <div className={styles.assistantActions}>
-            {canSaveToNote && (
-              <button
-                type="button"
-                className={styles.saveBtn}
-                onClick={() => onSaveToNote(message.content)}
-                aria-label="Save response to a note"
-              >
-                <svg
-                  viewBox="0 0 16 16"
-                  width="13"
-                  height="13"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M3 2h8l2 2v10a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" />
-                  <polyline points="5,2 5,7 10,7 10,2" />
-                  <line x1="5" y1="11" x2="11" y2="11" />
-                </svg>
-                Save to note
-              </button>
-            )}
-            <button
-              type="button"
-              className={styles.copyBtn}
-              onClick={handleCopy}
-              title={copied ? 'Copied!' : 'Copy response'}
-              aria-label="Copy response"
-            >
-              {copied ? (
-                <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <polyline points="3,8 6,11 13,4" />
-                </svg>
-              ) : (
-                <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <rect x="5" y="5" width="9" height="9" rx="1" />
-                  <path d="M11 4V3a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h1" />
-                </svg>
-              )}
-            </button>
-          </div>
-        </>
-      )}
-    </div>
   )
 }

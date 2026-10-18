@@ -88,7 +88,11 @@ export function MetadataManagerModal({
         aria-modal="true"
         aria-label="Manage properties"
         onKeyDown={(e) => {
-          if (e.key === 'Escape' && !(e.target instanceof HTMLInputElement)) onClose()
+          if (e.key === 'Escape' && !(e.target instanceof HTMLInputElement)) {
+            // O modal da task (por baixo) ignora o Esc já tratado.
+            e.preventDefault()
+            onClose()
+          }
         }}
       >
         <div className={styles.header}>

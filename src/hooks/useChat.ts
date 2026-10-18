@@ -16,7 +16,6 @@ import {
 } from '../lib/openrouter'
 import type { AiModel, Notebook, Task, TaskStatusDef } from '../types'
 import {
-  BUILTIN_STATUS_DEFS,
   queryTasksText,
   type ChecklistProgress,
   type TasksQuery,
@@ -25,16 +24,35 @@ import { formatSearchResults, hasTavilyKey, webSearch, type SearchResult } from 
 import { runDeepResearch, type DeepResearchPhase } from '../lib/deepResearch'
 import { enqueueLibrarian } from '../lib/librarian'
 import {
-  documentsSearchByIds,
-  embedText,
   getNotebookVisibleDocumentIds,
   NOTEBOOK_VISIBILITY_CHANGED_EVENT,
   notesFolderDocId,
   notesIndexGetDisabledNotebooks,
   replaceNotebookVisibility,
-  resolveSearchableIds,
   setNotebookDocumentVisibility,
 } from '../lib/documents'
+import {
+  buildRagContext,
+  citeSource,
+  RAG_DETAILED_KEY,
+  RAG_REWRITE_MODEL_KEY,
+  ragChunkBlocks,
+  ragGate,
+  ragGetChunks,
+  ragHistory,
+  ragMessage,
+  ragNothingFoundMessage,
+  ragRetrieve,
+  type RagCandidate,
+  type RagFilters,
+  type RagResponse,
+  type RagScope,
+  type RagSource,
+} from '../lib/rag'
+import { CALENDAR_NOTEBOOK_ID, dateKeyFromMs, getWeekdayName } from '../lib/calendar'
+import { cleanNoteContentForAi, loadEmbedResponses, noteDate } from '../lib/noteFileText'
+import { ocrTextsForContent } from '../lib/imageOcr'
+import { storage } from '../storage'
 
 // ─── System prompt do chat ───────────────────────────────────────────────────
 // Edite aqui para ajustar o comportamento do modelo no modo chat.
@@ -90,7 +108,8 @@ numbered format:
 1. [Title](url)
 2. [Title](url)
 
-Never place links or citation markers in the middle of the text.
+Never place web links or web citation markers in the middle of the text.
+Knowledge base excerpts are cited inline as [n].
 If search results are inconclusive or outdated, say so explicitly
 in the body of the response.
 
@@ -182,6 +201,10 @@ export interface ChatMessage {
   model?: string
   tokensPerSecond?: number
   thinking?: string
+  // Fontes do RAG usadas na resposta ([n] por documento), compactas.
+  ragSources?: RagSource[]
+  // A busca na base não achou nada relevante.
+  ragNothingFound?: true
 }
 
 export interface ChatConversation {
@@ -220,8 +243,11 @@ export interface ChatFolder {
 export interface ChatTools {
   webSearch: boolean
   deepResearch: boolean
-  // Tool "Tasks" (consulta à tabela de tasks); só no chat principal.
+  // Tool "Tasks" (consulta à tabela de tasks); nos chats que fornecem o snapshot.
   tasks: boolean
+  // Tools "Daily notes" (get_day, notes_by_date): leem notas datadas de
+  // qualquer caderno, fora do escopo da pasta. Opt-in.
+  dailyNotes: boolean
 }
 
 // Estado atual das tasks para a tool `query_tasks` (fornecido pelo App).
@@ -229,8 +255,9 @@ export interface TasksSnapshot {
   tasks: Task[]
   notebooks: Notebook[]
   todayKey: string
-  // Progresso do checklist da nota-corpo de cada task.
-  checklist: Map<string, ChecklistProgress>
+  // Progresso do checklist da nota-corpo de cada task. O loader é lido só
+  // quando a tool é chamada (o Assistant lê as notas-corpo do banco).
+  checklist: Map<string, ChecklistProgress> | (() => Promise<Map<string, ChecklistProgress>>)
   // Registro de status (enum da tool e nomes nas respostas).
   statuses: TaskStatusDef[]
 }
@@ -239,7 +266,7 @@ export type ConversationLocation =
   | { type: 'loose'; index: number }
   | { type: 'folder'; folderId: string; index: number }
 
-const DEFAULT_TOOLS: ChatTools = { webSearch: false, deepResearch: false, tasks: false }
+const DEFAULT_TOOLS: ChatTools = { webSearch: false, deepResearch: false, tasks: false, dailyNotes: false }
 
 function loadTools(): ChatTools {
   try {
@@ -252,6 +279,7 @@ function loadTools(): ChatTools {
           webSearch: !!p.webSearch,
           deepResearch: !!p.deepResearch,
           tasks: !!p.tasks,
+          dailyNotes: !!p.dailyNotes,
         }
       }
     }
@@ -532,6 +560,24 @@ export function unlinkResponseFromChat(responseId: string): void {
   saveResponseLinks(links)
 }
 
+// Ids das pastas de chat salvas. A KB usa para achar as pastas web órfãs
+// (de pastas de chat apagadas).
+// null quando a lista gravada não pôde ser lida: quem chama não pode concluir
+// que as pastas sumiram (ex.: marcar todas as pastas web como órfãs).
+export function listChatFolderIds(): string[] | null {
+  const raw = localStorage.getItem(FOLDERS_KEY)
+  const folders = parseFolders(raw)
+  if (raw && folders.length === 0) {
+    try {
+      const parsed: unknown = JSON.parse(raw)
+      if (!Array.isArray(parsed) || parsed.length > 0) return null
+    } catch {
+      return null
+    }
+  }
+  return folders.map((f) => f.id)
+}
+
 export function chatConversationExists(conversationId: string): boolean {
   return loadConversations().some((c) => c.id === conversationId)
 }
@@ -658,6 +704,162 @@ export function unlinkNotebookFromChatFolder(notebookId: string): void {
   saveNotebookChatFolderLinks(links)
 }
 
+// Conversas existentes de uma pasta, na ordem dela: pelo vínculo
+// (`folderId`, fonte de verdade) e pela lista de ordem, para que exclusões e
+// fusões não deixem nenhuma para trás. Da lista de ordem só entram as
+// conversas sem vínculo válido (legado ou pasta inexistente, como no
+// reconcileOrders): uma lista defasada não leva conversa solta ou de outra pasta.
+export function folderConversationIds(
+  folder: ChatFolder,
+  conversations: ChatConversation[],
+  folders: ChatFolder[]
+): string[] {
+  const folderIds = new Set(folders.map((f) => f.id))
+  const byId = new Map(conversations.map((c) => [c.id, c]))
+  const ids = folder.conversationIds.filter((id) => {
+    const c = byId.get(id)
+    if (!c) return false
+    if (c.folderId === undefined || c.folderId === folder.id) return true
+    return c.folderId !== null && !folderIds.has(c.folderId)
+  })
+  for (const c of conversations) {
+    if (c.folderId === folder.id && !ids.includes(c.id)) ids.push(c.id)
+  }
+  return ids
+}
+
+// Nome da pasta de chat de um caderno (cosmético; a resolução é pelo vínculo).
+function notebookChatFolderName(title: string): string {
+  return `Notebook - ${title.trim().slice(0, 90) || 'Untitled notebook'}`
+}
+
+// Funde a pasta `sourceId` em `destId`: as conversas da origem passam para o
+// topo do destino, a memória da origem é anexada com título, o system prompt
+// do destino fica e o web research vale se estiver ligado em qualquer uma. A
+// origem sai da lista. null se uma das pastas não existe.
+function mergeFolderList(
+  folders: ChatFolder[],
+  conversations: ChatConversation[],
+  sourceId: string,
+  destId: string
+): { folders: ChatFolder[]; movedIds: Set<string> } | null {
+  const source = folders.find((f) => f.id === sourceId)
+  const dest = folders.find((f) => f.id === destId)
+  if (!source || !dest || source === dest) return null
+  const moved = folderConversationIds(source, conversations, folders)
+  const movedIds = new Set(moved)
+  const sourceMemory = source.memory.trim()
+  const memory = sourceMemory
+    ? [dest.memory.trim(), `## Merged from "${source.name}"\n${sourceMemory}`].filter(Boolean).join('\n\n')
+    : dest.memory
+  const merged: ChatFolder = {
+    ...dest,
+    conversationIds: [...moved, ...dest.conversationIds.filter((id) => !movedIds.has(id))],
+    memory,
+    webResearchEnabled: dest.webResearchEnabled || source.webResearchEnabled,
+    updatedAt: new Date().toISOString(),
+  }
+  return {
+    folders: folders.filter((f) => f.id !== sourceId).map((f) => (f.id === destId ? merged : f)),
+    movedIds,
+  }
+}
+
+// ─── Pastas de chat de cadernos excluídos ou movidos ─────────────────────────
+// Instâncias `useChat` montadas nesta janela. Mudanças de pasta vindas de fora
+// do chat (excluir ou mover caderno) passam por TODAS elas: gravar direto no
+// localStorage seria desfeito pelo save-effect de uma instância montada (o
+// evento `storage` só chega às outras janelas). Sem instância montada, o
+// localStorage é editado direto.
+interface MountedChat {
+  hasFolder: (id: string) => boolean
+  deleteFolder: (id: string) => void
+  mergeFolderInto: (sourceId: string, destId: string) => void
+  renameFolder: (id: string, name: string) => void
+}
+const mountedChats = new Set<{ current: MountedChat | null }>()
+
+function chatFolderExists(folderId: string): boolean {
+  const instances = [...mountedChats]
+  if (instances.length > 0) return instances.some((i) => i.current?.hasFolder(folderId))
+  return parseFolders(localStorage.getItem(FOLDERS_KEY)).some((f) => f.id === folderId)
+}
+
+// Quantas conversas a pasta de chat do caderno tem; null se ele não tem pasta.
+// Para o texto da confirmação de exclusão do caderno.
+export function countNotebookChatConversations(notebookId: string): number | null {
+  const folderId = getNotebookChatFolderId(notebookId)
+  const folders = folderId ? parseFolders(localStorage.getItem(FOLDERS_KEY)) : []
+  const folder = folders.find((f) => f.id === folderId)
+  if (!folder) return null
+  return folderConversationIds(folder, parseConversations(localStorage.getItem(CONVERSATIONS_KEY)), folders).length
+}
+
+// Caderno excluído: apaga a pasta de chat dele com as conversas e desfaz o
+// vínculo. Chamar DEPOIS de o caderno sair do estado, senão o chat das
+// Anotações recria a pasta. Retorna o id da pasta (para apagar a pasta web
+// dela) ou null se o caderno não tinha pasta.
+export function deleteNotebookChatFolder(notebookId: string): string | null {
+  const folderId = getNotebookChatFolderId(notebookId)
+  if (!folderId) return null
+  const instances = [...mountedChats]
+  if (instances.length > 0) instances.forEach((i) => i.current?.deleteFolder(folderId))
+  else deleteChatFolderById(folderId)
+  unlinkNotebookFromChatFolder(notebookId)
+  return folderId
+}
+
+// Caderno movido para dentro de outro (vira subject): a pasta de chat dele
+// passa para o caderno de destino. Destino sem pasta: o vínculo do destino
+// aponta para a pasta da origem, renomeada. Destino com pasta: a origem é
+// fundida nela e apagada. Chamar DEPOIS de o caderno de origem sair do
+// estado. Retorna o id da pasta da origem quando ela foi apagada (a pasta web
+// dela não acompanha a fusão); senão null.
+export function moveNotebookChatFolder(
+  sourceNotebookId: string,
+  destNotebookId: string,
+  destTitle: string
+): string | null {
+  const sourceFolderId = getNotebookChatFolderId(sourceNotebookId)
+  if (!sourceFolderId || !chatFolderExists(sourceFolderId)) {
+    unlinkNotebookFromChatFolder(sourceNotebookId)
+    return null
+  }
+  const instances = [...mountedChats]
+  const destFolderId = getNotebookChatFolderId(destNotebookId)
+  let deletedFolderId: string | null = null
+  if (destFolderId && destFolderId !== sourceFolderId && chatFolderExists(destFolderId)) {
+    if (instances.length > 0) {
+      instances.forEach((i) => i.current?.mergeFolderInto(sourceFolderId, destFolderId))
+    } else {
+      const conversations = loadConversations()
+      const merged = mergeFolderList(loadFolders(), conversations, sourceFolderId, destFolderId)
+      if (merged) {
+        // Pastas antes das conversas: ver deleteFolder no hook.
+        saveFolders(merged.folders)
+        saveConversations(
+          conversations.map((c) => (merged.movedIds.has(c.id) ? { ...c, folderId: destFolderId } : c))
+        )
+      }
+    }
+    deletedFolderId = sourceFolderId
+  } else {
+    linkNotebookToChatFolder(destNotebookId, sourceFolderId)
+    const name = notebookChatFolderName(destTitle)
+    if (instances.length > 0) {
+      instances.forEach((i) => i.current?.renameFolder(sourceFolderId, name))
+    } else {
+      saveFolders(
+        loadFolders().map((f) =>
+          f.id === sourceFolderId ? { ...f, name, updatedAt: new Date().toISOString() } : f
+        )
+      )
+    }
+  }
+  unlinkNotebookFromChatFolder(sourceNotebookId)
+  return deletedFolderId
+}
+
 // Remove uma PASTA inteira diretamente do localStorage (pasta + conversas +
 // arquivos de documentos anexados + ordem solta). ATENÇÃO: este helper
 // manipula o localStorage diretamente e NÃO atualiza instâncias `useChat`
@@ -669,8 +871,8 @@ export function deleteChatFolderById(folderId: string): void {
   const folders = loadFolders()
   const folder = folders.find((f) => f.id === folderId)
   if (!folder) return
-  const convIdsToDelete = new Set(folder.conversationIds)
   const conversations = loadConversations()
+  const convIdsToDelete = new Set(folderConversationIds(folder, conversations, folders))
   // Mesma limpeza de documentos anexados do deleteFolder do hook.
   for (const conv of conversations) {
     if (!convIdsToDelete.has(conv.id)) continue
@@ -682,8 +884,9 @@ export function deleteChatFolderById(folderId: string): void {
       }
     }
   }
-  saveConversations(conversations.filter((c) => !convIdsToDelete.has(c.id)))
+  // Pastas antes das conversas: ver deleteFolder no hook.
   saveFolders(folders.filter((f) => f.id !== folderId))
+  saveConversations(conversations.filter((c) => !convIdsToDelete.has(c.id)))
   saveLooseOrder(loadLooseOrder().filter((id) => !convIdsToDelete.has(id)))
 }
 
@@ -952,6 +1155,11 @@ export interface UseChatResult {
   isStreaming: boolean
   deepResearchPhase: DeepResearchPhase | null
   webSearchActive: boolean
+  // Recuperação do RAG em andamento (antes do 1º token).
+  ragSearching: boolean
+  // Trace do inspetor por id de mensagem assistant; só em memória e só com
+  // o modo detalhado ligado.
+  ragTraces: Record<string, RagResponse>
   thinkingEnabled: boolean
   toggleThinking: () => void
   error: string | null
@@ -1005,12 +1213,95 @@ export interface UseChatResult {
 // (chat das Anotações). Ver `ensureScopedFolder`.
 export type ChatFolderScope = { kind: 'book' | 'notebook'; id: string; title: string }
 
+// ─── Tools "Daily notes" (get_day, notes_by_date) ────────────────────────────
+// Orçamento total de conteúdo das notas por chamada; cada nota leva uma parte.
+const NOTES_TOOL_BUDGET = 24000
+const NOTES_TOOL_MIN_SHARE = 1500
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+
+function foldText(s: string): string {
+  return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim()
+}
+
+// Notas do período (nota diária do Calendar + notas datadas, de qualquer
+// caderno com indexação de IA ligada), como texto para a IA. Cada nota vira
+// uma fonte [n] em `sources` (numeração contínua da resposta).
+async function notesByDateText(
+  from: string,
+  to: string,
+  notebook: string | undefined,
+  sources: RagSource[]
+): Promise<string> {
+  if (!ISO_DATE_RE.test(from) || !ISO_DATE_RE.test(to)) return 'Invalid date: use YYYY-MM-DD.'
+  if (from > to) [from, to] = [to, from]
+  const [notes, notebooks, summaries, disabledIds] = await Promise.all([
+    storage.getNotesByDateRange(from, to),
+    storage.getNotebooks(),
+    storage.getNoteSummaries(),
+    notesIndexGetDisabledNotebooks(),
+  ])
+  const disabled = new Set(disabledIds)
+  const notebookName = new Map(notebooks.map((nb) => [nb.id, nb.name]))
+  const titles = new Map(summaries.map((n) => [n.id, n.title]))
+  const wanted = notebook ? foldText(notebook) : ''
+  const picked = notes
+    .filter((n) => n.notebookId === null || !disabled.has(n.notebookId))
+    .filter((n) => !wanted || foldText(notebookName.get(n.notebookId ?? '') ?? '').includes(wanted))
+    .map((n) => ({ note: n, date: noteDate(n) ?? '' }))
+    // Por data; no mesmo dia, a nota diária primeiro.
+    .sort(
+      (a, b) =>
+        a.date.localeCompare(b.date) ||
+        Number(b.note.notebookId === CALENDAR_NOTEBOOK_ID) - Number(a.note.notebookId === CALENDAR_NOTEBOOK_ID)
+    )
+  if (picked.length === 0) return 'No notes found for this period.'
+
+  const contents = picked.map((p) => p.note.content)
+  const [embeds, imageTexts] = await Promise.all([
+    loadEmbedResponses(contents),
+    ocrTextsForContent(contents.join('\n')),
+  ])
+  const share = Math.max(NOTES_TOOL_MIN_SHARE, Math.floor(NOTES_TOOL_BUDGET / picked.length))
+  const blocks: string[] = []
+  let used = 0
+  let omitted = 0
+  for (const { note, date } of picked) {
+    if (used >= NOTES_TOOL_BUDGET) {
+      omitted++
+      continue
+    }
+    let body = cleanNoteContentForAi(note.content, {
+      resolveNoteTitle: (id) => titles.get(id),
+      resolveEmbed: (id) => embeds.get(id),
+      resolveImageText: (url) => imageTexts.get(url),
+    }).trim()
+    const cap = Math.min(share, NOTES_TOOL_BUDGET - used)
+    if (body.length > cap) body = `${body.slice(0, cap)} [truncated]`
+    used += body.length
+    const title = note.title.trim() || 'Untitled'
+    const folder = note.notebookId ? `Notes — ${notebookName.get(note.notebookId) ?? 'Untitled'}` : undefined
+    const n = citeSource(sources, {
+      documentId: `note:${note.id}`,
+      title,
+      kind: 'note',
+      date: date.slice(0, 10) || undefined,
+      folder,
+      rowids: [],
+    })
+    const header = [title, 'note', date, folder].filter(Boolean).join(' · ')
+    blocks.push(`[${n}] [${header}]\n${body || '(empty note)'}`)
+  }
+  if (omitted > 0) blocks.push(`(${omitted} more note(s) omitted: content budget reached; ask for a shorter period.)`)
+  return blocks.join('\n---\n')
+}
+
 export function useChat(
   models: AiModel[] = [],
   options?: {
     mode?: 'main' | 'assistant' | 'reader' | 'notes'
-    // ChatPanel principal e NotesChat passam: habilita a tool "Tasks".
-    getTasksSnapshot?: () => TasksSnapshot
+    // Chat principal, NotesChat e Assistant passam: habilita a tool "Tasks".
+    // O Assistant carrega do storage (assíncrono), por não ter o estado da main.
+    getTasksSnapshot?: () => TasksSnapshot | Promise<TasksSnapshot>
   }
 ): UseChatResult {
   const mode = options?.mode ?? 'main'
@@ -1067,6 +1358,8 @@ export function useChat(
   const [isStreaming, setIsStreaming] = useState<boolean>(false)
   const [deepResearchPhase, setDeepResearchPhase] = useState<DeepResearchPhase | null>(null)
   const [webSearchActive, setWebSearchActive] = useState<boolean>(false)
+  const [ragSearching, setRagSearching] = useState<boolean>(false)
+  const [ragTraces, setRagTraces] = useState<Record<string, RagResponse>>({})
   const [folderMemoryUpdatedAt, setFolderMemoryUpdatedAt] = useState<number | null>(null)
   const [webSourcesSaved, setWebSourcesSaved] = useState<{ count: number; at: number } | null>(null)
   const toolCallHandlerRef = useRef<((p: StreamToolCallPayload) => void) | null>(null)
@@ -1414,8 +1707,9 @@ export function useChat(
   // em memoria e NAO toca o localStorage. Ela so e materializada quando o
   // usuario envia a 1a mensagem (ver `send`). Abrir/fechar sem enviar nao
   // deixa rastro nem cria conversa vazia. `folderId` fixa desde ja a pasta de
-  // destino do rascunho (modo reader: a pasta do livro); sem ele, o send()
-  // resolve a pasta dedicada por nome (modo assistant).
+  // destino do rascunho (modo reader: a pasta do livro; modo assistant: a
+  // pasta do seletor); sem ele, o send() resolve a pasta dedicada por nome
+  // (modo assistant).
   const startAssistantConversation = useCallback((folderId?: string) => {
     const conv = makeNewConversation(folderId ?? null)
     setDraftConversation(conv)
@@ -1490,8 +1784,7 @@ export function useChat(
         folder.systemPrompt = buildReaderSystemPrompt(language)
         folder.systemPromptMode = 'replace'
       } else {
-        const title = scope.title.trim().slice(0, 90) || 'Untitled notebook'
-        folder = makeNewFolder(`Notebook - ${title}`)
+        folder = makeNewFolder(notebookChatFolderName(scope.title))
         folder.memoryEnabled = true
       }
       pendingScopedFolderIds.current.set(pendingKey, folder.id)
@@ -1585,7 +1878,7 @@ export function useChat(
     (id: string) => {
       const folder = foldersRef.current.find((f) => f.id === id)
       if (!folder) return
-      const convIdsToDelete = new Set(folder.conversationIds)
+      const convIdsToDelete = new Set(folderConversationIds(folder, conversationsRef.current, foldersRef.current))
       // Limpa arquivos de documentos anexados das conversas que serao apagadas
       for (const conv of conversationsRef.current) {
         if (!convIdsToDelete.has(conv.id)) continue
@@ -1597,6 +1890,11 @@ export function useChat(
           }
         }
       }
+      // Grava as pastas ANTES das conversas (os save-effects gravariam as
+      // conversas primeiro): na ordem inversa, a outra janela (ex.: assistant
+      // oculta) reconcilia as conversas novas com as pastas antigas e ecoa de
+      // volta a pasta apagada.
+      saveFolders(foldersRef.current.filter((f) => f.id !== id))
       setConversations((prev) =>
         prev.filter((c) => !convIdsToDelete.has(c.id))
       )
@@ -1604,11 +1902,33 @@ export function useChat(
       setActiveIdState((current) => {
         if (!current) return current
         if (!convIdsToDelete.has(current)) return current
+        // Instancias detached nao pulam para uma conversa alheia.
+        if (isDetached) return null
         const remaining = conversationsRef.current.filter(
           (c) => !convIdsToDelete.has(c.id)
         )
         return remaining[0]?.id ?? null
       })
+    },
+    [setFolders, isDetached]
+  )
+
+  // Fusão de pastas (caderno movido para dentro de outro); ver
+  // `mergeFolderList` e `moveNotebookChatFolder`. O vínculo de cada conversa
+  // muda junto com ela (folderId), nunca para null.
+  const mergeFolderInto = useCallback(
+    (sourceId: string, destId: string) => {
+      const merged = mergeFolderList(foldersRef.current, conversationsRef.current, sourceId, destId)
+      if (!merged) return
+      // Pastas antes das conversas: ver deleteFolder. A outra janela recebe o
+      // destino já listando as conversas e as re-adota no reconcile.
+      saveFolders(merged.folders)
+      setFolders(merged.folders)
+      setConversations((prev) =>
+        prev.map((c) =>
+          merged.movedIds.has(c.id) && c.folderId !== destId ? { ...c, folderId: destId } : c
+        )
+      )
     },
     [setFolders]
   )
@@ -2074,7 +2394,8 @@ export function useChat(
       if (draft && draft.id === activeId && isDetached) {
         // Materializa o rascunho da instancia dedicada (assistant/reader/notes).
         // A pasta de destino ja esta gravada NO PROPRIO rascunho
-        // (draft.folderId, fixado na criacao — modos reader/notes); o modo assistant
+        // (draft.folderId, fixado na criacao — modos reader/notes e a pasta
+        // escolhida no seletor do assistant); sem pasta valida, o modo assistant
         // resolve a pasta dedicada por NOME aqui (lazy: abrir o assistant sem
         // enviar nada nao cria pasta). A vinculacao e persistida de forma
         // ATOMICA junto com a conversa (folderId); a insercao na lista de
@@ -2082,9 +2403,13 @@ export function useChat(
         convId = draft.id
         let targetFolderId: string | null = draft.folderId ?? null
         if (dedicatedFolderName) {
-          const existing = foldersRef.current.find(
-            (f) => f.name === dedicatedFolderName
-          )
+          // Pasta escolhida no seletor do assistant (fixada no rascunho) vence,
+          // desde que exista; senão, a pasta dedicada por nome.
+          const chosen = targetFolderId
+            ? foldersRef.current.find((f) => f.id === targetFolderId)
+            : undefined
+          const existing =
+            chosen ?? foldersRef.current.find((f) => f.name === dedicatedFolderName)
           if (existing) {
             targetFolderId = existing.id
           } else {
@@ -2234,7 +2559,8 @@ export function useChat(
       }
 
       // Busca web — deep research tem prioridade sobre web search simples
-      const currentDate = new Date().toISOString().slice(0, 10)
+      // Data LOCAL do usuário ("hoje", "ontem", "semana passada" nas tools).
+      const currentDate = dateKeyFromMs(Date.now())
       const selectedModelInfo = models.find((m) => m.id === model)
       const supportsTools = selectedModelInfo?.supportsTools ?? false
       let searchSystemMessage: ChatMessageInput | null = null
@@ -2384,7 +2710,10 @@ export function useChat(
               : 'Current folder memory: (empty — nothing recorded yet for this folder).',
         })
       }
-      systemMessages.push({ role: 'system', content: `Current date: ${currentDate}` })
+      systemMessages.push({
+        role: 'system',
+        content: `Current date: ${currentDate} (${getWeekdayName(new Date())})`,
+      })
 
       // Contexto EFEMERO por envio (ex.: contexto de leitura do chat do
       // Reader): entra apenas nos payloads da API deste turno — nunca em
@@ -2400,41 +2729,104 @@ export function useChat(
       // RAG context for folder documents. A selecao (ids de arquivo e de pasta)
       // vem da tabela do caderno quando a pasta de chat e vinculada a um caderno
       // (com a pasta de notas dele implicita), senao de visibleDocumentIds.
-      // resolveSearchableIds expande pastas DINAMICAMENTE para os filhos atuais;
-      // pastas com origin === 'ai' so entram com webResearchEnabled ligado.
-      // `excludeNoteId` tira a nota aberta (ja enviada como contexto efemero).
-      let ragSystemMessage: ChatMessageInput | null = null
-      if (containingFolder && trimmed.trim()) {
+      // O `rag_retrieve` expande as pastas para os filhos atuais (pastas
+      // origin === 'ai' so com webResearchEnabled), reescreve a consulta com o
+      // historico, faz a busca hibrida e o rerank. `excludeNoteId` tira a nota
+      // aberta (ja enviada como contexto efemero).
+      // Gating: agradecimento nao busca; "continue"/"tenta de novo" reaproveita
+      // os trechos do turno anterior (rowids em ragSources).
+      // O escopo também alimenta a tool search_knowledge_base (null = pasta
+      // sem documentos visíveis: nem RAG nem tool).
+      let ragScope: RagScope | null = null
+      if (containingFolder) {
         try {
           const linkedNotebookId = getNotebookIdForChatFolder(containingFolder.id)
           const rawFolderDocIds = linkedNotebookId
             ? await getNotebookVisibleDocumentIds(linkedNotebookId)
             : containingFolder.visibleDocumentIds
-          const folderDocIds =
-            linkedNotebookId || rawFolderDocIds.length > 0
-              ? await resolveSearchableIds(rawFolderDocIds, {
-                  notebookId: linkedNotebookId,
-                  excludeNoteId: opts?.excludeNoteId ?? null,
-                  includeAiFolders: !!containingFolder.webResearchEnabled,
-                })
-              : []
-          if (folderDocIds.length > 0) {
-            const embedding = await embedText(trimmed)
-            const topK = 5
-            const chunks = await documentsSearchByIds(folderDocIds, embedding, topK)
-            if (chunks.length > 0) {
-              const formatted = chunks
-                .map((c) => `[${c.documentName}]\n${c.snippet}`)
-                .join('\n\n---\n\n')
-              ragSystemMessage = {
-                role: 'system',
-                content: `The following excerpts from your knowledge base documents are relevant to this conversation:\n\n${formatted}`,
-              }
+          if (linkedNotebookId || rawFolderDocIds.length > 0) {
+            ragScope = {
+              ids: rawFolderDocIds,
+              notebookId: linkedNotebookId,
+              excludeNoteId: opts?.excludeNoteId ?? null,
+              includeAiFolders: !!containingFolder.webResearchEnabled,
             }
           }
         } catch (err) {
-          console.warn('RAG search in chat failed (continuing without):', err)
+          console.warn('RAG scope in chat failed (continuing without):', err)
         }
+      }
+      let ragSystemMessage: ChatMessageInput | null = null
+      // Fontes do RAG automático; as tools de busca continuam a numeração.
+      let turnRagSources: RagSource[] = []
+      const ragGateResult = trimmed ? ragGate(trimmed) : 'skip'
+      if (ragScope && ragGateResult !== 'skip') {
+        try {
+          setRagSearching(true)
+          let selected: RagCandidate[] = []
+          let trace: RagResponse | null = null
+          if (ragGateResult === 'reuse') {
+            const prevSources = [...(currentConv?.messages ?? [])]
+              .reverse()
+              .find((m) => m.role === 'assistant' && m.ragSources && m.ragSources.length > 0)
+              ?.ragSources
+            const rowids = (prevSources ?? []).flatMap((s) => s.rowids)
+            if (rowids.length > 0) {
+              // O escopo (com a nota aberta excluida) e aplicado no backend.
+              selected = await ragGetChunks(ragScope, rowids)
+            }
+            if (import.meta.env.DEV)
+              console.log(`[useChat] RAG reuse: ${selected.length}/${rowids.length} chunks from the previous turn`)
+          }
+          // "search", ou "reuse" sem trechos (sem fontes antes, ou rowids
+          // que sumiram numa reindexacao).
+          if (selected.length === 0) {
+            trace = await ragRetrieve(
+              ragScope,
+              ragMessage(trimmed),
+              ragHistory(currentConv?.messages ?? []),
+              localStorage.getItem(RAG_REWRITE_MODEL_KEY)
+            )
+            selected = trace.selected
+            if (import.meta.env.DEV) console.log('[useChat] RAG retrieve:', trace)
+          }
+          const hasOtherContext = !!ephemeralSystemMessage
+          let ragSources: RagSource[] | undefined
+          let ragNothingFound: true | undefined
+          if (selected.length > 0) {
+            const ctx = buildRagContext(selected, hasOtherContext)
+            ragSystemMessage = { role: 'system', content: ctx.content }
+            ragSources = ctx.sources
+            turnRagSources = ctx.sources
+          } else if (trace?.nothingRelevant) {
+            ragSystemMessage = { role: 'system', content: ragNothingFoundMessage(hasOtherContext) }
+            ragNothingFound = true
+          }
+          if (ragSources || ragNothingFound) {
+            updateMessages(targetId, (msgs) =>
+              msgs.map((m) => (m.id === assistantId ? { ...m, ragSources, ragNothingFound } : m))
+            )
+          }
+          const detailed = localStorage.getItem(RAG_DETAILED_KEY) === '1'
+          if (trace && detailed) {
+            const t = trace
+            setRagTraces((prev) => ({ ...prev, [assistantId]: t }))
+          }
+        } catch (err) {
+          console.warn('RAG search in chat failed (continuing without):', err)
+        } finally {
+          setRagSearching(false)
+        }
+      }
+
+      // Stop durante a busca (web pre-turno ou RAG): ainda nao ha stream para
+      // cancelar, entao o turno termina aqui.
+      if (toolCancelledRef.current) {
+        updateMessages(targetId, (msgs) =>
+          msgs.filter((m) => !(m.id === assistantId && m.content === ''))
+        )
+        setIsStreaming(false)
+        return
       }
 
       // Documents arrive here already converted to plain text by ChatPanel
@@ -2540,9 +2932,18 @@ export function useChat(
           },
         })
       }
-      // query_tasks: só com a tool "Tasks" ligada pelo usuário e no chat
-      // principal (único que fornece o snapshot das tasks).
+      // query_tasks: só com a tool "Tasks" ligada pelo usuário e num chat que
+      // fornece o snapshot das tasks. Lido uma vez por envio: os status entram
+      // no enum da tool, e o mesmo snapshot responde à chamada.
+      let tasksSnapshot: TasksSnapshot | null = null
       if (supportsTools && toolsRef.current.tasks && getTasksSnapshotRef.current) {
+        try {
+          tasksSnapshot = await getTasksSnapshotRef.current()
+        } catch (err) {
+          console.warn('getTasksSnapshot failed:', err)
+        }
+      }
+      if (tasksSnapshot) {
         toolDefs.push({
           type: 'function',
           function: {
@@ -2563,7 +2964,7 @@ export function useChat(
                 status: {
                   type: 'string',
                   // Built-ins pelo id; custom pelo nome (lista dinâmica).
-                  enum: (getTasksSnapshotRef.current?.().statuses ?? BUILTIN_STATUS_DEFS).map((s) =>
+                  enum: tasksSnapshot.statuses.map((s) =>
                     s.builtin ? s.id : s.name
                   ),
                 },
@@ -2572,7 +2973,81 @@ export function useChat(
           },
         })
       }
+      // get_day / notes_by_date: só com a tool "Daily notes" ligada (leem notas
+      // de qualquer caderno, fora do escopo da pasta).
+      if (supportsTools && toolsRef.current.dailyNotes) {
+        toolDefs.push({
+          type: 'function',
+          function: {
+            name: 'get_day',
+            description: "Read the user's notes for one day, from any notebook: the daily note of the Calendar notebook for that date and the notes tagged with that date. Use it when the user asks about a specific day (\"what do I have today?\", \"what did I write yesterday?\", \"my notes from 14/10\"). Resolve relative dates from the current date in the system prompt, which is the user's local date.",
+            parameters: {
+              type: 'object',
+              properties: {
+                date: { type: 'string', description: 'The day, as YYYY-MM-DD.' },
+              },
+              required: ['date'],
+            },
+          },
+        })
+        toolDefs.push({
+          type: 'function',
+          function: {
+            name: 'notes_by_date',
+            description: "Read the user's notes dated within a period (inclusive), from any notebook: Calendar daily notes and notes tagged with a date in the range. Use it for periods (\"notes from last week\", \"what did I write in August\"); for a single day prefer get_day. Resolve relative dates from the current date in the system prompt (the user's local date); weeks start on Monday. Long periods return only part of each note.",
+            parameters: {
+              type: 'object',
+              properties: {
+                from: { type: 'string', description: 'First day, as YYYY-MM-DD.' },
+                to: { type: 'string', description: 'Last day, as YYYY-MM-DD.' },
+                notebook: {
+                  type: 'string',
+                  description: 'Only notes of the notebook whose name contains this text. Omit for all notebooks.',
+                },
+              },
+              required: ['from', 'to'],
+            },
+          },
+        })
+      }
+      // search_knowledge_base: com escopo de RAG na pasta, para o modelo
+      // refinar a busca (tipo, período, caderno) dentro desse escopo.
+      if (supportsTools && ragScope) {
+        toolDefs.push({
+          type: 'function',
+          function: {
+            name: 'search_knowledge_base',
+            description: "Search the user's knowledge base (the notes, meeting transcripts, documents and saved web pages visible in this chat folder). Excerpts for the user's message were already retrieved automatically and are in the context when relevant: call this only when they are missing or insufficient, or when the user asks to search a specific type of source, period or notebook/folder.",
+            parameters: {
+              type: 'object',
+              properties: {
+                query: {
+                  type: 'string',
+                  description: "A self-contained search query in the user's language, with the specific names, terms and versions to look for.",
+                },
+                kind: {
+                  type: 'string',
+                  enum: ['note', 'meeting', 'document', 'web'],
+                  description: 'Only this type of source: note (user notes), meeting (meeting transcripts), document (files), web (saved web pages).',
+                },
+                dateFrom: { type: 'string', description: 'Only sources dated on or after this day (YYYY-MM-DD).' },
+                dateTo: { type: 'string', description: 'Only sources dated on or before this day (YYYY-MM-DD).' },
+                notebook: {
+                  type: 'string',
+                  description: 'Only sources whose notebook or folder name contains this text (notes of a notebook are labeled "Notes — <notebook>").',
+                },
+              },
+              required: ['query'],
+            },
+          },
+        })
+      }
       const toolsPayload: object[] | undefined = toolDefs.length > 0 ? toolDefs : undefined
+
+      // Stop enquanto as tools eram montadas (hasTavilyKey, snapshot de tasks):
+      // o cancel() já limpou o turno (placeholder, isStreaming e
+      // activeStreamRef), mas o stream ainda não tinha começado. Não começa.
+      if (activeStreamRef.current?.requestId !== requestId) return
 
       // Register tool call handler for this turn. Single round: the tool runs,
       // then a 2nd request WITHOUT tools is dispatched to force the final text
@@ -2594,6 +3069,11 @@ export function useChat(
             let toolSearchMessage: ChatMessageInput | null = null
             // Resultados de query_tasks (uma entrada por chamada).
             const taskResults: string[] = []
+            // Resultados de search_knowledge_base e das tools de notas, com as
+            // fontes da resposta (cópia): a numeração [n] continua a do RAG.
+            const kbResults: string[] = []
+            const noteResults: string[] = []
+            const sources: RagSource[] = turnRagSources.map((s) => ({ ...s, rowids: [...s.rowids] }))
             for (const tc of p.toolCalls) {
               let parsedArgs: { query?: string; queries?: unknown; memory?: unknown } = {}
               try {
@@ -2660,7 +3140,7 @@ export function useChat(
                 }
                 setWebSearchActive(false)
               } else if (tc.toolName === 'query_tasks') {
-                const snapshot = getTasksSnapshotRef.current?.()
+                const snapshot = tasksSnapshot
                 if (snapshot) {
                   let query: TasksQuery = {}
                   try {
@@ -2672,22 +3152,72 @@ export function useChat(
                   let result: string
                   try {
                     const disabled = new Set(await notesIndexGetDisabledNotebooks())
+                    const checklist =
+                      typeof snapshot.checklist === 'function'
+                        ? await snapshot.checklist()
+                        : snapshot.checklist
                     result = queryTasksText(
                       snapshot.tasks.filter((t) => !disabled.has(t.notebookId)),
                       snapshot.notebooks.filter((n) => !disabled.has(n.id)),
                       query,
                       snapshot.todayKey,
-                      snapshot.checklist,
+                      checklist,
                       snapshot.statuses
                     )
                   } catch (err) {
-                    console.warn('notesIndexGetDisabledNotebooks failed:', err)
+                    console.warn('query_tasks failed:', err)
                     result = 'Tasks are unavailable right now.'
                   }
                   taskResults.push(
                     `query_tasks ${JSON.stringify(query)} (today is ${snapshot.todayKey}):\n${result}`
                   )
                 }
+              } else if (tc.toolName === 'search_knowledge_base' && ragScope) {
+                const args = parsedArgs as Record<string, unknown>
+                const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined)
+                const query = str(args.query) ?? trimmed
+                const kind = str(args.kind)
+                const filters: RagFilters = {
+                  kinds: kind ? [kind] : [],
+                  dateFrom: str(args.dateFrom),
+                  dateTo: str(args.dateTo),
+                  folderLabelContains: str(args.notebook),
+                }
+                const label = `search_knowledge_base ${tc.argumentsJson}`
+                setRagSearching(true)
+                try {
+                  const res = await ragRetrieve(
+                    ragScope,
+                    ragMessage(query),
+                    [],
+                    localStorage.getItem(RAG_REWRITE_MODEL_KEY),
+                    filters
+                  )
+                  if (import.meta.env.DEV) console.log('[useChat] search_knowledge_base:', filters, res)
+                  kbResults.push(
+                    res.selected.length > 0
+                      ? `${label}:\n\n${ragChunkBlocks(res.selected, sources).join('\n---\n')}`
+                      : `${label}: nothing relevant found.`
+                  )
+                } catch (err) {
+                  console.warn('search_knowledge_base failed:', err)
+                  kbResults.push(`${label}: the search failed.`)
+                } finally {
+                  setRagSearching(false)
+                }
+              } else if (tc.toolName === 'get_day' || tc.toolName === 'notes_by_date') {
+                const args = parsedArgs as Record<string, unknown>
+                const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
+                const from = str(tc.toolName === 'get_day' ? args.date : args.from)
+                const to = str(tc.toolName === 'get_day' ? args.date : args.to)
+                let result: string
+                try {
+                  result = await notesByDateText(from, to, str(args.notebook) || undefined, sources)
+                } catch (err) {
+                  console.warn(`${tc.toolName} failed:`, err)
+                  result = 'Notes are unavailable right now.'
+                }
+                noteResults.push(`${tc.toolName} ${tc.argumentsJson} (today is ${currentDate}):\n${result}`)
               } else if (tc.toolName === 'update_folder_memory') {
                 const newMemory = typeof parsedArgs.memory === 'string' ? parsedArgs.memory : null
                 if (newMemory !== null && containingFolder) {
@@ -2708,13 +3238,40 @@ export function useChat(
                     content: `You looked up the user's tasks. Answer from these results only; do not invent tasks.\n\n${taskResults.join('\n\n')}`,
                   }
                 : null
+            const toolKbMessage: ChatMessageInput | null =
+              kbResults.length > 0
+                ? {
+                    role: 'system',
+                    content: `You searched the user's knowledge base. Cite these excerpts inline as [n] right after the claim they support (the numbering continues the excerpts above). Use only what they say.\n\n${kbResults.join('\n\n')}`,
+                  }
+                : null
+            const toolNotesMessage: ChatMessageInput | null =
+              noteResults.length > 0
+                ? {
+                    role: 'system',
+                    content: `You looked up the user's notes by date. Answer from these notes only; do not invent notes or entries. Cite them inline as [n] right after the claim they support.\n\n${noteResults.join('\n\n')}`,
+                  }
+                : null
+            // Fontes trazidas pelas tools (qualquer uma): somam-se às do RAG na
+            // mensagem e tiram o aviso "nada relevante" do RAG automático.
+            const toolFound = sources.length > turnRagSources.length
+            if (toolFound) {
+              updateMessages(targetId, (msgs) =>
+                msgs.map((m) =>
+                  m.id === assistantId ? { ...m, ragSources: sources, ragNothingFound: undefined } : m
+                )
+              )
+            }
 
             const toolApiMessages: ChatMessageInput[] = [
               ...systemMessages,
               ...(ephemeralSystemMessage ? [ephemeralSystemMessage] : []),
-              ...(ragSystemMessage ? [ragSystemMessage] : []),
+              // O aviso "nada relevante" do RAG automático sai se uma tool trouxe fontes.
+              ...(ragSystemMessage && !(toolFound && turnRagSources.length === 0) ? [ragSystemMessage] : []),
               ...(toolSearchMessage ? [toolSearchMessage] : []),
               ...(toolTasksMessage ? [toolTasksMessage] : []),
+              ...(toolKbMessage ? [toolKbMessage] : []),
+              ...(toolNotesMessage ? [toolNotesMessage] : []),
               // Esta rodada vai sem tools: sem o aviso, prompts como o da
               // memória levam o modelo a pedir outra tool (e não responder).
               {
@@ -2798,6 +3355,35 @@ export function useChat(
     setIsStreaming(false)
   }, [updateMessages])
 
+  // Registro desta instância em `mountedChats`. Antes de apagar ou fundir uma
+  // pasta, para o turno em andamento numa conversa dela (antes do stream
+  // começar, a conversa do turno é a ativa).
+  const mountedRef = useRef<MountedChat | null>(null)
+  const cancelIfStreamingIn = (folderId: string) => {
+    const folder = foldersRef.current.find((f) => f.id === folderId)
+    const convId = activeStreamRef.current?.convId ?? activeId
+    if (!isStreaming || !folder || !convId) return
+    if (folderConversationIds(folder, conversationsRef.current, foldersRef.current).includes(convId)) cancel()
+  }
+  mountedRef.current = {
+    hasFolder: (id) => foldersRef.current.some((f) => f.id === id),
+    deleteFolder: (id) => {
+      cancelIfStreamingIn(id)
+      deleteFolder(id)
+    },
+    mergeFolderInto: (sourceId, destId) => {
+      cancelIfStreamingIn(sourceId)
+      mergeFolderInto(sourceId, destId)
+    },
+    renameFolder,
+  }
+  useEffect(() => {
+    mountedChats.add(mountedRef)
+    return () => {
+      mountedChats.delete(mountedRef)
+    }
+  }, [])
+
   const activeConversation =
     conversations.find((c) => c.id === activeId) ??
     (draftConversation && draftConversation.id === activeId
@@ -2822,6 +3408,8 @@ export function useChat(
     isStreaming,
     deepResearchPhase,
     webSearchActive,
+    ragSearching,
+    ragTraces,
     thinkingEnabled,
     toggleThinking: () => setThinkingEnabled((v) => !v),
     error,

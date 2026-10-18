@@ -217,6 +217,81 @@
   max-width: 0;
 }
 
+.nameWrap {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.nameWrap > * {
+  flex-shrink: 0;
+}
+
+.nameText {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aliasEdit {
+  width: var(--control-sm);
+  height: var(--control-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted, #606070);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.folderRow:hover .aliasEdit,
+.aliasEdit:focus-visible {
+  opacity: 1;
+}
+
+.aliasEdit:hover {
+  color: var(--text-primary, #e8e8f0);
+}
+
+.aliasInput {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: var(--space-0) var(--space-1h);
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text-primary, #e8e8f0);
+  background: var(--surface-1, #1e1e22);
+  border: 1px solid var(--accent-ai, #5dcaa5);
+  border-radius: var(--radius-sm);
+  outline: none;
+}
+
+.filterInput {
+  flex-shrink: 0;
+  width: 100%;
+  height: var(--control-md);
+  padding: 0 var(--space-2);
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text-primary, #e8e8f0);
+  background: var(--surface-1, #1e1e22);
+  border: 1px solid var(--border, #333340);
+  border-radius: var(--radius-sm);
+  outline: none;
+  box-sizing: border-box;
+}
+
+.filterInput:focus {
+  border-color: var(--accent-ai, #5dcaa5);
+}
+
 .aiBadge {
   display: inline-block;
   margin-left: var(--space-2);
@@ -228,6 +303,20 @@
   background: rgba(93, 202, 165, 0.12);
   color: var(--accent-ai, #5dcaa5);
   border: 1px solid rgba(93, 202, 165, 0.3);
+}
+
+.orphanBadge {
+  display: inline-block;
+  margin-left: var(--space-2);
+  font-size: 11px;
+  padding: 1px var(--space-1h);
+  border-radius: 999px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: rgba(239, 159, 39, 0.12);
+  color: var(--accent-warn, #ef9f27);
+  border: 1px solid rgba(239, 159, 39, 0.3);
+  cursor: help;
 }
 
 .notesBadge {
@@ -382,4 +471,51 @@
 .danger:hover {
   color: #e57368;
   border-color: rgba(192, 57, 43, 0.5);
+}
+
+.indexBanner {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid rgba(93, 202, 165, 0.3);
+  border-radius: var(--radius-md);
+  background: rgba(93, 202, 165, 0.06);
+  font-size: 12px;
+  line-height: var(--lh-ui);
+  color: var(--text-secondary, #a0a0b8);
+}
+
+.indexBannerRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.indexBannerRow > button {
+  flex-shrink: 0;
+}
+
+.indexCurrent {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted, #606070);
+}
+
+.progressTrack {
+  height: var(--space-1);
+  border-radius: 999px;
+  background: var(--surface-2, #26262c);
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  background: var(--accent-ai, #5dcaa5);
+  transition: width 0.3s ease;
 }

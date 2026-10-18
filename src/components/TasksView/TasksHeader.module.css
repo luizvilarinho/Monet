@@ -4,10 +4,12 @@
   gap: var(--space-3);
 }
 
+/* Alinhado à esquerda (não space-between): os controles ficam na mesma
+   posição em todas as visões, independente da largura disponível. */
 .titleRow {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: var(--space-2);
 }
 

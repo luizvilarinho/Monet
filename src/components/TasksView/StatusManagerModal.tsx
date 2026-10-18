@@ -107,7 +107,11 @@ export function StatusManagerModal({
         aria-modal="true"
         aria-label="Manage statuses"
         onKeyDown={(e) => {
-          if (e.key === 'Escape') onClose()
+          if (e.key === 'Escape') {
+            // O modal da task (por baixo) ignora o Esc já tratado.
+            e.preventDefault()
+            onClose()
+          }
         }}
       >
         <div className={styles.header}>

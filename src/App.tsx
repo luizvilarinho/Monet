@@ -11,6 +11,7 @@ import './App.css'
 import { AiPanel } from './components/AiPanel/AiPanel'
 import { CalendarView } from './components/CalendarView/CalendarView'
 import { ChatPanel } from './components/ChatPanel/ChatPanel'
+import { appendToggleToContent } from './components/ChatPanel/SaveToNoteModal'
 import { Library } from './components/Library/Library'
 import { DocumentsModal } from './components/DocumentsModal/DocumentsModal'
 import { KnowledgeBaseModal } from './components/KnowledgeBaseModal/KnowledgeBaseModal'
@@ -45,6 +46,7 @@ import { KanbanBoard } from './components/TasksView/KanbanBoard'
 import { DueTodayBlock } from './components/TasksView/DueTodayBlock'
 import { WeeklyReview } from './components/TasksView/WeeklyReview'
 import { TaskPropertiesBar } from './components/TasksView/TaskPropertiesBar'
+import { TaskEditorModal } from './components/TasksView/TaskEditorModal'
 import type { TaskChanges } from './components/TasksView/useTaskKeyboard'
 import { Toolbar, type ActiveMode } from './components/Toolbar/Toolbar'
 import { useAi } from './hooks/useAi'
@@ -52,9 +54,10 @@ import {
   activateChatConversation,
   chatConversationExists,
   createPreloadedChatConversation,
+  deleteNotebookChatFolder,
   getLinkedChatConversationId,
   linkResponseToChatConversation,
-  unlinkNotebookFromChatFolder,
+  moveNotebookChatFolder,
   unlinkResponseFromChat,
 } from './hooks/useChat'
 import { useNotebooks } from './hooks/useNotebooks'
@@ -69,6 +72,7 @@ import { SIDEBAR_WIDTH_KEY, SIDEBAR_WIDE_WIDTH_KEY, WIDE_MAX_WIDTH } from './hoo
 import { useTaskViews } from './hooks/useTaskViews'
 import { useToday } from './hooks/useToday'
 import { findCommand } from './lib/commands'
+import { onAssistantNoteRequest } from './lib/assistantNoteBridge'
 import {
   getUpdatePreference,
   getSkippedVersion,
@@ -79,6 +83,7 @@ import {
 } from './lib/updater'
 import { getToggleTitle, isPotentialCommandLine } from './components/Editor/commandParser'
 import { cleanNoteContentForAi, loadEmbedResponses } from './lib/noteFileText'
+import { ocrTextsForContent } from './lib/imageOcr'
 import { RemindersProvider } from './components/Editor/RemindersContext'
 import { TasksProvider } from './components/Editor/TasksContext'
 import {
@@ -110,10 +115,13 @@ import {
 } from './lib/calendar'
 import { storage } from './storage'
 import {
+  deleteChatWebFolder,
   documentsSearchByIds,
   embedText,
   getNotebookVisibleDocumentIds,
   getNotebooksWithVisibleDocs,
+  notesFolderDocId,
+  replaceNotebookVisibility,
   resolveSearchableIds,
   type ChunkResult,
 } from './lib/documents'
@@ -745,6 +753,17 @@ function App() {
     [tasksById, selectTask, setTasksMainView]
   )
 
+  // Visões que não são List: a task abre num modal com o mesmo editor da
+  // nota-corpo, sem trocar de visão. Guarda o id da task do modal.
+  const [taskModalId, setTaskModalId] = useState<string | null>(null)
+  const openTaskModal = useCallback(
+    (task: Task) => {
+      setTaskModalId(task.id)
+      void selectTask(task)
+    },
+    [selectTask]
+  )
+
   // "New task…" das Tasks (lista e Week board), com os campos do quick add.
   const createNewTask = useCallback(
     async (draft: NewTaskDraft): Promise<Task | undefined> => {
@@ -767,6 +786,11 @@ function App() {
 
   // Week/Kanban board ocupa a área da lista e do editor (fora do modo foco).
   const tasksBoardOpen = tasksViewOpen && tasksMainView !== 'list' && !focusMode
+
+  // Saiu do quadro (List, foco, navegação): o modal não volta sozinho depois.
+  useEffect(() => {
+    if (!tasksBoardOpen) setTaskModalId(null)
+  }, [tasksBoardOpen])
 
   const taskProgress = useMemo(() => taskProgressByNotebook(tasks, today), [tasks, today])
 
@@ -1336,15 +1360,15 @@ function App() {
       const weekNotes = cmd === '/week' && anchor ? getWeekCalendarNotes(notes, anchor) : []
       const datedNotes =
         activeNote?.notebookId === CALENDAR_NOTEBOOK_ID && anchor ? getDatedNotes(notes, anchor) : []
-      const embeds = await loadEmbedResponses(
-        [noteContent, ...weekNotes.map((e) => e.note.content), ...datedNotes.map((n) => n.content)],
-        resolveNoteContent
-      )
+      const contextContents = [noteContent, ...weekNotes.map((e) => e.note.content), ...datedNotes.map((n) => n.content)]
+      const embeds = await loadEmbedResponses(contextContents, resolveNoteContent)
+      const imageTexts = await ocrTextsForContent(contextContents.join('\n'))
       const toAiText = (content: string) =>
         cleanNoteContentForAi(content, {
           resolveNoteTitle,
           resolveEmbed: (id) => embeds.get(id),
           resolveLinkedNoteContent: resolveNoteContent,
+          resolveImageText: (dataUrl) => imageTexts.get(dataUrl),
         })
       const noteText = toAiText(noteContent)
       let searchContext: string | undefined
@@ -1548,15 +1572,24 @@ function App() {
   }
 
   async function handleDeleteNotebook(id: string) {
-    if (id === INBOX_NOTEBOOK_ID) return
+    if (id === INBOX_NOTEBOOK_ID || id === CALENDAR_NOTEBOOK_ID) return
     // As tasks do caderno (com as notas-corpo) vão para o Inbox ANTES da
     // exclusão em cascata das notas do caderno.
     const { movedNoteIds, ok } = await relocateNotebookTasks(id, await ensureInbox())
     if (!ok) return
     if (tasksFilter === id) setTasksFilter(null)
-    await removeNotebook(id)
-    // Desfaz o vínculo caderno → pasta de chat; as conversas ficam numa pasta comum.
-    unlinkNotebookFromChatFolder(id)
+    // Falhou no banco: o caderno volta no próximo load, então o chat, as fontes
+    // web e as notas ficam.
+    if (!(await removeNotebook(id))) return
+    // A pasta de chat do caderno sai junto, com as conversas e a pasta web.
+    // Depois do removeNotebook: com o caderno ainda no estado, o chat das
+    // Anotações recriaria a pasta.
+    const chatFolderId = deleteNotebookChatFolder(id)
+    if (chatFolderId) {
+      deleteChatWebFolder(chatFolderId).catch((err) =>
+        console.error('failed to delete web sources folder', err)
+      )
+    }
     const childNotes = notes.filter((n) => n.notebookId === id && !movedNoteIds.has(n.id))
     childNotes.forEach((n) => removeNote(n.id))
     if (activeNotebookId === id) {
@@ -1802,9 +1835,10 @@ function App() {
   // notes/subjects da origem.
   const handleMoveNotebook = useCallback(
     async (sourceId: string, destId: string) => {
-      if (sourceId === destId || sourceId === INBOX_NOTEBOOK_ID) return
+      if (sourceId === destId || sourceId === INBOX_NOTEBOOK_ID || sourceId === CALENDAR_NOTEBOOK_ID) return
       const source = notebooks.find((n) => n.id === sourceId)
-      if (!source) return
+      const dest = notebooks.find((n) => n.id === destId)
+      if (!source || !dest) return
       const destSubjects = await storage.getSubjects(destId)
       let target = destSubjects.find((s) => s.name === source.name)
       if (!target) {
@@ -1831,9 +1865,30 @@ function App() {
           saveNote({ ...n, notebookId: destId, subjectId: target.id, updatedAt: Date.now() })
         )
       )
-      await removeNotebook(sourceId)
-      // Desfaz o vínculo caderno → pasta de chat; as conversas ficam numa pasta comum.
-      unlinkNotebookFromChatFolder(sourceId)
+      // Documentos visíveis: o destino fica com a união das duas seleções
+      // (lida antes do removeNotebook, que apaga a da origem). As pastas de
+      // notas dos dois cadernos ficam de fora: são implícitas no destino.
+      try {
+        const [sourceVisible, destVisible] = await Promise.all([
+          getNotebookVisibleDocumentIds(sourceId),
+          getNotebookVisibleDocumentIds(destId),
+        ])
+        const implicit = new Set([notesFolderDocId(sourceId), notesFolderDocId(destId)])
+        const union = [...new Set([...destVisible, ...sourceVisible])].filter((docId) => !implicit.has(docId))
+        if (union.length !== destVisible.length) await replaceNotebookVisibility(destId, union)
+      } catch (err) {
+        console.error('failed to merge notebook document visibility', err)
+      }
+      if (!(await removeNotebook(sourceId))) return
+      // A pasta de chat da origem vai para o destino (ver moveNotebookChatFolder).
+      // Fundida numa pasta já existente, a pasta web dela é apagada: o
+      // caminho dela no disco é o id da pasta de origem.
+      const removedChatFolderId = moveNotebookChatFolder(sourceId, destId, dest.name)
+      if (removedChatFolderId) {
+        deleteChatWebFolder(removedChatFolderId).catch((err) =>
+          console.error('failed to delete web sources folder', err)
+        )
+      }
       if (activeNotebookId === sourceId) {
         setActiveNotebookId(null)
         setActiveSubjectId(null)
@@ -1872,7 +1927,7 @@ function App() {
         content,
         updatedAt: Date.now(),
       }
-      await saveNote(filled)
+      if (!(await saveNote(filled))) throw new Error('Failed to save note.')
       setNoteOrder((prev) => {
         const next = [filled.id, ...prev.filter((x) => x !== filled.id)]
         saveNoteOrder(next)
@@ -1893,6 +1948,40 @@ function App() {
       setSearch('')
     },
     []
+  )
+
+  // "Save to note" da janela assistant (Ctrl+M): a main grava, para a lista e
+  // a nota aberta no Editor refletirem a mudança. Só roda pelo clique do
+  // usuário no modal da assistant.
+  useEffect(
+    () =>
+      onAssistantNoteRequest(async (request) => {
+        if (request.kind === 'create-notebook') {
+          return { notebook: await handleCreateNotebookFromChat(request.name) }
+        }
+        if (request.kind === 'create-note') {
+          return {
+            note: await handleCreateNoteFromChat(request.notebookId, request.title, request.content),
+          }
+        }
+        // Parte da versão mais recente entre o estado (inclui o que está sendo
+        // digitado no Editor) e o banco (a keep grava direto nele).
+        const local = notesRef.current.find((n) => n.id === request.noteId)
+        const stored = await storage.getNote(request.noteId).catch(() => null)
+        const current = stored && (!local || stored.updatedAt > local.updatedAt) ? stored : local
+        if (!current) throw new Error('Note not found.')
+        const note: Note = {
+          ...current,
+          content: appendToggleToContent(current.content, request.block),
+          updatedAt: Date.now(),
+        }
+        if (!(await saveNote(note))) throw new Error('Failed to save note.')
+        // A keep recarrega a nota se for a aberta nela, senão o autosave dela
+        // apagaria o bloco.
+        void emit('calendar-note-updated', { noteId: note.id })
+        return { note }
+      }),
+    [handleCreateNotebookFromChat, handleCreateNoteFromChat, saveNote]
   )
 
   const handleNoteLinkNavigation = useCallback(
@@ -2125,16 +2214,111 @@ function App() {
     onCreateTask: async (draft: NewTaskDraft) => {
       await createNewTask(draft)
     },
-    onOpenTask: (task: Task) => {
-      setTasksMainView('list')
-      void selectTask(task)
-    },
+    onOpenTask: openTaskModal,
     onToggleTask: handleToggleLinkedTask,
     onUpdateTasks: (changes: TaskChanges) => void updateTasks(changes),
     onConvertPipeTitles: (list: Task[]) => void convertPipeTitles(list),
     onDeleteTasks: (ids: string[]) => void deleteProjectTasks(ids),
     checklist: taskChecklist,
   }
+
+  // Editor da nota aberta: no slot ao lado da List ou, nas visões em quadro,
+  // dentro do modal da task (TaskEditorModal).
+  const noteEditor = activeNote ? (
+    <RemindersProvider value={remindersContextValue}>
+    <TasksProvider value={tasksContextValue}>
+    <Editor
+      key={activeNote.id}
+      notebookName={notebooks.find((nb) => nb.id === activeNote.notebookId)?.name}
+      subjectName={effectiveSubjects.find(s => s.id === activeNote.subjectId)?.name}
+      title={activeNote.title}
+      onTitleChange={(title) => {
+        updateActive({ title })
+        // Título único: a nota-corpo dá o título da task.
+        if (activeTask && title.trim()) void updateTask(activeTask.id, { title: title.trim() })
+      }}
+      tags={activeNote.tags}
+      onTagsChange={(tags) => updateActive({ tags })}
+      date={activeNote.date}
+      onDateChange={activeTask ? undefined : (date) => updateActive({ date })}
+      value={activeNote.content}
+      onChange={(content) => updateActive({ content })}
+      onCommand={handleCommand}
+      executedCommandTexts={executedCommandTexts}
+      responses={responses}
+      onRemoveResponse={(id) => {
+        removeResponse(id)
+        unlinkResponseFromChat(id)
+      }}
+      notebookNotes={
+        activeNote.notebookId === calendarNotebookId
+          ? notes.filter((n) => n.id !== activeId)
+          : activeTask
+            ? notes.filter((n) => n.notebookId === activeTask.notebookId && n.id !== activeId)
+            : notebookNotes.filter((n) => n.id !== activeId)
+      }
+      onNavigateToNote={handleNoteLinkNavigation}
+      relatedContent={
+        activeNote.notebookId !== calendarNotebookId
+          ? <RelatedContent activeNote={activeNote} notes={notes} notebooks={notebooks} onSelect={setActiveId} />
+          : undefined
+      }
+      isCalendarNote={activeNote.notebookId === calendarNotebookId}
+      previewMode={previewMode}
+      onAskAi={handleAskAi}
+      onEditorReady={handleEditorReady}
+      taskStatuses={taskStatuses}
+      taskNotebooks={orderedNotebooks}
+      suggestedTaskNotebookId={
+        activeNote.notebookId && activeNote.notebookId !== calendarNotebookId
+          ? activeNote.notebookId
+          : INBOX_NOTEBOOK_ID
+      }
+      // Antes de as tasks carregarem, um item vinculado pareceria
+      // "stale" e geraria task duplicada: "Add to Tasks" fica oculto.
+      onCreateTasks={tasksLoaded ? (inputs, opts) =>
+        createProjectTasks(
+          inputs.map((i) => ({
+            title: i.title,
+            status: i.checked ? 'done' : 'todo',
+            dueDate: opts.dueDate,
+            sourceNoteId: activeNote.id,
+          })),
+          opts.project
+        ) : undefined
+      }
+      onToggleLinkedTask={handleToggleLinkedTask}
+      topSlot={activeTask ? (
+        <TaskPropertiesBar
+          task={activeTask}
+          notebooks={orderedNotebooks}
+          statuses={statusRegistry}
+          groupSuggestions={groupsOfNotebook(tasks, activeTask.notebookId)}
+          sourceNoteExists={
+            activeTask.sourceNoteId !== null && notes.some((n) => n.id === activeTask.sourceNoteId)
+          }
+          onUpdate={(patch) => void updateTask(activeTask.id, patch)}
+          onMove={(project) => void moveProjectTask(activeTask.id, project)}
+          onOpenSourceNote={() => {
+            if (activeTask.sourceNoteId) handleNoteLinkNavigation(activeTask.sourceNoteId)
+          }}
+          onDelete={() => void deleteProjectTasks([activeTask.id])}
+          metadataDefs={metadata.defs}
+          onCreateMetadataDef={metadata.create}
+          onManageMetadata={(focusId) => setMetadataManager({ focusId: focusId ?? null })}
+        />
+      ) : activeCalendarDay ? (
+        <DueTodayBlock
+          tasks={tasks}
+          dayKey={activeCalendarDay}
+          todayKey={today}
+          onOpenTask={openTask}
+        />
+      ) : null}
+    />
+    </TasksProvider>
+    </RemindersProvider>
+  ) : null
 
   return (
     <TasksEnvProvider value={tasksEnv}>
@@ -2263,10 +2447,7 @@ function App() {
               await createNewTask(draft)
             }}
             onConvertPipeTitles={(list) => void convertPipeTitles(list)}
-            onOpenTask={(task) => {
-              setTasksMainView('list')
-              void selectTask(task)
-            }}
+            onOpenTask={openTaskModal}
             onToggleTask={handleToggleLinkedTask}
             onUpdateTasks={(changes) => void updateTasks(changes)}
             checklist={taskChecklist}
@@ -2296,10 +2477,7 @@ function App() {
             onCreateTask={async (draft) => {
               await createNewTask(draft)
             }}
-            onOpenTask={(task) => {
-              setTasksMainView('list')
-              void selectTask(task)
-            }}
+            onOpenTask={openTaskModal}
             onToggleTask={handleToggleLinkedTask}
             onSchedule={(id, scheduledDate) => void updateTask(id, { scheduledDate })}
             onUpdateTasks={(changes) => void updateTasks(changes)}
@@ -2399,101 +2577,7 @@ function App() {
             ) : undefined}
           />
         ))}
-        {tasksBoardOpen ? null : activeNote ? (
-          <RemindersProvider value={remindersContextValue}>
-          <TasksProvider value={tasksContextValue}>
-          <Editor
-            key={activeNote.id}
-            notebookName={notebooks.find((nb) => nb.id === activeNote.notebookId)?.name}
-            subjectName={effectiveSubjects.find(s => s.id === activeNote.subjectId)?.name}
-            title={activeNote.title}
-            onTitleChange={(title) => {
-              updateActive({ title })
-              // Título único: a nota-corpo dá o título da task.
-              if (activeTask && title.trim()) void updateTask(activeTask.id, { title: title.trim() })
-            }}
-            tags={activeNote.tags}
-            onTagsChange={(tags) => updateActive({ tags })}
-            date={activeNote.date}
-            onDateChange={activeTask ? undefined : (date) => updateActive({ date })}
-            value={activeNote.content}
-            onChange={(content) => updateActive({ content })}
-            onCommand={handleCommand}
-            executedCommandTexts={executedCommandTexts}
-            responses={responses}
-            onRemoveResponse={(id) => {
-              removeResponse(id)
-              unlinkResponseFromChat(id)
-            }}
-            notebookNotes={
-              activeNote.notebookId === calendarNotebookId
-                ? notes.filter((n) => n.id !== activeId)
-                : activeTask
-                  ? notes.filter((n) => n.notebookId === activeTask.notebookId && n.id !== activeId)
-                  : notebookNotes.filter((n) => n.id !== activeId)
-            }
-            onNavigateToNote={handleNoteLinkNavigation}
-            relatedContent={
-              activeNote.notebookId !== calendarNotebookId
-                ? <RelatedContent activeNote={activeNote} notes={notes} notebooks={notebooks} onSelect={setActiveId} />
-                : undefined
-            }
-            isCalendarNote={activeNote.notebookId === calendarNotebookId}
-            previewMode={previewMode}
-            onAskAi={handleAskAi}
-            onEditorReady={handleEditorReady}
-            taskStatuses={taskStatuses}
-            taskNotebooks={orderedNotebooks}
-            suggestedTaskNotebookId={
-              activeNote.notebookId && activeNote.notebookId !== calendarNotebookId
-                ? activeNote.notebookId
-                : INBOX_NOTEBOOK_ID
-            }
-            // Antes de as tasks carregarem, um item vinculado pareceria
-            // "stale" e geraria task duplicada: "Add to Tasks" fica oculto.
-            onCreateTasks={tasksLoaded ? (inputs, opts) =>
-              createProjectTasks(
-                inputs.map((i) => ({
-                  title: i.title,
-                  status: i.checked ? 'done' : 'todo',
-                  dueDate: opts.dueDate,
-                  sourceNoteId: activeNote.id,
-                })),
-                opts.project
-              ) : undefined
-            }
-            onToggleLinkedTask={handleToggleLinkedTask}
-            topSlot={activeTask ? (
-              <TaskPropertiesBar
-                task={activeTask}
-                notebooks={orderedNotebooks}
-                statuses={statusRegistry}
-                groupSuggestions={groupsOfNotebook(tasks, activeTask.notebookId)}
-                sourceNoteExists={
-                  activeTask.sourceNoteId !== null && notes.some((n) => n.id === activeTask.sourceNoteId)
-                }
-                onUpdate={(patch) => void updateTask(activeTask.id, patch)}
-                onMove={(project) => void moveProjectTask(activeTask.id, project)}
-                onOpenSourceNote={() => {
-                  if (activeTask.sourceNoteId) handleNoteLinkNavigation(activeTask.sourceNoteId)
-                }}
-                onDelete={() => void deleteProjectTasks([activeTask.id])}
-                metadataDefs={metadata.defs}
-                onCreateMetadataDef={metadata.create}
-                onManageMetadata={(focusId) => setMetadataManager({ focusId: focusId ?? null })}
-              />
-            ) : activeCalendarDay ? (
-              <DueTodayBlock
-                tasks={tasks}
-                dayKey={activeCalendarDay}
-                todayKey={today}
-                onOpenTask={openTask}
-              />
-            ) : null}
-          />
-          </TasksProvider>
-          </RemindersProvider>
-        ) : (
+        {tasksBoardOpen ? null : noteEditor ?? (
           <EmptyEditor
             hasNotebook={activeNotebookId !== null}
             onCreate={handleCreateNote}
@@ -2598,6 +2682,9 @@ function App() {
         }}
         notebooks={notebooks}
       />
+      {tasksBoardOpen && activeTask?.id === taskModalId && noteEditor && (
+        <TaskEditorModal onClose={() => setTaskModalId(null)}>{noteEditor}</TaskEditorModal>
+      )}
       <StatusManagerModal
         open={statusManagerOpen}
         onClose={() => setStatusManagerOpen(false)}

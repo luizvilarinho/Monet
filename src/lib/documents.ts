@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { Document, DocumentStatus } from '../types'
+import { normalizeName } from './tasks'
 
 export interface ChunkResult {
   documentId: string
@@ -26,15 +27,47 @@ export async function documentsReindex(documentId: string): Promise<void> {
   await invoke('documents_reindex', { documentId })
 }
 
+// Arquivos fora da versão atual do índice (ou em erro). As notas se
+// reindexam sozinhas; os demais esperam o "Update index".
+export interface IndexOutdatedCount {
+  files: number
+  notes: number
+}
+
+export async function documentsIndexOutdatedCount(): Promise<IndexOutdatedCount> {
+  return invoke<IndexOutdatedCount>('documents_index_outdated_count')
+}
+
+// Dispara a reindexação dos arquivos pendentes (sem as notas) e volta na hora;
+// o andamento chega por onReindexProgress. Já rodando, não faz nada.
+export async function documentsReindexOutdated(): Promise<void> {
+  await invoke('documents_reindex_outdated')
+}
+
+export interface ReindexProgressEvent {
+  done: number
+  total: number
+  failed: number
+  currentName: string | null
+  finished: boolean
+}
+
+export function onReindexProgress(
+  handler: (event: ReindexProgressEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<ReindexProgressEvent>('documents://reindex-progress', (e) => handler(e.payload))
+}
+
 export async function documentsDelete(documentId: string): Promise<void> {
   await invoke('documents_delete', { documentId })
 }
 
-interface DocumentRaw extends Omit<Document, 'errorMessage' | 'parentFolderId' | 'lastModifiedMs' | 'originalPath'> {
+interface DocumentRaw extends Omit<Document, 'errorMessage' | 'parentFolderId' | 'lastModifiedMs' | 'originalPath' | 'alias'> {
   originalPath: string | null
   errorMessage: string | null
   parentFolderId: string | null
   lastModifiedMs: number | null
+  alias: string | null
 }
 
 export async function documentsListGlobal(): Promise<Document[]> {
@@ -45,7 +78,61 @@ export async function documentsListGlobal(): Promise<Document[]> {
     errorMessage: d.errorMessage ?? undefined,
     parentFolderId: d.parentFolderId ?? undefined,
     lastModifiedMs: d.lastModifiedMs ?? undefined,
+    alias: d.alias ?? undefined,
   }))
+}
+
+// Vazio ou null remove o apelido. Recusado para pastas de notas.
+export async function documentsSetFolderAlias(folderId: string, alias: string | null): Promise<void> {
+  await invoke('documents_set_folder_alias', { folderId, alias })
+}
+
+// Conjunto de documentos (preset de RAG), global no SQLite: ids de
+// visibilidade (arquivos e pastas da KB) aplicáveis a qualquer pasta de chat.
+export interface DocumentSet {
+  id: string
+  name: string
+  documentIds: string[]
+  createdAt: number
+  updatedAt: number
+}
+
+export async function documentSetsList(): Promise<DocumentSet[]> {
+  return invoke<DocumentSet[]>('document_sets_list')
+}
+
+// Sem `id` cria; com `id` regrava nome e ids. Devolve o id do conjunto.
+export async function documentSetsSave(id: string | null, name: string, documentIds: string[]): Promise<string> {
+  return invoke<string>('document_sets_save', { id, name, documentIds })
+}
+
+export async function documentSetsRename(id: string, name: string): Promise<void> {
+  await invoke('document_sets_rename', { id, name })
+}
+
+export async function documentSetsDelete(id: string): Promise<void> {
+  await invoke('document_sets_delete', { id })
+}
+
+// Filtro dos modais da KB: nome, apelido ou caminho, sem caixa nem acentos.
+export function documentMatchesFilter(doc: Document, query: string): boolean {
+  const q = normalizeName(query.trim())
+  if (!q) return true
+  return [doc.name, doc.alias, doc.originalPath].some((s) => !!s && normalizeName(s).includes(q))
+}
+
+// Pastas web (origin='ai') ficam em web-research/<chatFolderId>: o último
+// componente do caminho é o id da pasta de chat dona. null se não for pasta web.
+export function webFolderChatFolderId(doc: Document): string | null {
+  if (doc.docType !== 'folder' || doc.origin !== 'ai' || !doc.originalPath) return null
+  return doc.originalPath.split(/[\\/]/).pop() || null
+}
+
+// Apaga a pasta web (KB e disco) de uma pasta de chat, se existir.
+export async function deleteChatWebFolder(chatFolderId: string): Promise<void> {
+  const docs = await documentsListGlobal()
+  const webFolder = docs.find((d) => webFolderChatFolderId(d) === chatFolderId)
+  if (webFolder) await documentsDeleteWatchedFolder(webFolder.id)
 }
 
 export async function setNotebookDocumentVisibility(
@@ -153,11 +240,7 @@ export function notesFolderDocId(notebookId: string): string {
   return `notes-folder:${notebookId}`
 }
 
-export function noteDocId(noteId: string): string {
-  return `note:${noteId}`
-}
-
-export type NotesIndexUpsertResult = 'disabled' | 'removed' | 'no_key' | 'unchanged' | 'moved' | 'indexed'
+export type NotesIndexUpsertResult = 'disabled' | 'removed' | 'no_key' | 'unchanged' | 'indexed'
 
 export interface NotesIndexState {
   notebookIds: string[]
@@ -170,6 +253,8 @@ export async function notesIndexUpsert(args: {
   noteId: string
   title: string
   fileText: string
+  // `YYYY-MM-DD`, vai no cabeçalho dos chunks.
+  noteDate: string | null
 }): Promise<NotesIndexUpsertResult> {
   return invoke<NotesIndexUpsertResult>('notes_index_upsert', args)
 }
@@ -195,10 +280,8 @@ export async function notesIndexListState(): Promise<NotesIndexState> {
 }
 
 // Expande ids de visibilidade (arquivos e pastas) para os ids de arquivo
-// pesquisáveis. Pastas viram seus filhos `available` atuais; ids que não
-// existem mais em `documents` são ignorados. Com `notebookId`, inclui a pasta
-// de notas do caderno (se existir); `excludeNoteId` tira a cópia indexada
-// daquela nota. Pastas `origin === 'ai'` só expandem com `includeAiFolders`.
+// pesquisáveis. A regra mora em Rust (`rag::resolve_scope`) para que o golden
+// set (`examples/rag_eval.rs`) use o mesmo escopo do app.
 export async function resolveSearchableIds(
   rawIds: string[],
   opts: {
@@ -207,27 +290,10 @@ export async function resolveSearchableIds(
     includeAiFolders: boolean
   },
 ): Promise<string[]> {
-  const allDocs = await documentsListGlobal()
-  const docById = new Map(allDocs.map((d) => [d.id, d]))
-  const ids = new Set(rawIds)
-  if (opts.notebookId && docById.has(notesFolderDocId(opts.notebookId))) {
-    ids.add(notesFolderDocId(opts.notebookId))
-  }
-  const expanded = new Set<string>()
-  for (const id of ids) {
-    const doc = docById.get(id)
-    if (!doc) continue
-    if (doc.docType === 'folder') {
-      if (doc.origin === 'ai' && !opts.includeAiFolders) continue
-      for (const child of allDocs) {
-        if (child.parentFolderId === id && child.docType === 'file' && child.status === 'available') {
-          expanded.add(child.id)
-        }
-      }
-    } else if (doc.status === 'available') {
-      expanded.add(id)
-    }
-  }
-  if (opts.excludeNoteId) expanded.delete(noteDocId(opts.excludeNoteId))
-  return Array.from(expanded)
+  return invoke<string[]>('documents_resolve_searchable_ids', {
+    rawIds,
+    notebookId: opts.notebookId ?? null,
+    excludeNoteId: opts.excludeNoteId ?? null,
+    includeAiFolders: opts.includeAiFolders,
+  })
 }

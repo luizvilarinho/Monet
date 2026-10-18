@@ -9,7 +9,9 @@ import {
   notesIndexSetNotebookEnabled,
   notesIndexUpsert,
 } from '../lib/documents'
-import { buildNoteFileText, buildTasksSummaryText, loadEmbedResponses } from '../lib/noteFileText'
+import { buildNoteFileText, buildTasksSummaryText, loadEmbedResponses, noteDate } from '../lib/noteFileText'
+import { ocrTextsForContent } from '../lib/imageOcr'
+import { dateKeyFromMs } from '../lib/calendar'
 import { checklistProgress, statusName, tasksSummaryNoteId } from '../lib/tasks'
 
 // Espelha as notas de cada caderno no RAG (pasta gerenciada `origin='notes'`).
@@ -45,6 +47,12 @@ interface Params {
   loadFailed: boolean
   hasApiKey: boolean
   activeNoteId: string | null
+}
+
+// Data do cabeçalho dos chunks: a da nota (campo date ou título do Calendar)
+// ou, na falta dela, o dia de criação.
+function indexNoteDate(note: Note): string {
+  return noteDate(note)?.slice(0, 10) ?? dateKeyFromMs(note.createdAt)
 }
 
 function notifyChanged() {
@@ -135,11 +143,14 @@ export function useNotesIndexSync({
         ? notebooksRef.current.find((nb) => nb.id === task.notebookId)?.name
         : undefined
       const embeds = await loadEmbedResponses([note.content])
+      // OCR só no texto do índice; a nota não muda.
+      const imageTexts = await ocrTextsForContent(note.content)
       return buildNoteFileText(
         note,
         resolveNoteTitle,
         task ? { task, projectName: projectName ?? 'Unknown', statuses: statusesRef.current } : undefined,
         (id) => embeds.get(id),
+        (dataUrl) => imageTexts.get(dataUrl),
       )
     },
     [resolveNoteTitle],
@@ -184,6 +195,7 @@ export function useNotesIndexSync({
             noteId: note.id,
             title: note.title,
             fileText,
+            noteDate: indexNoteDate(note),
           })
           if (result === 'no_key') {
             // Sem chave nada indexa: descarta os upserts pendentes e deixa a
@@ -219,6 +231,7 @@ export function useNotesIndexSync({
             noteId: summaryId,
             title: `Tasks — ${notebook.name}`,
             fileText,
+            noteDate: null,
           })
           if (result === 'no_key') {
             queueRef.current = queueRef.current.filter(
@@ -466,7 +479,7 @@ export function useNotesIndexSync({
       if (!note.notebookId) continue
       const synced = lastSyncedRef.current.get(note.id)
       if (synced && synced.notebookId !== note.notebookId) {
-        // Move entre cadernos: imediato (o backend move o arquivo sem reembed).
+        // Move entre cadernos: imediato (o cabeçalho dos chunks leva o caderno).
         enqueueUpsertNow(note.id)
         continue
       }
@@ -513,8 +526,8 @@ export function useNotesIndexSync({
     }
   }, [tasks, notebooks, statuses, scheduleUpsert, scheduleTasksSummary])
 
-  // Diff de cadernos: apagado → remove a pasta; renomeado → um upsert
-  // atualiza o nome da pasta ("Notes — <Caderno>").
+  // Diff de cadernos: apagado → remove a pasta; renomeado → reindexa todas as
+  // notas do caderno (o nome "Notes — <Caderno>" vai no cabeçalho dos chunks).
   useEffect(() => {
     if (!reconciledRef.current) return
     const known = knownNotebooksRef.current
@@ -534,7 +547,6 @@ export function useNotesIndexSync({
         if (noteId === tasksSummaryNoteId(nb.id)) continue
         if (synced.notebookId === nb.id && synced.fileText) {
           enqueue({ kind: 'upsert', noteId })
-          break
         }
       }
     }

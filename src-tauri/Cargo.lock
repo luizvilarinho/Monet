@@ -2620,6 +2620,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tokio",
  "uuid",
+ "windows",
  "zerocopy 0.7.35",
 ]
 

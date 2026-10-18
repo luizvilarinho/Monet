@@ -16,9 +16,9 @@ export const COMMAND_LINE_RE = /^\/[a-zA-Z]/
 export const EMBED_BLOCK_RE = /<!--monet-embed:[a-zA-Z0-9_-]+-->[\s\S]*?<!--monet-embed-end:[a-zA-Z0-9_-]+-->/g
 export const MARKER_RE = /<!--monet:[a-zA-Z0-9_-]+-->/g
 
-const MD_DATA_IMAGE_RE = /!\[[^\]]*\]\(data:[^)]*\)/g
-const HTML_DATA_IMAGE_RE = /<img\b[^>]*\bsrc=["']data:[^"']*["'][^>]*>/gi
-const DATA_URL_RE = /data:[a-z]+\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/gi
+const MD_DATA_IMAGE_RE = /!\[[^\]]*\]\((data:[^)]*)\)/g
+const HTML_DATA_IMAGE_RE = /<img\b[^>]*\bsrc=["'](data:[^"']*)["'][^>]*>/gi
+export const DATA_URL_RE = /data:[a-z]+\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/gi
 const LINKED_NOTE_RE = /<linked-note\b[^>]*\bdata-note-id="([^"]*)"[^>]*>\s*<\/linked-note>/g
 const EMBED_TAG_RE = /<embed-block\b[^>]*\bdata-cmd="([^"]*)"[^>]*>\s*<\/embed-block>/g
 const REMINDER_CHIP_RE = /<reminder-chip\b[^>]*\bdata-time="([^"]*)"[^>]*>\s*<\/reminder-chip>/g
@@ -32,6 +32,10 @@ const EMBED_ID_RE = /<embed-block\b[^>]*\bdata-cmd="([^"]*)"/g
 const LINKED_NOTE_ID_RE = /<linked-note\b[^>]*\bdata-note-id="([^"]*)"/g
 const BR_RE = /<br\s*\/?>/gi
 const LINKED_NOTE_BUDGET = 2000
+const IMAGE_TEXT_BUDGET = 2000
+// Marcador do texto de OCR, trocado só no fim: o texto pode conter "<div" e
+// quebraria o parse dos toggles.
+const IMAGE_SLOT_RE = /\uE000(\d+)\uE001/g
 const TEXT_BLOCK_TAGS = new Set(['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'PRE'])
 
 function decodeEntities(text: string): string {
@@ -48,6 +52,8 @@ export interface NoteAiTextOptions {
   resolveEmbed?: (commandId: string) => AiResponse | undefined
   // Presente = expande as notas linkadas (1 nível); ausente = só o título (RAG).
   resolveLinkedNoteContent?: (noteId: string) => string | undefined
+  // dataUrl → texto do OCR (RAG e contexto efêmero); ausente ou vazio = "[image]".
+  resolveImageText?: (dataUrl: string) => string | undefined
 }
 
 // Troca cada toggle de topo pelo texto do walker. O fim do toggle é achado
@@ -81,7 +87,15 @@ function replaceToggleBlocks(text: string, render: (el: Element) => string): str
 // converte os blocos customizados do editor em texto legível para a IA:
 // respostas da IA embutidas, conteúdo dos toggles e notas linkadas.
 export function cleanNoteContentForAi(content: string, opts: NoteAiTextOptions): string {
-  const { resolveNoteTitle, resolveEmbed, resolveLinkedNoteContent } = opts
+  const { resolveNoteTitle, resolveEmbed, resolveLinkedNoteContent, resolveImageText } = opts
+
+  const imageTexts: string[] = []
+  const imageText = (dataUrl: string | null): string => {
+    const text = dataUrl ? resolveImageText?.(dataUrl)?.replace(/\s+/g, ' ').trim() : undefined
+    if (!text) return '[image]'
+    imageTexts.push(`[image: ${text.slice(0, IMAGE_TEXT_BUDGET)}]`)
+    return `\uE000${imageTexts.length - 1}\uE001`
+  }
 
   const embedResponseText = (commandId: string): string => {
     const r = resolveEmbed?.(commandId)
@@ -124,7 +138,7 @@ export function cleanNoteContentForAi(content: string, opts: NoteAiTextOptions):
     if (tag === 'TASK-REF') return '[task]'
     if (tag === 'REMINDER-CHIP') return `⏰ ${el.getAttribute('data-time') ?? ''}`
     if (tag === 'TASKS-QUERY') return `[Tasks block: ${el.getAttribute('data-filter') ?? ''}]\n`
-    if (tag === 'IMG') return '[image]'
+    if (tag === 'IMG') return imageText(el.getAttribute('src'))
     return children()
   }
 
@@ -134,9 +148,9 @@ export function cleanNoteContentForAi(content: string, opts: NoteAiTextOptions):
     content
       .replace(EMBED_BLOCK_RE, '')
       .replace(MARKER_RE, '')
-      .replace(MD_DATA_IMAGE_RE, '[image]')
-      .replace(HTML_DATA_IMAGE_RE, '[image]')
-      .replace(DATA_URL_RE, '[image]'),
+      .replace(MD_DATA_IMAGE_RE, (_, url: string) => imageText(url))
+      .replace(HTML_DATA_IMAGE_RE, (_, url: string) => imageText(url))
+      .replace(DATA_URL_RE, (url) => imageText(url)),
     toggleText,
   )
     .replace(REMINDER_CHIP_RE, (_, time: string) => `⏰ ${time}`)
@@ -151,6 +165,7 @@ export function cleanNoteContentForAi(content: string, opts: NoteAiTextOptions):
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
+    .replace(IMAGE_SLOT_RE, (_, i: string) => imageTexts[Number(i)])
 }
 
 function collectIds(content: string, re: RegExp): string[] {
@@ -235,9 +250,10 @@ export function buildNoteFileText(
   resolveNoteTitle: (noteId: string) => string | undefined,
   taskContext?: { task: Task; projectName: string; statuses: TaskStatusDef[] },
   resolveEmbed?: (commandId: string) => AiResponse | undefined,
+  resolveImageText?: (dataUrl: string) => string | undefined,
 ): string {
   const title = note.title.trim()
-  const body = cleanNoteContentForAi(note.content, { resolveNoteTitle, resolveEmbed })
+  const body = cleanNoteContentForAi(note.content, { resolveNoteTitle, resolveEmbed, resolveImageText })
   if (!title && !body && !taskContext) return ''
   const header = [`# ${title || 'Untitled'}`]
   if (taskContext) {

@@ -17,6 +17,9 @@ import { ChatToolsMenu } from '../ChatPanel/ChatToolsMenu'
 import { FolderSystemPromptModal } from '../ChatPanel/FolderSystemPromptModal'
 import { FolderDocumentSelectorModal } from '../ChatPanel/FolderDocumentSelectorModal'
 import { FolderMemoryModal } from '../ChatPanel/FolderMemoryModal'
+import { RagSearchStatus } from '../ChatPanel/RagSearchStatus'
+import { MessageSources } from '../ChatPanel/MessageSources'
+import type { RagResponse } from '../../lib/rag'
 import { buildReaderContext } from './readerContext'
 import styles from './ReaderChatPanel.module.css'
 
@@ -86,6 +89,8 @@ export function ReaderChatPanel({
     tools,
     setTool,
     isStreaming,
+    ragSearching,
+    ragTraces,
     error,
     send,
     cancel,
@@ -384,6 +389,7 @@ export function ReaderChatPanel({
               onToggleFolderMemory={(v) =>
                 bookFolder && setFolderMemoryEnabled(bookFolder.id, v)
               }
+              dailyNotesTool={{ supported: models.find((m) => m.id === model)?.supportsTools ?? false }}
             />
           </div>
           <ModelSelector
@@ -462,6 +468,7 @@ export function ReaderChatPanel({
               key={m.id}
               message={m}
               isStreaming={m.id === streamingMessageId}
+              trace={ragTraces[m.id]}
             />
           ))
         )}
@@ -474,6 +481,7 @@ export function ReaderChatPanel({
       )}
 
       <div className={styles.composer}>
+        {ragSearching && <RagSearchStatus />}
         <textarea
           ref={inputRef}
           className={styles.input}
@@ -541,9 +549,10 @@ export function ReaderChatPanel({
 interface ReaderChatBubbleProps {
   message: ChatMessage
   isStreaming: boolean
+  trace?: RagResponse
 }
 
-function ReaderChatBubble({ message, isStreaming }: ReaderChatBubbleProps) {
+function ReaderChatBubble({ message, isStreaming, trace }: ReaderChatBubbleProps) {
   const isUser = message.role === 'user'
   const [html, setHtml] = useState('')
   const isStreamingPlaceholder = !isUser && message.content.length === 0
@@ -578,18 +587,21 @@ function ReaderChatBubble({ message, isStreaming }: ReaderChatBubbleProps) {
   }
 
   return (
-    <div
-      className={styles.bubbleAssistant}
-      data-streaming={isStreaming || undefined}
-      dangerouslySetInnerHTML={{ __html: html }}
-      onClick={(e) => {
-        const target = (e.target as HTMLElement).closest('a')
-        if (!target) return
-        const href = target.getAttribute('href')
-        if (!href || !href.startsWith('http')) return
-        e.preventDefault()
-        void openUrl(href)
-      }}
-    />
+    <>
+      <div
+        className={styles.bubbleAssistant}
+        data-streaming={isStreaming || undefined}
+        dangerouslySetInnerHTML={{ __html: html }}
+        onClick={(e) => {
+          const target = (e.target as HTMLElement).closest('a')
+          if (!target) return
+          const href = target.getAttribute('href')
+          if (!href || !href.startsWith('http')) return
+          e.preventDefault()
+          void openUrl(href)
+        }}
+      />
+      <MessageSources message={message} trace={trace} />
+    </>
   )
 }

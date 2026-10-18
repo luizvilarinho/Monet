@@ -434,7 +434,7 @@ function makeDragHandle(
     const cleanup = () => {
       document.removeEventListener('mousemove', onMouseMove)
       document.removeEventListener('mouseup', onMouseUp)
-      document.removeEventListener('keydown', onKeyDown)
+      document.removeEventListener('keydown', onKeyDown, true)
       if (indicator) {
         indicator.remove()
         indicator = null
@@ -457,13 +457,17 @@ function makeDragHandle(
       cleanup()
     }
 
+    // Em captura: o Esc que cancela o arraste chega já tratado
+    // (defaultPrevented) a quem escuta no document, como o modal da task.
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') cleanup()
+      if (e.key !== 'Escape') return
+      if (isDragging) e.preventDefault()
+      cleanup()
     }
 
     document.addEventListener('mousemove', onMouseMove)
     document.addEventListener('mouseup', onMouseUp)
-    document.addEventListener('keydown', onKeyDown)
+    document.addEventListener('keydown', onKeyDown, true)
   })
 
   return handle
@@ -619,7 +623,7 @@ function makeTaskDragHandle(view: EditorView, taskItemPos: number, taskItemNode:
     const cleanup = () => {
       document.removeEventListener('mousemove', onMouseMove)
       document.removeEventListener('mouseup', onMouseUp)
-      document.removeEventListener('keydown', onKeyDown)
+      document.removeEventListener('keydown', onKeyDown, true)
       if (indicator) {
         indicator.remove()
         indicator = null
@@ -646,13 +650,17 @@ function makeTaskDragHandle(view: EditorView, taskItemPos: number, taskItemNode:
       cleanup()
     }
 
+    // Em captura: o Esc que cancela o arraste chega já tratado
+    // (defaultPrevented) a quem escuta no document, como o modal da task.
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') cleanup()
+      if (e.key !== 'Escape') return
+      if (isDragging) e.preventDefault()
+      cleanup()
     }
 
     document.addEventListener('mousemove', onMouseMove)
     document.addEventListener('mouseup', onMouseUp)
-    document.addEventListener('keydown', onKeyDown)
+    document.addEventListener('keydown', onKeyDown, true)
   })
 
   return handle

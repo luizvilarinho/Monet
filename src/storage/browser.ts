@@ -6,6 +6,7 @@ import type {
   MetadataDef,
   Note,
   Notebook,
+  NoteSummary,
   Subject,
   Task,
   TaskStatusDef,
@@ -52,6 +53,12 @@ export class BrowserStorage implements StorageAdapter {
   }
   async searchNotes(_query: string): Promise<Note[]> {
     throw new Error('BrowserStorage.searchNotes not implemented')
+  }
+  async getNotesByDateRange(_from: string, _to: string): Promise<Note[]> {
+    throw new Error('BrowserStorage.getNotesByDateRange not implemented')
+  }
+  async getNoteSummaries(): Promise<NoteSummary[]> {
+    throw new Error('BrowserStorage.getNoteSummaries not implemented')
   }
   async getBooks(): Promise<Book[]> {
     throw new Error('BrowserStorage.getBooks not implemented')

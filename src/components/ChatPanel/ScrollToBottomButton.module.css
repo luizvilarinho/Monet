@@ -1,0 +1,21 @@
+/* A posição (bottom/right) vem do painel, pela prop className. */
+.btn {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-lg);
+  height: var(--control-lg);
+  border-radius: 50%;
+  background: rgba(30, 30, 34, 0.85);
+  border: 1px solid var(--border, #333340);
+  color: var(--text-secondary, #a0a0b8);
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  z-index: 10;
+}
+
+.btn:hover {
+  color: var(--text-primary, #e8e8f0);
+  border-color: var(--accent, #7c6af5);
+}

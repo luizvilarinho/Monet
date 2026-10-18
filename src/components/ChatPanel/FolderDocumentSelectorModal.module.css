@@ -5,6 +5,24 @@
   font-style: italic;
 }
 
+.filterInput {
+  width: 100%;
+  height: var(--control-md);
+  padding: 0 var(--space-2);
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text-primary, #e8e8f0);
+  background: var(--surface-1, #1e1e22);
+  border: 1px solid var(--border, #333340);
+  border-radius: var(--radius-sm);
+  outline: none;
+  box-sizing: border-box;
+}
+
+.filterInput:focus {
+  border-color: var(--accent-ai, #5dcaa5);
+}
+
 .list {
   list-style: none;
   margin: 0;
@@ -88,4 +106,177 @@
 
 .alwaysOn {
   color: var(--text-muted, #606070);
+}
+
+.setsBlock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.sets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1h);
+}
+
+.setsLabel {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted, #606070);
+  margin-right: var(--space-1);
+}
+
+.setsEmpty {
+  font-size: 12px;
+  color: var(--text-muted, #606070);
+  font-style: italic;
+}
+
+.chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  height: var(--control-sm);
+  border: 1px solid var(--border, #333340);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1, #1e1e22);
+}
+
+.chipActive {
+  border-color: var(--accent-ai, #5dcaa5);
+}
+
+.chipApply,
+.chipMenuBtn {
+  height: 100%;
+  background: transparent;
+  border: none;
+  font-family: inherit;
+  color: var(--text-primary, #e8e8f0);
+  cursor: pointer;
+}
+
+.chipApply {
+  max-width: 200px;
+  padding: 0 var(--space-1) 0 var(--space-2);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chipMenuBtn {
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-1);
+  color: var(--text-muted, #606070);
+}
+
+.chipApply:hover,
+.chipMenuBtn:hover {
+  color: var(--accent-ai, #5dcaa5);
+}
+
+.chipMenu {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  left: 0;
+  z-index: 10;
+  min-width: 120px;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-1);
+  background: var(--bg-panel, #161618);
+  border: 1px solid var(--border, #333340);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.chipMenu button {
+  height: var(--control-md);
+  padding: 0 var(--space-2);
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-primary, #e8e8f0);
+  cursor: pointer;
+}
+
+.chipMenu button:hover {
+  background: var(--surface-1, #1e1e22);
+}
+
+.chipMenu .chipMenuDanger {
+  color: #e57368;
+}
+
+.setSaveBtn {
+  height: var(--control-sm);
+  padding: 0 var(--space-2);
+  background: transparent;
+  border: 1px dashed var(--border, #333340);
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-secondary, #a0a0b8);
+  cursor: pointer;
+}
+
+.setSaveBtn:hover:not(:disabled) {
+  color: var(--accent-ai, #5dcaa5);
+  border-color: var(--accent-ai, #5dcaa5);
+}
+
+.setSaveBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.setNameInput {
+  width: 180px;
+  height: var(--control-sm);
+  padding: 0 var(--space-1h);
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text-primary, #e8e8f0);
+  background: var(--surface-1, #1e1e22);
+  border: 1px solid var(--accent-ai, #5dcaa5);
+  border-radius: var(--radius-sm);
+  outline: none;
+  box-sizing: border-box;
+}
+
+.setWarning {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 12px;
+  color: var(--accent-warn, #ef9f27);
+}
+
+.setWarningBtn {
+  height: var(--control-sm);
+  padding: 0 var(--space-2);
+  background: transparent;
+  border: 1px solid rgba(239, 159, 39, 0.4);
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--accent-warn, #ef9f27);
+  cursor: pointer;
+}
+
+.setWarningBtn:hover {
+  background: rgba(239, 159, 39, 0.12);
+}
+
+.setError {
+  margin: 0;
+  font-size: 12px;
+  color: #e57368;
 }

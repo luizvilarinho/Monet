@@ -60,7 +60,9 @@ export function useNotebooks() {
     }
   }, [])
 
-  const remove = useCallback(async (id: string) => {
+  // true se o caderno saiu do banco: quem chama só segue a cascata (chat,
+  // notas) nesse caso.
+  const remove = useCallback(async (id: string): Promise<boolean> => {
     setNotebooks((prev) => prev.filter((n) => n.id !== id))
     try {
       await storage.deleteNotebook(id)
@@ -71,9 +73,11 @@ export function useNotebooks() {
         replaceNotebookVisibility(id, []),
         notesIndexSetNotebookEnabled(id, true),
       ]).catch((err) => console.warn('failed to clean up notebook settings', err))
+      return true
     } catch (err) {
       console.error('failed to delete notebook', err)
       setSaveError('Failed to delete notebook.')
+      return false
     }
   }, [])
 

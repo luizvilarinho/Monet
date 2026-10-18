@@ -5,10 +5,11 @@
 // conflito de locks com o backend e estados inconsistentes entre frontend/backend.
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
-use rusqlite::{params, params_from_iter, Connection};
+use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::task::spawn_blocking;
@@ -39,17 +40,41 @@ pub async fn documents_pick_folder() -> Result<Option<String>, String> {
     Ok(result.map(|p| p.to_string_lossy().to_string()))
 }
 
-use crate::vec_db::{VecDb, EMBEDDING_DIM};
+use crate::rag::ChunkResult;
+use crate::vec_db::{VecDb, CURRENT_INDEX_VERSION, EMBEDDING_DIM};
 
 const EMBED_BATCH_SIZE: usize = 32;
 const CHUNK_TARGET_CHARS: usize = 4000;
 const CHUNK_OVERLAP_CHARS: usize = 400;
+// Pedaço de uma linha maior que o chunk. Cabe no chunk junto com o overlap
+// (+ "\n\n") que abre o chunk seguinte.
+const LONG_LINE_PIECE_CHARS: usize = CHUNK_TARGET_CHARS - CHUNK_OVERLAP_CHARS - 2;
+// Teto do texto indexado de uma página web salva (pasta origin='ai'). Igual ao
+// MAX_WEB_SOURCE_CHARS de src/lib/librarian.ts, que corta na escrita.
+const MAX_WEB_SOURCE_CHARS: usize = 150_000;
 const EMBED_MODEL: &str = "openai/text-embedding-3-small";
 const EMBED_URL: &str = "https://openrouter.ai/api/v1/embeddings";
+// Retries num 429 da indexação (backoff 2+4+8+16+32 s). A consulta do chat usa
+// o seu próprio teto (rag.rs).
+pub(crate) const INDEX_RATE_LIMIT_RETRIES: u32 = 5;
 const MAX_FILE_BYTES: u64 = 50 * 1024 * 1024;
 // Teto específico do auto-save do bibliotecário (PDFs de acesso aberto). Separado
 // e mais estrito que MAX_FILE_BYTES (usado por uploads do usuário).
 const LIBRARIAN_MAX_PDF_BYTES: u64 = 10 * 1024 * 1024;
+
+// Cliente HTTP compartilhado pelo embedding, pela reescrita e pelo rerank
+// (reuso de conexão TLS com o OpenRouter). Os timeouts evitam uma conexão
+// pendurada para sempre; os passos do chat têm timeouts próprios, mais curtos.
+pub(crate) fn http_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(60))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new())
+    })
+}
 
 pub struct DocDb(Mutex<Option<Connection>>);
 
@@ -84,16 +109,7 @@ pub struct DocumentInfo {
     last_modified_ms: Option<i64>,
     is_external: bool,
     origin: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ChunkResult {
-    document_id: String,
-    document_name: String,
-    chunk_index: i64,
-    snippet: String,
-    distance: f64,
+    alias: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -162,11 +178,11 @@ fn notes_folder_dir(app: &AppHandle, safe_notebook_id: &str) -> Result<PathBuf, 
 }
 
 // IDs determinísticos das linhas de `documents` geradas a partir das notas.
-fn notes_folder_doc_id(notebook_id: &str) -> String {
+pub(crate) fn notes_folder_doc_id(notebook_id: &str) -> String {
     format!("notes-folder:{}", notebook_id)
 }
 
-fn note_doc_id(note_id: &str) -> String {
+pub(crate) fn note_doc_id(note_id: &str) -> String {
     format!("note:{}", note_id)
 }
 
@@ -243,6 +259,35 @@ fn open_doc_db(app: &AppHandle) -> Result<Connection, String> {
     )
     .map_err(|e| format!("failed to create notes index toggle table: {}", e))?;
 
+    // Apelido opcional de pasta indexada (exibição); sem linha = nome original.
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS folder_aliases (folder_id TEXT PRIMARY KEY, alias TEXT NOT NULL);",
+    )
+    .map_err(|e| format!("failed to create folder aliases table: {}", e))?;
+
+    // Conjuntos de documentos (presets de RAG), globais: `document_ids` é um
+    // array JSON de ids de visibilidade (arquivos e pastas da KB).
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS document_sets (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            document_ids TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        );",
+    )
+    .map_err(|e| format!("failed to create document sets table: {}", e))?;
+
+    // Cache do OCR das imagens das notas (ocr.rs), por SHA-256 do data URL.
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS image_ocr_cache (
+            hash TEXT PRIMARY KEY,
+            text TEXT NOT NULL,
+            created_at INTEGER NOT NULL
+        );",
+    )
+    .map_err(|e| format!("failed to create OCR cache table: {}", e))?;
+
     // Reconcilia o estado de migrations do tauri-plugin-sql quando um build
     // antigo aplicou uma v11 diferente (notes_rag_doc_ids) no DB de produção.
     // O sqlx aborta o migrate por checksum mismatch na 1ª carga e o retry do
@@ -278,7 +323,7 @@ fn open_doc_db(app: &AppHandle) -> Result<Connection, String> {
     Ok(conn)
 }
 
-fn with_doc_db<F, T>(app: &AppHandle, state: &State<'_, DocDb>, f: F) -> Result<T, String>
+pub(crate) fn with_doc_db<F, T>(app: &AppHandle, state: &State<'_, DocDb>, f: F) -> Result<T, String>
 where
     F: FnOnce(&mut Connection) -> Result<T, String>,
 {
@@ -303,7 +348,7 @@ fn detect_mime(path: &Path) -> Option<&'static str> {
     }
 }
 
-fn now_ms() -> i64 {
+pub(crate) fn now_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -319,19 +364,63 @@ fn take_tail_chars(s: &str, n: usize) -> String {
     s.chars().skip(total - n).collect()
 }
 
-fn chunk_text(text: &str) -> Vec<String> {
-    let normalized = text.replace("\r\n", "\n");
-    let paragraphs: Vec<&str> = normalized
-        .split("\n\n")
-        .map(|p| p.trim())
-        .filter(|p| !p.is_empty())
-        .collect();
+// Fatia `s` em pedaços de até `max_chars` caracteres. Sempre devolve ao menos
+// um pedaço (vazio para `s` vazio).
+fn split_by_chars(s: &str, max_chars: usize) -> Vec<&str> {
+    let mut pieces = Vec::new();
+    let mut start = 0;
+    let mut count = 0;
+    for (i, _) in s.char_indices() {
+        if count == max_chars {
+            pieces.push(&s[start..i]);
+            start = i;
+            count = 0;
+        }
+        count += 1;
+    }
+    pieces.push(&s[start..]);
+    pieces
+}
 
-    let mut chunks: Vec<String> = Vec::new();
+// Trecho que vira chunk, com a página (PDF) e a seção (último heading
+// markdown) onde ele começa.
+#[derive(Debug)]
+struct ChunkPiece {
+    text: String,
+    page: Option<u32>,
+    section: Option<String>,
+}
+
+// Texto de um heading markdown (`#` a `######` seguido de espaço).
+fn md_heading(line: &str) -> Option<String> {
+    let t = line.trim_start();
+    let hashes = t.chars().take_while(|c| *c == '#').count();
+    if hashes == 0 || hashes > 6 {
+        return None;
+    }
+    let text = crate::rag::header_part(t[hashes..].strip_prefix(' ')?);
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+// Segmentos = (texto, página): um por página nos PDFs, um só (sem página) nos
+// demais. Os parágrafos de todos os segmentos seguem o mesmo fluxo de chunking.
+fn chunk_segments(segments: &[(String, Option<u32>)]) -> Vec<ChunkPiece> {
+    let mut chunks: Vec<ChunkPiece> = Vec::new();
     let mut current = String::new();
+    // Página e seção do chunk em construção, fixadas no 1º trecho novo depois
+    // do overlap (o overlap é o fim do chunk anterior).
+    let mut start: Option<(Option<u32>, Option<String>)> = None;
+    let mut last_heading: Option<String> = None;
 
-    let push_with_overlap = |chunks: &mut Vec<String>, current: &mut String| {
+    let push_with_overlap = |chunks: &mut Vec<ChunkPiece>,
+                             current: &mut String,
+                             start: &mut Option<(Option<u32>, Option<String>)>| {
         let chunk = current.trim().to_string();
+        let (page, section) = start.take().unwrap_or((None, None));
         if !chunk.is_empty() {
             // Overlap proporcional ao tamanho do chunk (max 1/4 dele), nao um
             // valor fixo: em regioes de paragrafos curtos (ex.: sumario do
@@ -340,7 +429,7 @@ fn chunk_text(text: &str) -> Vec<String> {
             // que dominavam o top-k da busca vetorial.
             let overlap_len = CHUNK_OVERLAP_CHARS.min(chunk.chars().count() / 4);
             let overlap = take_tail_chars(&chunk, overlap_len);
-            chunks.push(chunk);
+            chunks.push(ChunkPiece { text: chunk, page, section });
             *current = overlap;
             if !current.is_empty() {
                 current.push_str("\n\n");
@@ -350,41 +439,106 @@ fn chunk_text(text: &str) -> Vec<String> {
         }
     };
 
-    for para in paragraphs {
-        if current.chars().count() + para.chars().count() > CHUNK_TARGET_CHARS
-            && !current.trim().is_empty()
-        {
-            push_with_overlap(&mut chunks, &mut current);
-        }
+    for (text, page) in segments {
+        let normalized = text.replace("\r\n", "\n");
+        let paragraphs = normalized
+            .split("\n\n")
+            .map(|p| p.trim())
+            .filter(|p| !p.is_empty());
 
-        if para.chars().count() > CHUNK_TARGET_CHARS {
-            let mut buf = String::new();
-            buf.push_str(&current);
-            for line in para.split('\n') {
-                if buf.chars().count() + line.chars().count() > CHUNK_TARGET_CHARS
-                    && !buf.trim().is_empty()
-                {
-                    push_with_overlap(&mut chunks, &mut buf);
-                }
-                buf.push_str(line);
-                buf.push('\n');
+        for para in paragraphs {
+            if current.chars().count() + para.chars().count() > CHUNK_TARGET_CHARS
+                && !current.trim().is_empty()
+            {
+                push_with_overlap(&mut chunks, &mut current, &mut start);
             }
-            current = buf;
-        } else {
-            current.push_str(para);
-            current.push_str("\n\n");
+
+            if para.chars().count() > CHUNK_TARGET_CHARS {
+                let mut buf = String::new();
+                buf.push_str(&current);
+                for line in para.split('\n') {
+                    let heading = md_heading(line);
+                    // Linha sem quebra maior que o chunk (HTML minificado, PDF
+                    // corrido) é fatiada; inteira, virava um chunk gigante que
+                    // estourava o limite do embedding.
+                    let pieces = split_by_chars(line, LONG_LINE_PIECE_CHARS);
+                    let last = pieces.len() - 1;
+                    for (i, piece) in pieces.into_iter().enumerate() {
+                        if buf.chars().count() + piece.chars().count() > CHUNK_TARGET_CHARS
+                            && !buf.trim().is_empty()
+                        {
+                            push_with_overlap(&mut chunks, &mut buf, &mut start);
+                        }
+                        if start.is_none() {
+                            start = Some((*page, heading.clone().or_else(|| last_heading.clone())));
+                        }
+                        buf.push_str(piece);
+                        if i == last {
+                            buf.push('\n');
+                        }
+                    }
+                    if heading.is_some() {
+                        last_heading = heading;
+                    }
+                }
+                current = buf;
+            } else {
+                if start.is_none() {
+                    let opening = para.lines().next().and_then(md_heading);
+                    start = Some((*page, opening.or_else(|| last_heading.clone())));
+                }
+                current.push_str(para);
+                current.push_str("\n\n");
+                if let Some(h) = para.lines().filter_map(md_heading).last() {
+                    last_heading = Some(h);
+                }
+            }
         }
     }
 
     let tail = current.trim().to_string();
     if !tail.is_empty() {
-        chunks.push(tail);
+        let (page, section) = start.take().unwrap_or((None, None));
+        chunks.push(ChunkPiece { text: tail, page, section });
     }
 
     chunks
 }
 
-async fn embed_batch(key: &str, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+// Chunks prontos para embutir e gravar, cada um com o seu cabeçalho. A seção
+// igual ao título (o `# Título` do início do arquivo) é omitida.
+fn prepare_chunks(
+    meta: &crate::rag::DocMeta,
+    segments: &[(String, Option<u32>)],
+) -> Vec<(ChunkPiece, String)> {
+    chunk_segments(segments)
+        .into_iter()
+        .map(|mut piece| {
+            if piece.section.as_deref() == Some(meta.title.as_str()) {
+                piece.section = None;
+            }
+            let header = crate::rag::build_header(meta, piece.section.as_deref(), piece.page);
+            (piece, header)
+        })
+        .collect()
+}
+
+// Texto embutido = cabeçalho + "\n" + trecho; chunks_meta.content guarda só o
+// trecho.
+fn embed_inputs(chunks: &[(ChunkPiece, String)]) -> Vec<String> {
+    chunks
+        .iter()
+        .map(|(piece, header)| format!("{}\n{}", header, piece.text))
+        .collect()
+}
+
+// `max_rate_limit_retries`: quantos 429 seguidos tolerar (com backoff) antes
+// de desistir.
+pub(crate) async fn embed_batch(
+    key: &str,
+    texts: &[String],
+    max_rate_limit_retries: u32,
+) -> Result<Vec<Vec<f32>>, String> {
     let body = serde_json::json!({
         "model": EMBED_MODEL,
         "input": texts,
@@ -393,8 +547,7 @@ async fn embed_batch(key: &str, texts: &[String]) -> Result<Vec<Vec<f32>>, Strin
 
     let mut attempt: u32 = 0;
     loop {
-        let client = reqwest::Client::new();
-        let resp = client
+        let resp = http_client()
             .post(EMBED_URL)
             .bearer_auth(key)
             .header("HTTP-Referer", "https://monet.local")
@@ -417,7 +570,7 @@ async fn embed_batch(key: &str, texts: &[String]) -> Result<Vec<Vec<f32>>, Strin
         let status = resp.status();
         if status.as_u16() == 429 {
             attempt += 1;
-            if attempt > 5 {
+            if attempt > max_rate_limit_retries {
                 return Err(
                     "Rate limit exceeded. Please try again in a few minutes.".into(),
                 );
@@ -479,42 +632,36 @@ async fn embed_batch(key: &str, texts: &[String]) -> Result<Vec<Vec<f32>>, Strin
 async fn embed_chunks(key: &str, chunks: &[String]) -> Result<Vec<Vec<f32>>, String> {
     let mut all_embeddings: Vec<Vec<f32>> = Vec::with_capacity(chunks.len());
     for batch in chunks.chunks(EMBED_BATCH_SIZE) {
-        all_embeddings.extend(embed_batch(key, batch).await?);
+        all_embeddings.extend(embed_batch(key, batch, INDEX_RATE_LIMIT_RETRIES).await?);
     }
     Ok(all_embeddings)
 }
 
-fn store_chunks(
-    app: &AppHandle,
-    document_id: &str,
-    source_name: &str,
-    chunks: &[String],
-    embeddings: &[Vec<f32>],
-) -> Result<(), String> {
-    let state = app.state::<VecDb>();
-    let mut conn = state.0.lock().map_err(|e| e.to_string())?;
-    let tx = conn
-        .transaction()
-        .map_err(|e| format!("failed to start transaction: {}", e))?;
-
-    insert_chunks_tx(&tx, document_id, source_name, chunks, embeddings)?;
-
-    tx.commit()
-        .map_err(|e| format!("failed to commit transaction: {}", e))?;
-    Ok(())
-}
-
-// Troca os chunks de um documento numa única transação do vec db: o documento
-// nunca fica com chunks duplicados nem sem chunks no meio da troca.
+// Troca os chunks de um documento numa única transação do vec db (rusqlite):
+// o documento nunca fica com chunks duplicados nem sem chunks no meio da
+// troca, e uma falha antes daqui mantém o índice antigo. Grava junto o
+// estado do índice (versão atual + assinatura dos metadados).
 fn replace_chunks(
     app: &AppHandle,
     document_id: &str,
     source_name: &str,
-    chunks: &[String],
+    meta: &crate::rag::DocMeta,
+    chunks: &[(ChunkPiece, String)],
     embeddings: &[Vec<f32>],
 ) -> Result<(), String> {
     let state = app.state::<VecDb>();
     let mut conn = state.0.lock().map_err(|e| e.to_string())?;
+    replace_chunks_conn(&mut conn, document_id, source_name, meta, chunks, embeddings)
+}
+
+fn replace_chunks_conn(
+    conn: &mut Connection,
+    document_id: &str,
+    source_name: &str,
+    meta: &crate::rag::DocMeta,
+    chunks: &[(ChunkPiece, String)],
+    embeddings: &[Vec<f32>],
+) -> Result<(), String> {
     let tx = conn
         .transaction()
         .map_err(|e| format!("failed to start transaction: {}", e))?;
@@ -525,12 +672,24 @@ fn replace_chunks(
     )
     .map_err(|e| format!("failed to delete vectors: {}", e))?;
     tx.execute(
+        "DELETE FROM chunks_fts WHERE rowid IN (SELECT rowid FROM chunks_meta WHERE document_id = ?1)",
+        params![document_id],
+    )
+    .map_err(|e| format!("failed to delete text index: {}", e))?;
+    tx.execute(
         "DELETE FROM chunks_meta WHERE document_id = ?1",
         params![document_id],
     )
     .map_err(|e| format!("failed to delete chunks_meta: {}", e))?;
 
-    insert_chunks_tx(&tx, document_id, source_name, chunks, embeddings)?;
+    insert_chunks_tx(&tx, document_id, source_name, meta, chunks, embeddings)?;
+
+    tx.execute(
+        "INSERT OR REPLACE INTO doc_index_state (document_id, index_version, meta_sig)
+         VALUES (?1, ?2, ?3)",
+        params![document_id, CURRENT_INDEX_VERSION, crate::rag::meta_sig(meta)],
+    )
+    .map_err(|e| format!("failed to save index state: {}", e))?;
 
     tx.commit()
         .map_err(|e| format!("failed to commit transaction: {}", e))?;
@@ -541,10 +700,11 @@ fn insert_chunks_tx(
     tx: &rusqlite::Transaction,
     document_id: &str,
     source_name: &str,
-    chunks: &[String],
+    meta: &crate::rag::DocMeta,
+    chunks: &[(ChunkPiece, String)],
     embeddings: &[Vec<f32>],
 ) -> Result<(), String> {
-    for (idx, (chunk, emb)) in chunks.iter().zip(embeddings.iter()).enumerate() {
+    for (idx, ((piece, header), emb)) in chunks.iter().zip(embeddings.iter()).enumerate() {
         if emb.len() != EMBEDDING_DIM {
             return Err(format!(
                 "embedding {} dim {} != {}",
@@ -558,9 +718,23 @@ fn insert_chunks_tx(
         // last_insert_rowid e usamos como rowid em vec_chunks para
         // garantir o pareamento sem depender de MAX(rowid)+1.
         tx.execute(
-            "INSERT INTO chunks_meta(document_id, source_name, content, chunk_index)
-             VALUES (?1, ?2, ?3, ?4)",
-            params![document_id, source_name, chunk, idx as i64],
+            "INSERT INTO chunks_meta(document_id, source_name, content, chunk_index, header,
+                                     kind, title, doc_date, folder_label, section, page, source_url)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![
+                document_id,
+                source_name,
+                piece.text,
+                idx as i64,
+                header,
+                meta.kind,
+                meta.title,
+                meta.doc_date,
+                meta.folder_label,
+                piece.section,
+                piece.page,
+                meta.source_url
+            ],
         )
         .map_err(|e| format!("failed to insert metadata {}: {}", idx, e))?;
 
@@ -571,6 +745,12 @@ fn insert_chunks_tx(
             params![rowid, emb.as_bytes()],
         )
         .map_err(|e| format!("failed to insert vector {}: {}", idx, e))?;
+
+        tx.execute(
+            "INSERT INTO chunks_fts(rowid, header, content) VALUES (?1, ?2, ?3)",
+            params![rowid, header, piece.text],
+        )
+        .map_err(|e| format!("failed to insert text index {}: {}", idx, e))?;
     }
     Ok(())
 }
@@ -578,6 +758,10 @@ fn insert_chunks_tx(
 fn delete_chunks_for_document(app: &AppHandle, document_id: &str) -> Result<(), String> {
     let state = app.state::<VecDb>();
     let mut conn = state.0.lock().map_err(|e| e.to_string())?;
+    delete_chunks_conn(&mut conn, document_id)
+}
+
+fn delete_chunks_conn(conn: &mut Connection, document_id: &str) -> Result<(), String> {
     let tx = conn
         .transaction()
         .map_err(|e| format!("failed to start transaction: {}", e))?;
@@ -588,14 +772,39 @@ fn delete_chunks_for_document(app: &AppHandle, document_id: &str) -> Result<(), 
     )
     .map_err(|e| format!("failed to delete vectors: {}", e))?;
     tx.execute(
+        "DELETE FROM chunks_fts WHERE rowid IN (SELECT rowid FROM chunks_meta WHERE document_id = ?1)",
+        params![document_id],
+    )
+    .map_err(|e| format!("failed to delete text index: {}", e))?;
+    tx.execute(
         "DELETE FROM chunks_meta WHERE document_id = ?1",
         params![document_id],
     )
     .map_err(|e| format!("failed to delete chunks_meta: {}", e))?;
+    tx.execute(
+        "DELETE FROM doc_index_state WHERE document_id = ?1",
+        params![document_id],
+    )
+    .map_err(|e| format!("failed to delete index state: {}", e))?;
 
     tx.commit()
         .map_err(|e| format!("failed to commit deletion: {}", e))?;
     Ok(())
+}
+
+// (versão, assinatura) gravadas na última indexação bem-sucedida.
+fn index_state(app: &AppHandle, document_id: &str) -> Result<Option<(i64, String)>, String> {
+    let state = app.state::<VecDb>();
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    match conn.query_row(
+        "SELECT index_version, meta_sig FROM doc_index_state WHERE document_id = ?1",
+        params![document_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    ) {
+        Ok(v) => Ok(Some(v)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(format!("failed to read index state: {}", e)),
+    }
 }
 
 fn update_document_status(
@@ -631,11 +840,72 @@ fn emit_status(
     );
 }
 
-async fn read_document_text(path: PathBuf, mime: String) -> Result<String, String> {
+fn has_chunks(conn: &Connection, document_id: &str) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM chunks_meta WHERE document_id = ?1)",
+        params![document_id],
+        |r| r.get(0),
+    )
+}
+
+// Sem a linha de doc_index_state o documento volta a ser pendente (Update
+// index, reconciliação das notas).
+fn mark_outdated(conn: &Connection, document_id: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "DELETE FROM doc_index_state WHERE document_id = ?1",
+        params![document_id],
+    )
+    .map(|_| ())
+}
+
+// Status depois de uma (re)indexação interrompida: com chunks de uma indexação
+// anterior, segue 'available' (pesquisável com o índice antigo); sem chunks,
+// 'error'.
+fn status_for_failed_index(app: &AppHandle, document_id: &str) -> &'static str {
+    let state = app.state::<VecDb>();
+    let Ok(conn) = state.0.lock() else {
+        return "error";
+    };
+    if has_chunks(&conn, document_id).unwrap_or(false) {
+        "available"
+    } else {
+        "error"
+    }
+}
+
+fn mark_outdated_logged(app: &AppHandle, document_id: &str) {
+    let state = app.state::<VecDb>();
+    let result = match state.0.lock() {
+        Ok(conn) => mark_outdated(&conn, document_id).map_err(|e| e.to_string()),
+        Err(e) => Err(e.to_string()),
+    };
+    if let Err(e) = result {
+        eprintln!("mark_outdated {}: {}", document_id, e);
+    }
+}
+
+// Falha de (re)indexação: com chunks antigos, fica 'available' e pendente
+// (perde a linha de doc_index_state); sem chunks, vira 'error'.
+fn status_after_index_failure(app: &AppHandle, document_id: &str) -> &'static str {
+    let status = status_for_failed_index(app, document_id);
+    if status == "available" {
+        mark_outdated_logged(app, document_id);
+    }
+    status
+}
+
+fn mark_index_failed(app: &AppHandle, document_id: &str, error_message: &str) {
+    let status = status_after_index_failure(app, document_id);
+    let _ = update_document_status(app, document_id, status, Some(error_message));
+    emit_status(app, document_id, status, Some(error_message));
+}
+
+// Segmentos (texto, página): um por página nos PDFs, um só nos demais.
+async fn read_document_text(path: PathBuf, mime: String) -> Result<Vec<(String, Option<u32>)>, String> {
     if mime == "application/pdf" {
         let path_clone = path.clone();
-        let join = spawn_blocking(move || pdf_extract::extract_text(&path_clone)).await;
-        let text = match join {
+        let join = spawn_blocking(move || pdf_extract::extract_text_by_pages(&path_clone)).await;
+        let pages = match join {
             Err(e) if e.is_panic() => {
                 return Err("Corrupted PDF or unsupported format".into());
             }
@@ -647,12 +917,16 @@ async fn read_document_text(path: PathBuf, mime: String) -> Result<String, Strin
                 eprintln!("pdf_extract error: {}", e);
                 return Err("Corrupted PDF or unsupported format".into());
             }
-            Ok(Ok(t)) => t,
+            Ok(Ok(p)) => p,
         };
-        if text.trim().is_empty() {
+        if pages.iter().all(|p| p.trim().is_empty()) {
             return Err("PDF has no extractable text (may be scanned)".into());
         }
-        Ok(text)
+        Ok(pages
+            .into_iter()
+            .enumerate()
+            .map(|(i, text)| (text, Some(i as u32 + 1)))
+            .collect())
     } else {
         let text = match spawn_blocking(move || fs::read_to_string(&path)).await {
             Err(e) => {
@@ -671,72 +945,151 @@ async fn read_document_text(path: PathBuf, mime: String) -> Result<String, Strin
         if text.trim().is_empty() {
             return Err("Empty file".into());
         }
-        Ok(text)
+        Ok(vec![(text, None)])
     }
 }
 
+// Documento de uma pasta web salva pelo bibliotecário (pasta-pai origin='ai').
+fn is_web_source(app: &AppHandle, document_id: &str) -> bool {
+    let state = app.state::<DocDb>();
+    with_doc_db(app, &state, |conn| {
+        conn.query_row(
+            "SELECT p.origin FROM documents d JOIN documents p ON p.id = d.parent_folder_id
+             WHERE d.id = ?1",
+            params![document_id],
+            |r| r.get::<_, String>(0),
+        )
+        .map_err(|e| e.to_string())
+    })
+    .map(|origin| origin == "ai")
+    .unwrap_or(false)
+}
+
+fn truncate_chars(text: String, max_chars: usize) -> String {
+    match text.char_indices().nth(max_chars) {
+        Some((byte_idx, _)) => text[..byte_idx].to_string(),
+        None => text,
+    }
+}
+
+// Corta o total dos segmentos em `max_chars`, descartando os que sobram.
+fn truncate_segments(
+    segments: Vec<(String, Option<u32>)>,
+    max_chars: usize,
+) -> Vec<(String, Option<u32>)> {
+    let mut left = max_chars;
+    let mut out = Vec::new();
+    for (text, page) in segments {
+        if left == 0 {
+            break;
+        }
+        let len = text.chars().count();
+        out.push((truncate_chars(text, left), page));
+        left = left.saturating_sub(len);
+    }
+    out
+}
+
+// O documento ainda existe em monet.db? Apagado enquanto o embedding rodava =
+// não gravar chunks órfãos.
+fn document_exists(conn: &Connection, document_id: &str) -> Result<bool, String> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM documents WHERE id = ?1)",
+        params![document_id],
+        |r| r.get(0),
+    )
+    .map_err(|e| format!("failed to query document: {}", e))
+}
+
+// Indexa um arquivo da KB e devolve se deu certo (um documento apagado no meio
+// conta como concluído: não há o que indexar). Uma falha mantém o índice
+// anterior (ver status_after_index_failure).
 async fn run_indexing(
     app: AppHandle,
     document_id: String,
     source_name: String,
     path: PathBuf,
     mime: String,
-) {
+) -> bool {
     emit_status(&app, &document_id, "indexing", None);
 
     let key = match crate::read_key(&app, "openrouter_key") {
         Some(k) => k,
         None => {
             let msg = "OpenRouter key not configured";
-            let _ = update_document_status(&app, &document_id, "error", Some(msg));
-            emit_status(&app, &document_id, "error", Some(msg));
-            return;
+            mark_index_failed(&app, &document_id, msg);
+            return false;
         }
     };
 
-    let text = match read_document_text(path, mime).await {
+    let segments = match read_document_text(path, mime).await {
         Ok(t) => t,
         Err(e) => {
-            let _ = update_document_status(&app, &document_id, "error", Some(&e));
-            emit_status(&app, &document_id, "error", Some(&e));
-            return;
+            mark_index_failed(&app, &document_id, &e);
+            return false;
         }
     };
 
-    let chunks = chunk_text(&text);
+    let segments = if is_web_source(&app, &document_id) {
+        truncate_segments(segments, MAX_WEB_SOURCE_CHARS)
+    } else {
+        segments
+    };
+
+    let first_text = segments.first().map(|(t, _)| t.as_str()).unwrap_or("");
+    let state = app.state::<DocDb>();
+    let meta = match with_doc_db(&app, &state, |conn| {
+        crate::rag::doc_meta(conn, &document_id, first_text)
+    }) {
+        Ok(m) => m,
+        Err(e) => {
+            mark_index_failed(&app, &document_id, &e);
+            return false;
+        }
+    };
+
+    let chunks = prepare_chunks(&meta, &segments);
     if chunks.is_empty() {
         let msg = "No indexable content found";
-        let _ = update_document_status(&app, &document_id, "error", Some(msg));
-        emit_status(&app, &document_id, "error", Some(msg));
-        return;
+        mark_index_failed(&app, &document_id, msg);
+        return false;
     }
 
-    let all_embeddings = match embed_chunks(&key, &chunks).await {
+    let all_embeddings = match embed_chunks(&key, &embed_inputs(&chunks)).await {
         Ok(embs) => embs,
         Err(e) => {
-            let _ = update_document_status(&app, &document_id, "error", Some(&e));
-            emit_status(&app, &document_id, "error", Some(&e));
-            return;
+            mark_index_failed(&app, &document_id, &e);
+            return false;
         }
     };
 
-    if let Err(e) = store_chunks(
+    match with_doc_db(&app, &state, |conn| document_exists(conn, &document_id)) {
+        Ok(true) => {}
+        Ok(false) => return true,
+        Err(e) => {
+            mark_index_failed(&app, &document_id, &e);
+            return false;
+        }
+    }
+
+    if let Err(e) = replace_chunks(
         &app,
         &document_id,
         &source_name,
+        &meta,
         &chunks,
         &all_embeddings,
     ) {
-        let _ = update_document_status(&app, &document_id, "error", Some(&e));
-        emit_status(&app, &document_id, "error", Some(&e));
-        return;
+        mark_index_failed(&app, &document_id, &e);
+        return false;
     }
 
     if let Err(e) = update_document_status(&app, &document_id, "available", None) {
         emit_status(&app, &document_id, "error", Some(&e));
-        return;
+        return false;
     }
     emit_status(&app, &document_id, "available", None);
+    true
 }
 
 #[tauri::command]
@@ -859,13 +1212,198 @@ pub async fn documents_reindex(
         return Ok(());
     };
 
-    delete_chunks_for_document(&app, &document_id)?;
-
+    // Sem pré-deleção: run_indexing troca os chunks atomicamente, e uma
+    // falha mantém o índice antigo.
     let path = PathBuf::from(original_path);
     let app_clone = app.clone();
     let id_clone = document_id.clone();
     tauri::async_runtime::spawn(async move {
         run_indexing(app_clone, id_clone, name, path, mime).await;
+    });
+
+    Ok(())
+}
+
+// ─── Reindexação dos documentos fora da versão atual ("Update index") ───────
+
+struct PendingDoc {
+    id: String,
+    name: String,
+    original_path: String,
+    mime: String,
+    is_note: bool,
+}
+
+// Arquivos (type='file') sem linha em doc_index_state, com versão menor que a
+// atual ou com status='error'. `documents` mora no monet.db e
+// `doc_index_state` no monet-vec.db: uma consulta por banco, cruzadas aqui.
+fn pending_documents(app: &AppHandle) -> Result<Vec<PendingDoc>, String> {
+    let state = app.state::<DocDb>();
+    let docs: Vec<(PendingDoc, String)> = with_doc_db(app, &state, |conn| {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, name, original_path, mime, origin, status FROM documents
+                 WHERE type = 'file' ORDER BY created_at",
+            )
+            .map_err(|e| format!("failed to prepare query: {}", e))?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    PendingDoc {
+                        id: r.get(0)?,
+                        name: r.get(1)?,
+                        original_path: r.get(2)?,
+                        mime: r.get(3)?,
+                        is_note: r.get::<_, String>(4)? == "notes",
+                    },
+                    r.get::<_, String>(5)?,
+                ))
+            })
+            .map_err(|e| format!("failed to query documents: {}", e))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| format!("invalid row: {}", e))?);
+        }
+        Ok(out)
+    })?;
+
+    let versions: std::collections::HashMap<String, i64> = {
+        let vec_state = app.state::<VecDb>();
+        let conn = vec_state.0.lock().map_err(|e| e.to_string())?;
+        let mut stmt = conn
+            .prepare("SELECT document_id, index_version FROM doc_index_state")
+            .map_err(|e| format!("failed to prepare query: {}", e))?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+            .map_err(|e| format!("failed to query index state: {}", e))?;
+        let mut out = std::collections::HashMap::new();
+        for r in rows {
+            let (id, version) = r.map_err(|e| format!("invalid row: {}", e))?;
+            out.insert(id, version);
+        }
+        out
+    };
+
+    Ok(docs
+        .into_iter()
+        .filter(|(doc, status)| {
+            status == "error"
+                || versions
+                    .get(&doc.id)
+                    .map_or(true, |v| *v < CURRENT_INDEX_VERSION)
+        })
+        .map(|(doc, _)| doc)
+        .collect())
+}
+
+#[derive(Serialize)]
+pub struct IndexOutdatedCount {
+    files: u32,
+    notes: u32,
+}
+
+#[tauri::command]
+pub async fn documents_index_outdated_count(app: AppHandle) -> Result<IndexOutdatedCount, String> {
+    let pending = pending_documents(&app)?;
+    let notes = pending.iter().filter(|d| d.is_note).count() as u32;
+    Ok(IndexOutdatedCount {
+        files: pending.len() as u32 - notes,
+        notes,
+    })
+}
+
+static REINDEX_RUNNING: AtomicBool = AtomicBool::new(false);
+
+// Libera o single-flight ao fim da rotina, inclusive em erro ou pânico.
+struct ReindexRunningGuard;
+
+impl Drop for ReindexRunningGuard {
+    fn drop(&mut self) {
+        REINDEX_RUNNING.store(false, Ordering::SeqCst);
+    }
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReindexProgressEvent {
+    done: u32,
+    total: u32,
+    failed: u32,
+    current_name: Option<String>,
+    finished: bool,
+}
+
+fn emit_reindex_progress(app: &AppHandle, done: u32, total: u32, failed: u32, current_name: Option<&str>, finished: bool) {
+    let _ = app.emit(
+        "documents://reindex-progress",
+        ReindexProgressEvent {
+            done,
+            total,
+            failed,
+            current_name: current_name.map(|s| s.to_string()),
+            finished,
+        },
+    );
+}
+
+// Marca 'indexing' se o documento existe e ninguém (scan, retry) já o indexa.
+fn claim_for_reindex(app: &AppHandle, document_id: &str) -> Result<bool, String> {
+    let state = app.state::<DocDb>();
+    with_doc_db(app, &state, |conn| {
+        let changed = conn
+            .execute(
+                "UPDATE documents SET status = 'indexing', error_message = NULL, updated_at = ?1
+                 WHERE id = ?2 AND status != 'indexing'",
+                params![now_ms(), document_id],
+            )
+            .map_err(|e| format!("failed to mark reindex: {}", e))?;
+        Ok(changed > 0)
+    })
+}
+
+// Reindexa, um por vez, os arquivos não-nota pendentes. Retomável por
+// construção: cada documento concluído grava a versão atual, então rodar de
+// novo (inclusive depois de fechar o app) só pega os que faltam. As notas se
+// reindexam pela reconciliação do useNotesIndexSync.
+#[tauri::command]
+pub async fn documents_reindex_outdated(app: AppHandle) -> Result<(), String> {
+    if crate::read_key(&app, "openrouter_key").is_none() {
+        return Err("OpenRouter key not configured".into());
+    }
+    if REINDEX_RUNNING.swap(true, Ordering::SeqCst) {
+        return Ok(());
+    }
+    let guard = ReindexRunningGuard;
+    let files: Vec<PendingDoc> = pending_documents(&app)?
+        .into_iter()
+        .filter(|d| !d.is_note)
+        .collect();
+
+    tauri::async_runtime::spawn(async move {
+        let _guard = guard;
+        let total = files.len() as u32;
+        let mut done = 0;
+        let mut failed = 0;
+        for doc in files {
+            emit_reindex_progress(&app, done, total, failed, Some(&doc.name), false);
+            let ok = match claim_for_reindex(&app, &doc.id) {
+                // Apagado, ou já indexando por outro caminho: não é falha.
+                Ok(false) => true,
+                Ok(true) => {
+                    let path = PathBuf::from(doc.original_path);
+                    run_indexing(app.clone(), doc.id, doc.name, path, doc.mime).await
+                }
+                Err(e) => {
+                    eprintln!("documents_reindex_outdated {}: {}", doc.id, e);
+                    false
+                }
+            };
+            done += 1;
+            if !ok {
+                failed += 1;
+            }
+        }
+        emit_reindex_progress(&app, done, total, failed, None, true);
     });
 
     Ok(())
@@ -916,6 +1454,35 @@ pub async fn documents_delete(
     Ok(())
 }
 
+// Abre o arquivo de um documento da KB no app padrão do sistema (fontes do
+// chat). Fica no Rust para não exigir `opener:allow-open-path` na capability.
+#[tauri::command]
+pub async fn documents_open_file(
+    app: AppHandle,
+    state: State<'_, DocDb>,
+    document_id: String,
+) -> Result<(), String> {
+    let path: Option<String> = with_doc_db(&app, &state, |conn| {
+        match conn.query_row(
+            "SELECT original_path FROM documents WHERE id = ?1 AND type = 'file' AND origin != 'notes'",
+            params![document_id],
+            |r| r.get::<_, Option<String>>(0),
+        ) {
+            Ok(v) => Ok(v),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.to_string()),
+        }
+    })?;
+    let path = path.ok_or_else(|| "Document file not found".to_string())?;
+    if !Path::new(&path).exists() {
+        return Err(format!("File not found: {}", path));
+    }
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_path(path, None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn documents_list_global(
     app: AppHandle,
@@ -924,9 +1491,10 @@ pub async fn documents_list_global(
     with_doc_db(&app, &state, |conn| {
         let mut stmt = conn
             .prepare(
-                "SELECT id, name, original_path, mime, size, status, error_message, created_at, updated_at,
-                        type, parent_folder_id, last_modified_ms, is_external, origin
-                 FROM documents ORDER BY created_at DESC",
+                "SELECT documents.id, name, original_path, mime, size, status, error_message, created_at, updated_at,
+                        type, parent_folder_id, last_modified_ms, is_external, origin, a.alias
+                 FROM documents LEFT JOIN folder_aliases a ON a.folder_id = documents.id
+                 ORDER BY created_at DESC",
             )
             .map_err(|e| format!("failed to prepare listing: {}", e))?;
         let rows = stmt
@@ -946,6 +1514,7 @@ pub async fn documents_list_global(
                     last_modified_ms: r.get(11)?,
                     is_external: r.get::<_, i64>(12).map(|v| v != 0).unwrap_or(false),
                     origin: r.get(13)?,
+                    alias: r.get(14)?,
                 })
             })
             .map_err(|e| format!("failed to list: {}", e))?;
@@ -954,6 +1523,192 @@ pub async fn documents_list_global(
             out.push(r.map_err(|e| format!("invalid row: {}", e))?);
         }
         Ok(out)
+    })
+}
+
+// Alias vazio ou ausente remove o apelido (volta ao nome original).
+#[tauri::command]
+pub async fn documents_set_folder_alias(
+    app: AppHandle,
+    state: State<'_, DocDb>,
+    folder_id: String,
+    alias: Option<String>,
+) -> Result<(), String> {
+    // Filhos da pasta, quando o apelido mudou: o cabeçalho dos chunks deles
+    // leva o apelido, então viram pendentes de reindexação.
+    let stale_children: Vec<String> = with_doc_db(&app, &state, |conn| {
+        reject_notes_origin(conn, &folder_id)?;
+        let alias = alias.as_deref().map(str::trim).unwrap_or("");
+        let previous: Option<String> = match conn.query_row(
+            "SELECT alias FROM folder_aliases WHERE folder_id = ?1",
+            params![folder_id],
+            |r| r.get(0),
+        ) {
+            Ok(a) => Some(a),
+            Err(rusqlite::Error::QueryReturnedNoRows) => None,
+            Err(e) => return Err(format!("failed to read alias: {}", e)),
+        };
+        if previous.as_deref().unwrap_or("") == alias {
+            return Ok(Vec::new());
+        }
+        if alias.is_empty() {
+            conn.execute(
+                "DELETE FROM folder_aliases WHERE folder_id = ?1",
+                params![folder_id],
+            )
+            .map_err(|e| format!("failed to clear alias: {}", e))?;
+        } else {
+            conn.execute(
+                "INSERT OR REPLACE INTO folder_aliases (folder_id, alias) VALUES (?1, ?2)",
+                params![folder_id, alias],
+            )
+            .map_err(|e| format!("failed to set alias: {}", e))?;
+        }
+        let mut stmt = conn
+            .prepare("SELECT id FROM documents WHERE parent_folder_id = ?1")
+            .map_err(|e| format!("failed to prepare children query: {}", e))?;
+        let rows = stmt
+            .query_map(params![folder_id], |r| r.get::<_, String>(0))
+            .map_err(|e| format!("failed to list folder children: {}", e))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| format!("invalid row: {}", e))?);
+        }
+        Ok(out)
+    })?;
+
+    if stale_children.is_empty() {
+        return Ok(());
+    }
+    let vec_state = app.state::<VecDb>();
+    let conn = vec_state.0.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare("DELETE FROM doc_index_state WHERE document_id = ?1")
+        .map_err(|e| format!("failed to prepare index state update: {}", e))?;
+    for id in &stale_children {
+        stmt.execute(params![id])
+            .map_err(|e| format!("failed to mark document outdated: {}", e))?;
+    }
+    Ok(())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentSet {
+    id: String,
+    name: String,
+    document_ids: Vec<String>,
+    created_at: i64,
+    updated_at: i64,
+}
+
+fn clean_set_name(name: &str) -> Result<String, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("set name is empty".into());
+    }
+    Ok(name.to_string())
+}
+
+#[tauri::command]
+pub async fn document_sets_list(
+    app: AppHandle,
+    state: State<'_, DocDb>,
+) -> Result<Vec<DocumentSet>, String> {
+    with_doc_db(&app, &state, |conn| {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, name, document_ids, created_at, updated_at
+                 FROM document_sets ORDER BY name COLLATE NOCASE, created_at",
+            )
+            .map_err(|e| format!("failed to prepare sets listing: {}", e))?;
+        let rows = stmt
+            .query_map([], |r| {
+                let ids_json: String = r.get(2)?;
+                Ok(DocumentSet {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    document_ids: serde_json::from_str(&ids_json).unwrap_or_default(),
+                    created_at: r.get(3)?,
+                    updated_at: r.get(4)?,
+                })
+            })
+            .map_err(|e| format!("failed to list sets: {}", e))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| format!("invalid set row: {}", e))?);
+        }
+        Ok(out)
+    })
+}
+
+// Sem `id` cria um conjunto novo; com `id` regrava nome e ids. Devolve o id.
+#[tauri::command]
+pub async fn document_sets_save(
+    app: AppHandle,
+    state: State<'_, DocDb>,
+    id: Option<String>,
+    name: String,
+    document_ids: Vec<String>,
+) -> Result<String, String> {
+    let name = clean_set_name(&name)?;
+    let ids_json = serde_json::to_string(&document_ids).map_err(|e| e.to_string())?;
+    let now = now_ms();
+    with_doc_db(&app, &state, |conn| match id {
+        Some(id) => {
+            let n = conn
+                .execute(
+                    "UPDATE document_sets SET name = ?2, document_ids = ?3, updated_at = ?4 WHERE id = ?1",
+                    params![id, name, ids_json, now],
+                )
+                .map_err(|e| format!("failed to update set: {}", e))?;
+            if n == 0 {
+                return Err("set not found".into());
+            }
+            Ok(id)
+        }
+        None => {
+            let id = Uuid::new_v4().to_string();
+            conn.execute(
+                "INSERT INTO document_sets (id, name, document_ids, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?4)",
+                params![id, name, ids_json, now],
+            )
+            .map_err(|e| format!("failed to create set: {}", e))?;
+            Ok(id)
+        }
+    })
+}
+
+#[tauri::command]
+pub async fn document_sets_rename(
+    app: AppHandle,
+    state: State<'_, DocDb>,
+    id: String,
+    name: String,
+) -> Result<(), String> {
+    let name = clean_set_name(&name)?;
+    let now = now_ms();
+    with_doc_db(&app, &state, |conn| {
+        conn.execute(
+            "UPDATE document_sets SET name = ?2, updated_at = ?3 WHERE id = ?1",
+            params![id, name, now],
+        )
+        .map_err(|e| format!("failed to rename set: {}", e))?;
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub async fn document_sets_delete(
+    app: AppHandle,
+    state: State<'_, DocDb>,
+    id: String,
+) -> Result<(), String> {
+    with_doc_db(&app, &state, |conn| {
+        conn.execute("DELETE FROM document_sets WHERE id = ?1", params![id])
+            .map_err(|e| format!("failed to delete set: {}", e))?;
+        Ok(())
     })
 }
 
@@ -1065,106 +1820,29 @@ pub async fn documents_search_by_ids(
     query_embedding: Vec<f32>,
     top_k: usize,
 ) -> Result<Vec<ChunkResult>, String> {
-    if document_ids.is_empty() {
-        return Ok(vec![]);
-    }
-    if query_embedding.len() != EMBEDDING_DIM {
-        return Err(format!(
-            "embedding tem {} dim, esperado {}",
-            query_embedding.len(),
-            EMBEDDING_DIM
-        ));
-    }
-    let target_k = top_k.max(1);
-    // sqlite-vec aplica o filtro de document_id depois do KNN global, então
-    // sobre-amostramos para garantir que sobrem ao menos `target_k` chunks
-    // dos documentos alvos após o filtro. Teto de 200 evita varredura excessiva.
-    let scan_k = target_k.saturating_mul(5).min(200) as i64;
-
-    let placeholders = std::iter::repeat("?")
-        .take(document_ids.len())
-        .collect::<Vec<_>>()
-        .join(",");
-    let sql = format!(
-        "SELECT cm.document_id, cm.source_name, cm.content, cm.chunk_index, vc.distance
-         FROM vec_chunks vc
-         JOIN chunks_meta cm ON cm.rowid = vc.rowid
-         WHERE vc.embedding MATCH ?
-           AND vc.k = ?
-           AND vc.rowid IN (SELECT rowid FROM chunks_meta WHERE document_id IN ({}))
-         ORDER BY vc.distance
-         LIMIT ?",
-        placeholders
-    );
-
     let state = app.state::<VecDb>();
     let conn = state.0.lock().map_err(|e| e.to_string())?;
+    crate::rag::knn_search(&conn, &document_ids, &query_embedding, top_k)
+}
 
-    let mut stmt = conn
-        .prepare(&sql)
-        .map_err(|e| format!("failed to prepare search: {}", e))?;
-
-    // Monta lista de parâmetros: [embedding_bytes, scan_k, doc_ids..., scan_k]
-    let embedding_bytes = query_embedding.as_bytes().to_vec();
-    let mut binders: Vec<Box<dyn rusqlite::ToSql>> = Vec::with_capacity(3 + document_ids.len());
-    binders.push(Box::new(embedding_bytes));
-    binders.push(Box::new(scan_k));
-    for id in &document_ids {
-        binders.push(Box::new(id.clone()));
-    }
-    // Traz ate scan_k candidatos (nao so target_k) para sobrar pool suficiente
-    // pro filtro de vizinhanca abaixo escolher substitutos quando descarta um.
-    binders.push(Box::new(scan_k));
-
-    let rows = stmt
-        .query_map(params_from_iter(binders.iter().map(|b| b.as_ref())), |r| {
-            Ok(ChunkResult {
-                document_id: r.get(0)?,
-                document_name: r.get(1)?,
-                chunk_index: r.get(3)?,
-                snippet: r.get(2)?,
-                distance: r.get(4)?,
-            })
-        })
-        .map_err(|e| format!("search failed: {}", e))?;
-
-    let mut candidates = Vec::new();
-    for r in rows {
-        candidates.push(r.map_err(|e| format!("invalid row: {}", e))?);
-    }
-
-    // Chunks vizinhos (chunk_index a +-1) do mesmo documento carregam texto
-    // quase identico por causa do overlap do chunking — sem esse filtro, o
-    // top-k tendia a incluir pares quase-duplicados em vez de diversificar.
-    // Candidatos ja vem ordenados por distancia (mais relevante primeiro);
-    // o fallback preenche o restante caso o filtro deixe menos que target_k.
-    let mut selected: Vec<ChunkResult> = Vec::with_capacity(target_k);
-    let mut fallback: Vec<ChunkResult> = Vec::new();
-    for r in candidates {
-        let is_adjacent = selected.iter().any(|s: &ChunkResult| {
-            s.document_id == r.document_id && (s.chunk_index - r.chunk_index).abs() <= 1
-        });
-        if is_adjacent {
-            fallback.push(r);
-        } else {
-            selected.push(r);
-        }
-        if selected.len() >= target_k {
-            break;
-        }
-    }
-    if selected.len() < target_k {
-        selected.extend(fallback.into_iter().take(target_k - selected.len()));
-    }
-    // O fallback e anexado no fim, entao reordena para manter a promessa de
-    // "mais relevante primeiro" que o consumidor (prompt do chat) pressupoe.
-    selected.sort_by(|a, b| {
-        a.distance
-            .partial_cmp(&b.distance)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-
-    Ok(selected)
+#[tauri::command]
+pub async fn documents_resolve_searchable_ids(
+    app: AppHandle,
+    state: State<'_, DocDb>,
+    raw_ids: Vec<String>,
+    notebook_id: Option<String>,
+    exclude_note_id: Option<String>,
+    include_ai_folders: bool,
+) -> Result<Vec<String>, String> {
+    with_doc_db(&app, &state, |conn| {
+        crate::rag::resolve_scope(
+            conn,
+            &raw_ids,
+            notebook_id.as_deref(),
+            exclude_note_id.as_deref(),
+            include_ai_folders,
+        )
+    })
 }
 
 #[tauri::command]
@@ -1175,9 +1853,7 @@ pub async fn embed_text(app: AppHandle, text: String) -> Result<Vec<f32>, String
     }
     let key = crate::read_key(&app, "openrouter_key")
         .ok_or_else(|| "OpenRouter key not configured".to_string())?;
-    let batch = vec![trimmed.to_string()];
-    let mut embs = embed_batch(&key, &batch).await?;
-    embs.pop().ok_or_else(|| "API returned no embedding".into())
+    crate::rag::embed_query(&key, trimmed).await
 }
 
 #[tauri::command]
@@ -1567,22 +2243,26 @@ async fn scan_watched_folder_async(app: AppHandle, folder_id: String) {
             // File already indexed
             let changed = existing_ms.map(|m| m != *disk_ms).unwrap_or(true);
             if changed {
-                // Modified — update last_modified_ms and reindex
-                let err_update = with_doc_db(&app, &state, |conn| {
-                    conn.execute(
-                        "UPDATE documents SET last_modified_ms = ?1, status = 'indexing',
-                                              updated_at = ?2 WHERE id = ?3",
-                        params![disk_ms, now, existing_id],
-                    )
-                    .map_err(|e| format!("update failed: {}", e))?;
-                    Ok(())
+                // Modified — update last_modified_ms and reindex. Já indexando
+                // (Update index, retry): fica para o próximo scan, que ainda
+                // vê o last_modified_ms antigo.
+                let claimed = with_doc_db(&app, &state, |conn| {
+                    let changed = conn
+                        .execute(
+                            "UPDATE documents SET last_modified_ms = ?1, status = 'indexing',
+                                                  updated_at = ?2
+                             WHERE id = ?3 AND status != 'indexing'",
+                            params![disk_ms, now, existing_id],
+                        )
+                        .map_err(|e| format!("update failed: {}", e))?;
+                    Ok(changed > 0)
                 });
-                if let Err(e) = err_update {
-                    eprintln!("scan_watched_folder_async update: {}", e);
+                match claimed {
+                    Ok(true) => {}
+                    Ok(false) => continue,
+                    Err(e) => eprintln!("scan_watched_folder_async update: {}", e),
                 }
-                if let Err(e) = delete_chunks_for_document(&app, &existing_id) {
-                    eprintln!("scan_watched_folder_async delete_chunks: {}", e);
-                }
+                // Os chunks antigos ficam até run_indexing trocá-los.
                 let name = file_path
                     .file_name()
                     .and_then(|n| n.to_str())
@@ -1725,6 +2405,11 @@ fn remove_folder_rows(app: &AppHandle, folder_id: &str) -> Result<(), String> {
         )
         .map_err(|e| format!("failed to clear visibility: {}", e))?;
         conn.execute(
+            "DELETE FROM folder_aliases WHERE folder_id = ?1",
+            params![folder_id],
+        )
+        .map_err(|e| format!("failed to clear alias: {}", e))?;
+        conn.execute(
             "DELETE FROM documents WHERE id = ?1",
             params![folder_id],
         )
@@ -1780,8 +2465,8 @@ fn is_notes_index_disabled(conn: &Connection, notebook_id: &str) -> Result<bool,
 
 // Espelha uma nota em `app_data_dir()/notes/<notebookId>/<noteId>.md` e a
 // indexa no RAG. Retorna: "disabled" | "removed" | "no_key" | "unchanged" |
-// "moved" | "indexed". Não emite documents://status para os filhos, evitando
-// refresh em cascata do KB a cada nota.
+// "indexed". Não emite documents://status para os filhos, evitando refresh em
+// cascata do KB a cada nota. `note_date` (`YYYY-MM-DD`) vai no cabeçalho.
 #[tauri::command]
 pub async fn notes_index_upsert(
     app: AppHandle,
@@ -1791,6 +2476,7 @@ pub async fn notes_index_upsert(
     note_id: String,
     title: String,
     file_text: String,
+    note_date: Option<String>,
 ) -> Result<String, String> {
     let safe_nb = safe_path_component(&notebook_id)?;
     let safe_note = safe_path_component(&note_id)?;
@@ -1871,30 +2557,26 @@ pub async fn notes_index_upsert(
             }
         })?;
 
+    let source_name = match title.trim() {
+        "" => "Untitled".to_string(),
+        t => t.to_string(),
+    };
+    let meta = crate::rag::note_meta(&source_name, &folder_name, note_date.as_deref());
+
+    // Sem mudança só com o mesmo conteúdo, o mesmo caderno e o índice na
+    // versão atual com os mesmos metadados. Mover entre cadernos reembute,
+    // porque o cabeçalho leva o caderno.
     if let Some((parent, Some(old_path), status)) = &existing {
         let same_content = fs::read_to_string(old_path)
             .map(|c| c == file_text)
             .unwrap_or(false);
-        if status == "available" && same_content {
-            if parent.as_deref() == Some(folder_id.as_str()) {
-                return Ok("unchanged".into());
-            }
-            // Move entre cadernos sem mudança de conteúdo: os chunks não
-            // guardam o caderno, então não há reembed.
-            write_bytes_atomic(&dir_str, &file_name, file_text.as_bytes())?;
-            if *old_path != target_str {
-                let _ = fs::remove_file(old_path);
-            }
-            with_doc_db(&app, &state, |conn| {
-                conn.execute(
-                    "UPDATE documents SET parent_folder_id = ?1, original_path = ?2, updated_at = ?3
-                     WHERE id = ?4",
-                    params![folder_id, target_str, now_ms(), doc_id],
-                )
-                .map_err(|e| format!("failed to move note document: {}", e))?;
-                Ok(())
-            })?;
-            return Ok("moved".into());
+        if status == "available"
+            && same_content
+            && parent.as_deref() == Some(folder_id.as_str())
+            && index_state(&app, &doc_id)?
+                == Some((CURRENT_INDEX_VERSION, crate::rag::meta_sig(&meta)))
+        {
+            return Ok("unchanged".into());
         }
     }
 
@@ -1905,10 +2587,6 @@ pub async fn notes_index_upsert(
         }
     }
 
-    let source_name = match title.trim() {
-        "" => "Untitled".to_string(),
-        t => t.to_string(),
-    };
     let size = file_text.len() as i64;
     with_doc_db(&app, &state, |conn| {
         conn.execute(
@@ -1936,11 +2614,12 @@ pub async fn notes_index_upsert(
         Ok(())
     })?;
 
-    let chunks = chunk_text(&file_text);
-    let embeddings = match embed_chunks(&key, &chunks).await {
+    let chunks = prepare_chunks(&meta, &[(file_text, None)]);
+    let embeddings = match embed_chunks(&key, &embed_inputs(&chunks)).await {
         Ok(e) => e,
         Err(msg) => {
-            let _ = update_document_status(&app, &doc_id, "error", Some(&msg));
+            let status = status_after_index_failure(&app, &doc_id);
+            let _ = update_document_status(&app, &doc_id, status, Some(&msg));
             return Err(msg);
         }
     };
@@ -1964,8 +2643,9 @@ pub async fn notes_index_upsert(
         return Ok("removed".into());
     }
 
-    if let Err(e) = replace_chunks(&app, &doc_id, &source_name, &chunks, &embeddings) {
-        let _ = update_document_status(&app, &doc_id, "error", Some(&e));
+    if let Err(e) = replace_chunks(&app, &doc_id, &source_name, &meta, &chunks, &embeddings) {
+        let status = status_after_index_failure(&app, &doc_id);
+        let _ = update_document_status(&app, &doc_id, status, Some(&e));
         return Err(e);
     }
     update_document_status(&app, &doc_id, "available", None)?;
@@ -2147,16 +2827,226 @@ pub async fn cleanup_stuck_indexing(app: AppHandle) {
     }
 
     let state = app.state::<DocDb>();
-    let result = with_doc_db(&app, &state, |conn| {
-        conn.execute(
-            "UPDATE documents SET status = 'error', error_message = ?1, updated_at = ?2 WHERE status = 'indexing'",
-            params!["Indexing interrupted (app closed)", now_ms()],
-        )
-        .map_err(|e| format!("cleanup failed: {}", e))?;
-        Ok(())
-    });
+    let stuck: Vec<String> = match with_doc_db(&app, &state, |conn| {
+        let mut stmt = conn
+            .prepare("SELECT id FROM documents WHERE status = 'indexing'")
+            .map_err(|e| format!("prepare failed: {}", e))?;
+        let rows = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| format!("query failed: {}", e))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| format!("row error: {}", e))?);
+        }
+        Ok(out)
+    }) {
+        Ok(ids) => ids,
+        Err(e) => {
+            eprintln!("cleanup_stuck_indexing: {}", e);
+            return;
+        }
+    };
 
-    if let Err(e) = result {
-        eprintln!("cleanup_stuck_indexing: {}", e);
+    // Interrompido com chunks antigos: segue pesquisável e pendente. Só mexe
+    // em quem continua 'indexing' (outro caminho pode ter concluído nesse meio
+    // tempo); o estado do índice só sai depois disso.
+    for id in stuck {
+        let status = status_for_failed_index(&app, &id);
+        match with_doc_db(&app, &state, |conn| release_stuck(conn, &id, status)) {
+            Ok(true) if status == "available" => mark_outdated_logged(&app, &id),
+            Ok(_) => {}
+            Err(e) => eprintln!("cleanup_stuck_indexing {}: {}", id, e),
+        }
+    }
+}
+
+// Tira um documento de 'indexing' se ele ainda estiver assim. Devolve se mudou.
+fn release_stuck(conn: &Connection, document_id: &str, status: &str) -> Result<bool, String> {
+    conn.execute(
+        "UPDATE documents SET status = ?1, error_message = ?2, updated_at = ?3
+         WHERE id = ?4 AND status = 'indexing'",
+        params![status, "Indexing interrupted (app closed)", now_ms(), document_id],
+    )
+    .map(|changed| changed > 0)
+    .map_err(|e| format!("failed to update status: {}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chunk_segments_splits_giant_line() {
+        // 20.000 chars numa linha só, com caractere multibyte para exercitar
+        // as fronteiras de char.
+        let line = "aé".repeat(10_000);
+        let chunks = chunk_segments(&[(line, None)]);
+        assert!(chunks.len() >= 5);
+        for c in &chunks {
+            let n = c.text.chars().count();
+            assert!(n <= CHUNK_TARGET_CHARS, "chunk com {} chars", n);
+        }
+        let joined: usize = chunks.iter().map(|c| c.text.replace("\n", "").chars().count()).sum();
+        assert!(joined >= 20_000);
+    }
+
+    #[test]
+    fn chunk_segments_tracks_page_and_section() {
+        let segments = vec![
+            (format!("# Guide\n\n{}", "a".repeat(3000)), Some(1)),
+            (
+                format!("## Setup\n\n{}\n\n{}", "b".repeat(3000), "c".repeat(3000)),
+                Some(2),
+            ),
+        ];
+        let chunks = chunk_segments(&segments);
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[0].page, Some(1));
+        assert_eq!(chunks[0].section.as_deref(), Some("Guide"));
+        assert!(chunks[0].text.ends_with("## Setup"));
+        // O chunk que começa no meio da página 2 herda o último heading.
+        assert_eq!(chunks[1].page, Some(2));
+        assert_eq!(chunks[1].section.as_deref(), Some("Setup"));
+        assert_eq!(chunks[2].section.as_deref(), Some("Setup"));
+
+        // A seção igual ao título sai do cabeçalho.
+        let meta = crate::rag::note_meta("Guide", "Notes — Docs", None);
+        let prepared = prepare_chunks(&meta, &segments);
+        assert_eq!(prepared[0].0.section, None);
+        assert_eq!(prepared[0].1, "[Guide · note · Notes — Docs · p. 1]");
+        assert_eq!(prepared[1].1, "[Guide · note · Notes — Docs · Setup · p. 2]");
+        assert!(md_heading("#nope").is_none() && md_heading("####### x").is_none());
+    }
+
+    #[test]
+    fn truncate_segments_caps_total() {
+        let segs = vec![("abc".to_string(), Some(1)), ("defg".to_string(), Some(2)), ("h".to_string(), Some(3))];
+        let out = truncate_segments(segs, 5);
+        assert_eq!(out, vec![("abc".to_string(), Some(1)), ("de".to_string(), Some(2))]);
+    }
+
+    // Vec db em memória com o mesmo schema do app (vec0, chunks_meta,
+    // doc_index_state e chunks_fts).
+    fn vec_test_db() -> Connection {
+        crate::vec_db::register_auto_extension();
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(&format!(
+            "CREATE VIRTUAL TABLE vec_chunks USING vec0(embedding float[{}]);
+             CREATE TABLE chunks_meta (
+                 rowid INTEGER PRIMARY KEY, document_id TEXT NOT NULL, source_name TEXT NOT NULL,
+                 content TEXT NOT NULL, chunk_index INTEGER NOT NULL, header TEXT NOT NULL DEFAULT '',
+                 kind TEXT NOT NULL DEFAULT 'document', title TEXT NOT NULL DEFAULT '', doc_date TEXT,
+                 folder_label TEXT, section TEXT, page INTEGER, source_url TEXT
+             );
+             CREATE TABLE doc_index_state (
+                 document_id TEXT PRIMARY KEY, index_version INTEGER NOT NULL,
+                 meta_sig TEXT NOT NULL DEFAULT ''
+             );",
+            EMBEDDING_DIM
+        ))
+        .unwrap();
+        crate::vec_db::ensure_fts(&conn).unwrap();
+        conn
+    }
+
+    fn index_doc(conn: &mut Connection, doc: &str, texts: &[&str]) {
+        let meta = crate::rag::note_meta(doc, "Notes — Test", None);
+        let segments: Vec<(String, Option<u32>)> =
+            texts.iter().map(|t| (t.to_string(), None)).collect();
+        let chunks: Vec<(ChunkPiece, String)> = segments
+            .iter()
+            .map(|(t, _)| (ChunkPiece { text: t.clone(), page: None, section: None }, format!("[{}]", doc)))
+            .collect();
+        let embeddings = vec![vec![0.1_f32; EMBEDDING_DIM]; chunks.len()];
+        replace_chunks_conn(conn, doc, doc, &meta, &chunks, &embeddings).unwrap();
+    }
+
+    fn count(conn: &Connection, sql: &str) -> i64 {
+        conn.query_row(sql, [], |r| r.get(0)).unwrap()
+    }
+
+    #[test]
+    fn replace_and_delete_keep_vectors_fts_and_state_in_sync() {
+        let mut conn = vec_test_db();
+        index_doc(&mut conn, "doc:a", &["alpha one", "alpha two"]);
+        index_doc(&mut conn, "doc:b", &["beta"]);
+        // Reindexar troca tudo do documento, sem duplicar.
+        index_doc(&mut conn, "doc:a", &["alpha three"]);
+        for table in ["chunks_meta", "vec_chunks", "chunks_fts"] {
+            assert_eq!(count(&conn, &format!("SELECT COUNT(*) FROM {}", table)), 2, "{}", table);
+        }
+        assert_eq!(
+            count(&conn, "SELECT COUNT(*) FROM chunks_fts WHERE chunks_fts MATCH '\"alpha\"'"),
+            1
+        );
+        assert_eq!(
+            count(&conn, "SELECT index_version FROM doc_index_state WHERE document_id = 'doc:a'"),
+            CURRENT_INDEX_VERSION
+        );
+        assert!(!crate::vec_db::ensure_fts(&conn).unwrap(), "FTS out of sync after replace");
+
+        delete_chunks_conn(&mut conn, "doc:a").unwrap();
+        for table in ["chunks_meta", "vec_chunks", "chunks_fts", "doc_index_state"] {
+            assert_eq!(count(&conn, &format!("SELECT COUNT(*) FROM {}", table)), 1, "{}", table);
+        }
+        assert!(!crate::vec_db::ensure_fts(&conn).unwrap(), "FTS out of sync after delete");
+    }
+
+    #[test]
+    fn failed_index_with_chunks_stays_searchable_and_pending() {
+        let mut conn = vec_test_db();
+        index_doc(&mut conn, "doc:a", &["alpha"]);
+        assert!(has_chunks(&conn, "doc:a").unwrap());
+        assert!(!has_chunks(&conn, "doc:missing").unwrap());
+        mark_outdated(&conn, "doc:a").unwrap();
+        // Chunks intactos, sem a linha de estado (= pendente no Update index).
+        assert!(has_chunks(&conn, "doc:a").unwrap());
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM doc_index_state"), 0);
+    }
+
+    fn doc_test_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE documents (
+                 id TEXT PRIMARY KEY, original_path TEXT NOT NULL, status TEXT NOT NULL,
+                 error_message TEXT, updated_at INTEGER
+             );
+             INSERT INTO documents (id, original_path, status) VALUES
+                 ('doc:a', 'C:\\kb\\a.md', 'indexing'),
+                 ('doc:b', 'C:\\kb\\b.md', 'available');",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn indexing_result_is_dropped_for_deleted_documents() {
+        let conn = doc_test_db();
+        assert!(document_exists(&conn, "doc:a").unwrap());
+        assert!(!document_exists(&conn, "doc:gone").unwrap());
+    }
+
+    #[test]
+    fn release_stuck_only_touches_documents_still_indexing() {
+        let conn = doc_test_db();
+        assert!(release_stuck(&conn, "doc:a", "available").unwrap());
+        // doc:b concluiu por outro caminho depois do snapshot: fica como está.
+        assert!(!release_stuck(&conn, "doc:b", "error").unwrap());
+        let status = |id: &str| -> (String, Option<String>) {
+            conn.query_row(
+                "SELECT status, error_message FROM documents WHERE id = ?1",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap()
+        };
+        assert_eq!(status("doc:a"), ("available".into(), Some("Indexing interrupted (app closed)".into())));
+        assert_eq!(status("doc:b"), ("available".into(), None));
+    }
+
+    #[test]
+    fn truncate_chars_respects_char_boundaries() {
+        assert_eq!(truncate_chars("ééé".to_string(), 2), "éé");
+        assert_eq!(truncate_chars("ab".to_string(), 5), "ab");
     }
 }

@@ -9,12 +9,15 @@ use tauri::{AppHandle, Manager, State};
 use zerocopy::AsBytes;
 
 pub const EMBEDDING_DIM: usize = 768;
+// Versão do formato dos chunks (2 = cabeçalho de metadados no texto embutido).
+// Documento com versão menor, ou sem linha em doc_index_state, é reindexado.
+pub(crate) const CURRENT_INDEX_VERSION: i64 = 2;
 
 pub struct VecDb(pub Mutex<Connection>);
 
 static AUTO_EXT_REGISTERED: OnceLock<()> = OnceLock::new();
 
-fn register_auto_extension() {
+pub(crate) fn register_auto_extension() {
     AUTO_EXT_REGISTERED.get_or_init(|| {
         // SAFETY: `sqlite3_vec_init` é exportada pela crate `sqlite-vec` com
         // a assinatura C ABI exigida por `sqlite3_auto_extension`
@@ -111,7 +114,87 @@ pub fn init(app: &AppHandle) -> Result<VecDb, String> {
         .map_err(|e| format!("falha ao criar chunks_meta: {}", e))?;
     }
 
+    // Metadados do cabeçalho por chunk (E6). ALTER guardado: só adiciona as
+    // colunas que faltam. Chunks legados ficam com os defaults até reindexar.
+    let existing_cols: Vec<String> = {
+        let mut stmt = conn
+            .prepare("PRAGMA table_info(chunks_meta)")
+            .map_err(|e| format!("falha ao inspecionar chunks_meta: {}", e))?;
+        let cols = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|e| format!("falha ao ler colunas de chunks_meta: {}", e))?
+            .filter_map(|r| r.ok())
+            .collect();
+        cols
+    };
+    for (col, ddl) in [
+        ("header", "TEXT NOT NULL DEFAULT ''"),
+        ("kind", "TEXT NOT NULL DEFAULT 'document'"),
+        ("title", "TEXT NOT NULL DEFAULT ''"),
+        ("doc_date", "TEXT"),
+        ("folder_label", "TEXT"),
+        ("section", "TEXT"),
+        ("page", "INTEGER"),
+        ("source_url", "TEXT"),
+    ] {
+        if !existing_cols.iter().any(|c| c == col) {
+            conn.execute(&format!("ALTER TABLE chunks_meta ADD COLUMN {} {}", col, ddl), [])
+                .map_err(|e| format!("falha ao adicionar coluna {}: {}", col, e))?;
+        }
+    }
+
+    // Versão do índice por documento. Sem linha = índice legado (pendente).
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS doc_index_state (\
+             document_id TEXT PRIMARY KEY,\
+             index_version INTEGER NOT NULL,\
+             meta_sig TEXT NOT NULL DEFAULT ''\
+         );",
+    )
+    .map_err(|e| format!("falha ao criar doc_index_state: {}", e))?;
+
+    ensure_fts(&conn)?;
+
     Ok(VecDb(Mutex::new(conn)))
+}
+
+// Índice textual (FTS5) dos chunks, com rowid = chunks_meta.rowid. É mantido
+// junto com chunks_meta nas escritas (documents.rs). Se divergir (tabela nova,
+// ou chunks gravados por uma versão sem FTS), é refeito a partir de
+// chunks_meta: local, sem reembutir nada. Devolve true quando refez.
+pub(crate) fn ensure_fts(conn: &Connection) -> Result<bool, String> {
+    conn.execute(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(header, content, tokenize = 'unicode61 remove_diacritics 2')",
+        [],
+    )
+    .map_err(|e| format!("falha ao criar chunks_fts: {}", e))?;
+
+    let in_sync: bool = conn
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM chunks_fts) = (SELECT COUNT(*) FROM chunks_meta)
+                AND NOT EXISTS (
+                    SELECT 1 FROM chunks_meta m
+                    WHERE NOT EXISTS (SELECT 1 FROM chunks_fts f WHERE f.rowid = m.rowid)
+                )",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| format!("falha ao verificar chunks_fts: {}", e))?;
+    if in_sync {
+        return Ok(false);
+    }
+
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| format!("falha ao iniciar backfill de chunks_fts: {}", e))?;
+    tx.execute_batch(
+        "DELETE FROM chunks_fts;\
+         INSERT INTO chunks_fts(rowid, header, content) SELECT rowid, header, content FROM chunks_meta;",
+    )
+    .map_err(|e| format!("falha no backfill de chunks_fts: {}", e))?;
+    tx.commit()
+        .map_err(|e| format!("falha ao gravar backfill de chunks_fts: {}", e))?;
+    Ok(true)
 }
 
 #[tauri::command]

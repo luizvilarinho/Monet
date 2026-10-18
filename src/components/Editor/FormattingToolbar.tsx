@@ -1,7 +1,7 @@
 import { BubbleMenu } from '@tiptap/react/menus'
 import { useEditorState } from '@tiptap/react'
 import { findParentNodeClosestToPos, type Editor } from '@tiptap/core'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import styles from './FormattingToolbar.module.css'
 import {
   FORMATTING_GROUPS,
@@ -78,16 +78,27 @@ function renderGroups(
 
 export function FormattingToolbar({ editor, scrollEl, onAskAi, onAddToTasks }: Props) {
   const [hiddenByEscape, setHiddenByEscape] = useState(false)
+  const hiddenByEscapeRef = useRef(hiddenByEscape)
+  hiddenByEscapeRef.current = hiddenByEscape
 
+  // Em captura: com a barra visível, o Esc é dela e chega já tratado
+  // (defaultPrevented) a quem escuta no document, como o modal da task.
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        const { from, to } = editor.state.selection
+        const visible =
+          !hiddenByEscapeRef.current &&
+          editor.isFocused &&
+          !editor.isActive('linkedNoteBlock') &&
+          (from !== to || editor.isActive('table'))
+        if (visible) e.preventDefault()
         setHiddenByEscape(true)
       }
     }
-    document.addEventListener('keydown', handleKey)
-    return () => document.removeEventListener('keydown', handleKey)
-  }, [])
+    document.addEventListener('keydown', handleKey, true)
+    return () => document.removeEventListener('keydown', handleKey, true)
+  }, [editor])
 
   useEffect(() => {
     if (!hiddenByEscape) return

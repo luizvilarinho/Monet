@@ -11,6 +11,7 @@ import {
 import { renderMarkdown } from '../../lib/markdown'
 import { notesFolderDocId } from '../../lib/documents'
 import { loadEmbedResponses } from '../../lib/noteFileText'
+import { ocrTextsForContent } from '../../lib/imageOcr'
 import type { ChecklistProgress } from '../../lib/tasks'
 import {
   listOpenRouterModels,
@@ -24,6 +25,9 @@ import { ChatToolsMenu } from '../ChatPanel/ChatToolsMenu'
 import { FolderSystemPromptModal } from '../ChatPanel/FolderSystemPromptModal'
 import { FolderDocumentSelectorModal } from '../ChatPanel/FolderDocumentSelectorModal'
 import { FolderMemoryModal } from '../ChatPanel/FolderMemoryModal'
+import { RagSearchStatus } from '../ChatPanel/RagSearchStatus'
+import { MessageSources } from '../ChatPanel/MessageSources'
+import type { RagResponse } from '../../lib/rag'
 import { buildNotesContext } from './notesContext'
 import { codeFence, messageToMarkdown, splitMessageBlocks, type NoteInsert } from './noteBlocks'
 import styles from './NotesChatPanel.module.css'
@@ -100,6 +104,8 @@ export function NotesChatPanel({
     tools,
     setTool,
     isStreaming,
+    ragSearching,
+    ragTraces,
     error,
     send,
     cancel,
@@ -355,6 +361,7 @@ export function NotesChatPanel({
     const note = activeNote
     const selectionText = getSelectionText()
     const embeds = await loadEmbedResponses(note ? [note.content] : [], resolveNoteContent)
+    const imageTexts = await ocrTextsForContent(note?.content ?? '')
     const ephemeralContext = buildNotesContext({
       notebookName: notebook.name,
       note,
@@ -362,6 +369,7 @@ export function NotesChatPanel({
       resolveNoteTitle,
       resolveLinkedNoteContent: resolveNoteContent,
       resolveEmbed: (id) => embeds.get(id),
+      resolveImageText: (dataUrl) => imageTexts.get(dataUrl),
       projectTasks,
       todayKey,
       checklist: taskChecklist,
@@ -444,6 +452,7 @@ export function NotesChatPanel({
                     notebookFolder && setFolderWebResearchEnabled(notebookFolder.id, v)
                   }
                   tasksTool={{ supported: selectedModel?.supportsTools ?? false }}
+                  dailyNotesTool={{ supported: selectedModel?.supportsTools ?? false }}
                 />
               </div>
               <ModelSelector
@@ -514,6 +523,7 @@ export function NotesChatPanel({
                   isStreaming={m.id === streamingMessageId}
                   canInsert={canInsert}
                   onInsert={onInsertIntoNote}
+                  trace={ragTraces[m.id]}
                 />
               ))
             )}
@@ -552,6 +562,7 @@ export function NotesChatPanel({
           )}
 
           <div className={styles.composer}>
+            {ragSearching && <RagSearchStatus />}
             <textarea
               ref={inputRef}
               className={styles.input}
@@ -628,9 +639,10 @@ interface NotesChatBubbleProps {
   isStreaming: boolean
   canInsert: boolean
   onInsert: (content: NoteInsert, where: 'cursor' | 'end') => void
+  trace?: RagResponse
 }
 
-function NotesChatBubble({ message, isStreaming, canInsert, onInsert }: NotesChatBubbleProps) {
+function NotesChatBubble({ message, isStreaming, canInsert, onInsert, trace }: NotesChatBubbleProps) {
   const isUser = message.role === 'user'
   const isEmpty = !isUser && message.content.length === 0
   const segments = useMemo(
@@ -723,6 +735,7 @@ function NotesChatBubble({ message, isStreaming, canInsert, onInsert }: NotesCha
           Append to note
         </button>
       </div>
+      <MessageSources message={message} trace={trace} />
     </div>
   )
 }

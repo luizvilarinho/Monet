@@ -29,6 +29,7 @@ import {
   X,
 } from '@phosphor-icons/react'
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import { countNotebookChatConversations } from '../../hooks/useChat'
 import { useConfirm } from '../../hooks/useConfirm'
 import { INBOX_NOTEBOOK_ID, isTasksSubject, type NotebookTaskProgress } from '../../lib/tasks'
 import type { Notebook, Subject } from '../../types'
@@ -416,8 +417,15 @@ export function NotebookList({
   }, [onWidthChange])
 
   async function handleDeleteNotebook(id: string, name: string) {
+    const chatCount = countNotebookChatConversations(id)
+    const chatNote =
+      chatCount === null
+        ? ''
+        : chatCount === 0
+          ? ' Its chat folder and any web sources saved from it will also be deleted.'
+          : ` Its chat (${chatCount} conversation${chatCount === 1 ? '' : 's'}) and any web sources saved from it will also be deleted.`
     const ok = await confirm(
-      `Delete notebook "${name}" and all its notes?`,
+      `Delete notebook "${name}" and all its notes?${chatNote}`,
       { title: 'Delete notebook' }
     )
     if (ok) onDelete(id)

@@ -21,7 +21,7 @@ import styles from './TaskCard.module.css'
 // Card de task das visões de Tasks (List, Today, Week, Kanban, Projects,
 // Groups, Review): bloco de status sólido no topo, deadline à direita, título,
 // "Projeto | group", metadados key/value e um rodapé com datas, checklist,
-// reagendamentos e ações.
+// reagendamentos e ações. Na List vira uma linha (ver `list`).
 interface TaskCardProps {
   task: Task
   todayKey: string
@@ -35,7 +35,8 @@ interface TaskCardProps {
   // Kanban: a coluna já é o status; só o quadrado de cor + tempo.
   compactStatus?: boolean
   maxMetadata?: 2 | 3
-  // List: bloco de status com largura fixa (títulos alinhados) e group em roxo.
+  // List: linha sem caixa; status e ações (fixas, à direita) na linha de
+  // metadados, sob o título; deadline na linha do título; group em roxo.
   list?: boolean
   checklist?: ChecklistProgress | null
   // Task aberta no editor.
@@ -96,11 +97,111 @@ export function TaskCard({
     task.recurrence !== null
   const hasActions = (open && (onTogglePlan || onSnooze)) || onDelete
 
+  const statusEl = compactStatus ? (
+    <span className={styles.stCompact} title={statusName(task.status, statuses)}>
+      <span className={styles.stSquare} aria-hidden />
+      {elapsed && <span title="Time in this status">{elapsed}</span>}
+    </span>
+  ) : (
+    <span className={list ? styles.statusTag : styles.block}>
+      <span className={styles.ellipsis}>{statusName(task.status, statuses)}</span>
+      {elapsed && (
+        <span className={styles.elapsed} title="Time in this status">
+          {elapsed}
+        </span>
+      )}
+    </span>
+  )
+  const actionsEl = hasActions && (
+    <span className={styles.actions}>
+      {onTogglePlan && open && (
+        <button
+          type="button"
+          className={`${styles.action} ${planned ? styles.planned : ''}`}
+          aria-label={planned ? 'Remove from today' : 'Add to today'}
+          aria-pressed={planned}
+          title={planned ? 'Remove from today' : 'Add to today'}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation()
+            onTogglePlan()
+          }}
+        >
+          <Sun size={13} weight={planned ? 'fill' : 'regular'} aria-hidden />
+        </button>
+      )}
+      {onSnooze && open && (
+        <span
+          className={styles.snoozeWrap}
+          onMouseDown={(e) => e.stopPropagation()}
+          onBlur={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setSnoozeOpen(false)
+          }}
+        >
+          <button
+            type="button"
+            className={styles.action}
+            aria-label="Snooze task"
+            title="Snooze"
+            onClick={(e) => {
+              e.stopPropagation()
+              setSnoozeOpen((v) => !v)
+            }}
+          >
+            <Clock size={13} aria-hidden />
+          </button>
+          {snoozeOpen && (
+            <div className={styles.snoozeMenu} role="menu">
+              {SNOOZE_OPTIONS.map((o) => (
+                <button
+                  key={o.kind}
+                  type="button"
+                  role="menuitem"
+                  className={styles.snoozeItem}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setSnoozeOpen(false)
+                    onSnooze(o.kind)
+                  }}
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </span>
+      )}
+      {onDelete && (
+        <button
+          type="button"
+          className={`${styles.action} ${styles.deleteAction}`}
+          aria-label="Delete task"
+          title="Delete task"
+          // Não inicia o arraste do card (Kanban/Week) nem abre a task.
+          onMouseDown={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation()
+            onDelete()
+          }}
+        >
+          <Trash size={13} aria-hidden />
+        </button>
+      )}
+    </span>
+  )
+  const dueEl = task.dueDate && (
+    <span className={`${styles.due} ${late === 'deadline' ? styles.late : ''}`} title="Deadline">
+      <Target size={11} aria-hidden />
+      {formatDueShort(task.dueDate)}
+    </span>
+  )
+
   return (
     <div
-      className={`${styles.card} ${selected ? styles.selected : ''} ${cursor ? styles.cursor : ''} ${
-        inSelection ? styles.inSelection : ''
-      }`}
+      className={`${styles.card} ${list ? styles.listRow : ''} ${selected ? styles.selected : ''} ${
+        cursor ? styles.cursor : ''
+      } ${inSelection ? styles.inSelection : ''}`}
       style={{ '--st': statusColor(task.status, statuses) } as CSSProperties}
       data-task-id={task.id}
       onClick={onSelect}
@@ -111,107 +212,13 @@ export function TaskCard({
         if (e.key === 'Enter' && e.target === e.currentTarget) onSelect(e)
       }}
     >
-      <div className={styles.top}>
-        {compactStatus ? (
-          <span className={styles.stCompact} title={statusName(task.status, statuses)}>
-            <span className={styles.stSquare} aria-hidden />
-            {elapsed && <span title="Time in this status">{elapsed}</span>}
-          </span>
-        ) : (
-          <span className={`${styles.block} ${list ? styles.blockFixed : ''}`}>
-            <span className={styles.ellipsis}>{statusName(task.status, statuses)}</span>
-            {elapsed && (
-              <span className={styles.elapsed} title="Time in this status">
-                {elapsed}
-              </span>
-            )}
-          </span>
-        )}
-        {hasActions && (
-          <span className={styles.actions}>
-            {onTogglePlan && open && (
-              <button
-                type="button"
-                className={`${styles.action} ${planned ? styles.planned : ''}`}
-                aria-label={planned ? 'Remove from today' : 'Add to today'}
-                aria-pressed={planned}
-                title={planned ? 'Remove from today' : 'Add to today'}
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onTogglePlan()
-                }}
-              >
-                <Sun size={13} weight={planned ? 'fill' : 'regular'} aria-hidden />
-              </button>
-            )}
-            {onSnooze && open && (
-              <span
-                className={styles.snoozeWrap}
-                onMouseDown={(e) => e.stopPropagation()}
-                onBlur={(e) => {
-                  if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setSnoozeOpen(false)
-                }}
-              >
-                <button
-                  type="button"
-                  className={styles.action}
-                  aria-label="Snooze task"
-                  title="Snooze"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    setSnoozeOpen((v) => !v)
-                  }}
-                >
-                  <Clock size={13} aria-hidden />
-                </button>
-                {snoozeOpen && (
-                  <div className={styles.snoozeMenu} role="menu">
-                    {SNOOZE_OPTIONS.map((o) => (
-                      <button
-                        key={o.kind}
-                        type="button"
-                        role="menuitem"
-                        className={styles.snoozeItem}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setSnoozeOpen(false)
-                          onSnooze(o.kind)
-                        }}
-                      >
-                        {o.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </span>
-            )}
-            {onDelete && (
-              <button
-                type="button"
-                className={`${styles.action} ${styles.deleteAction}`}
-                aria-label="Delete task"
-                title="Delete task"
-                // Não inicia o arraste do card (Kanban/Week) nem abre a task.
-                onMouseDown={(e) => e.stopPropagation()}
-                onKeyDown={(e) => e.stopPropagation()}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onDelete()
-                }}
-              >
-                <Trash size={13} aria-hidden />
-              </button>
-            )}
-          </span>
-        )}
-        {task.dueDate && (
-          <span className={`${styles.due} ${late === 'deadline' ? styles.late : ''}`} title="Deadline">
-            <Target size={11} aria-hidden />
-            {formatDueShort(task.dueDate)}
-          </span>
-        )}
-      </div>
+      {!list && (
+        <div className={styles.top}>
+          {statusEl}
+          {actionsEl}
+          {dueEl}
+        </div>
+      )}
       <div className={styles.body}>
         <div className={styles.titleRow}>
           <input
@@ -225,9 +232,11 @@ export function TaskCard({
           <span className={`${styles.title} ${open ? '' : styles.titleClosed}`} title={task.title}>
             {task.title}
           </span>
+          {list && dueEl}
         </div>
-        {(projectName || group) && (
+        {(list || projectName || group) && (
           <div className={styles.ctx}>
+            {list && statusEl}
             {projectName && (
               <span className={styles.project}>
                 <span
@@ -244,6 +253,7 @@ export function TaskCard({
                 {group}
               </span>
             )}
+            {list && actionsEl}
           </div>
         )}
       </div>

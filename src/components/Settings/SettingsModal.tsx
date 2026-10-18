@@ -18,6 +18,7 @@ import {
   isMandatory,
   type UpdatePreference,
 } from '../../lib/updater'
+import { RAG_REWRITE_MODEL_KEY } from '../../lib/rag'
 import styles from './SettingsModal.module.css'
 
 export interface SettingsModalProps {
@@ -51,6 +52,8 @@ export function SettingsModal({
     kind: 'idle' | 'success' | 'error'
     message: string
   }>({ kind: 'idle', message: '' })
+  // Modelo da reescrita da consulta do RAG (vazio = padrão do backend)
+  const [rewriteModel, setRewriteModel] = useState('')
 
   // Tavily state
   const [tavilyValue, setTavilyValue] = useState('')
@@ -77,6 +80,7 @@ export function SettingsModal({
     hasOpenRouterKey()
       .then(setHasKey)
       .catch(() => setHasKey(false))
+    setRewriteModel(localStorage.getItem(RAG_REWRITE_MODEL_KEY) ?? '')
     setTavilyValue('')
     setTavStatus({ kind: 'idle', message: '' })
     hasTavilyKey()
@@ -145,6 +149,13 @@ export function SettingsModal({
     } finally {
       setSaving(false)
     }
+  }
+
+  function handleRewriteModelChange(value: string) {
+    setRewriteModel(value)
+    const trimmed = value.trim()
+    if (trimmed) localStorage.setItem(RAG_REWRITE_MODEL_KEY, trimmed)
+    else localStorage.removeItem(RAG_REWRITE_MODEL_KEY)
   }
 
   async function handleTavilySave() {
@@ -308,6 +319,22 @@ export function SettingsModal({
                   {hasKey
                     ? 'A key is already configured in this app.'
                     : 'No key configured. Without the key, the AI panel cannot start requests.'}
+                </p>
+                <label className={styles.label} htmlFor="rag-rewrite-model">
+                  Retrieval model (query rewrite)
+                </label>
+                <input
+                  id="rag-rewrite-model"
+                  className={styles.input}
+                  type="text"
+                  value={rewriteModel}
+                  placeholder="openai/gpt-4.1-mini"
+                  onChange={(e) => handleRewriteModelChange(e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <p className={styles.footNote}>
+                  OpenRouter model that rewrites your message into a search query for your documents. Leave empty to use the default.
                 </p>
               </div>
             )}

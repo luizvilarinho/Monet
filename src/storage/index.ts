@@ -6,6 +6,7 @@ import type {
   MetadataDef,
   Note,
   Notebook,
+  NoteSummary,
   Subject,
   Task,
   TaskStatusDef,
@@ -30,6 +31,10 @@ export interface StorageAdapter {
   saveNote(note: Note): Promise<void>
   deleteNote(id: string): Promise<void>
   searchNotes(query: string): Promise<Note[]>
+  // Notas com `date` no período (YYYY-MM-DD, inclusivo) e as do Calendar cujo
+  // título é uma data no período.
+  getNotesByDateRange(from: string, to: string): Promise<Note[]>
+  getNoteSummaries(): Promise<NoteSummary[]>
 
   getBooks(): Promise<Book[]>
   saveBook(book: Book): Promise<void>

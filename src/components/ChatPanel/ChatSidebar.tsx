@@ -19,7 +19,12 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import { useConfirm } from '../../hooks/useConfirm'
 import type { ChatConversation, ChatFolder } from '../../hooks/useChat'
-import { ASSISTANT_FOLDER_NAME, getAutoFolderGroups } from '../../hooks/useChat'
+import { ASSISTANT_FOLDER_NAME, folderConversationIds, getAutoFolderGroups } from '../../hooks/useChat'
+import {
+  documentsDeleteWatchedFolder,
+  documentsListGlobal,
+  webFolderChatFolderId,
+} from '../../lib/documents'
 import styles from './ChatSidebar.module.css'
 
 export interface ChatSidebarProps {
@@ -334,15 +339,44 @@ export function ChatSidebar({
   }
 
   async function handleDeleteFolder(folder: ChatFolder) {
-    const hasConvs = folder.conversationIds.length > 0
+    const convCount = folderConversationIds(folder, conversations, folders).length
+    const hasConvs = convCount > 0
     const message = hasConvs
-      ? `Folder "${folder.name || 'unnamed'}" contains ${folder.conversationIds.length} conversation${folder.conversationIds.length === 1 ? '' : 's'}. Deleting the folder will permanently delete all conversations inside it.`
+      ? `Folder "${folder.name || 'unnamed'}" contains ${convCount} conversation${convCount === 1 ? '' : 's'}. Deleting the folder will permanently delete all conversations inside it.`
       : `Delete folder "${folder.name || 'unnamed'}"?`
     const ok = await confirm(message, {
       title: hasConvs ? 'Delete folder and conversations' : 'Delete folder',
       confirmLabel: 'delete',
     })
-    if (ok) onDeleteFolder(folder.id)
+    if (!ok) return
+    onDeleteFolder(folder.id)
+    await offerDeleteWebFolder(folder.id)
+  }
+
+  // A pasta web (KB) da pasta de chat apagada fica órfã: oferece apagá-la junto.
+  async function offerDeleteWebFolder(chatFolderId: string) {
+    let webFolderId: string
+    let count: number
+    try {
+      const docs = await documentsListGlobal()
+      const webFolder = docs.find((d) => webFolderChatFolderId(d) === chatFolderId)
+      if (!webFolder) return
+      webFolderId = webFolder.id
+      count = docs.filter((d) => d.parentFolderId === webFolder.id).length
+    } catch (err) {
+      console.error('failed to look up web sources folder', err)
+      return
+    }
+    const alsoDelete = await confirm(
+      `Also delete the ${count} web source${count === 1 ? '' : 's'} saved for this folder? They will be removed from the Knowledge Base and deleted from disk.`,
+      { title: 'Delete web sources', confirmLabel: 'delete', cancelLabel: 'keep' },
+    )
+    if (!alsoDelete) return
+    try {
+      await documentsDeleteWatchedFolder(webFolderId)
+    } catch (err) {
+      console.error('failed to delete web sources folder', err)
+    }
   }
 
   // ───── DnD ─────────────────────────────────────────────────────────────

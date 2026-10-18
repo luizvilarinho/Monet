@@ -134,6 +134,7 @@ export function normalizeGroup(group: string | null): string | null {
 // - reschedule_count conta quando havia deadline e ele muda para outro
 //   deadline, ou quando havia do date e ele é adiado (rollover); definir o
 //   primeiro valor, antecipar o do date ou limpar não contam;
+// - limpar o deadline zera o reschedule_count (recomeço, ex.: data errada);
 // - completed_at é gravado ao entrar em `done` e limpo ao sair dele;
 // - doing_since é gravado ao entrar em `doing` e limpo ao sair dele.
 export function applyTaskPatch(prev: Task, patch: TaskPatch, now: number): Task {
@@ -146,6 +147,8 @@ export function applyTaskPatch(prev: Task, patch: TaskPatch, now: number): Task 
     patch.dueDate !== prev.dueDate
   ) {
     next.rescheduleCount = prev.rescheduleCount + 1
+  } else if (patch.dueDate === null && prev.dueDate !== null) {
+    next.rescheduleCount = 0
   } else if (
     patch.scheduledDate !== undefined &&
     prev.scheduledDate !== null &&
@@ -370,14 +373,17 @@ export function summaryMatches(key: TaskSummaryKey, t: Task, todayKey: string): 
     case 'overdue':
       return isOverdue(t, todayKey)
     case 'today':
-      return isOpen(t) && !isOverdue(t, todayKey) && plan === todayKey
+      // Marcadas no My Day (sol) entram mesmo atrasadas: foi escolha do usuário.
+      return isOpen(t) && (t.plannedDay === todayKey || (!isOverdue(t, todayKey) && plan === todayKey))
     case 'week':
+      // Marcadas no My Day (sol) também contam na semana, como no Today.
       return (
         isOpen(t) &&
-        !isOverdue(t, todayKey) &&
-        plan !== null &&
-        plan >= todayKey &&
-        plan <= endOfWeekKey(todayKey)
+        (t.plannedDay === todayKey ||
+          (!isOverdue(t, todayKey) &&
+            plan !== null &&
+            plan >= todayKey &&
+            plan <= endOfWeekKey(todayKey)))
       )
     case 'doing':
       return isInProgress(t)
@@ -410,7 +416,7 @@ export function computeTaskSummary(tasks: Task[], todayKey: string): TaskSummary
     if (summaryMatches('doing', t, todayKey)) summary.doing++
     if (summaryMatches('doneWeek', t, todayKey)) summary.doneThisWeek++
     const plan = planDate(t)
-    if (isOpen(t) && plan !== null && plan <= weekEnd) summary.weekTotal++
+    if (isOpen(t) && ((plan !== null && plan <= weekEnd) || t.plannedDay === todayKey)) summary.weekTotal++
   }
   summary.weekTotal += summary.doneThisWeek
   return summary

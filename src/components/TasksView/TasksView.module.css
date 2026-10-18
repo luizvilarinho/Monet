@@ -33,13 +33,14 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: var(--gap-cards);
+  gap: var(--space-4);
 }
 
+/* Linhas encostadas (o fio de baixo de cada uma separa); o respiro do
+   cabeçalho vem do padding da linha. */
 .group {
   display: flex;
   flex-direction: column;
-  gap: var(--gap-cards);
 }
 
 .groupHeader {
@@ -92,7 +93,6 @@
 .subgroup {
   display: flex;
   flex-direction: column;
-  gap: var(--gap-cards);
 }
 
 .subgroupLabel {

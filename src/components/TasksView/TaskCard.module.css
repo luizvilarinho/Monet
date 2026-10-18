@@ -20,6 +20,16 @@
   background: var(--surface-1);
 }
 
+/* List: linha sem caixa (sem fundo nem borda própria), separada da vizinha
+   por um fio. Vem antes de .selected/.inSelection para eles prevalecerem. */
+.listRow {
+  padding: var(--space-2) 0;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--hair);
+  border-radius: 0;
+}
+
 /* O laranja de seleção nunca é preenchimento sólido (só o status é). */
 .selected {
   border-color: var(--accent-task);
@@ -33,6 +43,27 @@
 .inSelection,
 .inSelection:hover {
   background: color-mix(in srgb, var(--accent-task) 14%, var(--bg-app));
+}
+
+/* Seleção na List: fundo do hover + filete laranja à esquerda (o fio de
+   baixo continua neutro). */
+.listRow.selected {
+  border-bottom-color: var(--hair);
+}
+
+.listRow.selected::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: var(--space-1);
+  bottom: var(--space-1);
+  width: 2px;
+  background: var(--accent-task);
+}
+
+/* Anel do cursor por dentro, para não invadir a linha vizinha. */
+.listRow.cursor {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-task) 55%, transparent);
 }
 
 .top {
@@ -63,9 +94,20 @@
   text-overflow: ellipsis;
 }
 
-.blockFixed {
-  width: 92px;
+/* Status da List, na linha de metadados: o mesmo bloco sólido, na altura
+   da linha. */
+.statusTag {
   flex-shrink: 0;
+  max-width: 50%;
+  display: inline-flex;
+  gap: var(--space-1h);
+  align-items: center;
+  padding: 0 var(--space-1h);
+  background: var(--st);
+  color: var(--bg-panel);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
 }
 
 .elapsed {
@@ -131,6 +173,17 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
   overflow-wrap: anywhere;
+}
+
+/* List: o título ocupa a linha e empurra o deadline para a direita. */
+.listRow .title {
+  flex: 1;
+  min-width: 0;
+  line-height: var(--lh-row);
+}
+
+.listRow .due {
+  padding: var(--space-0) 0 0;
 }
 
 .titleClosed {
@@ -283,6 +336,26 @@
    ícone no eixo de 12px do card. */
 .actions:last-child {
   padding-right: var(--space-1h);
+}
+
+.listRow .actions:last-child {
+  padding-right: 0;
+}
+
+/* List: ações sempre no layout, no fim da linha de metadados, esmaecidas
+   fora do hover. A margem negativa de 4px em cima e embaixo faz o botão de
+   24px ocupar 16px no fluxo, dentro da linha de 11px: o espaço é sempre o
+   mesmo e a linha não muda de altura em nenhum estado. */
+.listRow .action {
+  display: inline-flex;
+  margin-block: calc(var(--space-1) * -1);
+  opacity: 0.45;
+}
+
+.listRow:hover .action,
+.listRow:focus-within .action,
+.listRow .planned {
+  opacity: 1;
 }
 
 /* Área de clique de 24×24 com o glifo de 13px. A margem negativa embaixo

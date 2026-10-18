@@ -1,6 +1,10 @@
 import { invoke } from '@tauri-apps/api/core'
 import { tavilyExtract, hashUrlToFilename, type SearchResult } from './search'
 
+// Teto do conteúdo salvo de uma página web. Igual ao MAX_WEB_SOURCE_CHARS de
+// src-tauri/src/documents.rs, que também corta na indexação.
+const MAX_WEB_SOURCE_CHARS = 150_000
+
 // ─── Wrappers dos comandos Rust do bibliotecário ─────────────────────────────
 // Os parâmetros snake_case do Rust (candidates_block/sources_block/current_date)
 // chegam como camelCase no invoke — Tauri faz a conversão automaticamente.
@@ -314,9 +318,13 @@ async function runWebPhase(
       const filename = await hashUrlToFilename(url)
       // Conteúdo salvo VERBATIM (raw content do Tavily) + cabeçalho de
       // proveniência. O modelo secundário só decide; nunca reescreve/resume.
-      // O tamanho é limitado pelo Rust (MAX_FILE_BYTES).
+      // O conteúdo é cortado em MAX_WEB_SOURCE_CHARS.
       const header = `# ${title}\n\nSource: ${url}\nRetrieved: ${currentDate}\n\n`
-      await documentsWriteAiSourceFile(folderId, filename, header + rawContent)
+      await documentsWriteAiSourceFile(
+        folderId,
+        filename,
+        header + rawContent.slice(0, MAX_WEB_SOURCE_CHARS),
+      )
       savedLocal++
     } catch (e) {
       console.warn('librarian: failed to save source', url, e)
