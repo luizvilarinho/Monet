@@ -37,6 +37,19 @@ Ponto de entrada para a documentação do projeto. Leia este arquivo primeiro pa
 
 ---
 
+## Estudos
+
+| Arquivo | Quando usar |
+| --- | --- |
+| `DOCS/features/central_informacao_study.md` | Estudo (2026-10-17) do Monet como central de informação: uso real em produção, RAG (o que melhorar e o que não fazer), versão online, planilhas/Sheets, MCP, propostas I1–I18 e decisões D1–D7. |
+| `DOCS/features/tasks_entregas_study.md` | Estudo (2026-10-17) de Tasks e entregas: uso real, Google Calendar/ICS/Outlook, planilhas/Sheets, versão online, propostas T1–T14 e decisões D1–D6. |
+| `DOCS/features/decisoes_study.md` | Estudo (2026-10-17) "entender para decidir": Monet como companheiro de decisão ao lado do Claude Code (dois contextos, `/btw`, hooks, Glossário, Decisões, mapa sem veredito, checklist de aprovação). Fase 0 sem código: system prompt (Anexo A) e bloco "Decisões necessárias" para o pipeline (Anexo B). |
+| `DOCS/features/tasks_study.md` | Estudo de Tasks v2 (2026-10-12): visão "num olhar", do date × deadline, Week board. |
+| `DOCS/features/tags_study.md` | Estudo de tags (2026-10-15): dar função ou remover. |
+| `DOCS/features/mercado_2026-10/` | Pesquisa de mercado bruta (out/2026) que embasa os estudos acima; comece pelo `README.md` da pasta. |
+
+---
+
 ## Relatórios
 
 > O `<timestamp>` segue o formato `YYYYMMDDHHmmss` (ex.: `20260526143022`). Para encontrar o relatório mais recente, liste `DOCS/reports/<data-de-hoje>/` e use o arquivo com o maior valor — a ordenação lexicográfica (alfabética) equivale à cronológica.

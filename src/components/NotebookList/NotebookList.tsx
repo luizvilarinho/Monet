@@ -673,7 +673,7 @@ export function NotebookList({
       )}
 
       <div className={`${styles.footer} ${collapsed ? styles.footerCollapsed : ''}`}>
-        {!collapsed && <span className={styles.version}>v1.4.8</span>}
+        {!collapsed && <span className={styles.version}>v1.4.9</span>}
         <button
           className={styles.settings}
           onClick={onOpenKnowledgeBase}

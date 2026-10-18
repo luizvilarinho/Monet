@@ -1,11 +1,11 @@
 {
-  "version": "1.4.8",
-  "notes": "Monet v1.4.8 — Tasks v3: new views, task statuses and refinements.",
-  "pub_date": "2026-10-15T16:08:57Z",
+  "version": "1.4.9",
+  "notes": "Monet v1.4.9 — Calmer spacing across the app and a calendar in the quick note window (Ctrl+K).",
+  "pub_date": "2026-10-17T14:22:24Z",
   "platforms": {
     "windows-x86_64": {
-      "url": "https://github.com/luizvilarinho/Monet/releases/download/v1.4.8/monet_1.4.8_x64_en-US.msi",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRlFHSkpLWXhzck85bE1hNkY5UUV2YnZPNUFsR0FGYzUxK1hLR3dHc09zWk1TaXA2NTJZRSt0SnRZcVlaZDUrbkJwSWV2NTdKeTVTYytBRWVYaHVDdWFnSDhPTWNVTkFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMDgwNTMzCWZpbGU6bW9uZXRfMS40LjhfeDY0X2VuLVVTLm1zaQoxMndEMm5WVFNIN1kvT3MzOW45R3Y4enVMUXJOQklwSGY4M2N4RkVNNDZNbWdjRllObGF4ajVxcHA0SFcxRiticDN0b1IxNEVOdFlZazNmWmpDa2hDUT09Cg=="
+      "url": "https://github.com/luizvilarinho/Monet/releases/download/v1.4.9/monet_1.4.9_x64_en-US.msi",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRlFHSkpLWXhzckIwL29HU3hpVnowZ1BVSmRTeWdiVlp2aXNwVUpIcjlIdG53d1hDc0UzUVBEdjAyQWxnaU1abURMUVFvVG1ORXVDQXhMVTBhdmo2L0ZYL0NHQlBmcFFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMjQ2OTMzCWZpbGU6bW9uZXRfMS40LjlfeDY0X2VuLVVTLm1zaQpaYjRGNlZ1eGxvckM0bDhpMGZnRWx4OUk4cHNkaUNEUHN1WjdSSVVWQnU3NTdzbEJuKzVIS0VKb2FFSFJ6amN0K21nSFhCTFA5cXUrU3FYUVYyREJEdz09Cg=="
     }
   }
 }
