@@ -6,6 +6,7 @@ import {
   type ChatMessage,
   type ChatConversation,
 } from '../../hooks/useChat'
+import { useStickToBottom } from '../../hooks/useStickToBottom'
 import { renderMarkdown } from '../../lib/markdown'
 import {
   listOpenRouterModels,
@@ -19,6 +20,7 @@ import { FolderDocumentSelectorModal } from '../ChatPanel/FolderDocumentSelector
 import { FolderMemoryModal } from '../ChatPanel/FolderMemoryModal'
 import { RagSearchStatus } from '../ChatPanel/RagSearchStatus'
 import { MessageSources } from '../ChatPanel/MessageSources'
+import { ScrollToBottomButton } from '../ChatPanel/ScrollToBottomButton'
 import type { RagResponse } from '../../lib/rag'
 import { buildReaderContext } from './readerContext'
 import styles from './ReaderChatPanel.module.css'
@@ -110,7 +112,7 @@ export function ReaderChatPanel({
   const [docsOpen, setDocsOpen] = useState(false)
   const [memoryOpen, setMemoryOpen] = useState(false)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
-  const historyRef = useRef<HTMLDivElement | null>(null)
+  const { historyRef, atBottom, onScroll, scrollToBottom } = useStickToBottom({ messages, isStreaming, activeId })
 
   const bookFolder = useMemo(
     () => folders.find((f) => f.id === bookFolderId) ?? null,
@@ -298,13 +300,6 @@ export function ReaderChatPanel({
     onPendingQuoteConsumed()
   }, [pendingQuote, onPendingQuoteConsumed])
 
-  // Acompanha o crescimento da resposta rolando para baixo.
-  useEffect(() => {
-    const el = historyRef.current
-    if (!el) return
-    el.scrollTo({ top: el.scrollHeight })
-  }, [messages])
-
   const streamingMessageId = useMemo(() => {
     if (!isStreaming) return null
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -456,22 +451,26 @@ export function ReaderChatPanel({
         </div>
       )}
 
-      <div className={styles.history} ref={historyRef}>
-        {messages.length === 0 ? (
-          <p className={styles.empty}>
-            Ask about this book — the AI sees your current page and your most
-            recent highlights.
-          </p>
-        ) : (
-          messages.map((m) => (
-            <ReaderChatBubble
-              key={m.id}
-              message={m}
-              isStreaming={m.id === streamingMessageId}
-              trace={ragTraces[m.id]}
-            />
-          ))
-        )}
+      <div className={styles.historyWrap}>
+        <div className={styles.history} ref={historyRef} onScroll={onScroll}>
+          {messages.length === 0 ? (
+            <p className={styles.empty}>
+              Ask about this book — the AI sees your current page and your most
+              recent highlights.
+            </p>
+          ) : (
+            messages.map((m) => (
+              <ReaderChatBubble
+                key={m.id}
+                message={m}
+                isStreaming={m.id === streamingMessageId}
+                trace={ragTraces[m.id]}
+              />
+            ))
+          )}
+        </div>
+
+        {!atBottom && <ScrollToBottomButton className={styles.scrollBtn} onClick={scrollToBottom} />}
       </div>
 
       {error && messages.length > 0 && (
@@ -571,6 +570,9 @@ function ReaderChatBubble({ message, isStreaming, trace }: ReaderChatBubbleProps
       cancelled = true
     }
   }, [isUser, message.content])
+  // Memoizado: o React 19 compara `__html` por identidade e um objeto novo a
+  // cada render reescreveria o DOM, desfazendo a seleção do usuário.
+  const inner = useMemo(() => ({ __html: html }), [html])
 
   if (isUser) {
     return <div className={styles.bubbleUser}>{message.content}</div>
@@ -591,7 +593,7 @@ function ReaderChatBubble({ message, isStreaming, trace }: ReaderChatBubbleProps
       <div
         className={styles.bubbleAssistant}
         data-streaming={isStreaming || undefined}
-        dangerouslySetInnerHTML={{ __html: html }}
+        dangerouslySetInnerHTML={inner}
         onClick={(e) => {
           const target = (e.target as HTMLElement).closest('a')
           if (!target) return

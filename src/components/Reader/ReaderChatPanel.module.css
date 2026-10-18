@@ -169,6 +169,20 @@
   flex-shrink: 0;
 }
 
+/* Âncora do botão "voltar ao fim" (fora do scroll do histórico). */
+.historyWrap {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.scrollBtn {
+  bottom: var(--space-3);
+  right: var(--space-4);
+}
+
 .history {
   flex: 1;
   min-height: 0;

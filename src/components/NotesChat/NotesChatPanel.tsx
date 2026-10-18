@@ -8,6 +8,7 @@ import {
   type TasksSnapshot,
   NO_RESPONSE_MESSAGE,
 } from '../../hooks/useChat'
+import { useStickToBottom } from '../../hooks/useStickToBottom'
 import { renderMarkdown } from '../../lib/markdown'
 import { notesFolderDocId } from '../../lib/documents'
 import { loadEmbedResponses } from '../../lib/noteFileText'
@@ -27,6 +28,7 @@ import { FolderDocumentSelectorModal } from '../ChatPanel/FolderDocumentSelector
 import { FolderMemoryModal } from '../ChatPanel/FolderMemoryModal'
 import { RagSearchStatus } from '../ChatPanel/RagSearchStatus'
 import { MessageSources } from '../ChatPanel/MessageSources'
+import { ScrollToBottomButton } from '../ChatPanel/ScrollToBottomButton'
 import type { RagResponse } from '../../lib/rag'
 import { buildNotesContext } from './notesContext'
 import { codeFence, messageToMarkdown, splitMessageBlocks, type NoteInsert } from './noteBlocks'
@@ -126,7 +128,7 @@ export function NotesChatPanel({
   const [docsOpen, setDocsOpen] = useState(false)
   const [memoryOpen, setMemoryOpen] = useState(false)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
-  const historyRef = useRef<HTMLDivElement | null>(null)
+  const { historyRef, atBottom, onScroll, scrollToBottom } = useStickToBottom({ messages, isStreaming, activeId })
 
   const notebookFolder = useMemo(
     () => folders.find((f) => f.id === notebookFolderId) ?? null,
@@ -274,13 +276,6 @@ export function NotesChatPanel({
     inputRef.current?.focus()
     onPendingQuoteConsumed()
   }, [pendingQuote, onPendingQuoteConsumed])
-
-  // Acompanha o crescimento da resposta rolando para baixo (e ao reexibir).
-  useEffect(() => {
-    const el = historyRef.current
-    if (!el) return
-    el.scrollTo({ top: el.scrollHeight })
-  }, [messages, visible])
 
   // "Insert selection": seleção dentro de UMA resposta da IA mostra uma ação
   // flutuante logo abaixo do trecho. Seleções que atravessam mensagens ou
@@ -509,50 +504,54 @@ export function NotesChatPanel({
             </div>
           )}
 
-          <div className={styles.history} ref={historyRef}>
-            {messages.length === 0 ? (
-              <p className={styles.empty}>
-                Ask about this notebook — the AI sees the open note, your selection
-                and the notebook's indexed notes.
-              </p>
-            ) : (
-              messages.map((m) => (
-                <NotesChatBubble
-                  key={m.id}
-                  message={m}
-                  isStreaming={m.id === streamingMessageId}
-                  canInsert={canInsert}
-                  onInsert={onInsertIntoNote}
-                  trace={ragTraces[m.id]}
-                />
-              ))
-            )}
-            {selectionInsert && (
-              <div
-                className={styles.selectionInsert}
-                style={{ top: selectionInsert.top, left: selectionInsert.left }}
-                // Não deixa o clique desfazer a seleção antes do onClick.
-                onMouseDown={(e) => e.preventDefault()}
-              >
-                <span className={styles.selectionInsertLabel}>Insert selection</span>
-                <button
-                  type="button"
-                  className={styles.messageActionBtn}
-                  disabled={!canInsert}
-                  onClick={() => onInsertIntoNote(selectionInsert.content, 'cursor')}
+          <div className={styles.historyWrap}>
+            <div className={styles.history} ref={historyRef} onScroll={onScroll}>
+              {messages.length === 0 ? (
+                <p className={styles.empty}>
+                  Ask about this notebook — the AI sees the open note, your selection
+                  and the notebook's indexed notes.
+                </p>
+              ) : (
+                messages.map((m) => (
+                  <NotesChatBubble
+                    key={m.id}
+                    message={m}
+                    isStreaming={m.id === streamingMessageId}
+                    canInsert={canInsert}
+                    onInsert={onInsertIntoNote}
+                    trace={ragTraces[m.id]}
+                  />
+                ))
+              )}
+              {selectionInsert && (
+                <div
+                  className={styles.selectionInsert}
+                  style={{ top: selectionInsert.top, left: selectionInsert.left }}
+                  // Não deixa o clique desfazer a seleção antes do onClick.
+                  onMouseDown={(e) => e.preventDefault()}
                 >
-                  At cursor
-                </button>
-                <button
-                  type="button"
-                  className={styles.messageActionBtn}
-                  disabled={!canInsert}
-                  onClick={() => onInsertIntoNote(selectionInsert.content, 'end')}
-                >
-                  Append
-                </button>
-              </div>
-            )}
+                  <span className={styles.selectionInsertLabel}>Insert selection</span>
+                  <button
+                    type="button"
+                    className={styles.messageActionBtn}
+                    disabled={!canInsert}
+                    onClick={() => onInsertIntoNote(selectionInsert.content, 'cursor')}
+                  >
+                    At cursor
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.messageActionBtn}
+                    disabled={!canInsert}
+                    onClick={() => onInsertIntoNote(selectionInsert.content, 'end')}
+                  >
+                    Append
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {!atBottom && <ScrollToBottomButton className={styles.scrollBtn} onClick={scrollToBottom} />}
           </div>
 
           {error && messages.length > 0 && (
@@ -741,8 +740,11 @@ function NotesChatBubble({ message, isStreaming, canInsert, onInsert, trace }: N
 }
 
 // Markdown da IA renderizado pelo pipeline seguro (sanitize + bloqueio de URLs).
+// O objeto `__html` é memoizado: o React 19 compara por identidade e, com um
+// objeto novo a cada render, reescreve o DOM e desfaz a seleção do usuário.
 function MarkdownHtml({ markdown, className }: { markdown: string; className?: string }) {
   const [html, setHtml] = useState('')
+  const inner = useMemo(() => ({ __html: html }), [html])
 
   useEffect(() => {
     let cancelled = false
@@ -754,7 +756,7 @@ function MarkdownHtml({ markdown, className }: { markdown: string; className?: s
     }
   }, [markdown])
 
-  return <div className={className} dangerouslySetInnerHTML={{ __html: html }} />
+  return <div className={className} dangerouslySetInnerHTML={inner} />
 }
 
 interface BlockCardProps {
