@@ -1,11 +1,11 @@
 {
-  "version": "1.4.9",
-  "notes": "Monet v1.4.9 — Calmer spacing across the app and a calendar in the quick note window (Ctrl+K).",
-  "pub_date": "2026-10-17T14:22:24Z",
+  "version": "1.4.10",
+  "notes": "Monet v1.4.10 — Smarter knowledge base search (hybrid RAG) and the Assistant now matches the Chat's capabilities.",
+  "pub_date": "2026-10-18T17:57:36Z",
   "platforms": {
     "windows-x86_64": {
-      "url": "https://github.com/luizvilarinho/Monet/releases/download/v1.4.9/monet_1.4.9_x64_en-US.msi",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRlFHSkpLWXhzckIwL29HU3hpVnowZ1BVSmRTeWdiVlp2aXNwVUpIcjlIdG53d1hDc0UzUVBEdjAyQWxnaU1abURMUVFvVG1ORXVDQXhMVTBhdmo2L0ZYL0NHQlBmcFFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMjQ2OTMzCWZpbGU6bW9uZXRfMS40LjlfeDY0X2VuLVVTLm1zaQpaYjRGNlZ1eGxvckM0bDhpMGZnRWx4OUk4cHNkaUNEUHN1WjdSSVVWQnU3NTdzbEJuKzVIS0VKb2FFSFJ6amN0K21nSFhCTFA5cXUrU3FYUVYyREJEdz09Cg=="
+      "url": "https://github.com/luizvilarinho/Monet/releases/download/v1.4.10/monet_1.4.10_x64_en-US.msi",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRlFHSkpLWXhzckRZNnl6Y3BySytqTW81bjRXUXBLdkhpcnF6ZlpTN0hDVitJTzhYYXFidXIzdlRJWnQ0aEhLREtBbmdJcDRDRzZuMDNRVmRocmtGTUw1SmgxbXZFV3dJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMzQ2MjQyCWZpbGU6bW9uZXRfMS40LjEwX3g2NF9lbi1VUy5tc2kKRFZMVDAyT0o2U1M0SWxCT04vWUJCd1prSGJtaEpVdDBIdGRxdkhaZ1FieU96NmtEcVcvK05IcThUQytQUHFvL1hSYjFvY25nNnd4NzJVR2RDc2NwQVE9PQo="
     }
   }
 }
