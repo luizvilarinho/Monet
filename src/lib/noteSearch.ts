@@ -4,8 +4,8 @@ import { compareTasks, findProjectByTag, isOpen, normalizeName, todosTitleOf, ty
 
 // Busca do Ctrl+P sobre as notas já em memória: texto limpo (sem base64, tags
 // internas e sintaxe Markdown), normalizado sem acentos, tokens com AND e
-// ranking por título. Filtros `#Caderno` e `type:Nome` e tasks por título ou
-// TODOS.
+// ranking por título. Filtros `#Caderno`, `type:Nome` e `is:archived`;
+// arquivadas depois das ativas. Tasks por título ou TODOS.
 
 export interface Snippet {
   before: string
@@ -185,13 +185,14 @@ export interface SearchChip {
   // Token como está na consulta (remover o chip tira este texto).
   raw: string
   label: string
-  kind: 'notebook' | 'type'
+  kind: 'notebook' | 'type' | 'archived'
 }
 
 export interface ParsedSearchQuery {
   text: string
   notebookId: string | null
   typeId: string | null
+  archived: boolean
   chips: SearchChip[]
 }
 
@@ -200,15 +201,21 @@ function typeTokenName(name: string): string {
   return normalizeName(name).replace(/\s+/g, '')
 }
 
-// Separa os filtros do texto: `#Nome` (caderno, como no quick add) e
-// `type:Nome` (tipo, sem espaços). Nome desconhecido, ou um segundo filtro do
-// mesmo tipo, fica no texto.
+// Separa os filtros do texto: `#Nome` (caderno, como no quick add),
+// `type:Nome` (tipo, sem espaços) e `is:archived` (só arquivadas). Nome
+// desconhecido, ou um segundo filtro do mesmo tipo, fica no texto.
 export function parseSearchQuery(raw: string, notebooks: Notebook[], noteTypes: NoteType[]): ParsedSearchQuery {
   const words: string[] = []
   const chips: SearchChip[] = []
   let notebookId: string | null = null
   let typeId: string | null = null
+  let archived = false
   for (const word of raw.split(/\s+/).filter(Boolean)) {
+    if (!archived && word.toLowerCase() === 'is:archived') {
+      archived = true
+      chips.push({ raw: word, label: 'Archived', kind: 'archived' })
+      continue
+    }
     if (word.startsWith('#') && word.length > 1 && !notebookId) {
       const nb = findProjectByTag(notebooks, word.slice(1))
       if (nb) {
@@ -228,7 +235,7 @@ export function parseSearchQuery(raw: string, notebooks: Notebook[], noteTypes: 
     }
     words.push(word)
   }
-  return { text: words.join(' '), notebookId, typeId, chips }
+  return { text: words.join(' '), notebookId, typeId, archived, chips }
 }
 
 // Token `type:` de um tipo (chip clicável da palette).
@@ -239,14 +246,18 @@ export function typeToken(type: NoteType): string {
 export function searchNotes(
   notes: Note[],
   query: string,
-  opts?: { limit?: number; notebookId?: string | null; typeId?: string | null },
+  opts?: { limit?: number; notebookId?: string | null; typeId?: string | null; archived?: boolean },
 ): NoteSearchResult[] {
   const notebookId = opts?.notebookId ?? null
   const typeId = opts?.typeId ?? null
+  const archived = opts?.archived ?? false
   const scoped =
-    notebookId || typeId
+    notebookId || typeId || archived
       ? notes.filter(
-          (n) => (!notebookId || n.notebookId === notebookId) && (!typeId || n.typeId === typeId),
+          (n) =>
+            (!notebookId || n.notebookId === notebookId) &&
+            (!typeId || n.typeId === typeId) &&
+            (!archived || !!n.archivedAt),
         )
       : notes
   const tokens = normalizeSearch(query).split(/\s+/).filter(Boolean)
@@ -271,14 +282,20 @@ export function searchNotes(
     if (fuzzy) results.push({ note, score: 50, snippet: snippetOf(entry, tokens) })
   }
   return results
-    .sort((a, b) => b.score - a.score || b.note.updatedAt - a.note.updatedAt)
+    .sort(
+      (a, b) =>
+        Number(!!a.note.archivedAt) - Number(!!b.note.archivedAt) ||
+        b.score - a.score ||
+        b.note.updatedAt - a.note.updatedAt,
+    )
     .slice(0, opts?.limit ?? DEFAULT_LIMIT)
 }
 
-// Consulta vazia: troca rápida entre as notas mexidas por último.
+// Consulta vazia: troca rápida entre as notas mexidas por último (arquivadas
+// por último).
 export function recentNotes(notes: Note[], limit = 10): NoteSearchResult[] {
   return [...notes]
-    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .sort((a, b) => Number(!!a.archivedAt) - Number(!!b.archivedAt) || b.updatedAt - a.updatedAt)
     .slice(0, limit)
     .map((note) => ({ note, score: 0, snippet: previewOf(entryOf(note).text) }))
 }

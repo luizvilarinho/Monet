@@ -8,6 +8,9 @@ export interface ConfirmModalProps {
   confirmLabel?: string
   cancelLabel?: string
   destructive?: boolean
+  // Terceira saída (secundária), entre Cancel e Confirm; só com as duas props.
+  altLabel?: string
+  onAlt?: () => void
   onConfirm: () => void
   onCancel: () => void
 }
@@ -19,6 +22,8 @@ export function ConfirmModal({
   confirmLabel = 'delete',
   cancelLabel = 'cancel',
   destructive = true,
+  altLabel,
+  onAlt,
   onConfirm,
   onCancel,
 }: ConfirmModalProps) {
@@ -33,6 +38,11 @@ export function ConfirmModal({
           <button className={styles.btnCancel} onClick={onCancel} type="button">
             {cancelLabel}
           </button>
+          {altLabel && onAlt && (
+            <button className={styles.btnCancel} onClick={onAlt} type="button">
+              {altLabel}
+            </button>
+          )}
           <button className={destructive ? styles.btnConfirm : styles.btnPrimary} onClick={onConfirm} type="button" autoFocus>
             {confirmLabel}
           </button>

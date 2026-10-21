@@ -26,13 +26,16 @@ export interface Note {
   date?: string | null
   createdAt: number
   updatedAt: number
-  // Tipo de nota (`note_types`); null/ausente = sem tipo. Tipo e propriedades
-  // são gravados só pelos setters (setNoteType/setNoteProperties), nunca pelo
-  // saveNote.
+  // Tipo de nota (`note_types`); null/ausente = sem tipo. Tipo, propriedades e
+  // arquivamento são gravados só pelos setters (setNoteType/setNoteProperties/
+  // setNoteArchived), nunca pelo saveNote.
   typeId?: string | null
   // Valores das propriedades: chave = id da MetadataDef (scope 'note'). Chaves
   // de defs de outro tipo ficam guardadas (voltam se o tipo voltar).
   properties?: Record<string, MetadataValue>
+  // Arquivada em (ms); null/ausente = ativa. Gravado só pelo setter
+  // `setNoteArchived`, nunca pelo saveNote.
+  archivedAt?: number | null
 }
 
 // Nota sem o conteúdo (listas e títulos de notas linkadas).

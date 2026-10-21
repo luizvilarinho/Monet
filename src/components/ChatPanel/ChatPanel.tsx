@@ -53,6 +53,7 @@ export function ChatPanel({
 }: ChatPanelProps) {
   const { statuses } = useTasksEnv()
   const resolveNoteTitle = (noteId: string) => notes.find((n) => n.id === noteId)?.title
+  const isNoteArchived = (noteId: string) => !!notes.find((n) => n.id === noteId)?.archivedAt
   const tasksSnapshotRef = useRef<TasksSnapshot>({
     tasks,
     notebooks,
@@ -60,8 +61,17 @@ export function ChatPanel({
     checklist: taskChecklist,
     statuses,
     resolveNoteTitle,
+    isNoteArchived,
   })
-  tasksSnapshotRef.current = { tasks, notebooks, todayKey, checklist: taskChecklist, statuses, resolveNoteTitle }
+  tasksSnapshotRef.current = {
+    tasks,
+    notebooks,
+    todayKey,
+    checklist: taskChecklist,
+    statuses,
+    resolveNoteTitle,
+    isNoteArchived,
+  }
   const {
     conversations,
     folders,

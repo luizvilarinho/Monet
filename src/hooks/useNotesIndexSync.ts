@@ -77,7 +77,8 @@ function taskSignature(
   task: Task,
   projectName: string | undefined,
   statusLabel: string,
-  todosTitle: string | undefined
+  todosTitle: string | undefined,
+  todosArchived: boolean
 ): string {
   return JSON.stringify([
     task.title,
@@ -89,6 +90,7 @@ function taskSignature(
     task.scheduledDate,
     task.parentNoteId,
     todosTitle,
+    todosArchived,
     task.important,
     task.recurrence,
     task.rescheduleCount,
@@ -153,6 +155,10 @@ export function useNotesIndexSync({
     (noteId: string) => notesRef.current.find((n) => n.id === noteId)?.title,
     [],
   )
+  const isNoteArchived = useCallback(
+    (noteId: string) => !!notesRef.current.find((n) => n.id === noteId)?.archivedAt,
+    [],
+  )
 
   const fileTextFor = useCallback(
     async (note: Note) => {
@@ -178,14 +184,21 @@ export function useNotesIndexSync({
       return buildNoteFileText(
         note,
         resolveNoteTitle,
-        task ? { task, projectName: projectName ?? 'Unknown', statuses: statusesRef.current } : undefined,
+        task
+          ? {
+              task,
+              projectName: projectName ?? 'Unknown',
+              statuses: statusesRef.current,
+              todosArchived: !!task.parentNoteId && isNoteArchived(task.parentNoteId),
+            }
+          : undefined,
         (id) => embeds.get(id),
         (dataUrl) => imageTexts.get(dataUrl),
         typeContext,
         todosProgress,
       )
     },
-    [resolveNoteTitle],
+    [resolveNoteTitle, isNoteArchived],
   )
 
   const clearTimers = useCallback(() => {
@@ -254,7 +267,7 @@ export function useNotesIndexSync({
           const fileText = buildTasksSummaryText(notebook.name, nbTasks, resolveNoteTitle, (t) => {
             const body = t.noteId ? notesRef.current.find((n) => n.id === t.noteId) : undefined
             return body ? checklistProgress(body.content) : null
-          }, statusesRef.current)
+          }, statusesRef.current, isNoteArchived)
           const synced = lastSyncedRef.current.get(summaryId)
           if (synced && synced.notebookId === notebook.id && synced.fileText === fileText) return
           const result = await notesIndexUpsert({
@@ -298,7 +311,7 @@ export function useNotesIndexSync({
         }
       }
     },
-    [fileTextFor, resolveNoteTitle, clearTimers, forgetNotebook],
+    [fileTextFor, resolveNoteTitle, isNoteArchived, clearTimers, forgetNotebook],
   )
 
   const drain = useCallback(async () => {
@@ -478,6 +491,7 @@ export function useNotesIndexSync({
                 nameById.get(t.notebookId),
                 statusName(t.status, statusesRef.current),
                 t.parentNoteId ? resolveNoteTitle(t.parentNoteId) : undefined,
+                !!t.parentNoteId && isNoteArchived(t.parentNoteId),
               ),
               notebookId: t.notebookId,
               parentNoteId: t.parentNoteId,
@@ -503,6 +517,7 @@ export function useNotesIndexSync({
     enqueue,
     clearTimers,
     resolveNoteTitle,
+    isNoteArchived,
   ])
 
   // Diff incremental das notas.
@@ -536,10 +551,15 @@ export function useNotesIndexSync({
     }
   }, [notes, enqueue, enqueueUpsertNow, scheduleUpsert, scheduleTasksSummary, cancelDebounce])
 
-  // Títulos das TODOS: renomear uma reindexa as notas-corpo das tasks dela
-  // (a linha `TODOS:` entra na assinatura da task).
+  // Títulos das TODOS: renomear ou arquivar/desarquivar uma reindexa as
+  // notas-corpo das tasks dela e o resumo (a linha `TODOS:` entra na
+  // assinatura da task).
   const todosTitlesKey = useMemo(
-    () => notes.filter(isTodosNote).map((n) => `${n.id}\u0000${n.title}`).join('\u0001'),
+    () =>
+      notes
+        .filter(isTodosNote)
+        .map((n) => `${n.id}\u0000${n.title}\u0000${n.archivedAt ? 1 : 0}`)
+        .join('\u0001'),
     [notes],
   )
 
@@ -564,6 +584,7 @@ export function useNotesIndexSync({
         nameById.get(task.notebookId),
         statusName(task.status, statuses),
         task.parentNoteId ? resolveNoteTitle(task.parentNoteId) : undefined,
+        !!task.parentNoteId && isNoteArchived(task.parentNoteId),
       )
       const prev = seen.get(task.id)
       if (prev?.sig === sig) continue
@@ -583,7 +604,16 @@ export function useNotesIndexSync({
     for (const nbId of affected) {
       if (!disabled.has(nbId)) scheduleTasksSummary(nbId)
     }
-  }, [tasks, notebooks, statuses, todosTitlesKey, resolveNoteTitle, scheduleUpsert, scheduleTasksSummary])
+  }, [
+    tasks,
+    notebooks,
+    statuses,
+    todosTitlesKey,
+    resolveNoteTitle,
+    isNoteArchived,
+    scheduleUpsert,
+    scheduleTasksSummary,
+  ])
 
   // Diff de tipos: renomear o tipo ou mudar as propriedades dele (nome, tipo
   // de dado, opções, ordem) reindexa as notas daquele tipo. Trocar o tipo ou os

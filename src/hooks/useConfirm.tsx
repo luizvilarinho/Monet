@@ -6,12 +6,15 @@ interface ConfirmOptions {
   confirmLabel?: string
   cancelLabel?: string
   destructive?: boolean
+  altLabel?: string
 }
+
+type ConfirmChoice = 'confirm' | 'alt' | 'cancel'
 
 interface ConfirmState {
   message: string
   options: ConfirmOptions
-  resolve: (value: boolean) => void
+  resolve: (choice: ConfirmChoice) => void
 }
 
 export function useConfirm() {
@@ -19,17 +22,32 @@ export function useConfirm() {
 
   const confirm = useCallback((message: string, options: ConfirmOptions = {}): Promise<boolean> => {
     return new Promise((resolve) => {
-      setState({ message, options, resolve })
+      setState({ message, options, resolve: (choice) => resolve(choice === 'confirm') })
     })
   }, [])
 
+  // choose: três saídas (Cancel / alt / confirm).
+  const choose = useCallback(
+    (message: string, options: ConfirmOptions & { altLabel: string }): Promise<ConfirmChoice> => {
+      return new Promise((resolve) => {
+        setState({ message, options, resolve })
+      })
+    },
+    []
+  )
+
   const handleConfirm = () => {
-    state?.resolve(true)
+    state?.resolve('confirm')
+    setState(null)
+  }
+
+  const handleAlt = () => {
+    state?.resolve('alt')
     setState(null)
   }
 
   const handleCancel = () => {
-    state?.resolve(false)
+    state?.resolve('cancel')
     setState(null)
   }
 
@@ -41,10 +59,12 @@ export function useConfirm() {
       confirmLabel={state?.options.confirmLabel}
       cancelLabel={state?.options.cancelLabel}
       destructive={state?.options.destructive}
+      altLabel={state?.options.altLabel}
+      onAlt={handleAlt}
       onConfirm={handleConfirm}
       onCancel={handleCancel}
     />
   )
 
-  return { confirm, modal }
+  return { confirm, choose, modal }
 }

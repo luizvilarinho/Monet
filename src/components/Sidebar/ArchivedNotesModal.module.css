@@ -1,0 +1,124 @@
+/* Base (backdrop, card, cabeçalho) em StatusManagerModal.module.css. */
+.card {
+  max-width: 600px;
+  gap: var(--space-3);
+}
+
+.search {
+  width: 100%;
+  box-sizing: border-box;
+  height: var(--control-lg);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-2);
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text-primary);
+  outline: none;
+}
+
+.search:focus {
+  border-color: var(--accent);
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0);
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1h) var(--space-2);
+  border-radius: var(--radius-md);
+}
+
+.row:hover {
+  background: var(--surface-1);
+}
+
+.main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0);
+}
+
+/* Ícone + nome do tipo na cor do tipo, como na lista de notas. */
+.type {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: var(--lh-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.type svg {
+  flex-shrink: 0;
+}
+
+.typeName,
+.title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.title {
+  font-size: 13px;
+  line-height: var(--lh-row);
+  color: var(--text-primary);
+}
+
+.date {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.actions {
+  flex-shrink: 0;
+  display: flex;
+  gap: var(--space-1);
+}
+
+.action {
+  height: var(--control-sm);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0 var(--space-2);
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.action:hover {
+  color: var(--text-primary);
+  background: var(--surface-3);
+}
+
+.actionDanger:hover {
+  color: var(--accent-danger);
+}
+
+.empty {
+  padding: var(--space-3) var(--space-2);
+  font-size: 13px;
+  color: var(--text-muted);
+}

@@ -68,7 +68,9 @@ export function KeepPanel() {
   const todosById = useMemo(
     () =>
       new Map<string, TodosInfo>(
-        allNotes.filter(isTodosNote).map((n) => [n.id, { id: n.id, title: n.title, notebookId: n.notebookId }])
+        allNotes
+          .filter(isTodosNote)
+          .map((n) => [n.id, { id: n.id, title: n.title, notebookId: n.notebookId, archived: !!n.archivedAt }])
       ),
     [allNotes]
   )

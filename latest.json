@@ -1,11 +1,11 @@
 {
   "version": "1.5.0",
-  "notes": "Monet v1.5.0 — Note types with properties and templates, TODOS deliverables replacing task groups (with migration), Ctrl+P search across notes and tasks with filters, '+' button on the block handle, and a fix for duplicated chat replies when a tool is used.",
-  "pub_date": "2026-10-21T03:01:03Z",
+  "notes": "Monet v1.5.0 — Note types with properties and templates, TODOS deliverables replacing task groups (with migration), note archiving with an Archived list, Ctrl+P search across notes and tasks with filters, '+' button on the block handle, and a fix for duplicated chat replies when a tool is used.",
+  "pub_date": "2026-10-21T05:25:03Z",
   "platforms": {
     "windows-x86_64": {
       "url": "https://github.com/luizvilarinho/Monet/releases/download/v1.5.0/monet_1.5.0_x64_en-US.msi",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRlFHSkpLWXhzckxFOG9ZZnhTQ2pheTlINGREdVc4NU5CZTZPME5nTFo1Zy9ZdDB3RE0yenh4YVFDQTRGZStWWDVOcGt3bkEwQTFoY1lxNDJUR0kwSVlYb1RaWlRMZVFjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyNTUxNjQ5CWZpbGU6bW9uZXRfMS41LjBfeDY0X2VuLVVTLm1zaQpzQVk4N2VvWHJYVjAxQ2toUjgzYnRIM3Y0UDZuaHEzN3h6V3NySU9CWEFyVVEwdFY0NEZ3ZU9STDQ1Q1c3ZGFLdXBVYkhoWmxpaHZxeEJsT2dVLzlBUT09Cg=="
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRlFHSkpLWXhzckRXaDZHNGJWaHdVczl2TjlaNXdUY1Z4NDJobkt1TXozWDgxdG9CUU1zQ2YrSzE5SHhyR29HcXR6a0RaVEFlbkl1U1VZQUhiL3F0TTdEUm9STGcyakFrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyNTYwMjgwCWZpbGU6bW9uZXRfMS41LjBfeDY0X2VuLVVTLm1zaQppbDlxTDA5OVVBdEJQN05HanZTWGNhbWt5MDRWeDM5cmg0NklsNXhIS0NmYmRNOFVLb1RLcGh3KzVHZnJpUjQ0SEpyMTRySzgyTEZVQnZBMUEzaFhDdz09Cg=="
     }
   }
 }

@@ -221,6 +221,7 @@ function taskMetadataLines(
   resolveNoteTitle: (noteId: string) => string | undefined,
   checklist: ChecklistProgress | null,
   statuses: TaskStatusDef[],
+  todosArchived: boolean,
 ): string[] {
   const lines = [
     `Project: ${projectName}`,
@@ -230,7 +231,10 @@ function taskMetadataLines(
     `Created: ${dateKeyFromMs(task.createdAt)}`,
   ]
   const todos = task.parentNoteId ? resolveNoteTitle(task.parentNoteId) : undefined
-  if (todos !== undefined) lines.splice(1, 0, `TODOS (deliverable note): ${todos.trim() || 'Untitled'}`)
+  if (todos !== undefined) {
+    const archived = todosArchived ? ' (archived)' : ''
+    lines.splice(1, 0, `TODOS (deliverable note): ${todos.trim() || 'Untitled'}${archived}`)
+  }
   if (task.important) lines.push('Important: yes')
   if (task.recurrence) lines.push(`Repeats: ${describeRecurrence(task.recurrence)}`)
   if (task.rescheduleCount > 0) lines.push(`Postponed: ${task.rescheduleCount}x`)
@@ -247,12 +251,12 @@ function taskMetadataLines(
 // sem corpo (o backend remove o documento nesse caso). Nota-corpo de task
 // recebe os metadados da task logo abaixo do título; nota com tipo, o tipo e
 // as propriedades com valor entre `Date:` e `Tags:` (a TODOS, também o
-// progresso das tasks dela). Notas linkadas entram só com o título: elas já
-// são indexadas sozinhas.
+// progresso das tasks dela) e, por último, `Archived:` na nota arquivada.
+// Notas linkadas entram só com o título: elas já são indexadas sozinhas.
 export function buildNoteFileText(
   note: Note,
   resolveNoteTitle: (noteId: string) => string | undefined,
-  taskContext?: { task: Task; projectName: string; statuses: TaskStatusDef[] },
+  taskContext?: { task: Task; projectName: string; statuses: TaskStatusDef[]; todosArchived: boolean },
   resolveEmbed?: (commandId: string) => AiResponse | undefined,
   resolveImageText?: (dataUrl: string) => string | undefined,
   typeContext?: { typeName: string; properties: Array<{ name: string; value: string }> },
@@ -270,6 +274,7 @@ export function buildNoteFileText(
         resolveNoteTitle,
         checklistProgress(note.content),
         taskContext.statuses,
+        taskContext.todosArchived,
       ),
     )
   }
@@ -284,6 +289,7 @@ export function buildNoteFileText(
     header.push(`Tasks: ${todosProgress.done}/${todosProgress.total} done${next}`)
   }
   if (note.tags.length > 0) header.push(`Tags: ${note.tags.join(', ')}`)
+  if (note.archivedAt) header.push(`Archived: ${dateKeyFromMs(note.archivedAt)}`)
   return body ? `${header.join('\n')}\n\n${body}` : header.join('\n')
 }
 
@@ -296,6 +302,8 @@ export function buildTasksSummaryText(
   // Progresso do checklist da nota-corpo da task.
   checklistOf: (task: Task) => ChecklistProgress | null,
   statuses: TaskStatusDef[],
+  // TODOS arquivada: `(archived)` na linha da TODOS.
+  isNoteArchived: (noteId: string) => boolean,
 ): string {
   const sections = [`# Tasks — ${projectName}\nAll tasks of the project "${projectName}", grouped by status.`]
   // Abertos na ordem do registro (doing antes de todo), depois done/dropped;
@@ -316,7 +324,14 @@ export function buildTasksSummaryText(
     for (const t of group) {
       const lines = [
         `### ${t.title.trim() || 'Untitled'}`,
-        ...taskMetadataLines(t, projectName, resolveNoteTitle, checklistOf(t), statuses),
+        ...taskMetadataLines(
+          t,
+          projectName,
+          resolveNoteTitle,
+          checklistOf(t),
+          statuses,
+          !!t.parentNoteId && isNoteArchived(t.parentNoteId),
+        ),
       ]
       sections.push(lines.join('\n'))
     }

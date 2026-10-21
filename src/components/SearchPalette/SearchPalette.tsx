@@ -59,6 +59,7 @@ const MEANING_MIN_CHARS = 3
 const MEANING_EXCERPT_CHARS = 120
 
 function noteLabel(note: Note): string | null {
+  if (note.archivedAt) return 'archived'
   if (note.notebookId === CALENDAR_NOTEBOOK_ID) return 'Daily'
   if (isTaskBodyNote(note)) return 'Task'
   return null
@@ -125,7 +126,7 @@ export function SearchPalette({
   const liveParsed = useMemo(() => parseSearchQuery(query, notebooks, noteTypes), [query, notebooks, noteTypes])
   const parsed = useMemo(() => parseSearchQuery(debounced, notebooks, noteTypes), [debounced, notebooks, noteTypes])
   const text = parsed.text.trim()
-  const hasFilters = parsed.notebookId !== null || parsed.typeId !== null
+  const hasFilters = parsed.notebookId !== null || parsed.typeId !== null || parsed.archived
 
   const results = useMemo<SearchResult[]>(() => {
     if (!open) return []
@@ -138,13 +139,14 @@ export function SearchPalette({
             .filter((nb) => normalizeSearch(nb.name).startsWith(q))
             .slice(0, MAX_NOTEBOOKS)
             .map((nb) => ({ kind: 'notebook', notebook: nb }))
-    // Tipo de nota filtra só notas: com `type:` a seção de tasks some.
-    const foundTasks = parsed.typeId ? [] : searchTasks(tasks, text, todosById, { notebookId: parsed.notebookId })
+    // `type:` e `is:archived` filtram só notas: com eles a seção de tasks some.
+    const foundTasks = parsed.typeId || parsed.archived ? [] : searchTasks(tasks, text, todosById, { notebookId: parsed.notebookId })
     // A nota-corpo de uma task listada não repete na seção de notas.
     const taskNoteIds = new Set(foundTasks.map((t) => t.noteId))
     const foundNotes: SearchResult[] = searchNotes(searchable, text, {
       notebookId: parsed.notebookId,
       typeId: parsed.typeId,
+      archived: parsed.archived,
     })
       .filter((r) => !(isTaskBodyNote(r.note) && taskNoteIds.has(r.note.id)))
       .map((r) => ({ kind: 'note', ...r }))
@@ -153,7 +155,7 @@ export function SearchPalette({
       ...foundNotes,
       ...foundTasks.map((task): SearchResult => ({ kind: 'task', task })),
     ]
-  }, [open, searchable, notebooks, tasks, todosById, text, hasFilters, parsed.notebookId, parsed.typeId])
+  }, [open, searchable, notebooks, tasks, todosById, text, hasFilters, parsed.notebookId, parsed.typeId, parsed.archived])
 
   // Escopo semântico: pastas de notas dos cadernos com IA ligada (só a do
   // `#Caderno`, se houver).
@@ -165,7 +167,7 @@ export function SearchPalette({
     [notebooks, disabledNotebookIds, parsed.notebookId]
   )
   const canSearchMeaning = hasApiKey && text.length >= MEANING_MIN_CHARS && meaningScopeIds.length > 0
-  const meaningKey = `${parsed.notebookId ?? ''}|${parsed.typeId ?? ''}|${text}`
+  const meaningKey = `${parsed.notebookId ?? ''}|${parsed.typeId ?? ''}|${parsed.archived ? 'a' : ''}|${text}`
   const currentMeaning = meaning && meaning.key === meaningKey ? meaning : null
   const meaningKeyRef = useRef(meaningKey)
   meaningKeyRef.current = meaningKey
@@ -201,6 +203,7 @@ export function SearchPalette({
   const runMeaningSearch = useCallback(async () => {
     const key = meaningKey
     const typeId = parsed.typeId
+    const archivedOnly = parsed.archived
     const request = ++meaningRequestRef.current
     setMeaning({ key, status: 'loading', hits: [], error: null })
     try {
@@ -220,6 +223,7 @@ export function SearchPalette({
         if (!c.documentId.startsWith('note:') || c.documentId.startsWith('note:tasks-')) continue
         const note = byId.get(c.documentId.slice('note:'.length))
         if (!note || seen.has(note.id) || (typeId && note.typeId !== typeId)) continue
+        if (archivedOnly && !note.archivedAt) continue
         seen.add(note.id)
         // 1º chunk: pula o cabeçalho gerado (`# título`, Project:, Status:...).
         const headerEnd = c.chunkIndex === 0 && c.content.startsWith('# ') ? c.content.indexOf('\n\n') : -1
@@ -227,6 +231,8 @@ export function SearchPalette({
         const excerpt = flat.length > MEANING_EXCERPT_CHARS ? `${flat.slice(0, MEANING_EXCERPT_CHARS)}…` : flat
         hits.push({ note, excerpt })
       }
+      // Arquivadas depois das ativas (sort estável: mantém a ordem do RAG).
+      hits.sort((a, b) => Number(!!a.note.archivedAt) - Number(!!b.note.archivedAt))
       setMeaning({ key, status: 'done', hits, error: null })
       if (hits.length > 0 && meaningKeyRef.current === key) {
         // Seleção no primeiro resultado (a linha do gatilho dá lugar a eles).
@@ -238,7 +244,7 @@ export function SearchPalette({
       console.warn('search by meaning failed:', err)
       setMeaning({ key, status: 'error', hits: [], error: err instanceof Error ? err.message : String(err) })
     }
-  }, [meaningKey, parsed.typeId, meaningScopeIds, text, searchable, results.length])
+  }, [meaningKey, parsed.typeId, parsed.archived, meaningScopeIds, text, searchable, results.length])
 
   const selectResult = useCallback((result: SearchResult) => {
     if (result.kind === 'meaning') {
@@ -312,6 +318,7 @@ export function SearchPalette({
 
   const showRecent = !text && !hasFilters && results.length > 0
   const notebookChip = liveParsed.chips.find((c) => c.kind === 'notebook')
+  const archivedChip = liveParsed.chips.find((c) => c.kind === 'archived')
 
   const meaningLabel = !currentMeaning
     ? `Search by meaning: '${text}'`
@@ -328,11 +335,11 @@ export function SearchPalette({
           ref={inputRef}
           className={styles.input}
           type="text"
-          placeholder="Search… (#notebook, type:TODOS)"
+          placeholder="Search… (#notebook, type:TODOS, is:archived)"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
-        {(notebookChip || noteTypes.length > 0) && (
+        {(notebookChip || archivedChip || noteTypes.length > 0) && (
           <div className={styles.chips}>
             {notebookChip && (
               <button
@@ -343,6 +350,18 @@ export function SearchPalette({
                 onClick={() => removeChip(notebookChip.raw)}
               >
                 <span>#{notebookChip.label}</span>
+                <X size={10} aria-hidden />
+              </button>
+            )}
+            {archivedChip && (
+              <button
+                type="button"
+                className={`${styles.chip} ${styles.chipActive}`}
+                title="Remove archived filter"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => removeChip(archivedChip.raw)}
+              >
+                <span>is:archived</span>
                 <X size={10} aria-hidden />
               </button>
             )}

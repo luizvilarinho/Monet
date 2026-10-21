@@ -638,6 +638,7 @@ const NEW_TODOS = '__new__'
 // TODOS da task: as do caderno da task primeiro, depois as demais com o
 // caderno; "＋ New TODOS…" troca o select por um input (Enter cria no caderno
 // da task e vincula, Esc cancela). Pai apagado por fora aparece como "No TODOS".
+// TODOS arquivadas só aparecem quando já são a da task.
 function TodosControl({
   task,
   notebooks,
@@ -657,8 +658,9 @@ function TodosControl({
   const current = options.find((o) => o.id === task.parentNoteId) ?? null
   const nameById = new Map(notebooks.map((nb) => [nb.id, nb.name || 'unnamed']))
   const byTitle = (a: TodosInfo, b: TodosInfo) => a.title.localeCompare(b.title)
-  const own = options.filter((o) => o.notebookId === task.notebookId).sort(byTitle)
-  const others = options.filter((o) => o.notebookId !== task.notebookId).sort(byTitle)
+  const listed = options.filter((o) => !o.archived || o.id === task.parentNoteId)
+  const own = listed.filter((o) => o.notebookId === task.notebookId).sort(byTitle)
+  const others = listed.filter((o) => o.notebookId !== task.notebookId).sort(byTitle)
 
   async function commit() {
     const title = draft?.trim() ?? ''
@@ -710,6 +712,7 @@ function TodosControl({
           <option key={o.id} value={o.id}>
             {o.title.trim() || 'Untitled'}
             {o.notebookId !== task.notebookId ? ` · ${nameById.get(o.notebookId ?? '') ?? 'unnamed'}` : ''}
+            {o.archived ? ' · archived' : ''}
           </option>
         ))}
         <option value={NEW_TODOS}>＋ New TODOS…</option>

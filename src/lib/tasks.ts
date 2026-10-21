@@ -176,6 +176,8 @@ export interface TodosInfo {
   id: string
   title: string
   notebookId: string | null
+  // Arquivada: fora do seletor de TODOS e do `>Nome`; o vínculo das tasks continua.
+  archived: boolean
 }
 
 // Título da TODOS da task; pai inexistente (apagado por outra janela) = sem TODOS.
@@ -994,7 +996,8 @@ export function queryTasksText(
   todayKey: string,
   checklist?: Map<string, ChecklistProgress>,
   statuses: TaskStatusDef[] = BUILTIN_STATUS_DEFS,
-  resolveNoteTitle: (noteId: string) => string | undefined = () => undefined
+  resolveNoteTitle: (noteId: string) => string | undefined = () => undefined,
+  isNoteArchived: (noteId: string) => boolean = () => false
 ): string {
   const todosTitle = (t: Task) => (t.parentNoteId ? resolveNoteTitle(t.parentNoteId) ?? null : null)
   const wantedTodos = q.todos?.trim() ? normalizeName(q.todos.trim()) : null
@@ -1051,7 +1054,8 @@ export function queryTasksText(
         names.get(t.notebookId) ?? 'unnamed',
         checklist?.get(t.id) ?? null,
         statuses,
-        todosTitle(t)
+        todosTitle(t),
+        !!t.parentNoteId && isNoteArchived(t.parentNoteId)
       )
     )
   if (matches.length > QUERY_LIMIT) lines.push(`(${matches.length - QUERY_LIMIT} more not shown)`)
@@ -1059,16 +1063,20 @@ export function queryTasksText(
 }
 
 // Uma task em uma linha para os chats (tool `query_tasks` e contexto do chat
-// das Anotações): status, título, projeto/TODOS e os metadados.
+// das Anotações): status, título, projeto/TODOS (com `(archived)` se a TODOS
+// está arquivada) e os metadados.
 export function taskLineForAi(
   t: Task,
   todayKey: string,
   projectName: string | null,
   checklist: ChecklistProgress | null,
   statuses: TaskStatusDef[] = BUILTIN_STATUS_DEFS,
-  todosTitle: string | null = null
+  todosTitle: string | null = null,
+  todosArchived = false
 ): string {
-  const where = [projectName, todosTitle !== null ? `TODOS "${todosTitle.trim() || 'Untitled'}"` : null]
+  const todos =
+    todosTitle !== null ? `TODOS "${todosTitle.trim() || 'Untitled'}"${todosArchived ? ' (archived)' : ''}` : null
+  const where = [projectName, todos]
     .filter(Boolean)
     .join(' / ')
   const late = overdueKind(t, todayKey)

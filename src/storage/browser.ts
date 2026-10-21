@@ -171,6 +171,9 @@ export class BrowserStorage implements StorageAdapter {
   async setNoteProperties(_noteId: string, _properties: Record<string, MetadataValue>): Promise<void> {
     throw new Error('BrowserStorage.setNoteProperties not implemented')
   }
+  async setNoteArchived(_noteId: string, _archivedAt: number | null): Promise<void> {
+    throw new Error('BrowserStorage.setNoteArchived not implemented')
+  }
 
   async getResponses(_noteId: string): Promise<AiResponse[]> {
     throw new Error('BrowserStorage.getResponses not implemented')

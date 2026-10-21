@@ -289,6 +289,7 @@
    e o pseudo-elemento estende 3px para cada lado (cabe no gap de 6px). */
 .rowMerge::after,
 .rowMove::after,
+.rowArchive::after,
 .rowDelete::after,
 .rowAssign::after {
   content: '';
@@ -331,6 +332,35 @@
 }
 
 .rowMove:hover {
+  color: var(--accent, #7c6af5);
+  background: rgba(124, 106, 245, 0.1);
+}
+
+.rowArchive {
+  position: relative;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text-muted, #606070);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0;
+  padding: 0;
+}
+
+.row:hover .rowArchive,
+.rowArchive:focus-visible {
+  opacity: 1;
+}
+
+.rowArchive:hover {
   color: var(--accent, #7c6af5);
   background: rgba(124, 106, 245, 0.1);
 }
@@ -477,4 +507,27 @@
 .subjectDropdown .sortExtra {
   border-top: 1px solid var(--border, #333340);
   color: var(--text-muted, #606070);
+}
+
+/* Rodapé "Archived · N": fixo abaixo da seção Tasks, fora da rolagem. */
+.archivedFooter {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+  min-height: var(--control-sm);
+  padding: var(--space-0) var(--space-1);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted, #606070);
+  text-align: left;
+  cursor: pointer;
+}
+
+.archivedFooter:hover {
+  color: var(--text-secondary, #a0a0b8);
 }

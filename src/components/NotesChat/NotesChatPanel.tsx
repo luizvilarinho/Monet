@@ -50,6 +50,7 @@ interface NotesChatPanelProps {
   notebook: { id: string; name: string } | null
   activeNote: Note | null
   resolveNoteTitle: (noteId: string) => string | undefined
+  isNoteArchived: (noteId: string) => boolean
   resolveNoteContent: (noteId: string) => string | undefined
   getSelectionText: () => string
   // Tasks do caderno, anexadas ao contexto efêmero (vazio se o caderno está
@@ -73,6 +74,7 @@ export function NotesChatPanel({
   notebook,
   activeNote,
   resolveNoteTitle,
+  isNoteArchived,
   resolveNoteContent,
   getSelectionText,
   projectTasks,
@@ -97,8 +99,17 @@ export function NotesChatPanel({
     checklist: taskChecklist,
     statuses,
     resolveNoteTitle,
+    isNoteArchived,
   })
-  tasksSnapshotRef.current = { tasks, notebooks, todayKey, checklist: taskChecklist, statuses, resolveNoteTitle }
+  tasksSnapshotRef.current = {
+    tasks,
+    notebooks,
+    todayKey,
+    checklist: taskChecklist,
+    statuses,
+    resolveNoteTitle,
+    isNoteArchived,
+  }
 
   const {
     activeId,
@@ -369,6 +380,7 @@ export function NotesChatPanel({
       note,
       selectionText,
       resolveNoteTitle,
+      isNoteArchived,
       resolveLinkedNoteContent: resolveNoteContent,
       resolveEmbed: (id) => embeds.get(id),
       resolveImageText: (dataUrl) => imageTexts.get(dataUrl),

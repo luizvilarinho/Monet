@@ -29,6 +29,11 @@
   color: color-mix(in srgb, var(--status-done, #5cc185) 70%, var(--text-muted));
 }
 
+.allDone {
+  margin-left: var(--space-1);
+  color: var(--text-muted);
+}
+
 .outside {
   display: flex;
   flex-direction: column;

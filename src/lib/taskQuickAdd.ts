@@ -19,7 +19,7 @@ import {
 //   !!        → important
 //   >Nome     → nota TODOS (título sem espaços igual, senão o primeiro que
 //               começa com Nome, preferindo as do `#Projeto`); desconhecida só
-//               após confirmação (cria a TODOS)
+//               após confirmação (cria a TODOS) (TODOS arquivadas não contam)
 // Repetição do mesmo tipo: o último vence (os anteriores ficam no título).
 
 export type QuickAddTokenKind = 'date' | 'deadline' | 'project' | 'status' | 'important' | 'todos'
@@ -66,10 +66,11 @@ function compactName(s: string): string {
 
 // TODOS de `>Nome`: título igual (sem espaços/acentos/caixa), senão a primeira
 // cujo título começa com o nome — as do projeto reconhecido antes, depois por
-// título.
-function findTodosByTag(todos: TodosInfo[], name: string, notebookId: string | null): TodosInfo | undefined {
+// título. TODOS arquivadas ficam de fora.
+function findTodosByTag(all: TodosInfo[], name: string, notebookId: string | null): TodosInfo | undefined {
   const wanted = compactName(name)
   if (!wanted) return undefined
+  const todos = all.filter((t) => !t.archived)
   const exact = todos.filter((t) => compactName(t.title) === wanted)
   const candidates = exact.length > 0 ? exact : todos.filter((t) => compactName(t.title).startsWith(wanted))
   return [...candidates].sort(

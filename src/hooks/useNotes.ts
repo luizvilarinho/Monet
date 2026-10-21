@@ -34,10 +34,16 @@ export function useNotes() {
       const i = prev.findIndex((n) => n.id === note.id)
       if (i >= 0) {
         const next = prev.slice()
-        // Tipo e propriedades vêm sempre da memória: o saveNote não os grava e
-        // quem monta a `Note` do zero (keep, assistant, merge, mover) não os
-        // conhece; só setType/setProperties mudam esses campos.
-        next[i] = { ...note, typeId: prev[i].typeId, properties: prev[i].properties }
+        // Tipo, propriedades e arquivamento vêm sempre da memória: o saveNote
+        // não os grava e quem monta a `Note` do zero (keep, assistant, merge,
+        // mover) não os conhece; só setType/setProperties/setArchived mudam
+        // esses campos.
+        next[i] = {
+          ...note,
+          typeId: prev[i].typeId,
+          properties: prev[i].properties,
+          archivedAt: prev[i].archivedAt,
+        }
         return next
       }
       return [note, ...prev]
@@ -67,15 +73,20 @@ export function useNotes() {
   // Setters pontuais (fora do saveNote): otimista em memória; em falha, relê
   // do banco. Devolvem false quando a gravação falha.
   const persistField = useCallback(
-    async (noteId: string, patch: Pick<Note, 'typeId'> | Pick<Note, 'properties'>, op: () => Promise<void>) => {
+    async (
+      noteId: string,
+      patch: Pick<Note, 'typeId'> | Pick<Note, 'properties'> | Pick<Note, 'archivedAt'>,
+      op: () => Promise<void>,
+      errorMessage: string
+    ) => {
       setNotes((prev) => prev.map((n) => (n.id === noteId ? { ...n, ...patch } : n)))
       try {
         await op()
         setSaveError(null)
         return true
       } catch (err) {
-        console.error('failed to save note type', err)
-        setSaveError('Failed to save note type or properties.')
+        console.error('failed to save note field', err)
+        setSaveError(errorMessage)
         void refresh().catch((e) => console.error('failed to reload notes', e))
         return false
       }
@@ -85,13 +96,37 @@ export function useNotes() {
 
   const setType = useCallback(
     (noteId: string, typeId: string | null) =>
-      persistField(noteId, { typeId }, () => storage.setNoteType(noteId, typeId)),
+      persistField(
+        noteId,
+        { typeId },
+        () => storage.setNoteType(noteId, typeId),
+        'Failed to save note type or properties.'
+      ),
     [persistField]
   )
 
   const setProperties = useCallback(
     (noteId: string, properties: Record<string, MetadataValue>) =>
-      persistField(noteId, { properties }, () => storage.setNoteProperties(noteId, properties)),
+      persistField(
+        noteId,
+        { properties },
+        () => storage.setNoteProperties(noteId, properties),
+        'Failed to save note type or properties.'
+      ),
+    [persistField]
+  )
+
+  // Otimista: a nota arquivada sai da lista principal na hora.
+  const setArchived = useCallback(
+    (noteId: string, archived: boolean) => {
+      const archivedAt = archived ? Date.now() : null
+      return persistField(
+        noteId,
+        { archivedAt },
+        () => storage.setNoteArchived(noteId, archivedAt),
+        'Failed to archive or unarchive note.'
+      )
+    },
     [persistField]
   )
 
@@ -114,5 +149,5 @@ export function useNotes() {
     [save]
   )
 
-  return { notes, loaded, loadFailed, save, remove, create, refresh, setType, setProperties, saveError }
+  return { notes, loaded, loadFailed, save, remove, create, refresh, setType, setProperties, setArchived, saveError }
 }

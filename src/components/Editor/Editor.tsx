@@ -97,8 +97,8 @@ export interface EditorProps {
   // Conteúdo acima das tags: barra de propriedades da task (nota-corpo de
   // task), do tipo de nota ou o bloco "Due today" (nota diária do Calendar).
   topSlot?: ReactNode
-  // "+ type" da nota sem tipo, no início da linha de data/tags.
-  typeSlot?: ReactNode
+  // Início da linha de data/tags: selo "Archived" e "+ type" da nota sem tipo.
+  tagsRowSlot?: ReactNode
   onToggleLinkedTask?: (taskId: string, checked: boolean) => void
 }
 
@@ -171,7 +171,7 @@ export function Editor({
   onCreateTasks,
   onToggleLinkedTask,
   topSlot,
-  typeSlot,
+  tagsRowSlot,
 }: EditorProps) {
   const [adding, setAdding] = useState(false)
   const [draft, setDraft] = useState('')
@@ -842,7 +842,7 @@ export function Editor({
       </div>
       {topSlot}
       <div className={styles.tagsRow}>
-        {typeSlot}
+        {tagsRowSlot}
         {onDateChange && (
           <span className={styles.dateWrapper} onClick={() => dateInputRef.current?.showPicker()}>
             <CalendarBlank size={14} className={styles.dateIcon} aria-hidden />

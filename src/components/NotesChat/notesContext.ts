@@ -1,3 +1,4 @@
+import { dateKeyFromMs } from '../../lib/calendar'
 import { cleanNoteContentForAi, noteDate } from '../../lib/noteFileText'
 import { isOpen, taskLineForAi, type ChecklistProgress } from '../../lib/tasks'
 import type { AiResponse, Note, Task, TaskStatusDef } from '../../types'
@@ -17,6 +18,8 @@ export interface NotesContextInput {
   // '' = sem seleção
   selectionText: string
   resolveNoteTitle: (noteId: string) => string | undefined
+  // TODOS arquivada: `(archived)` nas linhas das tasks dela.
+  isNoteArchived: (noteId: string) => boolean
   // Conteúdo das notas linkadas (expandidas 1 nível no contexto).
   resolveLinkedNoteContent: (noteId: string) => string | undefined
   // Respostas da IA embutidas na nota (e nas linkadas).
@@ -49,6 +52,7 @@ export function buildNotesContext(input: NotesContextInput): string {
     lines.push(`Current note: "${input.note.title.trim() || 'Untitled'}"`)
     const date = noteDate(input.note)
     if (date) lines.push(`Date: ${date}`)
+    if (input.note.archivedAt) lines.push(`Archived: ${dateKeyFromMs(input.note.archivedAt)}`)
     const content = cleanNoteContentForAi(input.note.content, {
       resolveNoteTitle: input.resolveNoteTitle,
       resolveEmbed: input.resolveEmbed,
@@ -85,7 +89,8 @@ export function buildNotesContext(input: NotesContextInput): string {
           null,
           input.checklist.get(t.id) ?? null,
           input.statuses,
-          t.parentNoteId ? input.resolveNoteTitle(t.parentNoteId) ?? null : null
+          t.parentNoteId ? input.resolveNoteTitle(t.parentNoteId) ?? null : null,
+          !!t.parentNoteId && input.isNoteArchived(t.parentNoteId)
         )
       )
     }

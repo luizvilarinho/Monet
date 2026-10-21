@@ -17,6 +17,7 @@ import { DocumentsModal } from './components/DocumentsModal/DocumentsModal'
 import { KnowledgeBaseModal } from './components/KnowledgeBaseModal/KnowledgeBaseModal'
 import { Editor } from './components/Editor/Editor'
 import { EmptyEditor } from './components/Editor/EmptyEditor'
+import { ArchivedBadge } from './components/Editor/ArchivedBadge'
 import { NotebookList } from './components/NotebookList/NotebookList'
 import { NotesChatPanel } from './components/NotesChat/NotesChatPanel'
 import { NotebookTasksSection } from './components/Sidebar/NotebookTasksSection'
@@ -366,6 +367,7 @@ function App() {
     refresh: refreshNotes,
     setType: setNoteType,
     setProperties: setNoteProperties,
+    setArchived: setNoteArchived,
     saveError: noteSaveError,
   } = useNotes()
 
@@ -484,7 +486,7 @@ function App() {
   // "Note types" aberto (focusTypeId = tipo selecionado ao abrir; reorder =
   // aberto por "Reorder types…" da lista de notas).
   const [noteTypesOpen, setNoteTypesOpen] = useState<{ focusTypeId: string | null; reorder?: boolean } | null>(null)
-  const { confirm, modal: confirmModal } = useConfirm()
+  const { confirm, choose, modal: confirmModal } = useConfirm()
   // Group by da lista de tasks.
   const [tasksGroupBy, setTasksGroupByState] = useState<TaskGroupBy>(() => {
     try {
@@ -585,12 +587,14 @@ function App() {
   // Mapa estável enquanto id/título/caderno das TODOS não mudam (digitar numa
   // nota não recria). Pai fora do mapa (apagado por outra janela) = sem TODOS.
   const todosKey = useMemo(
-    () => JSON.stringify(notes.filter(isTodosNote).map((n) => [n.id, n.title, n.notebookId])),
+    () => JSON.stringify(notes.filter(isTodosNote).map((n) => [n.id, n.title, n.notebookId, !!n.archivedAt])),
     [notes]
   )
   const todosById = useMemo(() => {
-    const entries = JSON.parse(todosKey) as Array<[string, string, string | null]>
-    return new Map<string, TodosInfo>(entries.map(([id, title, notebookId]) => [id, { id, title, notebookId }]))
+    const entries = JSON.parse(todosKey) as Array<[string, string, string | null, boolean]>
+    return new Map<string, TodosInfo>(
+      entries.map(([id, title, notebookId, archived]) => [id, { id, title, notebookId, archived }])
+    )
   }, [todosKey])
   const todosOptions = useMemo(() => [...todosById.values()], [todosById])
   const todosTemplate = noteTypes.types.find((t) => t.id === TODOS_TYPE_ID)?.template ?? TODOS_DEFAULT_TEMPLATE
@@ -1267,9 +1271,11 @@ function App() {
     saveNoteSort(sort)
   }, [])
 
+  // Arquivadas ficam fora da lista (rodapé "Archived · N" da Sidebar).
   const visibleNotes = useMemo(() => {
     const q = search.trim().toLowerCase()
     const filtered = subjectFilteredNotes.filter((n) => {
+      if (n.archivedAt) return false
       if (activeTag && !n.tags.includes(activeTag)) return false
       if (activeTypeFilter && n.typeId !== activeTypeFilter) return false
       if (!q) return true
@@ -1285,6 +1291,15 @@ function App() {
       noteTypes.types.map((t) => t.id)
     )
   }, [subjectFilteredNotes, search, activeTag, activeTypeFilter, noteOrder, noteSort, noteTypes.types])
+
+  // Arquivadas do caderno/subject atual, da mais recente para a mais antiga.
+  const archivedNotes = useMemo(
+    () =>
+      subjectFilteredNotes
+        .filter((n) => !!n.archivedAt)
+        .sort((a, b) => (b.archivedAt ?? 0) - (a.archivedAt ?? 0)),
+    [subjectFilteredNotes]
+  )
 
   const activeNote = useMemo(
     () => notes.find((n) => n.id === activeId) ?? null,
@@ -1306,6 +1321,7 @@ function App() {
     canTypeActive && activeNote?.typeId
       ? noteTypes.types.find((t) => t.id === activeNote.typeId) ?? null
       : null
+  const activeArchived = !!activeNote?.archivedAt
 
   // TODOS aberta: tasks vinculadas sem pill no conteúdo ("Linked outside this
   // checklist").
@@ -1535,6 +1551,10 @@ function App() {
 
   const resolveNoteTitle = useCallback(
     (noteId: string) => notes.find((n) => n.id === noteId)?.title,
+    [notes]
+  )
+  const isNoteArchived = useCallback(
+    (noteId: string) => !!notes.find((n) => n.id === noteId)?.archivedAt,
     [notes]
   )
   const resolveNoteContent = useCallback(
@@ -1910,6 +1930,37 @@ function App() {
     })
   }
 
+  // Arquivar/desarquivar (R2). Arquivar uma TODOS com tasks abertas pergunta
+  // antes (R6); nada é arquivado sozinho.
+  async function handleSetArchived(noteId: string, archived: boolean) {
+    const note = notesRef.current.find((n) => n.id === noteId)
+    if (!note) return
+    if (!archived) {
+      await setNoteArchived(noteId, false)
+      return
+    }
+    if (isTodosNote(note)) {
+      const open = tasks.filter((t) => t.parentNoteId === noteId && isOpen(t))
+      if (open.length > 0) {
+        const choice = await choose(
+          `"${note.title.trim() || 'Untitled'}" has ${open.length} open task${open.length === 1 ? '' : 's'}. Archived TODOS keep their tasks linked.`,
+          {
+            title: 'Archive TODOS',
+            confirmLabel: 'Archive anyway',
+            altLabel: 'Mark open as Dropped and archive',
+            cancelLabel: 'Cancel',
+            destructive: false,
+          }
+        )
+        if (choice === 'cancel') return
+        if (choice === 'alt') {
+          if (!(await updateTasks(open.map((t) => ({ id: t.id, patch: { status: 'dropped' } }))))) return
+        }
+      }
+    }
+    await setNoteArchived(noteId, true)
+  }
+
   async function handleCreateSubject() {
     if (!activeNotebookId) return
     const name = window.prompt('Subject name')
@@ -1934,7 +1985,7 @@ function App() {
     setActiveSubjectId(id)
     if (id === null) return
     const first = applyOrder(
-      notes.filter((n) => n.notebookId === activeNotebookId && n.subjectId === id),
+      notes.filter((n) => n.notebookId === activeNotebookId && n.subjectId === id && !n.archivedAt),
       noteOrder
     )[0]
     setActiveId(first?.id ?? null)
@@ -2014,7 +2065,9 @@ function App() {
       const movedIds = new Set(moved.map((n) => n.id))
       const destNotes = [
         ...moved,
-        ...notes.filter((n) => n.notebookId === destId && !movedIds.has(n.id) && !isTaskBodyNote(n)),
+        ...notes.filter(
+          (n) => n.notebookId === destId && !movedIds.has(n.id) && !isTaskBodyNote(n) && !n.archivedAt
+        ),
       ]
       setActiveId(applyOrder(destNotes, noteOrder)[0]?.id ?? null)
     }
@@ -2727,15 +2780,24 @@ function App() {
         ) : undefined
       }
       onToggleLinkedTask={handleToggleLinkedTask}
-      // Com tipo, o controle do tipo fica na barra de propriedades; aqui só o
-      // "+ type" da nota sem tipo.
-      typeSlot={canTypeActive && !activeNoteType ? (
-        <NoteTypePicker
-          types={noteTypes.types}
-          type={null}
-          onChange={(typeId) => void handleSetNoteType(typeId)}
-          onManage={() => setNoteTypesOpen({ focusTypeId: null })}
-        />
+      // Com tipo, o controle do tipo fica na barra de propriedades; aqui o selo
+      // "Archived" e o "+ type" da nota sem tipo.
+      tagsRowSlot={(activeArchived && !activeTask) || (canTypeActive && !activeNoteType) ? (
+        <>
+          {activeArchived && !activeTask && (
+            <ArchivedBadge onUnarchive={() => void handleSetArchived(activeNote.id, false)} />
+          )}
+          {canTypeActive && !activeNoteType && (
+            <NoteTypePicker
+              types={noteTypes.types}
+              type={null}
+              onChange={(typeId) => void handleSetNoteType(typeId)}
+              onManage={() => setNoteTypesOpen({ focusTypeId: null })}
+              archived={activeArchived}
+              onSetArchived={(archived) => void handleSetArchived(activeNote.id, archived)}
+            />
+          )}
+        </>
       ) : undefined}
       topSlot={activeTask ? (
         <TaskPropertiesBar
@@ -2776,6 +2838,8 @@ function App() {
                 onChange={(typeId) => void handleSetNoteType(typeId)}
                 onManage={() => setNoteTypesOpen({ focusTypeId: null })}
                 onEditType={() => setNoteTypesOpen({ focusTypeId: activeNoteType.id })}
+                archived={activeArchived}
+                onSetArchived={(archived) => void handleSetArchived(activeNote.id, archived)}
               />
             }
             defs={typeDefs(noteTypes.defs, activeNoteType.id)}
@@ -2790,6 +2854,7 @@ function App() {
               statuses={statusRegistry}
               onOpenTask={openTask}
               onInsert={handleInsertTodosTask}
+              onArchive={activeArchived ? undefined : () => void handleSetArchived(activeNote.id, true)}
             />
           )}
         </>
@@ -2867,7 +2932,7 @@ function App() {
             } else {
               setActiveNotebookId(id)
               const notebookNotes = applyOrder(
-                notes.filter((n) => n.notebookId === id && !isTaskBodyNote(n)),
+                notes.filter((n) => n.notebookId === id && !isTaskBodyNote(n) && !n.archivedAt),
                 noteOrder
               )
               setActiveId(notebookNotes[0]?.id ?? null)
@@ -3023,6 +3088,8 @@ function App() {
         ) : (
           <Sidebar
             notes={visibleNotes}
+            archivedNotes={archivedNotes}
+            onSetArchived={(id, archived) => void handleSetArchived(id, archived)}
             activeId={activeId}
             notebookSelected={activeNotebookId !== null}
             onSelect={setActiveId}
@@ -3109,6 +3176,7 @@ function App() {
               todayKey={today}
               taskChecklist={taskChecklist}
               resolveNoteTitle={resolveNoteTitle}
+              isNoteArchived={isNoteArchived}
               resolveNoteContent={resolveNoteContent}
               tasks={tasks}
               notebooks={orderedNotebooks}

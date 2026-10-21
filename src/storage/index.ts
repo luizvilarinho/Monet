@@ -71,13 +71,14 @@ export interface StorageAdapter {
   saveMetadataDef(def: MetadataDef): Promise<void>
   deleteMetadataDef(id: string): Promise<void>
 
-  // Tipos de nota. Tipo e propriedades da nota só pelos setters (o saveNote
-  // não os grava).
+  // Tipos de nota. Tipo, propriedades e arquivamento da nota só pelos setters
+  // (o saveNote não os grava).
   getNoteTypes(): Promise<NoteType[]>
   saveNoteType(type: NoteType): Promise<void>
   deleteNoteType(id: string): Promise<void>
   setNoteType(noteId: string, typeId: string | null): Promise<void>
   setNoteProperties(noteId: string, properties: Record<string, MetadataValue>): Promise<void>
+  setNoteArchived(noteId: string, archivedAt: number | null): Promise<void>
 
   getResponses(noteId: string): Promise<AiResponse[]>
   getResponsesByIds(ids: string[]): Promise<AiResponse[]>

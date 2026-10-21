@@ -7,7 +7,8 @@ import styles from './NoteTypePicker.module.css'
 // Controle do tipo da nota. Com tipo, é o rótulo da barra de propriedades
 // (ícone + nome + ▾ na cor do tipo); sem tipo, o "+ type" discreto da linha de
 // data/tags. O menu lista os tipos (o atual marcado) e, com tipo, "Remove
-// type" e "Edit type"; sempre "Manage types…". Fecha com Esc ou clique fora.
+// type" e "Edit type"; sempre "Manage types…" e, na nota de caderno,
+// "Archive"/"Unarchive". Fecha com Esc ou clique fora.
 interface NoteTypePickerProps {
   types: NoteType[]
   // Tipo atual (id órfão, de tipo apagado em outra janela, chega como null).
@@ -17,9 +18,19 @@ interface NoteTypePickerProps {
   onManage: () => void
   // Modal focado no tipo atual (só com tipo).
   onEditType?: () => void
+  archived?: boolean
+  onSetArchived?: (archived: boolean) => void
 }
 
-export function NoteTypePicker({ types, type, onChange, onManage, onEditType }: NoteTypePickerProps) {
+export function NoteTypePicker({
+  types,
+  type,
+  onChange,
+  onManage,
+  onEditType,
+  archived = false,
+  onSetArchived,
+}: NoteTypePickerProps) {
   const [open, setOpen] = useState(false)
   const wrapRef = useRef<HTMLSpanElement>(null)
 
@@ -101,6 +112,19 @@ export function NoteTypePicker({ types, type, onChange, onManage, onEditType }: 
           <button type="button" role="menuitem" className={styles.item} onClick={() => run(onManage)}>
             <span className={styles.itemName}>Manage types…</span>
           </button>
+          {onSetArchived && (
+            <>
+              <div className={styles.sep} role="separator" />
+              <button
+                type="button"
+                role="menuitem"
+                className={styles.item}
+                onClick={() => run(() => onSetArchived(!archived))}
+              >
+                <span className={styles.itemName}>{archived ? 'Unarchive' : 'Archive'}</span>
+              </button>
+            </>
+          )}
         </div>
       )}
     </span>

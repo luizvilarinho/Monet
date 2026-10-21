@@ -49,9 +49,10 @@ interface NoteRow {
   date: string | null
   created_at: number
   updated_at: number
-  // Colunas de ensureNotesColumns (ausentes até o primeiro setter de tipo).
+  // Colunas de ensureNotesColumns (ausentes até o primeiro setter de nota).
   type_id?: string | null
   properties?: string | null
+  archived_at?: number | null
 }
 
 interface NoteTypeRow {
@@ -184,6 +185,7 @@ function rowToNote(r: NoteRow): Note {
     updatedAt: r.updated_at,
     typeId: r.type_id ?? null,
     properties: parseMetadata(r.properties ?? null),
+    archivedAt: r.archived_at ?? null,
   }
 }
 
@@ -559,10 +561,11 @@ const METADATA_DEFS_EXTRA_COLUMNS = [
   { name: 'show_in_list', ddl: 'show_in_list INTEGER NOT NULL DEFAULT 0' },
 ]
 
-// Colunas de notes dos tipos de nota (ensureNotesColumns).
+// Colunas de notes gravadas por setters (tipo, propriedades, arquivamento).
 const NOTES_EXTRA_COLUMNS = [
   { name: 'type_id', ddl: 'type_id TEXT' },
   { name: 'properties', ddl: 'properties TEXT' },
+  { name: 'archived_at', ddl: 'archived_at INTEGER' },
 ]
 
 // Adiciona as colunas que faltam (PRAGMA table_info). Outra janela (main/keep)
@@ -933,8 +936,8 @@ export class TauriStorage implements StorageAdapter {
     return this.tasksTablesReady
   }
 
-  // `notes.type_id`/`properties`, no padrão do ensureNotebookColorColumn: só
-  // roda nos setters e nas operações de tipo (a leitura via `SELECT *` já traz
+  // `notes.type_id`/`properties`/`archived_at`, no padrão do
+  // ensureNotebookColorColumn: só roda nos setters e nas operações de tipo (a leitura via `SELECT *` já traz
   // as colunas quando existem, sem DDL no cold start).
   private ensureNotesColumns(db: Database): Promise<void> {
     if (!this.notesColumnsReady) {
@@ -1242,8 +1245,8 @@ export class TauriStorage implements StorageAdapter {
     this.scheduleCheckpoint()
   }
 
-  // Setters pontuais, fora do UPSERT do saveNote (que não conhece tipo nem
-  // propriedades). Não mexem em `updated_at`: não reordenam a lista nem
+  // Setters pontuais, fora do UPSERT do saveNote (que não conhece tipo,
+  // propriedades nem arquivamento). Não mexem em `updated_at`: não reordenam a lista nem
   // interferem nas comparações de versão entre janelas.
   async setNoteType(noteId: string, typeId: string | null): Promise<void> {
     const db = await this.db()
@@ -1259,6 +1262,13 @@ export class TauriStorage implements StorageAdapter {
       Object.keys(properties).length > 0 ? JSON.stringify(properties) : null,
       noteId,
     ])
+    this.scheduleCheckpoint()
+  }
+
+  async setNoteArchived(noteId: string, archivedAt: number | null): Promise<void> {
+    const db = await this.db()
+    await this.ensureNotesColumns(db)
+    await db.execute('UPDATE notes SET archived_at = $1 WHERE id = $2', [archivedAt, noteId])
     this.scheduleCheckpoint()
   }
 

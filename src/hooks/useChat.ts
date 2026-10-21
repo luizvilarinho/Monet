@@ -285,6 +285,9 @@ export interface TasksSnapshot {
   statuses: TaskStatusDef[]
   // Título de nota (TODOS das tasks e filtro `todos` da tool).
   resolveNoteTitle: (noteId: string) => string | undefined
+  // TODOS arquivada (`(archived)` nas linhas). O Assistant não passa: as
+  // notas dele vêm do getNoteSummaries, sem `archived_at`.
+  isNoteArchived?: (noteId: string) => boolean
 }
 
 export type ConversationLocation =
@@ -1313,7 +1316,8 @@ async function notesByDateText(
       folder,
       rowids: [],
     })
-    const header = [title, 'note', date, folder].filter(Boolean).join(' · ')
+    const archived = note.archivedAt ? `archived ${dateKeyFromMs(note.archivedAt)}` : undefined
+    const header = [title, 'note', date, archived, folder].filter(Boolean).join(' · ')
     blocks.push(`[${n}] [${header}]\n${body || '(empty note)'}`)
   }
   if (omitted > 0) blocks.push(`(${omitted} more note(s) omitted: content budget reached; ask for a shorter period.)`)
@@ -3237,7 +3241,8 @@ export function useChat(
                       snapshot.todayKey,
                       checklist,
                       snapshot.statuses,
-                      snapshot.resolveNoteTitle
+                      snapshot.resolveNoteTitle,
+                      snapshot.isNoteArchived
                     )
                   } catch (err) {
                     console.warn('query_tasks failed:', err)

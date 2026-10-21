@@ -1,4 +1,5 @@
 import {
+  Archive,
   ArrowsDownUp,
   ArrowsMerge,
   CaretDown,
@@ -32,6 +33,7 @@ import { CALENDAR_NOTEBOOK_ID } from '../../lib/calendar'
 import { isTodosNote, listPropertyValues } from '../../lib/noteTypes'
 import { formatDueShort, type TodosProgress } from '../../lib/tasks'
 import { NOTE_SORT_OPTIONS, type NoteSort } from '../../lib/noteOrder'
+import { ArchivedNotesModal } from './ArchivedNotesModal'
 import { MergeNoteModal } from './MergeNoteModal'
 import { NotebookPickerModal } from '../NotebookPickerModal/NotebookPickerModal'
 import { TypeIcon } from '../NoteTypes/TypeIcon'
@@ -41,6 +43,7 @@ import styles from './Sidebar.module.css'
 const EMPTY_PROGRESS = new Map<string, TodosProgress>()
 const EMPTY_COUNTS = new Map<string, number>()
 const NO_PROPERTIES: Array<{ def: MetadataDef; text: string }> = []
+const EMPTY_NOTES: Note[] = []
 
 interface SortableNoteItemProps {
   note: Note
@@ -55,6 +58,7 @@ interface SortableNoteItemProps {
   dragDisabled: boolean
   onSelect: (id: string) => void
   onDelete: (id: string) => void
+  onArchive?: (id: string) => void
   onMerge?: (id: string) => void
   onMoveNote?: (id: string) => void
   subjects?: Subject[]
@@ -62,7 +66,7 @@ interface SortableNoteItemProps {
   currentSubjectId?: string | null
 }
 
-function SortableNoteItem({ note, type, meta, properties, isActive, dragDisabled, onSelect, onDelete, onMerge, onMoveNote, subjects, onAssignSubject, currentSubjectId }: SortableNoteItemProps) {
+function SortableNoteItem({ note, type, meta, properties, isActive, dragDisabled, onSelect, onDelete, onArchive, onMerge, onMoveNote, subjects, onAssignSubject, currentSubjectId }: SortableNoteItemProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: note.id,
     disabled: dragDisabled,
@@ -168,6 +172,17 @@ function SortableNoteItem({ note, type, meta, properties, isActive, dragDisabled
           <NotebookIcon size={11} aria-hidden />
         </button>
       )}
+      {onArchive && (
+        <button
+          className={styles.rowArchive}
+          onClick={(e) => { e.stopPropagation(); onArchive(note.id) }}
+          aria-label={`archive note ${note.title || 'untitled'}`}
+          type="button"
+          title="archive note"
+        >
+          <Archive size={11} aria-hidden />
+        </button>
+      )}
       <button
         className={styles.rowDelete}
         onClick={(e) => { e.stopPropagation(); onDelete(note.id) }}
@@ -191,6 +206,10 @@ function SortableNoteItem({ note, type, meta, properties, isActive, dragDisabled
 
 export interface SidebarProps {
   notes: Note[]
+  // Arquivadas do caderno atual (já ordenadas): rodapé "Archived · N", que
+  // abre o modal das arquivadas.
+  archivedNotes?: Note[]
+  onSetArchived?: (id: string, archived: boolean) => void
   activeId: string | null
   notebookSelected: boolean
   onSelect: (id: string) => void
@@ -246,6 +265,8 @@ function noteMeta(
 
 export function Sidebar({
   notes,
+  archivedNotes = EMPTY_NOTES,
+  onSetArchived,
   activeId,
   notebookSelected,
   onSelect,
@@ -288,6 +309,7 @@ export function Sidebar({
   const [sortMenuOpen, setSortMenuOpen] = useState(false)
   const sortMenuRef = useRef<HTMLDivElement>(null)
   const sortLabel = NOTE_SORT_OPTIONS.find((o) => o.id === sort)?.label ?? 'Manual'
+  const [archivedOpen, setArchivedOpen] = useState(false)
 
   useEffect(() => {
     if (!newMenuOpen) return
@@ -387,6 +409,19 @@ export function Sidebar({
           />
         )
       })()}
+      {archivedOpen && (
+        <ArchivedNotesModal
+          notes={archivedNotes}
+          typeById={typeById}
+          onOpen={(id) => {
+            setArchivedOpen(false)
+            onSelect(id)
+          }}
+          onUnarchive={(id) => onSetArchived?.(id, false)}
+          onDelete={(id) => void handleDeleteNote(id, archivedNotes.find((n) => n.id === id)?.title ?? '')}
+          onClose={() => setArchivedOpen(false)}
+        />
+      )}
       {!collapsed && <div className={styles.resizeHandle} onMouseDown={onMouseDown} />}
       {collapsed ? (
         <div className={styles.collapsedTop}>
@@ -554,6 +589,7 @@ export function Sidebar({
                       dragDisabled={sort !== 'manual'}
                       onSelect={onSelect}
                       onDelete={(id) => handleDeleteNote(id, n.title)}
+                      onArchive={onSetArchived ? (id) => onSetArchived(id, true) : undefined}
                       onMerge={onMerge ? setMergeSourceId : undefined}
                       onMoveNote={onMoveNote ? setMoveNoteId : undefined}
                       subjects={subjects}
@@ -566,6 +602,12 @@ export function Sidebar({
             )}
           </ul>
           {tasksSection}
+          {archivedNotes.length > 0 && (
+            <button type="button" className={styles.archivedFooter} onClick={() => setArchivedOpen(true)}>
+              <Archive size={12} aria-hidden />
+              Archived · {archivedNotes.length}
+            </button>
+          )}
         </>
       )}
     </aside>

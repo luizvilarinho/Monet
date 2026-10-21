@@ -12,9 +12,11 @@ interface TodosPanelProps {
   statuses: TaskStatusDef[]
   onOpenTask: (id: string) => void
   onInsert: (task: Task) => void
+  // TODOS N/N: sugestão de arquivar (R5), nunca automática.
+  onArchive?: () => void
 }
 
-export function TodosPanel({ progress, outside, statuses, onOpenTask, onInsert }: TodosPanelProps) {
+export function TodosPanel({ progress, outside, statuses, onOpenTask, onInsert, onArchive }: TodosPanelProps) {
   const done = progress?.done ?? 0
   const total = progress?.total ?? 0
   const tone = progress?.overdue ? styles.overdue : total > 0 && done === total ? styles.complete : ''
@@ -26,6 +28,14 @@ export function TodosPanel({ progress, outside, statuses, onOpenTask, onInsert }
           {done}/{total}
         </span>
         {progress?.nextDeadline && <span title="Next deadline">⚑ {formatDueShort(progress.nextDeadline)}</span>}
+        {onArchive && total > 0 && done === total && (
+          <span className={styles.allDone}>
+            All done ·{' '}
+            <button type="button" className={styles.insert} onClick={onArchive}>
+              Archive
+            </button>
+          </span>
+        )}
       </div>
       {outside.length > 0 && (
         <div className={styles.outside}>
