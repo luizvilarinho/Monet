@@ -8,9 +8,14 @@ export const METADATA_TYPE_LABEL: Record<MetadataType, string> = {
   number: 'Number',
   date: 'Date',
   checkbox: 'Checkbox',
+  select: 'Select',
 }
 
+// Tipos do "+ Add property" da task.
 export const METADATA_TYPES: MetadataType[] = ['text', 'number', 'date', 'checkbox']
+
+// Tipos de propriedade de um tipo de nota (com select de seleção única, D3).
+export const NOTE_PROPERTY_TYPES: MetadataType[] = ['text', 'number', 'date', 'checkbox', 'select']
 
 // Valor ao anexar a propriedade a uma task.
 export function defaultMetadataValue(type: MetadataType): MetadataValue {
@@ -34,6 +39,8 @@ export function formatMetadataValue(def: MetadataDef, v: MetadataValue): string 
   if (def.type === 'checkbox') return v === true ? '✓' : '–'
   if (def.type === 'number' && typeof v === 'number') return v.toLocaleString('en-US')
   if (def.type === 'date' && typeof v === 'string') return formatDueShort(v)
+  // Select: nome da opção; opção apagada vira vazio.
+  if (def.type === 'select') return def.options?.find((o) => o.id === v)?.name ?? ''
   return String(v ?? '')
 }
 

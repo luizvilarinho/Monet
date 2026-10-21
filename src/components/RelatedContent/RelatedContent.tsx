@@ -20,7 +20,9 @@ function snippet(content: string, max = 140): string {
 }
 
 export function RelatedContent({ activeNote, notes, notebooks, onSelect }: Props) {
-  const [open, setOpen] = useState(true)
+  // Começa fechado: a lista ocupa muito espaço. O App remonta por nota
+  // (key = id), então cada nota aberta volta fechada.
+  const [open, setOpen] = useState(false)
   const related = useMemo(
     () => scoreRelatedNotes(activeNote, notes),
     [activeNote, notes]

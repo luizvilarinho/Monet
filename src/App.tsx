@@ -33,8 +33,13 @@ import type { NewTaskDraft } from './components/TasksView/TasksHeader'
 import { TasksEnvProvider, type TasksEnv } from './components/TasksView/TasksEnv'
 import { StatusManagerModal } from './components/TasksView/StatusManagerModal'
 import { MetadataManagerModal } from './components/TasksView/MetadataManagerModal'
+import { NoteTypesModal } from './components/NoteTypes/NoteTypesModal'
+import { NoteTypePicker } from './components/NoteTypes/NoteTypePicker'
+import { NotePropertiesBar } from './components/NoteTypes/NotePropertiesBar'
+import { TodosPanel } from './components/NoteTypes/TodosPanel'
+import { TodosMigrationModal } from './components/NoteTypes/TodosMigrationModal'
 import { ProjectsBoard } from './components/TasksView/ProjectsBoard'
-import { GroupsBoard } from './components/TasksView/GroupsBoard'
+import { TodosBoard } from './components/TasksView/TodosBoard'
 import { TodayBoard } from './components/TasksView/TodayBoard'
 import {
   EPHEMERAL_VIEW,
@@ -68,6 +73,23 @@ import { useSubjects } from './hooks/useSubjects'
 import { useTasks } from './hooks/useTasks'
 import { useTaskStatuses } from './hooks/useTaskStatuses'
 import { useMetadataDefs } from './hooks/useMetadataDefs'
+import { useNoteTypes } from './hooks/useNoteTypes'
+import { useConfirm } from './hooks/useConfirm'
+import {
+  canHaveType,
+  isTodosNote,
+  migrateProperties,
+  TODOS_DEFAULT_TEMPLATE,
+  TODOS_TYPE_ID,
+  typeDefs,
+} from './lib/noteTypes'
+import {
+  buildTodosContent,
+  missingPillLines,
+  planTodosMigration,
+  type MigrationRow,
+} from './lib/todosMigration'
+import { readerLinkedNoteIds } from './lib/readerNoteLink'
 import { SIDEBAR_WIDTH_KEY, SIDEBAR_WIDE_WIDTH_KEY, WIDE_MAX_WIDTH } from './hooks/useSidebarResize'
 import { useTaskViews } from './hooks/useTaskViews'
 import { useToday } from './hooks/useToday'
@@ -90,22 +112,26 @@ import {
   checklistProgress,
   compareTasks,
   extractTaskRefTitles,
-  groupsOfNotebook,
   INBOX_NOTEBOOK_ID,
+  isDone,
   isOpen,
   isTaskBodyNote,
   isTasksSubject,
+  normalizeName,
   splitPipeTitle,
   summaryMatches,
-  stripGroupPrefix,
+  stripPipePrefix,
   TASK_SUMMARY_KEYS,
   TASKS_SUBJECT_NAME,
   taskProgressByNotebook,
+  taskRefIds,
   tasksSubjectId,
+  todosProgressByNote,
   type ProjectChoice,
   type TaskGroupBy,
   type TaskPatch,
   type TaskSummaryKey,
+  type TodosInfo,
 } from './lib/tasks'
 import {
   CALENDAR_NOTEBOOK_ID,
@@ -125,7 +151,18 @@ import {
   resolveSearchableIds,
   type ChunkResult,
 } from './lib/documents'
-import { applyOrder, loadNoteOrder, loadOrder, mergeOrder, saveNoteOrder, saveOrder } from './lib/noteOrder'
+import {
+  applyOrder,
+  loadNoteOrder,
+  loadNoteSort,
+  loadOrder,
+  mergeOrder,
+  saveNoteOrder,
+  saveNoteSort,
+  saveOrder,
+  sortNotes,
+  type NoteSort,
+} from './lib/noteOrder'
 import {
   hasOpenRouterKey,
   listOpenRouterModels,
@@ -141,6 +178,7 @@ import type {
   AiResponse,
   AiSource,
   CommandExecutionRequest,
+  MetadataValue,
   Note,
   Notebook,
   Task,
@@ -326,6 +364,8 @@ function App() {
     create: createNote,
     remove: removeNote,
     refresh: refreshNotes,
+    setType: setNoteType,
+    setProperties: setNoteProperties,
     saveError: noteSaveError,
   } = useNotes()
 
@@ -436,16 +476,22 @@ function App() {
       /* ignorar */
     }
   }, [])
-  // Busca de texto (título/group) aplicada a todas as visões de Tasks.
+  // Busca de texto (título/TODOS) aplicada a todas as visões de Tasks.
   const [tasksSearch, setTasksSearch] = useState('')
   const [statusManagerOpen, setStatusManagerOpen] = useState(false)
   // "Manage properties" aberto (focusId = definição focada ao abrir, pelo lápis da task).
   const [metadataManager, setMetadataManager] = useState<{ focusId: string | null } | null>(null)
+  // "Note types" aberto (focusTypeId = tipo selecionado ao abrir; reorder =
+  // aberto por "Reorder types…" da lista de notas).
+  const [noteTypesOpen, setNoteTypesOpen] = useState<{ focusTypeId: string | null; reorder?: boolean } | null>(null)
+  const { confirm, modal: confirmModal } = useConfirm()
   // Group by da lista de tasks.
   const [tasksGroupBy, setTasksGroupByState] = useState<TaskGroupBy>(() => {
     try {
       const saved = localStorage.getItem('monet:tasks-group-by')
-      return saved === 'project' || saved === 'status' || saved === 'group' ? saved : 'date'
+      // 'group' (antes dos TODOS) é lido como 'todos', sem regravar.
+      if (saved === 'group' || saved === 'todos') return 'todos'
+      return saved === 'project' || saved === 'status' ? saved : 'date'
     } catch {
       return 'date'
     }
@@ -486,6 +532,7 @@ function App() {
     deleteTasks,
     reassignStatus,
     stripMetadata,
+    reload: reloadTasks,
     saveError: tasksSaveError,
   } = useTasks()
   // Registro de status e visões salvas (SQLite, compartilhados entre janelas).
@@ -500,6 +547,12 @@ function App() {
   } = useTaskStatuses({ onRemoved: (id) => reassignStatus(id, 'todo') })
   // Definições de metadados personalizados (globais, compartilhadas entre janelas).
   const metadata = useMetadataDefs({ onRemoved: (id) => stripMetadata(id) })
+  // Tipos de nota e propriedades (scope 'note'). Excluir tipo/propriedade
+  // limpa as notas no banco; a memória relê (só com o modal aberto, sem
+  // digitação em voo no editor).
+  const noteTypes = useNoteTypes({
+    onRemoved: () => void refreshNotes().catch((err) => console.error('failed to reload notes', err)),
+  })
   const {
     views: savedViews,
     create: createSavedView,
@@ -515,6 +568,8 @@ function App() {
     tasksLoaded,
     tasksLoadFailed,
     statuses: statusRegistry,
+    noteTypes: noteTypes.types,
+    noteDefs: noteTypes.defs,
     loadFailed: notesLoadFailed || notebooksLoadFailed,
     hasApiKey,
     activeNoteId: activeId,
@@ -525,6 +580,64 @@ function App() {
   notesRef.current = notes
   const notebooksRef = useRef(notebooks)
   notebooksRef.current = notebooks
+
+  // ─── TODOS: nota entregável que agrupa tasks (`parentNoteId`) ────────────
+  // Mapa estável enquanto id/título/caderno das TODOS não mudam (digitar numa
+  // nota não recria). Pai fora do mapa (apagado por outra janela) = sem TODOS.
+  const todosKey = useMemo(
+    () => JSON.stringify(notes.filter(isTodosNote).map((n) => [n.id, n.title, n.notebookId])),
+    [notes]
+  )
+  const todosById = useMemo(() => {
+    const entries = JSON.parse(todosKey) as Array<[string, string, string | null]>
+    return new Map<string, TodosInfo>(entries.map(([id, title, notebookId]) => [id, { id, title, notebookId }]))
+  }, [todosKey])
+  const todosOptions = useMemo(() => [...todosById.values()], [todosById])
+  const todosTemplate = noteTypes.types.find((t) => t.id === TODOS_TYPE_ID)?.template ?? TODOS_DEFAULT_TEMPLATE
+
+  // Nota TODOS nova no caderno, com o template do tipo; devolve o id.
+  const createTodosNote = useCallback(
+    async (notebookId: string, title: string): Promise<string> => {
+      const now = Date.now()
+      const note: Note = {
+        id: nanoid(),
+        notebookId,
+        subjectId: null,
+        title: title.trim(),
+        content: todosTemplate,
+        tags: [],
+        createdAt: now,
+        updatedAt: now,
+      }
+      if (!(await saveNote(note))) throw new Error('Failed to save note.')
+      if (!(await setNoteType(note.id, TODOS_TYPE_ID))) throw new Error('Failed to set note type.')
+      setNoteOrder((prev) => {
+        const next = [note.id, ...prev]
+        saveNoteOrder(next)
+        return next
+      })
+      return note.id
+    },
+    [saveNote, setNoteType, todosTemplate]
+  )
+
+  // Tasks das TODOS em `noteIds` ficam sem TODOS (a task não é apagada).
+  const detachTodosChildren = useCallback(
+    (noteIds: Set<string>) => {
+      const changes = tasks
+        .filter((t) => t.parentNoteId !== null && noteIds.has(t.parentNoteId))
+        .map((t) => ({ id: t.id, patch: { parentNoteId: null } }))
+      return changes.length > 0 ? updateTasks(changes) : Promise.resolve(true)
+    },
+    [tasks, updateTasks]
+  )
+
+  // Tasks vinculadas por TODOS (inclui descartadas: aviso de exclusão/troca de tipo).
+  const todosTaskCount = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const t of tasks) if (t.parentNoteId) map.set(t.parentNoteId, (map.get(t.parentNoteId) ?? 0) + 1)
+    return map
+  }, [tasks])
 
   // Inbox: caderno singleton de id fixo (como o Calendar) que recebe as tasks
   // sem projeto. Criado no boot e, por garantia, antes de receber uma task.
@@ -613,6 +726,7 @@ function App() {
         scheduledDate?: string | null
         important?: boolean
         sourceNoteId?: string | null
+        parentNoteId?: string | null
       }>,
       project: ProjectChoice
     ): Promise<Task[]> => {
@@ -649,14 +763,34 @@ function App() {
     [tasksById, updateTask, saveNote]
   )
 
-  // "group | título" → group + título, em lote (ação confirmada pelo
-  // usuário). O título da nota-corpo acompanha.
+  // "sistema | título" → vínculo com a TODOS "sistema" do mesmo caderno (criada
+  // se não houver; uma por nome no lote) + título, em lote (ação confirmada
+  // pelo usuário). O título da nota-corpo acompanha.
   const convertPipeTitles = useCallback(
     async (list: Task[]) => {
-      const changes = list.flatMap((t) => {
-        const split = splitPipeTitle(t.title)
-        return split ? [{ id: t.id, patch: { group: split.group, title: split.title } }] : []
-      })
+      const created = new Map<string, string>()
+      const changes: Array<{ id: string; patch: { title: string; parentNoteId: string } }> = []
+      try {
+        for (const t of list) {
+          const split = splitPipeTitle(t.title)
+          if (!split) continue
+          const wanted = normalizeName(split.prefix)
+          const key = `${t.notebookId}\u0000${wanted}`
+          let parentNoteId =
+            created.get(key) ??
+            notesRef.current.find(
+              (n) => isTodosNote(n) && n.notebookId === t.notebookId && normalizeName(n.title.trim()) === wanted
+            )?.id
+          if (!parentNoteId) {
+            parentNoteId = await createTodosNote(t.notebookId, split.prefix)
+            created.set(key, parentNoteId)
+          }
+          changes.push({ id: t.id, patch: { title: split.title, parentNoteId } })
+        }
+      } catch (err) {
+        console.error('failed to create TODOS', err)
+        setTaskCreateError('Failed to create TODOS note.')
+      }
       await updateTasks(changes)
       for (const { id, patch } of changes) {
         const task = list.find((t) => t.id === id)
@@ -666,7 +800,7 @@ function App() {
         }
       }
     },
-    [updateTasks, saveNote]
+    [updateTasks, saveNote, createTodosNote]
   )
 
   // Leva a task e a nota-corpo (para o subject "Tasks") para outro caderno.
@@ -766,8 +900,20 @@ function App() {
   )
 
   // "New task…" das Tasks (lista e Week board), com os campos do quick add.
+  // TODOS nova (`>Nome` confirmado) nasce no projeto da task.
   const createNewTask = useCallback(
     async (draft: NewTaskDraft): Promise<Task | undefined> => {
+      let notebookId: string
+      let parentNoteId: string | null = null
+      try {
+        notebookId = await resolveProject(draft.project)
+        if (draft.todos && 'noteId' in draft.todos) parentNoteId = draft.todos.noteId
+        else if (draft.todos) parentNoteId = await createTodosNote(notebookId, draft.todos.newTitle)
+      } catch (err) {
+        console.error('failed to create task', err)
+        setTaskCreateError('Failed to create task.')
+        return undefined
+      }
       const [task] = await createProjectTasks(
         [
           {
@@ -776,13 +922,14 @@ function App() {
             scheduledDate: draft.scheduledDate,
             dueDate: draft.dueDate,
             important: draft.important,
+            parentNoteId,
           },
         ],
-        draft.project
+        { notebookId }
       )
       return task
     },
-    [createProjectTasks]
+    [resolveProject, createTodosNote, createProjectTasks]
   )
 
   // Week/Kanban board ocupa a área da lista e do editor (fora do modo foco).
@@ -794,6 +941,8 @@ function App() {
   }, [tasksBoardOpen])
 
   const taskProgress = useMemo(() => taskProgressByNotebook(tasks, today), [tasks, today])
+  // Progresso de cada nota TODOS (lista de notas e faixa da nota).
+  const todosProgress = useMemo(() => todosProgressByNote(tasks, today), [tasks, today])
 
   // Progresso do checklist da nota-corpo de cada task (`2/5` nos cards).
   const taskChecklist = useMemo(() => {
@@ -839,8 +988,9 @@ function App() {
           if (!task || task.sourceNoteId !== note.id) continue
           const previous = seen.get(id)
           seen.set(id, title)
-          // Task com group: o prefixo "group | " do item não volta ao título.
-          const synced = stripGroupPrefix(title, task.group)
+          // Task com TODOS: o prefixo "<TODOS> | " do item não volta ao título.
+          const prefix = task.parentNoteId ? todosById.get(task.parentNoteId)?.title ?? null : null
+          const synced = stripPipePrefix(title, prefix)
           if (previous !== undefined && previous !== title && task.title !== synced) {
             void updateProjectTask(id, { title: synced })
           }
@@ -848,7 +998,7 @@ function App() {
       }
     }, 1000)
     return () => clearTimeout(timer)
-  }, [notes, tasksById, updateProjectTask])
+  }, [notes, tasksById, todosById, updateProjectTask])
 
   useEffect(() => {
     if (!notebooksLoaded) return
@@ -1078,14 +1228,50 @@ function App() {
       notebooks: orderedNotebooks,
       onToggleTask: handleToggleLinkedTask,
       checklist: taskChecklist,
+      statuses: statusRegistry,
+      onSetStatus: (id: string, status: string) => {
+        void updateTask(id, { status })
+      },
+      metadataDefs: metadata.defs,
+      todosTitle: (noteId: string) => todosById.get(noteId)?.title,
+      currentNoteId: activeId,
     }),
-    [tasksById, today, openTask, orderedNotebooks, handleToggleLinkedTask, taskChecklist]
+    [
+      tasksById,
+      today,
+      openTask,
+      orderedNotebooks,
+      handleToggleLinkedTask,
+      taskChecklist,
+      statusRegistry,
+      updateTask,
+      metadata.defs,
+      todosById,
+      activeId,
+    ]
   )
+
+  // Filtro por tipo da lista de notas (N4): opções = tipos presentes nas notas
+  // listadas; tipo que some da lista volta a "All".
+  const [noteTypeFilter, setNoteTypeFilter] = useState<string | null>(null)
+  const typeFilterOptions = useMemo(() => {
+    const present = new Set(subjectFilteredNotes.map((n) => n.typeId).filter(Boolean))
+    return noteTypes.types.filter((t) => present.has(t.id))
+  }, [subjectFilteredNotes, noteTypes.types])
+  const activeTypeFilter = typeFilterOptions.some((t) => t.id === noteTypeFilter) ? noteTypeFilter : null
+
+  // Ordem da lista de notas (global): fora de 'manual', a lista não arrasta.
+  const [noteSort, setNoteSortState] = useState<NoteSort>(loadNoteSort)
+  const setNoteSort = useCallback((sort: NoteSort) => {
+    setNoteSortState(sort)
+    saveNoteSort(sort)
+  }, [])
 
   const visibleNotes = useMemo(() => {
     const q = search.trim().toLowerCase()
     const filtered = subjectFilteredNotes.filter((n) => {
       if (activeTag && !n.tags.includes(activeTag)) return false
+      if (activeTypeFilter && n.typeId !== activeTypeFilter) return false
       if (!q) return true
       return (
         n.title.toLowerCase().includes(q) ||
@@ -1093,8 +1279,12 @@ function App() {
         n.tags.some((t) => t.toLowerCase().includes(q))
       )
     })
-    return applyOrder(filtered, noteOrder)
-  }, [subjectFilteredNotes, search, activeTag, noteOrder])
+    return sortNotes(
+      applyOrder(filtered, noteOrder),
+      noteSort,
+      noteTypes.types.map((t) => t.id)
+    )
+  }, [subjectFilteredNotes, search, activeTag, activeTypeFilter, noteOrder, noteSort, noteTypes.types])
 
   const activeNote = useMemo(
     () => notes.find((n) => n.id === activeId) ?? null,
@@ -1108,6 +1298,48 @@ function App() {
     () => (activeId ? tasks.find((t) => t.noteId === activeId) ?? null : null),
     [tasks, activeId]
   )
+
+  // Tipo da nota aberta: só nota de caderno (D4); id órfão = sem tipo.
+  const readerNoteIds = useMemo(() => readerLinkedNoteIds(), [activeId])
+  const canTypeActive = !!activeNote && !activeTask && canHaveType(activeNote, readerNoteIds)
+  const activeNoteType =
+    canTypeActive && activeNote?.typeId
+      ? noteTypes.types.find((t) => t.id === activeNote.typeId) ?? null
+      : null
+
+  // TODOS aberta: tasks vinculadas sem pill no conteúdo ("Linked outside this
+  // checklist").
+  const todosOutside = useMemo(() => {
+    if (!activeNote || !isTodosNote(activeNote)) return []
+    const present = taskRefIds(activeNote.content)
+    return tasks.filter((t) => t.parentNoteId === activeNote.id && !present.has(t.id))
+  }, [tasks, activeNote])
+
+  // "Insert into checklist": item no fim da nota (no último checklist, se o
+  // documento termina num), marcado se a task está concluída. Só por clique.
+  const handleInsertTodosTask = useCallback((task: Task) => {
+    const editor = notesEditorRef.current
+    if (!editor || editor.isDestroyed || !editor.isEditable) return
+    const item = {
+      type: 'taskItem',
+      attrs: { checked: isDone(task) },
+      content: [
+        {
+          type: 'paragraph',
+          content: [
+            { type: 'text', text: `${task.title.trim() || 'Untitled'} ` },
+            { type: 'taskRef', attrs: { id: task.id } },
+          ],
+        },
+      ],
+    }
+    const { doc } = editor.state
+    if (doc.lastChild?.type.name === 'taskList') {
+      editor.chain().insertContentAt(doc.content.size - 1, item).run()
+    } else {
+      editor.chain().insertContentAt(doc.content.size, { type: 'taskList', content: [item] }).run()
+    }
+  }, [])
 
   // Apaga as tasks e as notas-corpo. Se a task aberta no editor está entre
   // elas, a nota fecha antes.
@@ -1561,15 +1793,74 @@ function App() {
     })
   }
 
-  async function handleCreateNote() {
+  // `typeId`: "New <tipo>" (nota com o template do tipo como conteúdo).
+  async function handleCreateNote(typeId: string | null = null) {
     if (!activeNotebookId) return
     const note = await createNote(activeNotebookId, activeSubjectId)
+    if (typeId) {
+      const template = noteTypes.types.find((t) => t.id === typeId)?.template
+      if (template) await saveNote({ ...note, content: template, updatedAt: Date.now() })
+      await setNoteType(note.id, typeId)
+    }
     setActiveId(note.id)
     setNoteOrder((prev) => {
       const next = [note.id, ...prev]
       saveNoteOrder(next)
       return next
     })
+  }
+
+  // Troca o tipo da nota aberta (§4.5): valores migram por nome + tipo de
+  // dado; os sem correspondente ficam guardados, com confirmação. O template do
+  // tipo novo só entra em nota vazia.
+  async function handleSetNoteType(typeId: string | null) {
+    const note = activeNote
+    if (!note) return
+    const props = note.properties ?? {}
+    const { next, hidden } = migrateProperties(
+      props,
+      typeDefs(noteTypes.defs, activeNoteType?.id),
+      typeDefs(noteTypes.defs, typeId)
+    )
+    if (hidden.length > 0) {
+      const ok = await confirm(
+        `Switch type? These properties will be hidden (values are kept): ${hidden.map((d) => d.name).join(', ')}.`,
+        { title: 'Change note type', confirmLabel: 'Switch' }
+      )
+      if (!ok) return
+    }
+    // Deixar de ser TODOS desvincula as tasks dela (não as apaga).
+    const linked = isTodosNote(note) && typeId !== TODOS_TYPE_ID ? todosTaskCount.get(note.id) ?? 0 : 0
+    if (linked > 0) {
+      const ok = await confirm(
+        `${linked} task${linked === 1 ? '' : 's'} stop belonging to this TODOS (they are not deleted).`,
+        { title: 'Change note type', confirmLabel: 'Switch' }
+      )
+      if (!ok) return
+    }
+    if (!(await setNoteType(note.id, typeId))) return
+    if (linked > 0) await detachTodosChildren(new Set([note.id]))
+    if (next !== props) await setNoteProperties(note.id, next)
+    const template = typeId ? noteTypes.types.find((t) => t.id === typeId)?.template : null
+    const fresh = notesRef.current.find((n) => n.id === note.id)
+    if (template && fresh && fresh.content.trim() === '') {
+      void saveNote({ ...fresh, content: template, updatedAt: Date.now() })
+    }
+  }
+
+  // Valor vazio sai do JSON (checkbox `false` conta como valor).
+  function handleNotePropertyChange(defId: string, value: MetadataValue) {
+    if (!activeNote) return
+    const { [defId]: _old, ...rest } = activeNote.properties ?? {}
+    void setNoteProperties(activeNote.id, value === null || value === '' ? rest : { ...rest, [defId]: value })
+  }
+
+  // "Insert template": acrescenta ao fim, nunca sobrescreve.
+  function handleInsertTemplate() {
+    const template = activeNoteType?.template
+    if (!activeNote || !template) return
+    const body = activeNote.content.trimEnd()
+    updateActive({ content: body ? `${body}\n\n${template}` : template })
   }
 
   async function handleDeleteNotebook(id: string) {
@@ -1592,6 +1883,8 @@ function App() {
       )
     }
     const childNotes = notes.filter((n) => n.notebookId === id && !movedNoteIds.has(n.id))
+    // Tasks (já no Inbox) das TODOS apagadas ficam sem TODOS.
+    await detachTodosChildren(new Set(childNotes.filter(isTodosNote).map((n) => n.id)))
     childNotes.forEach((n) => removeNote(n.id))
     if (activeNotebookId === id) {
       setActiveNotebookId(null)
@@ -1606,6 +1899,8 @@ function App() {
   }
 
   async function handleDeleteNote(id: string) {
+    // As tasks da TODOS ficam sem TODOS (não são apagadas).
+    await detachTodosChildren(new Set([id]))
     await removeNote(id)
     if (activeId === id) setActiveId(null)
     setNoteOrder((prev) => {
@@ -1648,6 +1943,7 @@ function App() {
   async function handleDeleteSubject(id: string) {
     const childNotes = notes.filter((n) => n.subjectId === id)
     await removeSubject(id)
+    await detachTodosChildren(new Set(childNotes.filter(isTodosNote).map((n) => n.id)))
     await Promise.all(childNotes.map((n) => removeNote(n.id)))
     if (activeSubjectId === id) setActiveSubjectId(null)
     if (childNotes.some((n) => n.id === activeId)) setActiveId(null)
@@ -1804,10 +2100,20 @@ function App() {
         ? target.content + '\n\n---\n\n' + source.content
         : source.content
       await saveNote({ ...target, content: mergedContent, updatedAt: Date.now() })
+      // Tasks da TODOS de origem: passam para o destino se ele também é TODOS;
+      // senão ficam sem TODOS.
+      if (isTodosNote(target)) {
+        const changes = tasks
+          .filter((t) => t.parentNoteId === sourceId)
+          .map((t) => ({ id: t.id, patch: { parentNoteId: targetId } }))
+        if (changes.length > 0) await updateTasks(changes)
+      } else {
+        await detachTodosChildren(new Set([sourceId]))
+      }
       await removeNote(sourceId)
       if (activeId === sourceId) setActiveId(targetId)
     },
-    [notes, saveNote, removeNote, activeId]
+    [notes, saveNote, removeNote, activeId, tasks, updateTasks, detachTodosChildren]
   )
 
   const handleAssignNoteToSubject = useCallback(
@@ -2141,6 +2447,133 @@ function App() {
     })
   }, [])
 
+  // ─── Migração group → TODOS (D7) ─────────────────────────────────────────
+  // Só nesta janela (main), uma vez por sessão e com tudo carregado: lê o
+  // `task_group` dormente e abre o dry-run se houver o que migrar, fora das
+  // linhas já resolvidas (registro no banco, que acompanha o DB). Nada é
+  // gravado sem "Migrate"; o registro só é gravado depois de sucesso. "Later"
+  // fecha nesta sessão.
+  const [todosMigration, setTodosMigration] = useState<{
+    rows: MigrationRow[]
+    status: 'idle' | 'running' | 'done' | 'error'
+    message: string | null
+  } | null>(null)
+  const todosMigrationCheckedRef = useRef(false)
+  // Nova tentativa da checagem depois de uma falha na leitura (1, 2, 4 e 8 s).
+  const [todosMigrationRetry, setTodosMigrationRetry] = useState(0)
+  const todosTypeLoaded = noteTypes.types.some((t) => t.id === TODOS_TYPE_ID)
+  useEffect(() => {
+    if (todosMigrationCheckedRef.current) return
+    if (!notesLoaded || !tasksLoaded || !notebooksLoaded || !todosTypeLoaded) return
+    if (notesLoadFailed || tasksLoadFailed || notebooksLoadFailed) return
+    todosMigrationCheckedRef.current = true
+    void (async () => {
+      try {
+        const legacy = await storage.getLegacyTaskGroups()
+        if (legacy.length === 0) return
+        const done = new Set(await storage.getTodosMigrationDone())
+        const rows = planTodosMigration(legacy, tasks, notesRef.current, notebooksRef.current).filter(
+          (r) => !done.has(r.noteId)
+        )
+        if (rows.length > 0) setTodosMigration({ rows, status: 'idle', message: null })
+      } catch (err) {
+        // Lock transitório do cold start: reavalia na próxima mudança ou na
+        // nova tentativa agendada.
+        todosMigrationCheckedRef.current = false
+        console.error('failed to read task groups', err)
+        if (todosMigrationRetry < 4) {
+          setTimeout(() => setTodosMigrationRetry((n) => n + 1), 1000 * 2 ** todosMigrationRetry)
+        }
+      }
+    })()
+  }, [notesLoaded, tasksLoaded, notebooksLoaded, todosTypeLoaded, notesLoadFailed, tasksLoadFailed, notebooksLoadFailed, tasks, todosMigrationRetry])
+
+  // Execução, sem BEGIN/COMMIT e idempotente, por linha marcada: nota (nova,
+  // com id determinístico, ou existente recebendo só as pills que faltam) →
+  // tipo TODOS → um único updateTasks sobre o estado relido do banco, só nas
+  // tasks ainda sem TODOS (um saveTask de estado defasado não desfaz o vínculo).
+  // No fim, marcadas e desmarcadas ficam registradas no banco e não voltam.
+  async function runTodosMigration(rows: MigrationRow[], skipped: MigrationRow[]) {
+    setTodosMigration((m) => m && { ...m, status: 'running', message: null })
+    let created = 0
+    let linked = 0
+    try {
+      const fresh = await reloadTasks()
+      if (!fresh) throw new Error('failed to load tasks')
+      const byId = new Map(fresh.map((t) => [t.id, t]))
+      for (const row of rows) {
+        const rowTasks = row.taskIds
+          .map((id) => byId.get(id))
+          .filter((t): t is Task => !!t && t.parentNoteId === null)
+        const stored = await storage.getNote(row.noteId)
+        if (!stored) {
+          if (rowTasks.length === 0) continue
+          const now = Date.now()
+          const note: Note = {
+            id: row.noteId,
+            notebookId: row.notebookId,
+            subjectId: null,
+            title: row.title,
+            content: buildTodosContent(todosTemplate, rowTasks),
+            tags: [],
+            date: null,
+            createdAt: now,
+            updatedAt: now,
+          }
+          if (!(await saveNote(note))) throw new Error('failed to save note')
+          setNoteOrder((prev) => {
+            if (prev.includes(note.id)) return prev
+            const next = [note.id, ...prev]
+            saveNoteOrder(next)
+            return next
+          })
+          created++
+        } else {
+          const local = notesRef.current.find((n) => n.id === row.noteId)
+          const current = local && local.updatedAt >= stored.updatedAt ? local : stored
+          const missing = missingPillLines(current.content, rowTasks)
+          if (missing.length > 0) {
+            const body = current.content.trimEnd()
+            const content = `${body ? `${body}\n\n` : ''}## Tasks (migrated)\n\n${missing.join('\n')}`
+            if (!(await saveNote({ ...current, content, updatedAt: Date.now() }))) throw new Error('failed to save note')
+          }
+        }
+        if (!(await setNoteType(row.noteId, TODOS_TYPE_ID))) throw new Error('failed to set note type')
+        if (rowTasks.length === 0) continue
+        const ok = await updateTasks(
+          rowTasks.map((t) => ({
+            id: t.id,
+            patch:
+              t.sourceNoteId === null
+                ? { parentNoteId: row.noteId, sourceNoteId: row.noteId }
+                : { parentNoteId: row.noteId },
+          }))
+        )
+        if (!ok) throw new Error('failed to save tasks')
+        linked += rowTasks.length
+      }
+      await storage.markTodosMigrationDone([...rows, ...skipped].map((r) => r.noteId))
+      setTodosMigration(
+        (m) =>
+          m && {
+            ...m,
+            status: 'done',
+            message: `${created} TODOS created, ${linked} task${linked === 1 ? '' : 's'} linked.`,
+          }
+      )
+    } catch (err) {
+      console.error('TODOS migration failed', err)
+      setTodosMigration(
+        (m) =>
+          m && {
+            ...m,
+            status: 'error',
+            message: `Migration stopped (${err instanceof Error ? err.message : String(err)}). Nothing was lost: run it again to finish, it does not duplicate.`,
+          }
+      )
+    }
+  }
+
   const currentViewConfig = useMemo<TaskViewConfig>(
     () => ({
       base: tasksMainView,
@@ -2185,7 +2618,7 @@ function App() {
         TASK_SUMMARY_KEYS.includes(summary as TaskSummaryKey) ? (summary as TaskSummaryKey) : null
       )
       setTasksSearch(text)
-      if (groupBy === 'date' || groupBy === 'project' || groupBy === 'status' || groupBy === 'group') setTasksGroupBy(groupBy)
+      if (groupBy === 'date' || groupBy === 'project' || groupBy === 'status' || groupBy === 'todos') setTasksGroupBy(groupBy)
     },
     onSaveView: (name) => void createSavedView(name, currentViewConfig),
     onRenameView: (id, name) => void renameSavedView(id, name),
@@ -2197,9 +2630,12 @@ function App() {
     onSearchChange: setTasksSearch,
     onMoveTaskToProject: (taskId, notebookId) => void moveProjectTask(taskId, { notebookId }),
     onSetProjectColor: (notebookId, color) => void setNotebookColor(notebookId, color),
+    todosById,
+    onOpenNote: handleNoteLinkNavigation,
+    onCreateTodos: createTodosNote,
   }
 
-  // Props comuns das visões em colunas (Kanban, Projects, Groups, Today).
+  // Props comuns das visões em colunas (Kanban, Projects, TODOS, Today).
   const boardProps = {
     tasks,
     notebooks: orderedNotebooks,
@@ -2261,7 +2697,7 @@ function App() {
       onNavigateToNote={handleNoteLinkNavigation}
       relatedContent={
         activeNote.notebookId !== calendarNotebookId
-          ? <RelatedContent activeNote={activeNote} notes={notes} notebooks={notebooks} onSelect={setActiveId} />
+          ? <RelatedContent key={activeNote.id} activeNote={activeNote} notes={notes} notebooks={notebooks} onSelect={setActiveId} />
           : undefined
       }
       isCalendarNote={activeNote.notebookId === calendarNotebookId}
@@ -2284,17 +2720,31 @@ function App() {
             status: i.checked ? 'done' : 'todo',
             dueDate: opts.dueDate,
             sourceNoteId: activeNote.id,
+            // Numa TODOS, a task nasce vinculada a ela (§5.2).
+            parentNoteId: isTodosNote(activeNote) ? activeNote.id : null,
           })),
           opts.project
         ) : undefined
       }
       onToggleLinkedTask={handleToggleLinkedTask}
+      // Com tipo, o controle do tipo fica na barra de propriedades; aqui só o
+      // "+ type" da nota sem tipo.
+      typeSlot={canTypeActive && !activeNoteType ? (
+        <NoteTypePicker
+          types={noteTypes.types}
+          type={null}
+          onChange={(typeId) => void handleSetNoteType(typeId)}
+          onManage={() => setNoteTypesOpen({ focusTypeId: null })}
+        />
+      ) : undefined}
       topSlot={activeTask ? (
         <TaskPropertiesBar
           task={activeTask}
           notebooks={orderedNotebooks}
           statuses={statusRegistry}
-          groupSuggestions={groupsOfNotebook(tasks, activeTask.notebookId)}
+          todosOptions={todosOptions}
+          onOpenTodos={handleNoteLinkNavigation}
+          onCreateTodos={createTodosNote}
           sourceNoteExists={
             activeTask.sourceNoteId !== null && notes.some((n) => n.id === activeTask.sourceNoteId)
           }
@@ -2315,6 +2765,34 @@ function App() {
           todayKey={today}
           onOpenTask={openTask}
         />
+      ) : activeNoteType ? (
+        <>
+          <NotePropertiesBar
+            type={activeNoteType}
+            typeControl={
+              <NoteTypePicker
+                types={noteTypes.types}
+                type={activeNoteType}
+                onChange={(typeId) => void handleSetNoteType(typeId)}
+                onManage={() => setNoteTypesOpen({ focusTypeId: null })}
+                onEditType={() => setNoteTypesOpen({ focusTypeId: activeNoteType.id })}
+              />
+            }
+            defs={typeDefs(noteTypes.defs, activeNoteType.id)}
+            properties={activeNote.properties ?? {}}
+            onChange={handleNotePropertyChange}
+            onInsertTemplate={handleInsertTemplate}
+          />
+          {activeNoteType.id === TODOS_TYPE_ID && (
+            <TodosPanel
+              progress={todosProgress.get(activeNote.id)}
+              outside={todosOutside}
+              statuses={statusRegistry}
+              onOpenTask={openTask}
+              onInsert={handleInsertTodosTask}
+            />
+          )}
+        </>
       ) : null}
     />
     </TasksProvider>
@@ -2339,9 +2817,9 @@ function App() {
         previewMode={previewMode}
         onTogglePreview={() => setPreviewMode((v) => !v)}
       />
-      {(noteSaveError || notebookSaveError || subjectSaveError || tasksSaveError || statusSaveError || metadata.saveError || taskCreateError || subjectConvertError) && (
+      {(noteSaveError || notebookSaveError || subjectSaveError || tasksSaveError || statusSaveError || metadata.saveError || noteTypes.saveError || taskCreateError || subjectConvertError) && (
         <div className="saveErrorBanner" role="alert">
-          {noteSaveError || notebookSaveError || subjectSaveError || tasksSaveError || statusSaveError || metadata.saveError || taskCreateError || subjectConvertError}
+          {noteSaveError || notebookSaveError || subjectSaveError || tasksSaveError || statusSaveError || metadata.saveError || noteTypes.saveError || taskCreateError || subjectConvertError}
         </div>
       )}
       {activeMode === 'library' ? (
@@ -2458,8 +2936,8 @@ function App() {
           <KanbanBoard {...boardProps} />
         ) : tasksBoardOpen && tasksMainView === 'projects' ? (
           <ProjectsBoard {...boardProps} />
-        ) : tasksBoardOpen && tasksMainView === 'groups' ? (
-          <GroupsBoard {...boardProps} />
+        ) : tasksBoardOpen && tasksMainView === 'todos' ? (
+          <TodosBoard {...boardProps} />
         ) : tasksBoardOpen && tasksMainView === 'plan' ? (
           <TodayBoard {...boardProps} />
         ) : tasksBoardOpen ? (
@@ -2548,7 +3026,23 @@ function App() {
             activeId={activeId}
             notebookSelected={activeNotebookId !== null}
             onSelect={setActiveId}
-            onCreate={handleCreateNote}
+            onCreate={() => void handleCreateNote()}
+            noteTypes={noteTypes.types}
+            // Subject "Tasks": as notas são notas-corpo, sem tipo (D4).
+            onCreateTyped={
+              activeNotebookId && activeSubjectId === tasksSubjectId(activeNotebookId)
+                ? undefined
+                : (typeId) => void handleCreateNote(typeId)
+            }
+            noteDefs={noteTypes.defs}
+            todosProgress={todosProgress}
+            todosTaskCount={todosTaskCount}
+            typeFilterOptions={typeFilterOptions}
+            typeFilter={activeTypeFilter}
+            onTypeFilterChange={setNoteTypeFilter}
+            sort={noteSort}
+            onSortChange={setNoteSort}
+            onReorderTypes={() => setNoteTypesOpen({ focusTypeId: null, reorder: true })}
             onDelete={handleDeleteNote}
             onReorder={handleReorder}
             onMerge={handleMergeNotes}
@@ -2574,6 +3068,9 @@ function App() {
                   await createNewTask(draft)
                 }}
                 onShowAll={() => openNotebookTasks(activeNotebookId)}
+                defaultTodosNoteId={
+                  isTodosNote(activeNote) && activeNote?.notebookId === activeNotebookId ? activeNote.id : null
+                }
               />
             ) : undefined}
           />
@@ -2581,7 +3078,7 @@ function App() {
         {tasksBoardOpen ? null : noteEditor ?? (
           <EmptyEditor
             hasNotebook={activeNotebookId !== null}
-            onCreate={handleCreateNote}
+            onCreate={() => void handleCreateNote()}
           />
         )}
         <AiPanel
@@ -2681,7 +3178,18 @@ function App() {
           setActiveTag(null)
           setSearchPaletteOpen(false)
         }}
+        onSelectTask={(taskId) => {
+          openTask(taskId)
+          setSearchPaletteOpen(false)
+        }}
         notebooks={notebooks}
+        notes={notes}
+        noteTypes={noteTypes.types}
+        tasks={tasks}
+        todosById={todosById}
+        statuses={statusRegistry}
+        hasApiKey={hasApiKey}
+        disabledNotebookIds={disabledNotebookIds}
       />
       {tasksBoardOpen && activeTask?.id === taskModalId && noteEditor && (
         <TaskEditorModal onClose={() => setTaskModalId(null)}>{noteEditor}</TaskEditorModal>
@@ -2706,6 +3214,25 @@ function App() {
         onRename={metadata.rename}
         onRemove={(id) => void metadata.remove(id)}
       />
+      {noteTypesOpen && (
+        <NoteTypesModal
+          onClose={() => setNoteTypesOpen(null)}
+          focusTypeId={noteTypesOpen.focusTypeId}
+          reorder={noteTypesOpen.reorder}
+          registry={noteTypes}
+          notes={notes}
+        />
+      )}
+      {todosMigration && (
+        <TodosMigrationModal
+          rows={todosMigration.rows}
+          status={todosMigration.status}
+          message={todosMigration.message}
+          onMigrate={(rows, skipped) => void runTodosMigration(rows, skipped)}
+          onClose={() => setTodosMigration(null)}
+        />
+      )}
+      {confirmModal}
     </div>
     </TasksEnvProvider>
   )

@@ -139,6 +139,14 @@ struct StreamToolCallEvent {
     tool_calls: Vec<ToolCallItem>,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StreamToolCallStartedEvent {
+    request_id: String,
+    // Nome da 1ª tool, quando já vem no 1º delta (senão vazio).
+    tool_name: String,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ModelInfo {
@@ -994,6 +1002,56 @@ enum StreamError {
     Failed { code: String, message: String },
 }
 
+// Entrega as tool calls acumuladas da rodada; o front executa as tools e
+// dispara a rodada seguinte.
+fn emit_tool_calls(
+    app: &AppHandle,
+    request_id: &str,
+    tool_calls: &std::collections::BTreeMap<u64, (String, String)>,
+) {
+    let items: Vec<ToolCallItem> = tool_calls
+        .values()
+        .filter(|(name, _)| !name.is_empty())
+        .map(|(name, args)| ToolCallItem {
+            tool_name: name.clone(),
+            arguments_json: if args.is_empty() {
+                "{}".to_string()
+            } else {
+                args.clone()
+            },
+        })
+        .collect();
+    let _ = app.emit(
+        "openrouter://tool_call",
+        StreamToolCallEvent {
+            request_id: request_id.to_string(),
+            tool_calls: items,
+        },
+    );
+}
+
+// Fallback: stream encerrado depois de tool calls sem finish_reason
+// "tool_calls" (ex.: "length" ou conexão caída). Os argumentos podem ter sido
+// cortados, então as tools só seguem se todos forem JSON válido; senão o turno
+// termina com erro.
+fn finish_tool_calls_fallback(
+    app: &AppHandle,
+    request_id: &str,
+    tool_calls: &std::collections::BTreeMap<u64, (String, String)>,
+) -> StreamError {
+    let complete = tool_calls
+        .values()
+        .all(|(_, args)| args.is_empty() || serde_json::from_str::<serde_json::Value>(args).is_ok());
+    if !complete {
+        return StreamError::Failed {
+            code: "TOOL_CALL_INCOMPLETE".into(),
+            message: "The response was cut off while calling a tool. Try again.".into(),
+        };
+    }
+    emit_tool_calls(app, request_id, tool_calls);
+    StreamError::ToolCall
+}
+
 async fn run_openrouter_stream(
     app: &AppHandle,
     request_id: &str,
@@ -1047,6 +1105,9 @@ async fn run_openrouter_stream(
     let mut completion_tokens: u64 = 0;
     let mut tool_calls: std::collections::BTreeMap<u64, (String, String)> =
         std::collections::BTreeMap::new();
+    // Rodada que virou tool call: o texto dela não é a resposta final (a
+    // rodada seguinte responde), então o conteúdo deixa de ser emitido.
+    let mut tool_call_started = false;
 
     loop {
         tokio::select! {
@@ -1085,6 +1146,9 @@ async fn run_openrouter_stream(
                         None => continue,
                     };
                     if data == "[DONE]" {
+                        if tool_call_started {
+                            return Err(finish_tool_calls_fallback(app, request_id, &tool_calls));
+                        }
                         return Ok((completion_tokens,));
                     }
                     let value: serde_json::Value = match serde_json::from_str(data) {
@@ -1131,7 +1195,7 @@ async fn run_openrouter_stream(
                         .and_then(|d| d.get("content"))
                         .and_then(|c| c.as_str())
                     {
-                        if !content.is_empty() {
+                        if !content.is_empty() && !tool_call_started {
                             let _ = app.emit(
                                 "openrouter://chunk",
                                 StreamChunkEvent {
@@ -1150,6 +1214,21 @@ async fn run_openrouter_stream(
                         .and_then(|d| d.get("tool_calls"))
                         .and_then(|tc| tc.as_array())
                     {
+                        if !tool_call_started && !delta_tool_calls.is_empty() {
+                            tool_call_started = true;
+                            let tool_name = delta_tool_calls[0]
+                                .get("function")
+                                .and_then(|f| f.get("name"))
+                                .and_then(|n| n.as_str())
+                                .unwrap_or("");
+                            let _ = app.emit(
+                                "openrouter://tool_call_started",
+                                StreamToolCallStartedEvent {
+                                    request_id: request_id.to_string(),
+                                    tool_name: tool_name.to_string(),
+                                },
+                            );
+                        }
                         for tool_call in delta_tool_calls {
                             let idx = tool_call
                                 .get("index")
@@ -1177,25 +1256,7 @@ async fn run_openrouter_stream(
                         }
                     }
                     if finish_reason == Some("tool_calls") && !tool_calls.is_empty() {
-                        let items: Vec<ToolCallItem> = tool_calls
-                            .values()
-                            .filter(|(name, _)| !name.is_empty())
-                            .map(|(name, args)| ToolCallItem {
-                                tool_name: name.clone(),
-                                arguments_json: if args.is_empty() {
-                                    "{}".to_string()
-                                } else {
-                                    args.clone()
-                                },
-                            })
-                            .collect();
-                        let _ = app.emit(
-                            "openrouter://tool_call",
-                            StreamToolCallEvent {
-                                request_id: request_id.to_string(),
-                                tool_calls: items,
-                            },
-                        );
+                        emit_tool_calls(app, request_id, &tool_calls);
                         return Err(StreamError::ToolCall);
                     }
                 }
@@ -1203,6 +1264,12 @@ async fn run_openrouter_stream(
         }
     }
 
+    // Stream encerrado sem finish_reason "tool_calls" depois de tool calls:
+    // o conteúdo já foi suprimido, então as tools seguem se os argumentos
+    // estiverem completos.
+    if tool_call_started {
+        return Err(finish_tool_calls_fallback(app, request_id, &tool_calls));
+    }
     Ok((completion_tokens,))
 }
 

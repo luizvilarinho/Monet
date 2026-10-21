@@ -3,14 +3,16 @@ import { nanoid } from 'nanoid'
 import type { MetadataDef, MetadataType } from '../types'
 import { storage } from '../storage'
 import { normalizeName } from '../lib/tasks'
-import { emitTasksChanged, onTasksChangedElsewhere } from '../lib/tasksEvents'
+import { emitTasksChanged, loadAndSyncWithRetry } from '../lib/tasksEvents'
 
 export const MAX_METADATA_NAME = 24
 
-// Definições globais de metadados (SQLite, compartilhadas entre janelas).
+// Definições de metadados custom de task (scope 'task'; SQLite, compartilhadas
+// entre janelas). As propriedades de tipo de nota ficam no useNoteTypes (D2).
 export function useMetadataDefs(opts?: { onRemoved?: (id: string) => void }) {
   const [defs, setDefs] = useState<MetadataDef[]>([])
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [loadFailed, setLoadFailed] = useState(false)
   const defsRef = useRef(defs)
   defsRef.current = defs
   const onRemovedRef = useRef(opts?.onRemoved)
@@ -18,15 +20,18 @@ export function useMetadataDefs(opts?: { onRemoved?: (id: string) => void }) {
 
   const reload = useCallback(async () => {
     try {
-      setDefs(await storage.getMetadataDefs())
+      setDefs((await storage.getMetadataDefs()).filter((d) => d.scope === 'task'))
+      setLoadFailed(false)
+      return true
     } catch (err) {
       console.error('failed to load metadata defs', err)
+      setLoadFailed(true)
+      return false
     }
   }, [])
 
   useEffect(() => {
-    void reload()
-    return onTasksChangedElsewhere(() => void reload())
+    return loadAndSyncWithRetry(reload)
   }, [reload])
 
   const persist = useCallback(async (op: () => Promise<void>, what: string): Promise<boolean> => {
@@ -61,6 +66,10 @@ export function useMetadataDefs(opts?: { onRemoved?: (id: string) => void }) {
         type,
         sortOrder: defsRef.current.reduce((m, d) => Math.max(m, d.sortOrder), 0) + 1,
         createdAt: Date.now(),
+        scope: 'task',
+        noteTypeId: null,
+        options: null,
+        showInList: false,
       }
       setDefs((list) => [...list, def])
       await persist(() => storage.saveMetadataDef(def), 'create property')
@@ -91,5 +100,12 @@ export function useMetadataDefs(opts?: { onRemoved?: (id: string) => void }) {
     [persist]
   )
 
-  return { defs, saveError, reload, create, rename, remove }
+  return {
+    defs,
+    saveError: saveError ?? (loadFailed ? 'Failed to load task properties.' : null),
+    reload,
+    create,
+    rename,
+    remove,
+  }
 }

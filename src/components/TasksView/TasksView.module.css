@@ -105,8 +105,8 @@
   white-space: nowrap;
 }
 
-/* Group by projeto: os subtítulos são os groups. */
-.subgroupGroup {
+/* Group by projeto: os subtítulos são as TODOS. */
+.subgroupTodos {
   color: var(--accent);
 }
 

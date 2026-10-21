@@ -61,6 +61,12 @@ export interface StreamToolCallPayload {
   toolCalls: ToolCallItem[]
 }
 
+export interface StreamToolCallStartedPayload {
+  requestId: string
+  // Nome da 1ª tool, quando já veio no 1º delta (senão vazio).
+  toolName: string
+}
+
 export interface StartStreamMessagesInput {
   requestId: string
   model: string
@@ -131,4 +137,12 @@ export function onOpenRouterToolCall(
   handler: (p: StreamToolCallPayload) => void
 ): Promise<UnlistenFn> {
   return listen<StreamToolCallPayload>('openrouter://tool_call', (e) => handler(e.payload))
+}
+
+// Primeiro sinal de tool call na rodada: o backend para de emitir o conteúdo
+// dela (a resposta final vem na rodada seguinte).
+export function onOpenRouterToolCallStarted(
+  handler: (p: StreamToolCallStartedPayload) => void
+): Promise<UnlistenFn> {
+  return listen<StreamToolCallStartedPayload>('openrouter://tool_call_started', (e) => handler(e.payload))
 }

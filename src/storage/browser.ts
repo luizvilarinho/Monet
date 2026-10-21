@@ -4,9 +4,11 @@ import type {
   BookHighlight,
   BookQuote,
   MetadataDef,
+  MetadataValue,
   Note,
   Notebook,
   NoteSummary,
+  NoteType,
   Subject,
   Task,
   TaskStatusDef,
@@ -50,9 +52,6 @@ export class BrowserStorage implements StorageAdapter {
   }
   async deleteNote(_id: string): Promise<void> {
     throw new Error('BrowserStorage.deleteNote not implemented')
-  }
-  async searchNotes(_query: string): Promise<Note[]> {
-    throw new Error('BrowserStorage.searchNotes not implemented')
   }
   async getNotesByDateRange(_from: string, _to: string): Promise<Note[]> {
     throw new Error('BrowserStorage.getNotesByDateRange not implemented')
@@ -121,6 +120,15 @@ export class BrowserStorage implements StorageAdapter {
   async deleteTask(_id: string): Promise<void> {
     throw new Error('BrowserStorage.deleteTask not implemented')
   }
+  async getLegacyTaskGroups(): Promise<Array<{ taskId: string; notebookId: string; group: string }>> {
+    throw new Error('BrowserStorage.getLegacyTaskGroups not implemented')
+  }
+  async getTodosMigrationDone(): Promise<string[]> {
+    throw new Error('BrowserStorage.getTodosMigrationDone not implemented')
+  }
+  async markTodosMigrationDone(_noteIds: string[]): Promise<void> {
+    throw new Error('BrowserStorage.markTodosMigrationDone not implemented')
+  }
   async getTaskStatuses(): Promise<TaskStatusDef[]> {
     throw new Error('BrowserStorage.getTaskStatuses not implemented')
   }
@@ -147,6 +155,21 @@ export class BrowserStorage implements StorageAdapter {
   }
   async deleteMetadataDef(_id: string): Promise<void> {
     throw new Error('BrowserStorage.deleteMetadataDef not implemented')
+  }
+  async getNoteTypes(): Promise<NoteType[]> {
+    throw new Error('BrowserStorage.getNoteTypes not implemented')
+  }
+  async saveNoteType(_type: NoteType): Promise<void> {
+    throw new Error('BrowserStorage.saveNoteType not implemented')
+  }
+  async deleteNoteType(_id: string): Promise<void> {
+    throw new Error('BrowserStorage.deleteNoteType not implemented')
+  }
+  async setNoteType(_noteId: string, _typeId: string | null): Promise<void> {
+    throw new Error('BrowserStorage.setNoteType not implemented')
+  }
+  async setNoteProperties(_noteId: string, _properties: Record<string, MetadataValue>): Promise<void> {
+    throw new Error('BrowserStorage.setNoteProperties not implemented')
   }
 
   async getResponses(_noteId: string): Promise<AiResponse[]> {

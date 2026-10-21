@@ -3,15 +3,16 @@ import { nanoid } from 'nanoid'
 import type { Task, TaskRecurrence, TaskStatus } from '../types'
 import { storage } from '../storage'
 import { dateKeyFromMs } from '../lib/calendar'
-import { emitTasksChanged, onTasksChangedElsewhere } from '../lib/tasksEvents'
-import { applyTaskPatch, buildNextOccurrence, normalizeGroup, type TaskPatch } from '../lib/tasks'
+import { emitTasksChanged, loadAndSyncWithRetry } from '../lib/tasksEvents'
+import { applyTaskPatch, buildNextOccurrence, type TaskPatch } from '../lib/tasks'
 
 export interface NewTaskInput {
   title: string
   status?: TaskStatus
   dueDate?: string | null
   scheduledDate?: string | null
-  group?: string | null
+  // Nota TODOS (entregável) da task.
+  parentNoteId?: string | null
   important?: boolean
   recurrence?: TaskRecurrence | null
   notebookId: string
@@ -33,30 +34,42 @@ export function useTasks() {
   const tasksRef = useRef(tasks)
   tasksRef.current = tasks
 
-  const reload = useCallback(async () => {
+  // Devolve a lista lida (null em falha). O ref é atualizado já aqui: quem
+  // chama updateTasks logo depois (migração) parte do estado fresco, sem
+  // esperar o render.
+  const reload = useCallback(async (): Promise<Task[] | null> => {
     try {
-      setTasks(await storage.getTasks())
+      const list = await storage.getTasks()
+      tasksRef.current = list
+      setTasks(list)
       setLoaded(true)
       setLoadFailed(false)
+      return list
     } catch (err) {
       console.error('failed to load tasks', err)
       setLoadFailed(true)
+      return null
     }
   }, [])
 
+  // A 1ª leitura passa pelo ensureTasksTables (DDL): no cold start ela pode
+  // falhar pelo lock do monet.db, então tenta de novo com espera. Enquanto
+  // falha, o banner mostra "Failed to load tasks." (não uma lista vazia muda).
   useEffect(() => {
-    void reload()
-    return onTasksChangedElsewhere(() => void reload())
+    return loadAndSyncWithRetry(async () => (await reload()) !== null)
   }, [reload])
 
-  const persist = useCallback(async (op: () => Promise<void>, what: string) => {
+  // Devolve false quando a gravação falha (o erro fica em `saveError`).
+  const persist = useCallback(async (op: () => Promise<void>, what: string): Promise<boolean> => {
     try {
       await op()
       setSaveError(null)
       emitTasksChanged()
+      return true
     } catch (err) {
       console.error(`failed to ${what}`, err)
       setSaveError('Failed to save task.')
+      return false
     }
   }, [])
 
@@ -75,7 +88,7 @@ export function useTasks() {
           noteId: i.noteId,
           dueDate: i.dueDate ?? null,
           scheduledDate: i.scheduledDate ?? null,
-          group: normalizeGroup(i.group ?? null),
+          parentNoteId: i.parentNoteId ?? null,
           important: i.important ?? false,
           recurrence: i.recurrence ?? null,
           recurrenceNextId: null,
@@ -104,7 +117,7 @@ export function useTasks() {
   // Recorrente que entra em `done` gera a próxima ocorrência uma única vez:
   // `recurrenceNextId` aponta para ela, então desmarcar e remarcar não duplica.
   const updateTasks = useCallback(
-    async (changes: Array<{ id: string; patch: TaskPatch }>) => {
+    async (changes: Array<{ id: string; patch: TaskPatch }>): Promise<boolean> => {
       const now = Date.now()
       const current = tasksRef.current
       const nextById = new Map<string, Task>()
@@ -115,7 +128,7 @@ export function useTasks() {
         if (!prevById.has(id)) prevById.set(id, original)
         nextById.set(id, applyTaskPatch(nextById.get(id) ?? original, patch, now))
       }
-      if (nextById.size === 0) return
+      if (nextById.size === 0) return true
       const existing = new Set(current.map((t) => t.id))
       const generated: Task[] = []
       let order = current.reduce((m, t) => Math.max(m, t.sortOrder), 0)
@@ -129,7 +142,7 @@ export function useTasks() {
         nextById.set(id, { ...next, recurrenceNextId: occurrence.id })
       }
       setTasks((list) => [...list.map((t) => nextById.get(t.id) ?? t), ...generated])
-      await persist(async () => {
+      return persist(async () => {
         for (const t of nextById.values()) await storage.saveTask(t)
         for (const t of generated) await storage.saveTask(t)
       }, 'save tasks')
@@ -180,7 +193,7 @@ export function useTasks() {
     tasksById,
     loaded,
     loadFailed,
-    saveError,
+    saveError: saveError ?? (loadFailed ? 'Failed to load tasks.' : null),
     reload,
     createTasks,
     updateTask,

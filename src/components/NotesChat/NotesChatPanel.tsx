@@ -90,8 +90,15 @@ export function NotesChatPanel({
   const [modelsLoading, setModelsLoading] = useState(false)
   const [modelsError, setModelsError] = useState<string | null>(null)
   const { statuses } = useTasksEnv()
-  const tasksSnapshotRef = useRef<TasksSnapshot>({ tasks, notebooks, todayKey, checklist: taskChecklist, statuses })
-  tasksSnapshotRef.current = { tasks, notebooks, todayKey, checklist: taskChecklist, statuses }
+  const tasksSnapshotRef = useRef<TasksSnapshot>({
+    tasks,
+    notebooks,
+    todayKey,
+    checklist: taskChecklist,
+    statuses,
+    resolveNoteTitle,
+  })
+  tasksSnapshotRef.current = { tasks, notebooks, todayKey, checklist: taskChecklist, statuses, resolveNoteTitle }
 
   const {
     activeId,

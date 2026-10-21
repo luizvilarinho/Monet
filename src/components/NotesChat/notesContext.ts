@@ -79,7 +79,14 @@ export function buildNotesContext(input: NotesContextInput): string {
     )
     for (const t of projectTasks.slice(0, PROJECT_TASKS_LIMIT)) {
       lines.push(
-        taskLineForAi(t, input.todayKey, null, input.checklist.get(t.id) ?? null, input.statuses)
+        taskLineForAi(
+          t,
+          input.todayKey,
+          null,
+          input.checklist.get(t.id) ?? null,
+          input.statuses,
+          t.parentNoteId ? input.resolveNoteTitle(t.parentNoteId) ?? null : null
+        )
       )
     }
     if (projectTasks.length > PROJECT_TASKS_LIMIT) lines.push('- [truncated]')

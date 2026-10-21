@@ -1,0 +1,528 @@
+# Execution Report
+
+## Documents
+- Task report: DOCS/reports/20-10-2026/taskreport_20261020012309.md
+- Execution report: DOCS/reports/20-10-2026/executionreport_20261020012309.md
+- Explorer report: DOCS/reports/20-10-2026/explorerreport_20261020005342.md (do estudo)
+- Estudo: DOCS/features/note_types_study.md
+- Plan report: DOCS/reports/20-10-2026/planreport_20261020013139.md
+- Review report: DOCS/reports/20-10-2026/reviewreport_20261020024613.md
+- Review report (ajustes pós-review e chat com tool call): DOCS/reports/20-10-2026/reviewreport_20261020153611.md
+
+## Sessions
+### Orchestrator — abertura — 20261020012309
+- Summary: Coordenador confirmou as decisões D1–D11 (D2 com `scope`) e pediu planejamento, desenvolvimento e revisão em sequência, testando só no final. Branch `feature/note-types`.
+- Inputs:
+  - DOCS/reports/20-10-2026/taskreport_20261020012309.md
+  - DOCS/features/note_types_study.md
+- Decision: plannerAgent → codeAgent por fase (1 a 4) → codereviewAgent → codeAgent final. Sem parada para teste entre desenvolvimento e revisão (instrução do Coordenador).
+- Next step: aguardando plannerAgent
+
+### PlannerAgent — 20261020013139
+- Summary: Plano das fases 1 a 4 em 4 blocos autocontidos (um codeAgent por fase, em sequência), com paths:linha verificados no código. Fase 1: busca no cliente (`src/lib/noteSearch.ts`, palette com notas em memória, remoção do `searchNotes` SQL) e gutter "+" único (`BlockGutter.tsx`). Fase 2: `note_types`, `notes.type_id`/`properties` e `metadata_defs.scope`/`note_type_id`/`options`/`show_in_list` (D2) por `ensure*` + `PRAGMA table_info`, setters fora do `saveNote`, `useNoteTypes`, modal de tipos, seletor e barra de propriedades, tipo no RAG. Fase 3: `parent_note_id`, TODOS embutido, `Task.group` removido do tipo (o `tsc` vira checklist; `task_group` dormente e fora do `saveTask`), lista completa de superfícies, chip rico, progresso, `>Nome`, IA/RAG e migração (planejador puro, id determinístico, dry-run em modal, execução via `updateTasks` filtrando `parentNoteId === null`, flag só após sucesso). Fase 4: filtros com chips, tasks na palette e "Search by meaning" sob demanda. Verificação: `npx tsc --noEmit`, `npm run build`, `cargo check`, `cargo test` (não há lint nem testes de frontend) + grep de resíduos do group.
+- Scope notes (para o Orquestrador, sem mudança de escopo decidida): Weekly Review agrupado por TODOS (§5.3) não planejado, pois não é substituição de group nem está no Task Report; N4 colocado na Fase 3 (§10 do estudo); E2 e `prop:valor` fora; escolhas menores listadas ao fim do plano (rótulo do tipo = chip, nome do TODOS fixo, `↻n` = adiamentos, merge de TODOS, flag da migração em localStorage, barra de propriedades não recolhível).
+- Output: DOCS/reports/20-10-2026/planreport_20261020013139.md
+
+### Orchestrator — decisão — 20261020013800
+- Summary: Plano recebido (4 blocos, um codeAgent por fase).
+- Inputs:
+  - DOCS/reports/20-10-2026/planreport_20261020013139.md
+- Decision: Weekly Review agrupado por TODOS fica fora desta entrega (não está no Task Report; registrar como pendência para o Coordenador no encerramento). Escolhas menores do planner aceitas como estão.
+- Next step: codeAgent — Fase 1
+
+### CodeAgent — implementação inicial (Fase 1) — 20261020014620
+- Summary: Fase 1 do plano (etapas 1.1–1.4, todas `FEITO`). Busca Ctrl+P no cliente: `src/lib/noteSearch.ts` (texto limpo via `cleanNoteContentForAi` + remoção de marcadores/HTML/Markdown, normalização sem acentos com `offsets` para o snippet, cache por nota invalidado por `updatedAt`/`content`/`title`, AND de tokens, faixas de score 1000/800/600/400/200/100, fuzzy ≤ 1 edição só no título para termos ≥ 5 letras com score 50, limite 30, `recentNotes`). `SearchPalette` usa `notes` em memória com debounce de 100 ms e `useMemo`, cadernos por prefixo (máx. 3), "Recent" com consulta vazia, snippet com `<mark>` (sem `dangerouslySetInnerHTML`), rótulos `Daily`/`Task`. `searchNotes` SQL removido do `StorageAdapter`/`TauriStorage`/`BrowserStorage`. Editor: `BlockGutter` (um elemento absoluto no `.body`, mousemove com throttle por rAF, sem decorations/widgets) com `resolveBlockUnit` e `insertAround` (abaixo/Shift acima, par `/comando` + embed preservado, `taskItem` comum sem `taskRef`, `listItem`, demais → parágrafo), escondido em `previewMode`, editor não editável, células `td/th`, parágrafo vazio final e com o mouse fora do bloco (respiro de 50vh).
+- Desvios (pequenos, sem mudança de escopo):
+  - Tags entram no match (AND) com score de conteúdo: a busca SQL antiga casava `tags`; sem isso a palette perderia esse comportamento.
+  - `noteSearchText` também remove tags HTML residuais e escapes Markdown (`\_`, `\*`), além do que o plano lista (B5).
+  - Notas sem caderno (Reader) ficam fora da palette, porque `selectResult` já não as abria.
+  - `recentNotes` devolve o mesmo formato de `searchNotes` (snippet = início do texto) para a lista ter um renderer só.
+  - `resolveBlockUnit` checa tabela antes de item (item dentro de célula vira a tabela, sem gutter por célula); `inside === -1` cai no bloco de topo, como o plano pede.
+  - `listItem`: o "+" alinha pela borda da lista (`ul/ol`), não do `li`, para não cobrir o marcador do item (o `ul` tem `padding-left: 1.4em`).
+  - Gutter some também a cada transação com `docChanged` (posição defasada após digitar, trocar de nota ou o próprio "+"); reaparece no próximo mousemove.
+- Verificações: `npx tsc --noEmit` ok; `npm run build` ok (o sandbox negava o `%TEMP%` padrão ao esbuild: rodado com `TMP`/`TEMP` numa pasta temporária em `node_modules`, apagada depois); `cargo check` ok; `cargo test` 30 passed, 3 ignored. `Grep "searchNotes"` em `src/` só acha `noteSearch.ts` e `SearchPalette.tsx`; a palette não importa `storage`. Smoke das funções puras (esbuild + Node no scratchpad): "migracao"/"MIGRAÇÃO" casam "Migração"; "rag híbrido" é AND (e acha "RAG e busca híbrida" pelo fuzzy de título); base64, `<task-ref>`, `<br>` e "data" não casam; limite 30; snippet alinhado com acento.
+- Files changed:
+  - src/components/SearchPalette/SearchPalette.tsx
+  - src/components/SearchPalette/SearchPalette.module.css
+  - src/App.tsx
+  - src/storage/index.ts
+  - src/storage/tauri.ts
+  - src/storage/browser.ts
+  - src/components/Editor/Editor.tsx
+  - src/components/Editor/Editor.module.css
+  - DOCS/reports/20-10-2026/planreport_20261020013139.md (status das etapas 1.1–1.4)
+- Files created:
+  - src/lib/noteSearch.ts
+  - src/components/Editor/BlockGutter.tsx
+- Files removed:
+  - nenhum
+- Left behind: sem teste em app real (comportamento do gutter sobre NodeViews React — toggle, embed — e posição vertical em títulos só verificados por revisão de código). A palette não rola o item selecionado para a vista com as setas (já era assim; com até 33 itens fica mais visível). Fase 2 não iniciada.
+
+### CodeAgent — implementação inicial (Fase 2) — 20261020020402
+- Summary: Fase 2 do plano (etapas 2.1–2.9, todas `FEITO`). Tipos: `Note.typeId`/`properties`, `MetadataType` com `select`, `MetadataDef.scope`/`noteTypeId`/`options`/`showInList`, `SelectOption`, `NoteType`. Storage (`tauri.ts`): `note_types` por `CREATE TABLE IF NOT EXISTS` (memoizado), `notes.type_id`/`properties` por `ensureNotesColumns` (só nos setters e operações de tipo), `metadata_defs.scope` (DEFAULT `'task'`, D2)/`note_type_id`/`options`/`show_in_list` dentro do `ensureTasksTables`, todos via `PRAGMA table_info` + "duplicate column" = sucesso; `getNoteTypes`/`saveNoteType`/`deleteNoteType` (passos idempotentes: valores → defs → `type_id` → tipo)/`setNoteType`/`setNoteProperties` (sem mexer em `updated_at`), também no `StorageAdapter` e no `BrowserStorage`; `deleteMetadataDef` lê o `scope` e limpa só `notebook_tasks.metadata` ou só `notes.properties`. `saveNote` intocado. `useNotes.save` preserva `typeId`/`properties` da memória (eco de keep/assistant/merge/mover não sobrescreve) e ganha `setType`/`setProperties` (otimistas; falha → `saveError` + `refresh`). `useMetadataDefs` filtra `scope === 'task'` e cria defs de task. `useNoteTypes` (registro de tipos + defs `scope='note'`, recarrega em `tasks-changed`, emite a cada mutação, nome único por tipo, máx. 2 "show in list"). `lib/noteTypes.ts` (`typeDefs`, `canHaveType` D4, `migrateProperties` §4.5, `listPropertyValues`, `propertiesForAi`), `readerLinkedNoteIds`. Controles `DateControl`/`TextControl`/`NumberControl` extraídos para `PropertyControls.tsx` com `MetadataValueControl` (inclui select com bolinha de cor); a barra da task usa os mesmos controles, comportamento inalterado. Modal "Note types" (tipos com nome/ícone/cor/ordem/template; propriedades com tipo de dado fixo, "In list", ↑/↓, exclusão com contagem; editor de opções do select), `NoteTypePicker` (chip na linha de data/tags; menu com tipos, "No type", "Manage types…"), `NotePropertiesBar` (topSlot; todas as defs do tipo; "Insert template" no fim; "Edit type"), prop `typeSlot` no Editor, "New <tipo>" no Sidebar. App: troca de tipo com migração e confirmação dos valores que ficam ocultos, template só em nota vazia ou em "New <tipo>". RAG: `buildNoteFileText` com `Type:` e `<Nome>: <valor>` entre `Date:` e `Tags:`; `useNotesIndexSync` monta o contexto do tipo e reindexa as notas de um tipo quando o nome/propriedades dele mudam.
+- Desvios (pequenos, sem mudança de escopo):
+  - `addMissingColumns(db, tabela, colunas)` extraído em `tauri.ts`: o laço `PRAGMA table_info` + `ALTER` do `ensureTasksTables` virou essa função, usada por `notebook_tasks`, `metadata_defs` e `notes` (mesmo comportamento, sem triplicar o laço).
+  - `deleteNoteType` sai cedo se o tipo é built-in (além do `AND builtin = 0` do plano), para não limpar valores/defs de um tipo que não será excluído.
+  - `migrateProperties` no select casa também a **opção** pelo nome (ids de opção diferem entre tipos); sem opção correspondente, a propriedade vai para `hidden`. Devolve `next === props` quando nada é copiado (o App só grava propriedades se algo mudou). Valor migrado sobrescreve o que estava guardado na chave do tipo novo (o valor visível acompanha a troca).
+  - `propertiesForAi` (nova, pura): no RAG a data vai em ISO e o checkbox como yes/no, em vez de `formatMetadataValue` ("Nov 12", ✓/–), que segue na lista.
+  - Opções do select: nome obrigatório e único dentro da propriedade (a troca de tipo casa pelo nome). Opção excluída deixa o valor apontando para id inexistente: aparece como "Empty" e não vai à lista nem ao RAG.
+  - Propriedade com valor vazio (`null`/`''`) sai do JSON; checkbox `false` fica (mesma semântica do `hasMetadataValue`).
+  - CSS do seletor em arquivo próprio (`NoteTypePicker.module.css`, não listado no plano). A barra de propriedades reaproveita `TaskPropertiesBar.module.css` com a borda/rótulo na cor do tipo.
+  - "New <tipo>": o "+" continua criando nota comum; um botão de seta ao lado (só quando há tipos) abre o menu "New note" / "New <tipo>". As chamadas de `handleCreateNote` agora são `() => void handleCreateNote()` (antes o handler recebia o evento de clique, que viraria `typeId`).
+  - O App passou a usar `useConfirm` (para "Switch type?"). O `NoteTypesModal` é montado só quando aberto (sem prop `open`), para a seleção inicial vir do `focusTypeId`.
+  - Excluir tipo/propriedade: `useNoteTypes({ onRemoved })` chama `refreshNotes()` (risco já previsto no plano: só acontece com o modal aberto).
+- Verificações: `npx tsc --noEmit` ok; `npm run build` ok (de novo com `TMP`/`TEMP` numa pasta temporária em `node_modules`, apagada depois); `cargo check` ok; `cargo test` 30 passed, 3 ignored; nenhum arquivo em `src-tauri/` alterado; nenhum `BEGIN`/`COMMIT` novo; `type_id`/`properties` em `tauri.ts` só em `NoteRow`/`rowToNote`, `NOTES_EXTRA_COLUMNS`/`ensureNotesColumns`, `removeNotePropertyKey` (usado por `deleteMetadataDef`/`deleteNoteType`), `deleteNoteType` e setters; `saveNote` sem tipo/propriedades; `typeSlot` só passado pelo App (o Editor do `ReaderNotesPanel` não recebe). Smoke das funções puras (esbuild + Node, saída em pasta temporária apagada): select "Fase: HML" migra para a opção "hml" do outro tipo, "Professor" text→number e date/checkbox sem par ficam em `hidden`; `canHaveType` falso para Calendar, nota-corpo, nota do Reader e nota sem caderno; `listPropertyValues` = ["HML", "Nov 12"]; `buildNoteFileText` com `Type: Course` e as propriedades entre `Date:` e `Tags:`.
+- Files changed:
+  - src/types/index.ts
+  - src/storage/tauri.ts
+  - src/storage/index.ts
+  - src/storage/browser.ts
+  - src/hooks/useNotes.ts
+  - src/hooks/useMetadataDefs.ts
+  - src/hooks/useNotesIndexSync.ts
+  - src/lib/metadata.ts
+  - src/lib/readerNoteLink.ts
+  - src/lib/noteFileText.ts
+  - src/components/TasksView/TaskPropertiesBar.tsx
+  - src/components/TasksView/TaskPropertiesBar.module.css
+  - src/components/Editor/Editor.tsx
+  - src/components/Sidebar/Sidebar.tsx
+  - src/components/Sidebar/Sidebar.module.css
+  - src/App.tsx
+  - DOCS/reports/20-10-2026/planreport_20261020013139.md (status das etapas 2.1–2.9)
+- Files created:
+  - src/lib/noteTypes.ts
+  - src/hooks/useNoteTypes.ts
+  - src/components/TasksView/PropertyControls.tsx
+  - src/components/NoteTypes/NoteTypesModal.tsx
+  - src/components/NoteTypes/NoteTypesModal.module.css
+  - src/components/NoteTypes/NoteTypePicker.tsx
+  - src/components/NoteTypes/NoteTypePicker.module.css
+  - src/components/NoteTypes/NotePropertiesBar.tsx
+  - src/components/NoteTypes/TypeIcon.tsx
+- Files removed:
+  - nenhum
+- Left behind: sem teste em app real (DDL `ALTER TABLE ... NOT NULL DEFAULT` e o caminho "duplicate column" com duas janelas só revisados no código; visual do modal, chip e menu não conferidos). `listPropertyValues` e `MAX_LIST_PROPERTIES` na lista de notas só são consumidos na Fase 3 (3.8); hoje `listPropertyValues` é export sem uso. Esc dentro do `ConfirmModal` aberto sobre o "Note types" também fecha o modal (mesmo comportamento do `MetadataManagerModal`). Um `refresh` concorrente com um setter em voo pode mostrar o tipo antigo até a próxima leitura (o banco fica certo). Fase 3 não iniciada.
+
+### CodeAgent — implementação inicial (Fase 3) — 20261020023008
+- Summary: Fase 3 do plano (etapas 3.1–3.12, todas `FEITO`). Modelo: `Task.group` removido, `Task.parentNoteId` (D6); `notebook_tasks.parent_note_id` em `TASKS_EXTRA_COLUMNS` + `CREATE INDEX IF NOT EXISTS idx_notebook_tasks_parent_note`; `task_group` fica dormente (DDL comentada) e sai do `saveTask` (INSERT e DO UPDATE); `getLegacyTaskGroups` é o único leitor (também no `StorageAdapter`/`BrowserStorage`). `TaskPatch` com `parentNoteId`/`sourceNoteId`; `normalizeGroup` removido; recorrência copia o pai. TODOS embutido: `TODOS_TYPE_ID`/`TODOS_DEFAULT_TEMPLATE`/`isTodosNote` e seed `INSERT OR IGNORE` em `ensureNoteTypesTable` (ícone `checks`, cor da paleta). Helpers em `lib/tasks.ts`: `TodosInfo`, `todosTitleOf`, `byTodosId`, `todosProgressByNote`, `taskRefIds`, `splitPipeTitle` → `{ prefix, title }`, `stripPipePrefix`. `TasksEnv` com `todosById`/`onOpenNote`/`onCreateTodos`. App: `todosById` estável (chave das TODOS), `createTodosNote`, `detachTodosChildren` (excluir nota/caderno/subject, trocar TODOS → outro tipo com confirmação, mesclar: destino TODOS herda as tasks), "Add to Tasks" numa TODOS grava pai + origem, D10 (mover task/TODOS não mexe no vínculo). Superfícies: busca de tasks por título ou TODOS; Group by `'todos'` (lê `'group'` do localStorage e das visões sem regravar); Projects board e Group by projeto com subseções por TODOS; `GroupsBoard.tsx` → `TodosBoard.tsx` (coluna por nota, caderno + abrir no cabeçalho, drop define `parentNoteId`); `resolveMainView('groups')` → `'todos'`; chip TODOS clicável em `TaskCard`/`TaskLine`/`DueTodayBlock`; conversão "TODOS | título" vincula/cria a TODOS do mesmo caderno (uma por nome no lote); sync de título por `stripPipePrefix`; texto do bloco `/tasks` com `TODOS <título>: `; campo TODOS na `TaskPropertiesBar` (do caderno primeiro, demais com " · caderno", "＋ New TODOS…", abrir). Chip rico `TaskRefView` (● status que cicla sem abrir a task, do date, →, ⚑ deadline, ↻n, ★, atraso por data, tooltip projeto/TODOS/checklist). `TodosPanel` (progresso + "Linked outside this checklist" com "Insert into checklist" por clique). Lista de notas: ícone do tipo, até 2 valores "show in list" ou progresso da TODOS, filtro por tipo (N4), aviso de tasks na exclusão. Quick add `>Nome` (exato sem espaços, senão prefixo preferindo o `#Projeto`; desconhecido só com confirmação, cria a TODOS) e pai pela TODOS aberta no "+ task" do caderno. IA/RAG: `TODOS (deliverable note): <título>` nos metadados da task, `Tasks: d/t done · next deadline` na nota TODOS, assinatura da task com pai + título da TODOS (reindexa pai atual/anterior e notas-corpo ao renomear), `taskLineForAi`/`notesContext` com `TODOS "<título>"`, tool `query_tasks` com parâmetro `todos` e `resolveNoteTitle` no `TasksSnapshot` (Chat, Notes chat, Assistant). Migração: `lib/todosMigration.ts` puro (id `todos-<16 hex>` por dois FNV-1a, agrupa por caderno + nome normalizado, grafia mais frequente, só tasks existentes sem pai, `buildTodosContent`, `missingPillLines`), `TodosMigrationModal` (dry-run, nada gravado ao abrir, checkbox por linha, "already created"/"only done", Later/Migrate/Close), disparo só na main com tudo carregado e flag `monet:todos-migration-done` ausente, execução sequencial idempotente (`reload` das tasks → nota nova ou pills faltantes em "## Tasks (migrated)" → `setNoteType` → um `updateTasks` só nas tasks ainda sem pai, com origem quando nula) e flag só após sucesso.
+- Desvios (pequenos, sem mudança de escopo):
+  - `filterTasksForView`/`matchesSearch`/`groupTasksBy` recebem o `Map` `todosById` (não um resolver), para os `useMemo` dependerem de um objeto estável.
+  - `todosProgress` (versão de uma nota) não foi criado: App e Sidebar usam o mapa de `todosProgressByNote` (seria export sem uso).
+  - `useTasks`: `reload` devolve a lista e atualiza o ref na hora (a migração chama `updateTasks` logo depois sem esperar render); `updateTasks` devolve `boolean` (a migração precisa saber se gravou para não marcar a flag).
+  - `rowToTaskView` também normaliza `base: 'groups'` → `'todos'` (sem isso a visão salva antiga não aparecia como ativa).
+  - Datas na lista de notas e no `TodosPanel` em `formatDueShort` ("Oct 26", padrão da UI em inglês), não dd/mm.
+  - Chip TODOS com o ícone `Checks` fixo (o `TasksEnv` não carrega o tipo); a lista de notas usa o ícone/cor do tipo.
+  - Excluir um subject também desvincula as tasks das TODOS dele (mesma regra de nota/caderno).
+  - Keep (Ctrl+K): `TasksEnv` com `todosById` das notas da keep e "abrir" via `open_note_in_main`; `TasksContext` com status/TODOS para o chip rico.
+  - `TextControl` perdeu `suggestions`/`datalist` (só o group usava); `TextControl`/`NumberControl` deixaram de ser exportados (uso só interno).
+  - Chaves das subseções (`BoardColumns`, `TasksView`) com índice: duas TODOS podem ter o mesmo título.
+  - "Migrate" com todas as linhas desmarcadas só grava a flag (para não reabrir o dry-run).
+  - `rag.rs` intocado: a stopword "todos" é minúscula na comparação, então o termo some do FTS também em "TODOS"; a mitigação é a do estudo (texto "TODOS (deliverable note)", parâmetro explícito `todos` na tool, busca densa).
+- Verificações: `npx tsc --noEmit` ok; `npm run build` ok (`TMP`/`TEMP` numa pasta temporária em `node_modules`, apagada depois); `cargo check` ok; `cargo test` 30 passed, 3 ignored; nenhum arquivo em `src-tauri/` alterado; nenhum `BEGIN`/`COMMIT` novo. Grep de resíduos: `task_group` só na DDL (`TASKS_EXTRA_COLUMNS`) e em `getLegacyTaskGroups`; `'group'`/`'groups'` só na leitura legada (`App.tsx` localStorage, `rowToTaskView`, `resolveMainView`); demais `.group` são de outros componentes (`ContextMenu`, `FormattingToolbar`, `TasksView`, `ViewMenu`, nodes Tiptap). Smoke das funções puras (esbuild + Node, saída em pasta temporária apagada): dois cadernos com "Sistema" = duas linhas; "Sistema"/"sistema"/"Sistema " fundidas com título "Sistema"; group só com concluídas = `onlyClosed`; task já vinculada e task inexistente fora; reexecução marca `noteExists` com o mesmo id; `buildTodosContent` gera abertas antes das fechadas e casa com `extractTaskRefTitles`/`taskRefIds`; `missingPillLines` só as faltantes; `todosProgressByNote` sem dropped, próximo deadline e atraso; `>autofrotaweb` exato, `>auto #Outro` prefere o projeto, `>Novo` pendente até confirmar; Group by TODOS com pai apagado em "No TODOS".
+- Files changed:
+  - src/types/index.ts
+  - src/storage/tauri.ts
+  - src/storage/index.ts
+  - src/storage/browser.ts
+  - src/lib/tasks.ts
+  - src/lib/noteTypes.ts
+  - src/lib/taskQuickAdd.ts
+  - src/lib/noteFileText.ts
+  - src/hooks/useTasks.ts
+  - src/hooks/useNotesIndexSync.ts
+  - src/hooks/useChat.ts
+  - src/App.tsx
+  - src/components/TasksView/TasksEnv.tsx
+  - src/components/TasksView/views.ts
+  - src/components/TasksView/BoardView.tsx
+  - src/components/TasksView/BoardColumns.tsx
+  - src/components/TasksView/BoardColumns.module.css
+  - src/components/TasksView/ProjectsBoard.tsx
+  - src/components/TasksView/TasksView.tsx
+  - src/components/TasksView/TasksView.module.css
+  - src/components/TasksView/TasksHeader.tsx
+  - src/components/TasksView/WeekBoard.tsx
+  - src/components/TasksView/WeeklyReview.tsx
+  - src/components/TasksView/TaskCard.tsx
+  - src/components/TasksView/TaskCard.module.css
+  - src/components/TasksView/TaskLine.tsx
+  - src/components/TasksView/TaskLine.module.css
+  - src/components/TasksView/DueTodayBlock.tsx
+  - src/components/TasksView/DueTodayBlock.module.css
+  - src/components/TasksView/TaskPropertiesBar.tsx
+  - src/components/TasksView/PropertyControls.tsx
+  - src/components/TasksView/TaskEditorModal.tsx
+  - src/components/Editor/TasksContext.tsx
+  - src/components/Editor/TaskRefView.tsx
+  - src/components/Editor/TaskRef.module.css
+  - src/components/Editor/TasksQueryBlockView.tsx
+  - src/components/Sidebar/Sidebar.tsx
+  - src/components/Sidebar/Sidebar.module.css
+  - src/components/Sidebar/NotebookTasksSection.tsx
+  - src/components/ChatPanel/ChatPanel.tsx
+  - src/components/NotesChat/NotesChatPanel.tsx
+  - src/components/NotesChat/notesContext.ts
+  - src/components/AssistantPanel/AssistantPanel.tsx
+  - src/components/KeepPanel/KeepPanel.tsx
+  - DOCS/reports/20-10-2026/planreport_20261020013139.md (status das etapas 3.1–3.12)
+- Files created:
+  - src/lib/todosMigration.ts
+  - src/components/TasksView/TodosBoard.tsx
+  - src/components/NoteTypes/TodosPanel.tsx
+  - src/components/NoteTypes/TodosPanel.module.css
+  - src/components/NoteTypes/TodosMigrationModal.tsx
+  - src/components/NoteTypes/TodosMigrationModal.module.css
+- Files removed:
+  - src/components/TasksView/GroupsBoard.tsx
+- Left behind: sem teste em app real (seed do TODOS, `ALTER` de `parent_note_id` e índice, modal da migração, chip rico dentro do NodeView, "Insert into checklist" e visual da lista/boards só revisados no código). Eco entre janelas: o `saveTask` grava `parent_note_id` como as demais colunas; uma janela keep com estado de antes da migração e que edite uma task no intervalo antes de recarregar (`tasks-changed`) pode desfazer o vínculo dessa task (mesmo risco que já existe para os outros campos; a migração em si parte de `reload` + `updateTasks`). Weekly Review agrupado por TODOS segue fora (decisão do Orquestrador). Fase 4 não iniciada.
+
+### CodeAgent — implementação inicial (Fase 4) — 20261020023723
+- Summary: Fase 4 do plano (etapas 4.1–4.4, todas `FEITO`). `noteSearch.ts`: `parseSearchQuery(raw, notebooks, noteTypes)` (`#Nome` via `findProjectByTag`, `type:Nome` pelo nome do tipo normalizado sem espaços; nome desconhecido fica no texto; devolve `text`, `notebookId`, `typeId` e `chips` com o token original), `typeToken(type)`, `searchNotes` com `opts.notebookId`/`opts.typeId` (filtro antes do ranking; só filtros = notas do filtro por recência) e `searchTasks` (AND de tokens sobre título + título da TODOS, respeita o caderno, abertas por `compareTasks` e depois fechadas pela conclusão mais recente, limite 8). `SearchPalette`: placeholder "Search… (#notebook, type:TODOS)"; linha de chips sob o input com o caderno ativo (removível: tira o token do texto) e um chip por tipo (ícone + cor do tipo; clicar alterna `type:<nome>`, um tipo por vez); seção "Tasks" depois das notas (ponto de status, título riscado se fechada, `TODOS <título>` à direita, projeto em cima; seleção → `openTask`), some com `type:`; nota-corpo de task listada sai das notas. "Search by meaning: '<texto>'" como última linha quando há chave, texto sem filtros ≥ 3 chars e algum caderno no escopo; só roda por Enter/clique: `ragRetrieve` com as pastas de notas dos cadernos fora de `disabledNotebookIds` (só a do `#Caderno`, se houver), `history: []`, modelo de `RAG_REWRITE_MODEL_KEY`, `filters: { kinds: ['note'] }`; usa `selected`, descarta `note:tasks-*`, agrupa por nota, só notas existentes (e do tipo filtrado), seção "By meaning" com título + 120 chars do trecho. Estados "Searching…", "Nothing found by meaning" e "Search by meaning failed: …" (Enter tenta de novo). Resultado guardado por chave (filtros + texto): mudar a consulta descarta; resposta de pedido antigo é ignorada (contador). Ponto herdado da Fase 1 corrigido: setas rolam o item selecionado com `scrollIntoView({ block: 'nearest' })` (só por teclado e no reset da lista, não no hover). App passa `onSelectTask`, `noteTypes`, `tasks`, `todosById`, `statuses`, `hasApiKey`, `disabledNotebookIds`.
+- Desvios (pequenos, sem mudança de escopo):
+  - A linha "Search by meaning" também some quando o escopo semântico fica vazio (ex.: `#Caderno` de um caderno com IA desligada): o backend devolveria nada sempre.
+  - Com algum filtro ativo, os cadernos por prefixo não aparecem (o filtro já escolheu o caderno/tipo).
+  - Só um filtro de cada espécie: um segundo `#X`/`type:` reconhecido fica no texto (como nome desconhecido).
+  - Tasks não aparecem com texto vazio (só filtros), para não listar o projeto inteiro.
+  - Com resultados por significado, a linha do gatilho dá lugar à seção "By meaning" e a seleção vai para o 1º resultado.
+  - Clique nas linhas faz `preventDefault` no `mousedown` (o input não perde o foco ao clicar em "Search by meaning", que não fecha a palette).
+  - `listPropertyValues` não é código morto: a Fase 3 passou a usá-lo na lista de notas (`Sidebar.tsx`).
+- Verificações: `npx tsc --noEmit` ok; `npm run build` ok (`TMP`/`TEMP` numa pasta temporária em `node_modules`, apagada depois); `cargo check` ok; `cargo test` 30 passed, 3 ignored; nenhum arquivo em `src-tauri/` alterado. `ragRetrieve` só é chamado em `runMeaningSearch`, acionado só por `selectResult` da linha "meaning" (Enter/clique). Smoke das funções puras (esbuild + Node, pasta temporária apagada): `#autofrotaweb type:todos migração` → caderno + TODOS + texto "migração"; nome desconhecido e segundo `#` ficam no texto; "migracao" com `#` filtra o caderno; só filtro lista por recência; consulta vazia sem filtro = []; tasks por título e pela TODOS, abertas antes das fechadas, filtro por caderno.
+- Files changed:
+  - src/lib/noteSearch.ts
+  - src/components/SearchPalette/SearchPalette.tsx
+  - src/components/SearchPalette/SearchPalette.module.css
+  - src/App.tsx
+  - DOCS/reports/20-10-2026/planreport_20261020013139.md (status das etapas 4.1–4.4)
+- Files created:
+  - nenhum
+- Files removed:
+  - nenhum
+- Left behind: sem teste em app real (visual dos chips, latência/erro do RAG e rolagem só revisados no código). Nota ainda não indexada não aparece por significado (limitação conhecida, §6.2). Os chips de tipo listam todos os tipos existentes; com muitos tipos a linha quebra em várias.
+
+### Orchestrator — decisão — 20261020024500
+- Summary: Fases 1–4 concluídas pelos codeAgents, com tsc/build/cargo passando. Sem teste humano entre fases (instrução do Coordenador).
+- Inputs:
+  - DOCS/reports/20-10-2026/planreport_20261020013139.md
+- Decision: seguir para a Etapa 2 (revisão). Pedir ao codereviewAgent atenção especial ao eco da janela Assistant (Ctrl+K) sobrescrevendo `parent_note_id` via `saveTask` com estado defasado (risco registrado na Fase 3).
+- Next step: codereviewAgent
+
+### CodeReviewAgent — 20261020024613
+- Summary: Revisão das Fases 1–4. Pontos de atenção verificados:
+  - Schema idempotente e sem BEGIN/COMMIT.
+  - `saveNote` intocado e `useNotes.save` preservando tipo e propriedades.
+  - Migração com id determinístico, dry-run sem gravação e reexecução segura.
+  - Eco da keep: risco baixo (a Assistant não grava tasks).
+  - Busca no cliente correta; "Search by meaning" respeita os cadernos com IA desligada.
+  - Achados:
+    - 1 crítico: o checklist da migração é montado sem o escape do serializer. Na 1ª edição da TODOS, o sync de título grava `&gt;`/`\[` nos títulos das tasks.
+    - 4 importantes: o "+" não alcança itens de lista, itens aninhados e blocos do toggle; o "+" é cortado com `left` negativo; a flag da migração fica em localStorage, não no banco; `useNoteTypes` não tenta de novo em falha.
+    - 11 nits.
+- Verdict: APROVADO COM RESSALVAS
+- Output: DOCS/reports/20-10-2026/reviewreport_20261020024613.md
+
+### CodeAgent — ajuste final — 20261020030143
+- Summary: Ajustes do review `reviewreport_20261020024613.md`.
+  - **[crítico] 1 (títulos corrompidos):** causa raiz corrigida dos dois lados.
+    - `extractTaskRefTitles` decodifica as entidades (`&lt; &gt; &quot; &#39; &amp;`) e remove o `\` antes de pontuação ASCII (escape do Markdown). Isso também corrige o bug antigo das linhas editadas à mão.
+    - `pillLine` da migração escreve o título como o editor grava: `escapeHTML` do tiptap-markdown mais o `esc` do prosemirror-markdown com início de bloco.
+    - Smoke (esbuild + Node, usando o `esc` real do prosemirror-markdown): as linhas da migração saem idênticas às do serializer, e o título extraído é o original para `a -> b [x]`, `Fix [bug] *now*`, `snake_case and _lead`, `- dash`, `# hash`, `1. numbered`, `+ plus`, `` P&D <tag> `code` ~x~ \back ``.
+  - **[importante] 2 (alcance do "+"):** a unidade vem dos ancestrais de `pos`, e o `inside` só vale para nó atômico ou para o cabeçalho do toggle (acima do `[data-node-view-content]`, ou toggle recolhido). Sonda primeiro na borda esquerda do conteúdo. Se ali houver nó atômico (imagem, embed), usa esse ponto. Senão, resolve no meio da largura na mesma altura, onde o elemento é o bloco mais interno, fora do padding do `ul` e do toggle. Com isso o "+" acompanha item de lista, item aninhado e bloco dentro do toggle.
+  - **[importante] 3 ("+" cortado):** `left` limitado a 0. Ao lado de um ⋮⋮ (taskItem, linha `/comando` executada), se não cabe, o "+" some em vez de cobrir o handle. Nesse caso o par linha + embed segue com "+" pelo embed.
+  - **[importante] 4 (flag da migração):** o localStorage saiu. A migração passa a usar o banco.
+    - Tabela `todos_migration_done (note_id, done_at)`, com `CREATE TABLE IF NOT EXISTS` no padrão do `ensureReminderStateTable`.
+    - `getTodosMigrationDone`/`markTodosMigrationDone` também no `StorageAdapter`/`BrowserStorage`.
+    - O dry-run decide pelos dados (tasks com `task_group` e sem pai) menos as linhas já resolvidas, pelo id determinístico da nota.
+    - No sucesso, marcadas e desmarcadas são registradas. O modal avisa que as desmarcadas não voltam.
+    - O registro acompanha o DB: um clone prod→dev volta a oferecer a migração.
+    - Uma TODOS apagada ou uma task desvinculada depois não é reoferecida.
+    - A tabela só é lida se existir algum `task_group`.
+  - **[importante] 5 (`useNoteTypes`):** em falha de leitura, tenta de novo em 1, 2, 4 e 8 s. Enquanto falha, o banner mostra "Failed to load note types.".
+  - **Nits feitos:**
+    - 7: chip sem datas mostra "task".
+    - 8: o ponto do chip e "Insert into checklist" não agem com o editor não editável. O preview do Monet só esconde as linhas de comando, então não bloqueia edição.
+    - 9: busca decodifica entidades (`decodeEntities` exportado de `noteFileText.ts`).
+    - 10: "By meaning" pula o cabeçalho do 1º chunk.
+    - 11: Enter durante o debounce aplica a consulta e abre o 1º resultado dela.
+    - 12: a seleção só volta ao topo quando a consulta muda. Num reload ela fica, limitada ao tamanho da lista.
+    - 13: o cache guarda a nova referência do conteúdo.
+    - 14: "New <tipo>" não é oferecido na subject Tasks (D4).
+    - 15: mesclar uma TODOS com tasks numa nota que não é TODOS pede confirmação.
+    - Extra: `{ __html }` memoizado em `EmbedBlockView`/`LinkedNoteBlockView`.
+- Verificações:
+  - `npx tsc --noEmit` ok.
+  - `npm run build` ok, com `TMP`/`TEMP` em `node_modules/.tmp-build`, apagada depois.
+  - `cargo check` ok.
+  - `cargo test`: 30 passed, 3 ignored.
+  - Nenhum arquivo em `src-tauri/` alterado e nenhum BEGIN/COMMIT.
+  - Sem resíduo da chave `monet:todos-migration-done`.
+- Files changed:
+  - src/lib/tasks.ts
+  - src/lib/todosMigration.ts
+  - src/lib/noteFileText.ts
+  - src/lib/noteSearch.ts
+  - src/components/Editor/BlockGutter.tsx
+  - src/components/Editor/TaskRefView.tsx
+  - src/components/Editor/EmbedBlockView.tsx
+  - src/components/Editor/LinkedNoteBlockView.tsx
+  - src/components/NoteTypes/TodosMigrationModal.tsx
+  - src/components/SearchPalette/SearchPalette.tsx
+  - src/components/Sidebar/Sidebar.tsx
+  - src/hooks/useNoteTypes.ts
+  - src/storage/tauri.ts
+  - src/storage/index.ts
+  - src/storage/browser.ts
+  - src/App.tsx
+- Files created:
+  - nenhum
+- Files removed:
+  - nenhum
+- Left behind:
+  - **Nit 6 (eco da keep sobre `parent_note_id`):** não feito. O risco é baixo e já existe para todas as colunas do `saveTask`. O guard `updated_at` no UPSERT muda o comportamento geral e pede avaliação à parte.
+  - **Nit 16 (título de TODOS de caderno com IA desligada):** não feito. É preciso levar o conjunto de cadernos desligados a 4 resolvedores (index sync, Chat, Notes chat, Assistant) e reindexar as notas de outros cadernos quando o toggle muda. É a mesma classe de vazamento que já existe, antes desta entrega, para "Source note:" e para o título de nota linkada. Melhor tratar junto, como item próprio. O caso exige D10: uma task num caderno com IA ligada e a TODOS num caderno com IA desligada.
+  - **Cache da busca:** não descarta notas apagadas. Fica uma entrada por nota apagada na sessão, sem efeito no resultado.
+  - **Sem teste em app real:** o alcance e a posição do "+" sobre NodeViews (toggle, embed, listas aninhadas) e o modal da migração com o banco real só foram verificados no código. O caso do review continua valendo para o teste do Coordenador: migrar `a -> b [x]`, digitar na seção Status e conferir que o título não muda.
+
+### Orchestrator — encerramento — 20261020034500
+- Summary: Fases 1–4 implementadas, revisadas e com passada final (crítico, 4 importantes, 9/11 nits e `{ __html }` dos NodeViews corrigidos). tsc/build/cargo ok. Nada testado no app real; nada commitado.
+- Inputs:
+  - DOCS/reports/20-10-2026/reviewreport_20261020024613.md
+- Decision: entregar ao Coordenador para teste. Ficaram para trás: eco da keep sobre `parent_note_id` (risco geral do `saveTask`), vazamento de título de TODOS/nota de origem/nota linkada de cadernos com IA desligada (item próprio), Weekly Review por TODOS, fase 5 (limpeza do `task_group`, 4 semanas após o release).
+- Next step: aguardando teste do Coordenador
+
+### CodeAgent — ajuste pontual (propriedades abaixo do título) — 20261020035500
+- Summary: Na lista de notas do caderno, as propriedades "show in list" saíram da direita do título e passaram para baixo dele, uma por linha, no formato `Nome: valor` (valor formatado por `formatMetadataValue`, limite `MAX_LIST_PROPERTIES` mantido). Fonte 11px, `--text-muted`, recuadas até o texto do título, com ellipsis por linha e `title` com o texto completo. A linha só quebra (`flex-wrap`) quando há propriedades: notas sem tipo/sem valores e a TODOS ficam iguais. O progresso da TODOS continua à direita (`noteMeta` agora só trata a TODOS). Alça, hover, ativo e botões de ação seguem no `li` (a 1ª linha continua centralizada). `npx tsc --noEmit` ok; `npm run build` ok (TMP/TEMP em `node_modules/.tmp-build`, apagada). Sem cargo, sem app.
+- Files changed:
+  - src/components/Sidebar/Sidebar.tsx
+  - src/components/Sidebar/Sidebar.module.css
+- Files created:
+  - nenhum
+- Files removed:
+  - nenhum
+- Left behind: o recuo das propriedades é um `calc` fixo (alça + ícone + 2 gaps); se uma nota tiver propriedades sem o ícone do tipo (tipo ausente no mapa), o recuo fica 18px maior. Não verificado no app real.
+
+### CodeAgent — ajuste pontual (task inline como card) — 20261020040500
+- Summary: Item de checklist vinculado a uma task virou card compacto. O `li` com `data-task-status` (decoration existente do `TaskStatus`) ganha borda, fundo sutil e padding em `Editor.module.css`. O 1º parágrafo (título) reserva uma linha embaixo, onde a linha de propriedades do `taskRef` fica absoluta (`.monetTaskProps`). O node continua inline no fim do título, então edição, Enter, "+" do gutter, ⋮⋮ e sync de título não mudam. Também não foi preciso reescrever o `taskItem`. No fim do título fica um ícone discreto (↗) que abre a task. Ele também é a âncora visível do node: o cursor antes e depois dele se distingue, e o Backspace o remove como removia o chip. As pills, só com valor, são:
+  - status na cor do status;
+  - do date (atrasada em `--accent-late`);
+  - ⚑ deadline (vermelho se atrasada);
+  - ↻n;
+  - ★;
+  - TODOS, se não for a nota aberta;
+  - metadados custom `Nome: valor`, via `visibleMetadata`/`formatMetadataValue`.
+  Clicar na pill de status abre um menu em portal com os status do registro, na ordem configurada, incluindo os custom. O status atual desconhecido entra no fim, como na `TaskPropertiesBar`. A escolha grava por `updateTask(id, { status })`, o mesmo caminho da barra. O WIP no código é só indicador (não há bloqueio a respeitar). O checkbox segue o status pela decoration. O menu fecha com Esc (capturado, não chega ao editor nem à keep), clique fora, rolagem ou resize, e os itens não tiram o foco do editor. Com o editor não editável, a pill fica desabilitada e sem menu. `onCycleStatus` foi trocado por `onSetStatus` no `TasksContext`, que também ganhou `metadataDefs`. A keep (Ctrl+K) ganhou `onSetStatus`. `taskRef` passou a `selectable: false`: um clique na linha de propriedades não vira NodeSelection, que apagaria o vínculo ao digitar em seguida. Código morto removido: chip antigo (`.pill` laranja, `.sep`, `.deadline`, `.selected`, o fallback "task", o ciclo pelo ponto e o import `nextStatus` do App). `npx tsc --noEmit` ok. `npm run build` ok, com TMP/TEMP em `node_modules/.tmp-build`, apagada depois. Sem cargo, sem app.
+- Files changed:
+  - src/components/Editor/TaskRef.ts
+  - src/components/Editor/TaskRefView.tsx
+  - src/components/Editor/TaskRef.module.css
+  - src/components/Editor/TasksContext.tsx
+  - src/components/Editor/Editor.module.css
+  - src/App.tsx
+  - src/components/KeepPanel/KeepPanel.tsx
+- Files created:
+  - nenhum
+- Files removed:
+  - nenhum
+- Left behind:
+  - A linha de propriedades tem uma linha só: o que não cabe é cortado, e cada pill de texto (TODOS, metadado) tem no máximo 16em, com ellipsis e `title`.
+  - Na keep não há CSS de checklist, então o card não aparece: ícone e pills ficam inline depois do título, sem os metadados custom (a keep não carrega as defs).
+  - O ⋮⋮ fica centralizado na altura do card, não na 1ª linha.
+  - Nada disso foi verificado no app real.
+
+### CodeAgent — ajuste pontual (tasks vazias no 1º start sobre o banco de prod) — 20261020120258
+- Summary: Causa confirmada no código, mas não o erro exato, porque não há log do 1º start.
+  - O que o código mostra:
+    - `getTasks`/`getTaskStatuses`/`getMetadataDefs`/`getTaskViews` passam pelo `ensureTasksTables`. Num banco sem o schema novo, ele roda ~13 `ALTER TABLE`, o índice e o seed.
+    - O `getNoteTypes` passa pelo `ensureNoteTypesTable` (CREATE e seed). Os dois rodavam em paralelo no pool, e cada janela (main, keep, assistant) roda o seu.
+    - Isso disputa o lock de escrita com o scan do Rust e com os `wal_checkpoint(TRUNCATE)`, que bloqueiam escritores enquanto esperam leitores.
+    - Qualquer erro que não seja "duplicate column" (ex.: `database is locked` após o `busy_timeout` de 5 s do sqlx/rusqlite) rejeita o `ensure`, e o `getTasks` junto.
+    - Nesse caso, `useTasks` marcava `loadFailed`, sem nova tentativa e sem aviso: a lista ficava vazia, e a migração, que exige `tasksLoaded`, não era avaliada.
+    - Status, metadados e visões tinham a mesma falha silenciosa.
+    - No 2º start o schema já existe e as DDLs viram no-op, o que bate com o sintoma.
+  - O que não era problema: nenhuma promise de ensure (`tasksTablesReady`, `notebookColorReady`, `notesColumnsReady`, `noteTypesTableReady`) nem o `dbPromise` fica em cache quando rejeitada. Todas já se limpavam.
+  - Mudanças:
+    - (b) `TauriStorage.serialDdl`: fila única das DDLs `ensure*` (tasks, cor do caderno, colunas de notes, `note_types`, `todos_migration_done`) por janela. Uma DDL por vez, e a fila segue mesmo se a anterior falhar.
+    - (c) `loadWithRetry` em `lib/tasksEvents.ts`: 1ª leitura com novas tentativas em 1, 2, 4 e 8 s, extraída do `useNoteTypes`. Usada em `useTasks`, `useTaskStatuses`, `useMetadataDefs`, `useTaskViews` e `useNoteTypes`.
+    - Notas e cadernos não mudaram: as leituras deles são `SELECT` puros, sem DDL, e o `db()` já tenta 15× no `Database.load`.
+    - (d) `useTasks` expõe "Failed to load tasks." no `saveError` (banner `saveErrorBanner` do App), como o `useNoteTypes`.
+    - (3) A guarda da migração já esperava `tasksLoaded`, que só fica true em sucesso, e o tipo TODOS carregado. Logo, cobre o retry. Se `getLegacyTaskGroups`/`getTodosMigrationDone` falharem, a checagem agora é reaberta e reavaliada na próxima mudança, em vez de ficar travada na sessão.
+  - Sem BEGIN/COMMIT. `npx tsc --noEmit` ok. `npm run build` ok, com TMP/TEMP em `node_modules/.tmp-build`, apagada depois. Sem cargo, sem app, sem banco de prod.
+- Files changed:
+  - src/storage/tauri.ts
+  - src/lib/tasksEvents.ts
+  - src/hooks/useTasks.ts
+  - src/hooks/useNoteTypes.ts
+  - src/hooks/useTaskStatuses.ts
+  - src/hooks/useMetadataDefs.ts
+  - src/hooks/useTaskViews.ts
+  - src/App.tsx
+- Files created:
+  - nenhum
+- Files removed:
+  - nenhum
+- Left behind:
+  - Entre janelas não há serialização. Só o JS de cada janela é serializado, e as DDLs concorrentes de main/keep/assistant continuam valendo pelo "duplicate column" e pelo retry.
+  - Se o lock durar mais que ~15 s (5 tentativas), o banner fica até um reload bem-sucedido, que acontece num `tasks-changed` de outra janela ou ao reabrir o app.
+  - Notas e cadernos seguem sem banner próprio de falha de leitura. É preexistente e só é atingido se o `Database.load` falhar 15×.
+  - Não reproduzido no app real: o teste é repetir o 1º start sobre uma cópia do banco de prod sem o schema novo.
+
+### CodeAgent — ajuste pontual (nome do tipo acima do título + biblioteca de ícones) — 20261020130008
+- Summary:
+  - Lista de notas: notas com tipo ganham uma linha "eyebrow" acima do título com o nome do tipo (10px, peso 600, caixa alta, letter-spacing 0.06em, ellipsis), na cor do tipo (fallback `--text-muted`, como o ícone). O span vem depois do ícone no DOM e sobe com `order: -1`; a classe `rowWithProps` virou `rowWrap` e vale para nota com tipo ou com propriedades. A 1ª linha (alça, ícone, título, progresso da TODOS, botões) não muda. O recuo das propriedades agora depende do ícone (`.rowType ~ .rowProps`): sem ícone, recua só alça + gap, o que resolve o "18px a mais" registrado antes.
+  - Ícones de tipo: `TypeIcon.tsx` passou de 8 para 123 ícones do `@phosphor-icons/react` já instalado, em 9 grupos (`TYPE_ICON_GROUPS`), com imports nomeados explícitos (tree-shaking mantido). `TYPE_ICONS` é o mapa plano derivado, sem protótipo. Os 8 nomes antigos (`note`, `checks`, `book`, `flag`, `briefcase`, `lightbulb`, `user`, `star`) continuam; nome desconhecido cai em `note`. O seletor do `NoteTypesModal` ganhou busca (nome do ícone, espaço vale como "-", ou nome do grupo) e grade agrupada com rolagem própria (máx. 192px).
+  - `npx tsc --noEmit` ok; `npm run build` ok (TMP/TEMP em `node_modules/.tmp-build`, apagada). Sem cargo, sem app.
+- Files changed:
+  - src/components/Sidebar/Sidebar.tsx
+  - src/components/Sidebar/Sidebar.module.css
+  - src/components/NoteTypes/TypeIcon.tsx
+  - src/components/NoteTypes/NoteTypesModal.tsx
+  - src/components/NoteTypes/NoteTypesModal.module.css
+- Files created:
+  - nenhum
+- Files removed:
+  - nenhum
+- Left behind: o app só tem tema escuro (não há tema claro no CSS), então a cor do tipo é usada direto, como no ícone. Nota com tipo fica ~14px mais alta na lista. Não verificado no app real.
+
+### CodeAgent — ajuste final (ícone junto ao nome do tipo) — 20261020134500
+- Summary: Na lista de notas, o ícone do tipo saiu da linha do título e foi para a linha do tipo (ícone 11px + NOME DO TIPO, ambos na cor do tipo, alinhados verticalmente). A linha do tipo agora começa na mesma coluna do título; a linha de baixo tem só o título (progresso da TODOS continua à direita). Propriedades `Chave: valor` e notas sem tipo ficam na mesma borda esquerda. Removidos o `.rowType` e o recuo extra (`24px + 2 gaps`) do eyebrow e de `.rowType ~ .rowProps`, que ficaram mortos. Drag handle, hover/ativo e botões de ação intocados. `npx tsc --noEmit` e `npm run build` OK.
+- Files changed:
+  - src/components/Sidebar/Sidebar.tsx
+  - src/components/Sidebar/Sidebar.module.css
+- Files created:
+  - nenhum
+- Files removed:
+  - nenhum
+- Left behind: nenhum (sem verificação visual no app, que não foi subido)
+
+### Orchestrator — ajuste — 20261020134500
+- Summary: Pedido do Coordenador no teste: "Related content" abre fechado. `RelatedContent` com `useState(false)` e `key={activeNote.id}` no App, para cada nota aberta começar fechada. Ajuste de 2 linhas feito direto pelo Orquestrador; `tsc` ok.
+- Next step: aguardando teste do Coordenador
+
+### CodeAgent — ajuste pontual (tipo sem duplicação, largura do texto, ordenação de notas) — 20261020143000
+- Summary:
+  - **Tipo no cabeçalho:** a pill do tipo na linha data/tags saiu. O `NoteTypePicker` virou o controle do tipo nos dois lugares. Com tipo, ele é o rótulo da `NotePropertiesBar` (ícone + nome + ▾ na cor do tipo, recebido como `typeControl`). Sem tipo, é o "+ type" da linha data/tags (`typeSlot` só quando `canTypeActive && !activeNoteType`; D4 continua sem nada). O menu tem: tipos (com ícone e cor, o atual marcado), "Remove type", "Edit type…" (modal focado no tipo) e "Manage types…" (modal geral, sem foco). Sem tipo, só tipos + "Manage types…". A troca continua no `handleSetNoteType` do App (confirmação §4.5, desvínculo da TODOS, template em nota vazia, tudo pelo `useConfirm`). O menu fecha com Esc (capturado, não chega ao editor) e clique fora. O link "Edit type" solto saiu da barra; "Insert template" ficou na barra (visível sem abrir menu). A barra já aparecia sempre que a nota tem tipo, mesmo sem propriedades; segue assim. Código morto removido: `.chip`/`.manage` do `NoteTypePicker.module.css`, o badge e o `onEditType` da `NotePropertiesBar`.
+  - **Largura do texto:** novo token `--measure-note: 80ch` no `:root` (antes o corpo usava `--measure: 68ch`), usado só no `.proseEditor` do Editor (parágrafos e a escala dos headings). O padding direito de 72px, que reserva a faixa do sumário, não mudou: em coluna mais estreita que a medida o texto para antes do sumário, como antes. `--measure` (68ch) continua na keep. O Reader usa o mesmo CSS, mas a coluna dele é mais estreita que 68ch, então não muda. O modal de task (920px) cabe 80ch + paddings.
+  - **Ordenação da lista de notas:** ícone ⇅ no cabeçalho da coluna (entre o filtro de tipo e o recolher), com menu Manual / By type / Alphabetical (A–Z) e "Reorder types…". As opções ficam em `NOTE_SORT_OPTIONS` e a ordenação em `sortNotes` (`lib/noteOrder.ts`), aplicada no `visibleNotes` do App depois do filtro e da ordem manual (sort estável). By type segue a ordem dos tipos do registro (`note_types.sort_order`), A–Z dentro do tipo e sem tipo/tipo apagado por último. Alphabetical usa `localeCompare` com `sensitivity: 'base'` sobre o título exibido (vazio = "untitled"). A escolha é global em `localStorage` (`monet:note-sort`, com try/catch). Fora de Manual, o `useSortable` fica `disabled` e a alça some, mas guarda o lugar (o recuo do tipo e das propriedades conta com ela); o ícone fica na cor de destaque e o `title` mostra a ordem ativa. O filtro por tipo continua junto.
+  - **Ordem dos tipos:** a coluna `sort_order`, o `reorderTypes` (uma gravação por linha alterada, sem BEGIN/COMMIT) e as setas ↑/↓ no modal já existiam. Mantive as setas, que são mais robustas que arrastar num modal pequeno. "Reorder types…" abre o modal com `reorder` e um aviso no topo da lista de tipos ("Use ↑/↓ to set the order of “By type”…"). Nenhuma mudança no banco.
+  - `npx tsc --noEmit` ok. `npm run build` ok, com TMP/TEMP em `node_modules/.tmp-build`, apagada depois. Sem cargo, sem app.
+- Files changed:
+  - src/App.tsx
+  - src/App.css
+  - src/components/Editor/Editor.tsx
+  - src/components/Editor/Editor.module.css
+  - src/components/NoteTypes/NoteTypePicker.tsx
+  - src/components/NoteTypes/NoteTypePicker.module.css
+  - src/components/NoteTypes/NotePropertiesBar.tsx
+  - src/components/NoteTypes/NoteTypesModal.tsx
+  - src/components/NoteTypes/NoteTypesModal.module.css
+  - src/components/Sidebar/Sidebar.tsx
+  - src/components/Sidebar/Sidebar.module.css
+  - src/lib/noteOrder.ts
+- Files created:
+  - nenhum
+- Files removed:
+  - nenhum
+- Left behind:
+  - Em janela larga o texto para em 80ch (~690px) e sobra espaço à direita. É a medida de leitura; ela não acompanha a coluna inteira.
+  - O menu de ordenação abre alinhado à direita do ícone. Com a coluna de notas no mínimo, ele pode passar da borda esquerda da coluna, como o menu "New <tipo>".
+  - Nada verificado no app real.
+
+### CodeAgent — implementação inicial (Chat — rodadas com tool call) — 20261020152721
+- Summary:
+  - **Diagnóstico confirmado:** o backend emitia `openrouter://chunk` para todo `delta.content`, mesmo numa rodada que termina em tool call, e só emitia `tool_call` no fim. O front anexava a 2ª rodada (sem o texto da 1ª no payload) no mesmo balão, e o modelo respondia de novo: daí os dois blocos ```note iguais.
+  - **Backend (`lib.rs`):** novo evento `openrouter://tool_call_started` (`{ requestId }`), emitido no primeiro `delta.tool_calls` não vazio da rodada. A partir daí o conteúdo da rodada deixa de ser emitido (o reasoning segue). A montagem do `tool_call` virou `emit_tool_calls`, usada no `finish_reason == "tool_calls"` (como antes) e num fallback novo: se o stream termina (`[DONE]` ou fim do corpo) depois de tool calls sem esse `finish_reason`, as tools seguem mesmo assim (o conteúdo já tinha sido suprimido).
+  - **Front (`openrouter.ts`, `useChat.ts`):** `onOpenRouterToolCallStarted`. O `activeStreamRef` guarda `roundText` (texto da rodada já no balão) e `roundThinking`. Ao receber `tool_call_started` do stream ativo, **e só se houver handler de tool** (haverá rodada seguinte), o texto da rodada sai do balão (`content` perde o sufixo `roundText`, então o que fosse de rodadas anteriores fica). Sem handler (2ª rodada, enviada sem tools, em que o modelo ainda tenta uma tool), o texto fica e o caminho "sem handler" atual encerra o turno, como antes. O thinking é mantido (é o caminho até a tool); o 1º trecho de thinking de cada rodada nova é separado do anterior por linha em branco.
+  - **Separação defensiva:** `joinRound` junta o 1º trecho de cada rodada ao que já está no balão com `\n\n` (completa se já houver `\n`); com conteúdo vazio, não acrescenta nada.
+  - **System prompt:** `TOOLS_FIRST_SYSTEM_PROMPT` ("If you need a tool, call it before writing any text of your reply. Do not start answering and then call a tool.") entra como mensagem system antes do histórico na 1ª rodada, só quando o turno tem tools. Para isso o `apiMessages` foi montado depois do `toolsPayload` (bloco movido, sem outra mudança). Vale para todos os consumidores do `useChat` (Chat, Assistant, chat das Anotações, chat do Reader).
+  - **Status de ferramenta:** as linhas existentes (`Searching knowledge base...`, `Searching the web...`, fases do deep research) continuam acesas durante a execução da tool. Entre `tool_call_started` e o `tool_call` (argumentos chegando), o balão vazio mostra os pontinhos de streaming.
+  - **Outros caminhos:** só o `run_openrouter_stream` + handler do `useChat` usa tools. Deep Research e web search são tools desse mesmo handler (rodam fora do stream e montam a 2ª rodada pelo mesmo caminho); o `useAi` não usa tools. Nada mais a ajustar.
+  - **Preservados:** Stop (com o texto descartado, o balão vazio é removido no cancel, como antes de qualquer texto), tokens/s (`done` da 2ª rodada), persistência (mesmo `updateMessages`), fontes/`ragSources`, `ragNothingFound`, bibliotecário.
+  - Verificações: `npx tsc --noEmit` ok; `npm run build` ok; `cargo check` e `cargo test` ok (30 passed, 3 ignored) com `CARGO_TARGET_DIR` no scratchpad. App não subido.
+- Files changed:
+  - src-tauri/src/lib.rs
+  - src/lib/openrouter.ts
+  - src/hooks/useChat.ts
+- Files created:
+  - nenhum
+- Files removed:
+  - nenhum
+- Left behind:
+  - Rodadas encadeadas (mais de uma tool em sequência) não existem hoje: a 2ª rodada vai sem tools. A regra de descarte vale por rodada (`roundText`) e serviria a elas, mas não houve mudança para encadear tools.
+  - Desvio: o fallback do backend (tools emitidas mesmo sem `finish_reason == "tool_calls"`) não estava pedido; protege o caso em que o conteúdo foi suprimido e o turno ficaria sem resposta.
+  - Para `query_tasks`, `get_day`/`notes_by_date` e `update_folder_memory` não há linha de status própria (só os pontinhos), como antes.
+  - Com a regra nova, uma resposta seguida de `update_folder_memory` passa a ser descartada e reescrita na 2ª rodada (custo de tokens), em vez de duplicar.
+  - Nada verificado no app real.
+
+### CodeReviewAgent — 20261020153611
+- Summary: Revisão do que mudou depois da passada final: lista de notas (tipo acima, propriedades abaixo), card da task com menu de status, correção do 1º start (`serialDdl`, `loadWithRetry`, banners), 123 ícones, tipo na barra de cima, `--measure-note`, ordenação de notas e tipos, Related content fechado e chat com tool call. `tsc` e `cargo check` ok.
+  - Pontos de atenção verificados:
+    - Chat: uma emissão de `tool_call` por stream, sem chunk depois do `tool_call_started`, filtro por `requestId`, Stop durante a tool, reasoning mantido, prompt system extra sem risco novo.
+    - Card: edição, sync de título e checkbox↔status preservados.
+    - `serialDdl`: sem deadlock e sem erro engolido.
+    - Ordenação: drag desabilitado fora de Manual; `sort_order` gravado sem BEGIN/COMMIT.
+  - Achados: nenhum crítico ou importante; 8 nits.
+    - Resposta que some e é reescrita quando o modelo chama `update_folder_memory` depois de responder.
+    - Balão vazio persistido se o app fecha durante a tool.
+    - Fallback do backend roda tools com argumentos truncados.
+    - Banner de tasks preso após falha num reload posterior.
+    - Status, metadados e visões falham em silêncio.
+    - A checagem da migração só reavalia quando `tasks` muda.
+    - Dois `taskRef` no mesmo título sobrepõem as propriedades.
+    - Regra do `serialDdl` não documentada.
+  - Bug extra (anterior à entrega): Stop durante a tool seguido de novo envio orfana o turno novo.
+- Verdict: APROVADO
+- Output: DOCS/reports/20-10-2026/reviewreport_20261020153611.md
+
+### CodeAgent — ajuste final — 20261020154728
+- Summary: Passada final sobre o review 20261020153611 (bug extra + nits 1–8).
+  - **Bug extra (Stop durante a tool + envio novo):** o handler de tool do turno agora compara o `assistantId` do stream ativo com o seu (`isActive()`) depois das tools e no `catch`. Se o turno não é mais o ativo (Stop zerou o `activeStreamRef`, ou um `send()` novo pôs o dele), retorna sem abrir a 2ª rodada e sem tocar em `activeStreamRef`/`toolCallHandlerRef`/`isStreaming`. A checagem por `toolCancelledRef` no handler saiu. O flag continua só para o Stop durante a busca pré-turno, onde ainda não há stream.
+  - **Nit 1 (memória):** o `tool_call_started` leva `toolName` (nome da 1ª tool, se já veio no 1º delta). Se for `update_folder_memory`, o texto da rodada fica no balão. No `tool_call`:
+    - só memória e com texto: grava a memória e encerra o turno com o texto da 1ª rodada, sem 2ª rodada;
+    - memória junto com outra tool: o texto sai nesse momento e a 2ª rodada responde;
+    - sem texto: segue a 2ª rodada, que é a resposta.
+    - O descarte virou `withoutRoundText`, usado nos dois lugares.
+  - **Nit 2:** o `historyForApi` pula mensagens do assistant com conteúdo vazio.
+  - **Nit 3:** o fallback do backend (`[DONE]` ou fim do corpo sem `finish_reason == "tool_calls"`) passou para `finish_tool_calls_fallback`. Ele só emite o `tool_call` se os argumentos de todas as tools forem JSON válido (ou vazios). Senão, emite `openrouter://error` (`TOOL_CALL_INCOMPLETE`, "The response was cut off while calling a tool. Try again."). O caminho `finish_reason == "tool_calls"` não mudou.
+  - **Nits 4/5:** novo `loadAndSyncWithRetry` em `lib/tasksEvents.ts`: `loadWithRetry` na montagem e de novo a cada `tasks-changed` de outra janela. Ele substitui o `loadWithRetry` + `onTasksChangedElsewhere` de `useTasks`, `useTaskStatuses`, `useMetadataDefs`, `useTaskViews` e `useNoteTypes`. `loadWithRetry` deixou de ser exportado. `useTaskStatuses` e `useMetadataDefs` expõem a falha de leitura no `saveError` ("Failed to load task statuses." / "Failed to load task properties."), que já vai para o banner do App.
+  - **Nit 6:** se a leitura da migração (`getLegacyTaskGroups`/`getTodosMigrationDone`) falha, uma nova checagem é agendada em 1, 2, 4 e 8 s (`todosMigrationRetry` nas deps do efeito). A volta de `tasksLoadFailed` a `false` depois de um reload bem-sucedido já reabria a checagem pelas deps.
+  - **Nit 7:** só o 1º `taskRef` do parágrafo (mesmo critério do `firstTaskRefId`) recebe a classe `monetTaskProps` e as pills. Os demais viram chip compacto inline (ícone de abrir + status).
+  - **Nit 8:** comentário no `serialDdl`: "nunca chame um `ensure*` de dentro de um `run`".
+  - Sem BEGIN/COMMIT. `npx tsc --noEmit` ok. `npm run build` ok, sem precisar mexer em TMP/TEMP. `cargo check` e `cargo test` ok (30 passed, 3 ignored), com `CARGO_TARGET_DIR` no scratchpad. App não subido.
+- Files changed:
+  - src/hooks/useChat.ts
+  - src/lib/openrouter.ts
+  - src-tauri/src/lib.rs
+  - src/lib/tasksEvents.ts
+  - src/hooks/useTasks.ts
+  - src/hooks/useTaskStatuses.ts
+  - src/hooks/useMetadataDefs.ts
+  - src/hooks/useTaskViews.ts
+  - src/hooks/useNoteTypes.ts
+  - src/App.tsx
+  - src/components/Editor/TaskRefView.tsx
+  - src/storage/tauri.ts
+- Files created:
+  - nenhum
+- Files removed:
+  - nenhum
+- Left behind:
+  - Nit 2: o balão vazio não é removido ao reabrir. O `parseConversations` também serve ao sync entre janelas, e filtrar ali apagaria o balão em andamento de outra janela. Ele só fica fora do histórico enviado à API.
+  - Nit 5: as visões salvas (`useTaskViews`) seguem sem banner. O hook não tem `saveError` e o App não o mostra, então já não é trivial.
+  - Nit 1: só a 1ª tool é conhecida no `tool_call_started`. Se ela não for a da memória, o texto sai mesmo que a rodada inclua `update_folder_memory`, como antes. O turno só de memória encerra sem tokens/s (não há `done` da 1ª rodada).
+  - Nit 7: o chip compacto é decidido no render do node view. Se o 1º `taskRef` for apagado, o seguinte só vira card no próximo render dele (mudança de task/contexto).
+  - Bug extra: um turno antigo cancelado ainda pode piscar os indicadores de status da tool (`setDeepResearchPhase`/`setWebSearchActive`/`setRagSearching`) enquanto a tool dele termina em background. Só afeta a exibição.
+  - Nada verificado no app real.
+
+### Orchestrator — encerramento — 20261020160000
+- Summary: Ajustes do teste do Coordenador (lista de notas, card de task, 1º start, ícones, tipo no cabeçalho, largura, ordenação, Related content) + correção das rodadas do chat com tool call (incluída no Task Report a pedido do Coordenador) revisados (2º review: aprovado, só nits) e com passada final (bug pré-existente de Stop+envio corrigido; nits 1–4, 6–8 corrigidos, 5 parcial).
+- Inputs:
+  - DOCS/reports/20-10-2026/reviewreport_20261020153611.md
+- Decision: entregar para teste final do Coordenador com `npx tauri build --no-bundle`. Ficaram para trás: banner de falha das visões salvas; balão vazio persistido não é removido ao reabrir (só filtrado do histórico); texto descartado quando a memória não é a 1ª tool; Weekly Review por TODOS; vazamento de títulos de cadernos com IA desligada; fase 5 (limpeza do `task_group`).
+- Next step: aguardando teste final e pedido de commit
+
+### Orchestrator — ajuste do teste — 20261020183000
+- Summary: no modal da task (aberto pelo Kanban etc.) o corpo da nota parava na medida de leitura (`--measure-note: 80ch`) e deixava uma faixa vazia à direita (print `DOCS/prints/2026-10-20 18-26-01.png`). O modal agora libera a medida e o corpo usa a largura do card.
+- Files modified:
+  - src/components/TasksView/TaskEditorModal.module.css
+- Decision: ajuste só de CSS, feito direto pelo Orchestrator, sem novo ciclo de plano e revisão. O editor principal mantém os 80ch.
+- Next step: aguardando teste final e pedido de commit

@@ -71,6 +71,11 @@
   background: var(--surface-1, #1e1e22);
 }
 
+/* Ordem ativa diferente de Manual. */
+.headerToggleOn {
+  color: var(--accent, #7c6af5);
+}
+
 .headerAdd:disabled {
   opacity: 0.3;
   cursor: not-allowed;
@@ -150,12 +155,115 @@
   opacity: 1;
 }
 
+/* Lista ordenada (não manual): a alça some, mas guarda o lugar (o recuo do
+   tipo e das propriedades conta com ela). */
+.dragHandleOff,
+.row:hover .dragHandleOff {
+  visibility: hidden;
+}
+
 .rowLabel {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Resumo à direita do título. */
+.rowMeta {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.rowMetaOverdue {
+  color: var(--accent-danger);
+}
+
+.rowMetaComplete {
+  color: color-mix(in srgb, var(--status-done) 70%, var(--text-muted));
+}
+
+/* Tipo (ícone + nome) acima do título e propriedades "show in list" abaixo
+   dele: a linha quebra e cada bloco ocupa a largura toda, recuado até o texto
+   do título (alça 12px + 2×space-0 e um gap). O tipo vem depois da alça no DOM
+   e sobe com `order`. */
+.rowWrap {
+  flex-wrap: wrap;
+  row-gap: 0;
+}
+
+.rowEyebrow {
+  order: -1;
+  flex-basis: 100%;
+  min-width: 0;
+  padding-left: calc(12px + 2 * var(--space-0) + var(--space-1h));
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: var(--lh-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.rowEyebrow svg {
+  flex-shrink: 0;
+}
+
+.rowEyebrowName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowProps {
+  flex-basis: 100%;
+  min-width: 0;
+  padding-left: calc(12px + 2 * var(--space-0) + var(--space-1h));
+  display: flex;
+  flex-direction: column;
+}
+
+.rowProp {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: var(--lh-ui);
+  color: var(--text-muted);
+}
+
+.typeFilter {
+  max-width: 96px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 11px;
+  padding: var(--space-0) var(--space-1);
+  outline: none;
+  cursor: pointer;
+}
+
+.typeFilter:hover,
+.typeFilter:focus {
+  border-color: var(--border);
+}
+
+.typeFilter option {
+  background: var(--surface-2);
+  color: var(--text-primary);
 }
 
 .rowMerge {
@@ -326,4 +434,47 @@
 .subjectDropdown button:hover {
   background: var(--surface-1, #1e1e22);
   color: var(--text-primary, #e8e8f0);
+}
+
+/* Menu "New <tipo>" ao lado do "+" (reusa o .subjectDropdown). */
+.newMenuWrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.newMenuToggle {
+  margin-left: calc(-1 * var(--space-1));
+  height: var(--control-sm);
+  padding: 0 var(--space-0);
+}
+
+.subjectDropdown .newTypeItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+}
+
+.newTypeIcon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+/* Menu de ordenação (reusa o .subjectDropdown): marca na ordem ativa. */
+.subjectDropdown .sortItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+}
+
+.sortCheck {
+  display: inline-flex;
+  flex-shrink: 0;
+  width: 12px;
+  color: var(--accent, #7c6af5);
+}
+
+.subjectDropdown .sortExtra {
+  border-top: 1px solid var(--border, #333340);
+  color: var(--text-muted, #606070);
 }

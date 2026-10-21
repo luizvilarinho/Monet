@@ -26,6 +26,13 @@ export interface Note {
   date?: string | null
   createdAt: number
   updatedAt: number
+  // Tipo de nota (`note_types`); null/ausente = sem tipo. Tipo e propriedades
+  // são gravados só pelos setters (setNoteType/setNoteProperties), nunca pelo
+  // saveNote.
+  typeId?: string | null
+  // Valores das propriedades: chave = id da MetadataDef (scope 'note'). Chaves
+  // de defs de outro tipo ficam guardadas (voltam se o tipo voltar).
+  properties?: Record<string, MetadataValue>
 }
 
 // Nota sem o conteúdo (listas e títulos de notas linkadas).
@@ -77,8 +84,9 @@ export interface Task {
   // `dueDate` = deadline (entrega); `scheduledDate` = quando vou fazer.
   dueDate: string | null
   scheduledDate: string | null
-  // Agrupamento livre dentro do projeto (ex.: o sistema em "sistema | ação").
-  group: string | null
+  // Nota TODOS (entregável) à qual a task pertence; null = sem TODOS. A
+  // origem (`sourceNoteId`) é outra coisa: governa o sync de título (D6).
+  parentNoteId: string | null
   // Prioridade leve: ordena primeiro dentro do grupo.
   important: boolean
   recurrence: TaskRecurrence | null
@@ -98,18 +106,46 @@ export interface Task {
   metadata: Record<string, MetadataValue>
 }
 
-export type MetadataType = 'text' | 'number' | 'date' | 'checkbox'
+export type MetadataType = 'text' | 'number' | 'date' | 'checkbox' | 'select'
 
-// Text: string; Number: number; Date: YYYY-MM-DD; Checkbox: boolean.
-// null = propriedade anexada e sem valor.
+// Text: string; Number: number; Date: YYYY-MM-DD; Checkbox: boolean;
+// Select: id da opção. null = propriedade anexada e sem valor.
 export type MetadataValue = string | number | boolean | null
 
-// Definição global de metadado (não exclusiva de tasks).
+export interface SelectOption {
+  id: string
+  name: string
+  color: string | null
+}
+
+// Definição de metadado. `scope` separa os metadados custom de task das
+// propriedades de tipo de nota (D2); cada picker lista só o seu escopo.
 export interface MetadataDef {
   id: string
   name: string
   type: MetadataType
   sortOrder: number
+  createdAt: number
+  scope: 'task' | 'note'
+  // Tipo de nota dono da propriedade (só scope 'note').
+  noteTypeId: string | null
+  // Opções do select (null nos demais tipos).
+  options: SelectOption[] | null
+  // Mostrar o valor na lista de notas (máx. 2 por tipo).
+  showInList: boolean
+}
+
+// Tipo de nota global e opcional. `builtin` não é renomeado nem excluído.
+export interface NoteType {
+  id: string
+  name: string
+  // Nome de ícone do conjunto fixo (TypeIcon); null = ícone padrão.
+  icon: string | null
+  color: string | null
+  // Markdown aplicado em nota vazia ou em "New <tipo>".
+  template: string | null
+  sortOrder: number
+  builtin: boolean
   createdAt: number
 }
 

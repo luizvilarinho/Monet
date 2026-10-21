@@ -45,6 +45,7 @@ import {
   type TaskStatusStorage,
 } from './TaskStatus'
 import { SearchInNote } from './SearchInNote'
+import { BlockGutter } from './BlockGutter'
 import { getCommandSuggestions } from './commandParser'
 import { findCommand } from '../../lib/commands'
 import type {
@@ -94,8 +95,10 @@ export interface EditorProps {
     opts: { dueDate: string | null; project: ProjectChoice }
   ) => Promise<Task[]>
   // Conteúdo acima das tags: barra de propriedades da task (nota-corpo de
-  // task) ou o bloco "Due today" (nota diária do Calendar).
+  // task), do tipo de nota ou o bloco "Due today" (nota diária do Calendar).
   topSlot?: ReactNode
+  // "+ type" da nota sem tipo, no início da linha de data/tags.
+  typeSlot?: ReactNode
   onToggleLinkedTask?: (taskId: string, checked: boolean) => void
 }
 
@@ -168,6 +171,7 @@ export function Editor({
   onCreateTasks,
   onToggleLinkedTask,
   topSlot,
+  typeSlot,
 }: EditorProps) {
   const [adding, setAdding] = useState(false)
   const [draft, setDraft] = useState('')
@@ -838,6 +842,7 @@ export function Editor({
       </div>
       {topSlot}
       <div className={styles.tagsRow}>
+        {typeSlot}
         {onDateChange && (
           <span className={styles.dateWrapper} onClick={() => dateInputRef.current?.showPicker()}>
             <CalendarBlank size={14} className={styles.dateIcon} aria-hidden />
@@ -917,6 +922,7 @@ export function Editor({
               <EditorContent editor={editor} />
             </EditorResponsesProvider>
           </EditorNotesProvider>
+          <BlockGutter editor={editor} scrollEl={scrollEl} disabled={previewMode} />
         </div>
         <HeadingNavigator
           content={value}

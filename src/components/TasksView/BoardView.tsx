@@ -17,7 +17,7 @@ import type { TasksMainView } from './views'
 // Mesmo layout de quadro do Week board.
 import styles from './WeekBoard.module.css'
 
-// Casca comum das visões em colunas (Kanban, Projects, Groups, Today): header,
+// Casca comum das visões em colunas (Kanban, Projects, TODOS, Today): header,
 // filtros (projeto + busca), colunas arrastáveis, teclado e barra de lote. Cada
 // visão só diz quais colunas montar e o que um drop significa.
 export interface BoardViewProps {
@@ -69,11 +69,11 @@ export function BoardView({
   showProject = true,
   compactStatus = false,
 }: BoardViewProps) {
-  const { search } = useTasksEnv()
+  const { search, todosById } = useTasksEnv()
   const notebookById = useMemo(() => new Map(notebooks.map((nb) => [nb.id, nb])), [notebooks])
   const projectTasks = useMemo(
-    () => filterTasksForView(tasks, filter, search),
-    [tasks, filter, search]
+    () => filterTasksForView(tasks, filter, search, todosById),
+    [tasks, filter, search, todosById]
   )
   const summary = useMemo(() => computeTaskSummary(projectTasks, todayKey), [projectTasks, todayKey])
   const columns = useMemo(() => columnsFor(projectTasks), [columnsFor, projectTasks])

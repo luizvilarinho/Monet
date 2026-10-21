@@ -54,6 +54,15 @@ export function getReaderNoteLink(bookId: string): ReaderNoteLink | null {
   return links[bookId] ?? null
 }
 
+// Notas ligadas a algum livro (não podem ter tipo, D4).
+export function readerLinkedNoteIds(): Set<string> {
+  const ids = new Set<string>()
+  for (const link of Object.values(loadReaderNoteLinks())) {
+    if (link.noteId) ids.add(link.noteId)
+  }
+  return ids
+}
+
 export function setReaderNoteLink(
   bookId: string,
   notebookId: string,

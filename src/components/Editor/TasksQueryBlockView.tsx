@@ -13,7 +13,7 @@ import styles from './TasksQueryBlockView.module.css'
 
 export function TasksQueryBlockView({ node, editor, updateAttributes }: NodeViewProps) {
   const filterText = node.attrs.filter as string
-  const { tasksById, todayKey, notebooks = [], onOpenTask, onToggleTask, checklist } = useTasksContext()
+  const { tasksById, todayKey, notebooks = [], onOpenTask, onToggleTask, checklist, todosTitle } = useTasksContext()
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(filterText)
 
@@ -33,9 +33,10 @@ export function TasksQueryBlockView({ node, editor, updateAttributes }: NodeView
     storage.resolveText = (text) =>
       renderTasksBlockText(
         text,
-        filterTasksForBlock(allTasks, parseTasksFilter(text, notebooks), todayKey)
+        filterTasksForBlock(allTasks, parseTasksFilter(text, notebooks), todayKey),
+        (noteId) => todosTitle?.(noteId)
       )
-  }, [editor, allTasks, notebooks, todayKey])
+  }, [editor, allTasks, notebooks, todayKey, todosTitle])
 
   function commit() {
     const next = draft.trim() || 'this week'

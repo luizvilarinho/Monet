@@ -3,8 +3,8 @@
 // Novo metadado de task — lugares a tocar:
 //   1. `Task` em src/types/index.ts (e `TaskPatch` em src/lib/tasks.ts, se editável);
 //   2. coluna em TASKS_EXTRA_COLUMNS + `TaskRow`/`rowToTask`/`saveTask` em src/storage/tauri.ts;
-//   3. uma entrada em `TASK_PROPERTY_ROWS` abaixo (controle 'status', 'toggle', 'date', 'text',
-//      'repeat' ou 'project';
+//   3. uma entrada em `TASK_PROPERTY_ROWS` abaixo (controle 'status', 'toggle', 'date',
+//      'repeat', 'project' ou 'todos';
 //      um tipo de controle novo pede um caso em `renderControl`).
 // Status vem do registro `task_statuses` (prop `statuses`); `doingSince` e `plannedDay`
 // são derivados (applyTaskPatch / Plan today) e não têm controle aqui.
@@ -13,17 +13,12 @@
 // Metadados personalizados (`task.metadata`, definições em `metadataDefs`) são uma
 // lista dinâmica abaixo: uma linha por definição anexada, com controle conforme o
 // tipo, e "+ Add property" para anexar ou criar definições.
-import { useEffect, useId, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
-import { ArrowSquareOut, CalendarBlank, Flag, ListChecks, PencilSimple, Trash, X } from '@phosphor-icons/react'
+import { useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
+import { ArrowSquareOut, Flag, ListChecks, PencilSimple, Trash, X } from '@phosphor-icons/react'
 import { useConfirm } from '../../hooks/useConfirm'
 import { MAX_METADATA_NAME } from '../../hooks/useMetadataDefs'
 import { dateKeyFromMs } from '../../lib/calendar'
-import {
-  defaultMetadataValue,
-  METADATA_TYPE_LABEL,
-  METADATA_TYPES,
-  parseNumberInput,
-} from '../../lib/metadata'
+import { defaultMetadataValue, METADATA_TYPE_LABEL, METADATA_TYPES } from '../../lib/metadata'
 import {
   deleteTasksMessage,
   planDate,
@@ -32,6 +27,7 @@ import {
   WEEKDAY_SHORT,
   type ProjectChoice,
   type TaskPatch,
+  type TodosInfo,
 } from '../../lib/tasks'
 import type {
   MetadataDef,
@@ -43,6 +39,7 @@ import type {
   TaskStatusDef,
 } from '../../types'
 import { ProjectPicker } from './ProjectPicker'
+import { DateControl, MetadataValueControl, type DateNote } from './PropertyControls'
 import styles from './TaskPropertiesBar.module.css'
 
 interface TaskPropertiesBarProps {
@@ -50,8 +47,11 @@ interface TaskPropertiesBarProps {
   notebooks: Notebook[]
   // Registro de status (opções do controle Status).
   statuses: TaskStatusDef[]
-  // Groups já usados no projeto da task (autocomplete do campo Group).
-  groupSuggestions: string[]
+  // Notas TODOS (opções do campo TODOS).
+  todosOptions: TodosInfo[]
+  onOpenTodos: (noteId: string) => void
+  // Cria a TODOS no caderno e devolve o id (a task é vinculada a ela).
+  onCreateTodos: (notebookId: string, title: string) => Promise<string>
   sourceNoteExists: boolean
   onUpdate: (patch: TaskPatch) => void
   onMove: (project: ProjectChoice) => void
@@ -85,22 +85,12 @@ type TaskPropertyControl =
       // Aviso em amarelo, idem (ex.: "After deadline").
       warning?: (t: Task) => DateNote | null
     }
-  | {
-      // Texto livre com sugestões (as do projeto); grava no blur/Enter.
-      kind: 'text'
-      get: (t: Task) => string | null
-      set: (value: string | null) => TaskPatch
-      placeholder: string
-    }
   // Recorrência: None | Daily | Weekly (dias da semana) | Monthly.
   | { kind: 'repeat' }
   // Projeto = caderno: mudar move a task e a nota-corpo (onMove), não é patch.
   | { kind: 'project' }
-
-interface DateNote {
-  text: string
-  short: string
-}
+  // Nota TODOS da task (`parentNoteId`): picker, "New TODOS…" e abrir.
+  | { kind: 'todos' }
 
 interface TaskProperty {
   id: string
@@ -111,16 +101,7 @@ interface TaskProperty {
 const TASK_PROPERTY_ROWS: TaskProperty[][] = [
   [
     { id: 'project', label: 'Project', control: { kind: 'project' } },
-    {
-      id: 'group',
-      label: 'Group',
-      control: {
-        kind: 'text',
-        get: (t) => t.group,
-        set: (value) => ({ group: value }),
-        placeholder: 'Add a group…',
-      },
-    },
+    { id: 'todos', label: 'TODOS', control: { kind: 'todos' } },
   ],
   [
     {
@@ -174,7 +155,9 @@ export function TaskPropertiesBar({
   task,
   notebooks,
   statuses,
-  groupSuggestions,
+  todosOptions,
+  onOpenTodos,
+  onCreateTodos,
   sourceNoteExists,
   onUpdate,
   onMove,
@@ -246,18 +229,19 @@ export function TaskPropertiesBar({
             onChange={(value) => onUpdate(control.set(value))}
           />
         )
-      case 'text':
-        return (
-          <TextControl
-            label={prop.label}
-            value={control.get(task)}
-            placeholder={control.placeholder}
-            suggestions={groupSuggestions}
-            onChange={(value) => onUpdate(control.set(value))}
-          />
-        )
       case 'project':
         return <ProjectControl task={task} notebooks={notebooks} onMove={onMove} />
+      case 'todos':
+        return (
+          <TodosControl
+            task={task}
+            notebooks={notebooks}
+            options={todosOptions}
+            onChange={(parentNoteId) => onUpdate({ parentNoteId })}
+            onOpen={onOpenTodos}
+            onCreate={onCreateTodos}
+          />
+        )
     }
   }
 
@@ -268,50 +252,6 @@ export function TaskPropertiesBar({
   function removeMetadata(id: string) {
     const { [id]: _removed, ...rest } = task.metadata
     onUpdate({ metadata: rest })
-  }
-
-  function renderMetadataControl(def: MetadataDef) {
-    const value = task.metadata[def.id] ?? null
-    switch (def.type) {
-      case 'text':
-        return (
-          <TextControl
-            label={def.name}
-            value={typeof value === 'string' ? value : null}
-            placeholder="Empty"
-            suggestions={[]}
-            onChange={(v) => setMetadata(def.id, v)}
-          />
-        )
-      case 'number':
-        return (
-          <NumberControl
-            label={def.name}
-            value={typeof value === 'number' ? value : null}
-            onChange={(v) => setMetadata(def.id, v)}
-          />
-        )
-      case 'date':
-        return (
-          <DateControl
-            label={def.name}
-            value={typeof value === 'string' ? value : null}
-            hint={null}
-            warning={null}
-            onChange={(v) => setMetadata(def.id, v)}
-          />
-        )
-      case 'checkbox':
-        return (
-          <input
-            type="checkbox"
-            className={styles.checkbox}
-            checked={value === true}
-            onChange={(e) => setMetadata(def.id, e.target.checked)}
-            aria-label={def.name}
-          />
-        )
-    }
   }
 
   function renderField(prop: TaskProperty) {
@@ -359,7 +299,13 @@ export function TaskPropertiesBar({
             <span className={styles.label} title={def.name}>
               {def.name}
             </span>
-            <span className={styles.control}>{renderMetadataControl(def)}</span>
+            <span className={styles.control}>
+              <MetadataValueControl
+                def={def}
+                value={task.metadata[def.id] ?? null}
+                onChange={(v) => setMetadata(def.id, v)}
+              />
+            </span>
             <button
               type="button"
               className={styles.metaAction}
@@ -512,156 +458,6 @@ function RepeatControl({
           )
         })}
     </>
-  )
-}
-
-function DateControl({
-  label,
-  value,
-  hint,
-  warning,
-  onChange,
-}: {
-  label: string
-  value: string | null
-  hint: DateNote | null
-  warning: DateNote | null
-  onChange: (value: string | null) => void
-}) {
-  const inputRef = useRef<HTMLInputElement>(null)
-  return (
-    <span className={styles.dateControl}>
-      <span className={styles.dateWrapper} onClick={() => inputRef.current?.showPicker()}>
-        <CalendarBlank size={14} className={styles.dateIcon} aria-hidden />
-        <input
-          ref={inputRef}
-          type="date"
-          className={styles.dateInput}
-          value={value ?? ''}
-          onChange={(e) => onChange(e.target.value || null)}
-          onClick={(e) => e.stopPropagation()}
-          aria-label={label}
-        />
-      </span>
-      {value && (
-        <button type="button" className={styles.link} onClick={() => onChange(null)}>
-          Clear
-        </button>
-      )}
-      {hint && <Note note={hint} className={styles.hint} />}
-      {warning && <Note note={warning} className={styles.warning} />}
-    </span>
-  )
-}
-
-function Note({ note, className }: { note: DateNote; className: string }) {
-  return (
-    <span className={`${styles.note} ${className}`} title={note.text} role="note" aria-label={note.text}>
-      <span className={styles.noteFull}>{note.text}</span>
-      <span className={styles.noteShort}>{note.short}</span>
-    </span>
-  )
-}
-
-function TextControl({
-  label,
-  value,
-  placeholder,
-  suggestions,
-  onChange,
-}: {
-  label: string
-  value: string | null
-  placeholder: string
-  suggestions: string[]
-  onChange: (value: string | null) => void
-}) {
-  const [draft, setDraft] = useState(value ?? '')
-  const listId = useId()
-  // Esc descarta o rascunho (o blur que segue não grava).
-  const cancelRef = useRef(false)
-  useEffect(() => setDraft(value ?? ''), [value])
-
-  function commit() {
-    if (cancelRef.current) {
-      cancelRef.current = false
-      setDraft(value ?? '')
-      return
-    }
-    const next = draft.trim() || null
-    if (next !== value) onChange(next)
-  }
-
-  return (
-    <>
-      <input
-        className={styles.textInput}
-        value={draft}
-        placeholder={placeholder}
-        list={listId}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') e.currentTarget.blur()
-          if (e.key === 'Escape') {
-            cancelRef.current = true
-            e.currentTarget.blur()
-          }
-        }}
-        aria-label={label}
-      />
-      <datalist id={listId}>
-        {suggestions.map((s) => (
-          <option key={s} value={s} />
-        ))}
-      </datalist>
-    </>
-  )
-}
-
-// Número: rascunho livre; o commit (blur/Enter) aceita vírgula decimal e
-// inválido ou vazio grava null (o campo volta vazio).
-function NumberControl({
-  label,
-  value,
-  onChange,
-}: {
-  label: string
-  value: number | null
-  onChange: (value: number | null) => void
-}) {
-  const [draft, setDraft] = useState(value === null ? '' : String(value))
-  const cancelRef = useRef(false)
-  useEffect(() => setDraft(value === null ? '' : String(value)), [value])
-
-  function commit() {
-    if (cancelRef.current) {
-      cancelRef.current = false
-      setDraft(value === null ? '' : String(value))
-      return
-    }
-    const next = parseNumberInput(draft)
-    setDraft(next === null ? '' : String(next))
-    if (next !== value) onChange(next)
-  }
-
-  return (
-    <input
-      className={styles.textInput}
-      inputMode="decimal"
-      value={draft}
-      placeholder="Empty"
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') e.currentTarget.blur()
-        if (e.key === 'Escape') {
-          cancelRef.current = true
-          e.currentTarget.blur()
-        }
-      }}
-      aria-label={label}
-    />
   )
 }
 
@@ -831,6 +627,102 @@ function ProjectControl({
       {draft && (
         <button type="button" className={styles.link} onClick={commitDraft}>
           Move
+        </button>
+      )}
+    </span>
+  )
+}
+
+const NEW_TODOS = '__new__'
+
+// TODOS da task: as do caderno da task primeiro, depois as demais com o
+// caderno; "＋ New TODOS…" troca o select por um input (Enter cria no caderno
+// da task e vincula, Esc cancela). Pai apagado por fora aparece como "No TODOS".
+function TodosControl({
+  task,
+  notebooks,
+  options,
+  onChange,
+  onOpen,
+  onCreate,
+}: {
+  task: Task
+  notebooks: Notebook[]
+  options: TodosInfo[]
+  onChange: (parentNoteId: string | null) => void
+  onOpen: (noteId: string) => void
+  onCreate: (notebookId: string, title: string) => Promise<string>
+}) {
+  const [draft, setDraft] = useState<string | null>(null)
+  const current = options.find((o) => o.id === task.parentNoteId) ?? null
+  const nameById = new Map(notebooks.map((nb) => [nb.id, nb.name || 'unnamed']))
+  const byTitle = (a: TodosInfo, b: TodosInfo) => a.title.localeCompare(b.title)
+  const own = options.filter((o) => o.notebookId === task.notebookId).sort(byTitle)
+  const others = options.filter((o) => o.notebookId !== task.notebookId).sort(byTitle)
+
+  async function commit() {
+    const title = draft?.trim() ?? ''
+    setDraft(null)
+    if (!title) return
+    try {
+      onChange(await onCreate(task.notebookId, title))
+    } catch (err) {
+      console.error('failed to create TODOS', err)
+    }
+  }
+
+  if (draft !== null) {
+    return (
+      <span className={styles.project}>
+        <input
+          autoFocus
+          value={draft}
+          placeholder="New TODOS title"
+          aria-label="new TODOS title"
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void commit()
+            if (e.key === 'Escape') {
+              e.stopPropagation()
+              setDraft(null)
+            }
+          }}
+        />
+        <button type="button" className={styles.link} onClick={() => void commit()}>
+          Create
+        </button>
+      </span>
+    )
+  }
+  return (
+    <span className={styles.project}>
+      <select
+        value={current?.id ?? ''}
+        onChange={(e) => {
+          const v = e.target.value
+          if (v === NEW_TODOS) setDraft('')
+          else onChange(v || null)
+        }}
+        aria-label="TODOS"
+      >
+        <option value="">No TODOS</option>
+        {[...own, ...others].map((o) => (
+          <option key={o.id} value={o.id}>
+            {o.title.trim() || 'Untitled'}
+            {o.notebookId !== task.notebookId ? ` · ${nameById.get(o.notebookId ?? '') ?? 'unnamed'}` : ''}
+          </option>
+        ))}
+        <option value={NEW_TODOS}>＋ New TODOS…</option>
+      </select>
+      {current && (
+        <button
+          type="button"
+          className={styles.link}
+          onClick={() => onOpen(current.id)}
+          aria-label="Open TODOS"
+          title="Open TODOS"
+        >
+          <ArrowSquareOut size={13} aria-hidden />
         </button>
       )}
     </span>

@@ -46,6 +46,7 @@ Ponto de entrada para a documentação do projeto. Leia este arquivo primeiro pa
 | `DOCS/features/decisoes_study.md` | Estudo (2026-10-17) "entender para decidir": Monet como companheiro de decisão ao lado do Claude Code (dois contextos, `/btw`, hooks, Glossário, Decisões, mapa sem veredito, checklist de aprovação). Fase 0 sem código: system prompt (Anexo A) e bloco "Decisões necessárias" para o pipeline (Anexo B). |
 | `DOCS/features/tasks_study.md` | Estudo de Tasks v2 (2026-10-12): visão "num olhar", do date × deadline, Week board. |
 | `DOCS/features/tags_study.md` | Estudo de tags (2026-10-15): dar função ou remover. |
+| `DOCS/features/note_types_study.md` | Estudo (2026-10-20) de tipos de nota (globais, opcionais, com propriedades e template), o tipo **TODOS** que substitui o `group` das tasks (migração, chip rico, progresso na lista), diagnóstico e melhoria da busca Ctrl+P (FTS5 verificado) e "+" no handle de bloco do editor. Mercado: só Capacities. Decisões D1–D11. |
 | `DOCS/features/mercado_2026-10/` | Pesquisa de mercado bruta (out/2026) que embasa os estudos acima; comece pelo `README.md` da pasta. |
 
 ---

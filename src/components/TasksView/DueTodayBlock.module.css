@@ -42,11 +42,15 @@
   overflow-wrap: anywhere;
 }
 
-.group,
+.todos,
 .tag {
   flex-shrink: 0;
   font-size: 11px;
   color: var(--text-muted);
+}
+
+.todos:hover {
+  text-decoration: underline;
 }
 
 .lateDeadline .title {

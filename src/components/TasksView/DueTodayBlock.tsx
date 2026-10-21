@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
-import { compareTasks, formatDueShort, isOpen, isOverdue, overdueKind } from '../../lib/tasks'
+import { compareTasks, formatDueShort, isOpen, isOverdue, overdueKind, todosTitleOf } from '../../lib/tasks'
 import type { Task } from '../../types'
+import { useTasksEnv } from './TasksEnv'
 import styles from './DueTodayBlock.module.css'
 
 // Bloco somente leitura no topo da nota diária do Calendar: tasks abertas com
@@ -14,6 +15,7 @@ interface DueTodayBlockProps {
 }
 
 export function DueTodayBlock({ tasks, dayKey, todayKey, onOpenTask }: DueTodayBlockProps) {
+  const { todosById, onOpenNote } = useTasksEnv()
   const isToday = dayKey === todayKey
   const list = useMemo(
     () =>
@@ -32,6 +34,7 @@ export function DueTodayBlock({ tasks, dayKey, todayKey, onOpenTask }: DueTodayB
       <span className={styles.heading}>{isToday ? 'Due today' : `Due ${formatDueShort(dayKey)}`}</span>
       {list.map((t) => {
         const late = overdueKind(t, todayKey)
+        const todos = todosTitleOf(t, todosById)
         return (
           <button
             key={t.id}
@@ -42,7 +45,18 @@ export function DueTodayBlock({ tasks, dayKey, todayKey, onOpenTask }: DueTodayB
             onClick={() => onOpenTask(t.id)}
             title={t.title}
           >
-            {t.group && <span className={styles.group}>{t.group}</span>}
+            {todos && (
+              <span
+                className={styles.todos}
+                title={`Open TODOS: ${todos}`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onOpenNote(t.parentNoteId!)
+                }}
+              >
+                {todos}
+              </span>
+            )}
             <span className={styles.title}>{t.title}</span>
             {t.dueDate === dayKey && <span className={styles.tag}>deadline</span>}
           </button>

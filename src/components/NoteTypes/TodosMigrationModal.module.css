@@ -1,0 +1,153 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.card {
+  background: var(--surface-2, #26262c);
+  border: 1px solid var(--border, #333340);
+  border-radius: var(--radius-xl);
+  padding: var(--pad-modal);
+  width: min(640px, 92%);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.text {
+  margin: 0;
+  font-size: 13px;
+  line-height: var(--lh-body, 1.5);
+  color: var(--text-secondary);
+}
+
+.error {
+  margin: 0;
+  font-size: 13px;
+  color: var(--accent-danger);
+}
+
+.tableWrap {
+  min-height: 0;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.table th {
+  position: sticky;
+  top: 0;
+  background: var(--surface-2, #26262c);
+  padding: var(--space-1) var(--space-2);
+  font-weight: 500;
+  color: var(--text-muted);
+  text-align: left;
+}
+
+.table th:nth-child(1) {
+  width: 56px;
+}
+
+.table th:nth-child(2) {
+  width: 30%;
+}
+
+.table th:nth-child(4),
+.table th:nth-child(5) {
+  width: 52px;
+}
+
+.table td {
+  padding: var(--space-1) var(--space-2);
+  border-top: 1px solid var(--border);
+}
+
+.cellText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cellNum {
+  color: var(--text-secondary);
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.rowOff td {
+  opacity: 0.5;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.totals {
+  margin-right: auto;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.btnCancel {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  height: var(--control-lg);
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.btnCancel:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--text-muted);
+}
+
+.btnPrimary {
+  background: var(--accent, #7c6af5);
+  border: 1px solid transparent;
+  color: #fff;
+  height: var(--control-lg);
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.btnPrimary:hover:not(:disabled) {
+  opacity: 0.85;
+}
+
+.btnCancel:disabled,
+.btnPrimary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

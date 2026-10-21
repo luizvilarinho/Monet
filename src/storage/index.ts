@@ -4,9 +4,11 @@ import type {
   BookHighlight,
   BookQuote,
   MetadataDef,
+  MetadataValue,
   Note,
   Notebook,
   NoteSummary,
+  NoteType,
   Subject,
   Task,
   TaskStatusDef,
@@ -30,7 +32,6 @@ export interface StorageAdapter {
   getNote(id: string): Promise<Note | null>
   saveNote(note: Note): Promise<void>
   deleteNote(id: string): Promise<void>
-  searchNotes(query: string): Promise<Note[]>
   // Notas com `date` no período (YYYY-MM-DD, inclusivo) e as do Calendar cujo
   // título é uma data no período.
   getNotesByDateRange(from: string, to: string): Promise<Note[]>
@@ -54,6 +55,11 @@ export interface StorageAdapter {
   getTasks(): Promise<Task[]>
   saveTask(task: Task): Promise<void>
   deleteTask(id: string): Promise<void>
+  // `task_group` dormente (só a migração group → TODOS lê).
+  getLegacyTaskGroups(): Promise<Array<{ taskId: string; notebookId: string; group: string }>>
+  // Ids das notas TODOS cujas linhas da migração já foram resolvidas.
+  getTodosMigrationDone(): Promise<string[]>
+  markTodosMigrationDone(noteIds: string[]): Promise<void>
 
   getTaskStatuses(): Promise<TaskStatusDef[]>
   saveTaskStatus(status: TaskStatusDef): Promise<void>
@@ -64,6 +70,14 @@ export interface StorageAdapter {
   getMetadataDefs(): Promise<MetadataDef[]>
   saveMetadataDef(def: MetadataDef): Promise<void>
   deleteMetadataDef(id: string): Promise<void>
+
+  // Tipos de nota. Tipo e propriedades da nota só pelos setters (o saveNote
+  // não os grava).
+  getNoteTypes(): Promise<NoteType[]>
+  saveNoteType(type: NoteType): Promise<void>
+  deleteNoteType(id: string): Promise<void>
+  setNoteType(noteId: string, typeId: string | null): Promise<void>
+  setNoteProperties(noteId: string, properties: Record<string, MetadataValue>): Promise<void>
 
   getResponses(noteId: string): Promise<AiResponse[]>
   getResponsesByIds(ids: string[]): Promise<AiResponse[]>

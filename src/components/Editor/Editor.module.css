@@ -212,15 +212,17 @@
   caret-color: var(--text-primary, #e8e8f0);
 }
 
-/* Medida: blocos de texto com no máximo --measure, alinhados à esquerda.
+/* Medida: blocos de texto com no máximo --measure-note, alinhados à esquerda.
    O ch é medido na fonte de cada bloco, então os headings dividem pela
-   própria escala para manter a largura do parágrafo. */
+   própria escala para manter a largura do parágrafo. Em coluna mais estreita
+   que a medida (Reader, janela pequena) o texto ocupa até o padding direito,
+   que já reserva a faixa do sumário. */
 .proseEditor > :global(*) {
-  max-width: var(--measure);
+  max-width: var(--measure-note);
 }
-.proseEditor > :global(h1) { max-width: calc(var(--measure) / 1.6); }
-.proseEditor > :global(h2) { max-width: calc(var(--measure) / 1.35); }
-.proseEditor > :global(h3) { max-width: calc(var(--measure) / 1.15); }
+.proseEditor > :global(h1) { max-width: calc(var(--measure-note) / 1.6); }
+.proseEditor > :global(h2) { max-width: calc(var(--measure-note) / 1.35); }
+.proseEditor > :global(h3) { max-width: calc(var(--measure-note) / 1.15); }
 /* Tabelas e embeds (respostas de /comando, PDFs, consulta de tasks) usam a
    largura toda do editor (node views do Tiptap vêm como div.node-<nome>). */
 .proseEditor > :global(.tableWrapper),
@@ -399,6 +401,30 @@
   text-decoration: line-through;
   color: var(--text-muted, #606070);
 }
+/* Item vinculado a uma task (`data-task-status`, decoration do TaskStatus):
+   card compacto. O 1º parágrafo (título) reserva embaixo a linha de
+   propriedades do taskRef (absoluta, TaskRef.module.css). */
+.proseEditor :global(ul[data-type="taskList"] li[data-task-status]) {
+  margin: var(--space-1h) 0;
+  padding: var(--space-1h) var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface-2) 35%, transparent);
+}
+.proseEditor :global(ul[data-type="taskList"] li[data-task-status] > div > p:first-of-type) {
+  position: relative;
+  padding-bottom: calc(var(--lh-row) + var(--space-1));
+}
+/* Linha de propriedades (TaskRefView): uma linha só; o que não cabe é cortado. */
+.proseEditor :global(ul[data-type="taskList"] li[data-task-status] > div > p:first-of-type .monetTaskProps) {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--lh-row);
+  margin-left: 0;
+  overflow: hidden;
+}
 
 /* Subtasks aninhadas — indentação visual para hierarquia */
 .proseEditor :global(ul[data-type="taskList"] ul[data-type="taskList"]) {
@@ -505,6 +531,29 @@
 }
 .proseEditor :global(.monetTaskDragHandle:active) {
   cursor: grabbing;
+}
+
+/* "+" do gutter flutuante (BlockGutter): linha abaixo, Shift = acima */
+.blockGutter {
+  position: absolute;
+  z-index: 5;
+  width: 16px;
+  height: 20px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted, #606070);
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+.blockGutter:hover {
+  opacity: 1;
+  color: var(--text-primary, #e8e8f0);
 }
 
 /* Indicador visual da posição de drop durante o arrasto manual */

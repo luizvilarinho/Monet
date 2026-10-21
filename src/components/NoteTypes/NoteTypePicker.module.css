@@ -1,0 +1,107 @@
+.wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+/* Sem tipo: mesmo traço do "+ tag" ao lado. */
+.add {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border-radius: 999px;
+  background: transparent;
+  border: 1px dashed var(--border);
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.add:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Com tipo: rótulo da barra de propriedades, na cor do tipo. A margem
+   negativa compensa o padding e mantém o ícone no eixo da barra. */
+.trigger {
+  --type-color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: calc(-1 * var(--space-1));
+  padding: var(--space-0) var(--space-1);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--type-color);
+  cursor: pointer;
+}
+
+.trigger:hover,
+.trigger[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--type-color) 14%, transparent);
+}
+
+.menu {
+  position: absolute;
+  left: 0;
+  top: calc(100% + var(--space-1));
+  z-index: 30;
+  min-width: 180px;
+  max-height: 60vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+.item {
+  --type-color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--control-md);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-2);
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.item:hover {
+  background: var(--surface-3);
+}
+
+.itemIcon {
+  display: inline-flex;
+  color: var(--type-color);
+}
+
+.itemName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sep {
+  flex-shrink: 0;
+  height: 1px;
+  margin: var(--space-1) 0;
+  background: var(--border);
+}

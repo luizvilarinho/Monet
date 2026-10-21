@@ -120,7 +120,8 @@ export type TaskPatch = Partial<
     | 'noteId'
     | 'dueDate'
     | 'scheduledDate'
-    | 'group'
+    | 'parentNoteId'
+    | 'sourceNoteId'
     | 'important'
     | 'recurrence'
     | 'recurrenceNextId'
@@ -128,12 +129,6 @@ export type TaskPatch = Partial<
     | 'metadata'
   >
 >
-
-// Group é texto livre: sempre aparado; vazio vira null.
-export function normalizeGroup(group: string | null): string | null {
-  const g = group?.trim() ?? ''
-  return g ? g : null
-}
 
 // Regras de negócio de uma edição de task:
 // - reschedule_count conta quando havia deadline e ele muda para outro
@@ -144,7 +139,6 @@ export function normalizeGroup(group: string | null): string | null {
 // - doing_since é gravado ao entrar em `doing` e limpo ao sair dele.
 export function applyTaskPatch(prev: Task, patch: TaskPatch, now: number): Task {
   const next: Task = { ...prev, ...patch, updatedAt: now }
-  if (patch.group !== undefined) next.group = normalizeGroup(patch.group)
   if (
     patch.dueDate !== undefined &&
     prev.dueDate !== null &&
@@ -177,18 +171,37 @@ export function deleteTasksMessage(tasks: Task[]): string {
   return `Delete ${tasks.length} tasks and their notes? This can't be undone.`
 }
 
-// Texto da busca: título ou group, sem diferenciar maiúsculas/acentos.
-export function matchesSearch(t: Task, search: string): boolean {
+// Nota TODOS como as visões de Tasks a conhecem (título e caderno).
+export interface TodosInfo {
+  id: string
+  title: string
+  notebookId: string | null
+}
+
+// Título da TODOS da task; pai inexistente (apagado por outra janela) = sem TODOS.
+export function todosTitleOf(t: Task, todosById: Map<string, TodosInfo>): string | null {
+  if (!t.parentNoteId) return null
+  const info = todosById.get(t.parentNoteId)
+  return info ? info.title.trim() || 'Untitled' : null
+}
+
+// Texto da busca: título ou título da TODOS, sem diferenciar maiúsculas/acentos.
+export function matchesSearch(t: Task, search: string, todosById: Map<string, TodosInfo>): boolean {
   const q = normalizeName(search.trim())
   if (!q) return true
-  return normalizeName(t.title).includes(q) || normalizeName(t.group ?? '').includes(q)
+  return normalizeName(t.title).includes(q) || normalizeName(todosTitleOf(t, todosById) ?? '').includes(q)
 }
 
 // Tasks que as visões mostram: projeto filtrado (null = todos) + busca.
-export function filterTasksForView(tasks: Task[], notebookId: string | null, search: string): Task[] {
+export function filterTasksForView(
+  tasks: Task[],
+  notebookId: string | null,
+  search: string,
+  todosById: Map<string, TodosInfo>
+): Task[] {
   if (notebookId === null && !search.trim()) return tasks
   return tasks.filter(
-    (t) => (notebookId === null || t.notebookId === notebookId) && matchesSearch(t, search)
+    (t) => (notebookId === null || t.notebookId === notebookId) && matchesSearch(t, search, todosById)
   )
 }
 
@@ -465,6 +478,20 @@ export function taskProgressByNotebook(
 
 const TASK_LINE_RE = /^\s*- \[[ xX]\] (.*)$/
 const TASK_REF_ID_RE = /<task-ref data-id="([^"]+)"/
+// Escape de pontuação ASCII do Markdown (`\[`, `\*`, `\-`...).
+const MD_ESCAPE_RE = /\\([!-/:-@[-`{-~])/g
+
+// Texto do item como o usuário o vê: o editor grava `<`/`>` como entidades e
+// põe `\` antes da pontuação Markdown.
+function itemPlainText(s: string): string {
+  return s
+    .replace(MD_ESCAPE_RE, '$1')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&')
+}
 
 // Título de cada item de checklist vinculado a uma task no markdown da nota.
 export function extractTaskRefTitles(
@@ -476,7 +503,7 @@ export function extractTaskRefTitles(
     if (!m) continue
     const ref = m[1].match(TASK_REF_ID_RE)
     if (!ref) continue
-    const title = m[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()
+    const title = itemPlainText(m[1].replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim()
     if (!title) continue
     out.push({ id: ref[1], title })
   }
@@ -488,43 +515,75 @@ export function formatDueShort(key: string): string {
   return parseKey(key).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
-// ─── Group (agrupamento livre dentro do projeto) ────────────────────────────
+// ─── TODOS (nota entregável que agrupa tasks) ───────────────────────────────
 
-// Groups distintos já usados no caderno (sugestões do campo Group).
-export function groupsOfNotebook(tasks: Task[], notebookId: string): string[] {
-  const set = new Set<string>()
-  for (const t of tasks) if (t.notebookId === notebookId && t.group) set.add(t.group)
-  return [...set].sort((a, b) => a.localeCompare(b))
-}
-
-// "sistema | ação" → group "sistema", título "ação". Divide no PRIMEIRO `|`;
-// os dois lados precisam ficar não-vazios.
-export function splitPipeTitle(title: string): { group: string; title: string } | null {
+// "sistema | ação" → prefixo "sistema" (a TODOS), título "ação". Divide no
+// PRIMEIRO `|`; os dois lados precisam ficar não-vazios.
+export function splitPipeTitle(title: string): { prefix: string; title: string } | null {
   const i = title.indexOf('|')
   if (i < 0) return null
-  const group = title.slice(0, i).trim()
+  const prefix = title.slice(0, i).trim()
   const rest = title.slice(i + 1).trim()
-  return group && rest ? { group, title: rest } : null
+  return prefix && rest ? { prefix, title: rest } : null
 }
 
-// Título vindo da nota de origem de uma task com group: remove o prefixo
-// "group | " (sem diferenciar maiúsculas) para não reintroduzi-lo no título.
-export function stripGroupPrefix(title: string, group: string | null): string {
-  if (!group) return title
+// Título vindo da nota de origem: remove o prefixo "<TODOS> | " (sem
+// diferenciar maiúsculas/acentos) para não reintroduzi-lo no título.
+export function stripPipePrefix(title: string, prefix: string | null): string {
+  if (!prefix) return title
   const split = splitPipeTitle(title)
-  if (!split || split.group.toLowerCase() !== group.toLowerCase()) return title
+  if (!split || normalizeName(split.prefix) !== normalizeName(prefix.trim())) return title
   return split.title
+}
+
+export interface TodosProgress {
+  done: number
+  // Sem as descartadas.
+  total: number
+  // Menor deadline das abertas.
+  nextDeadline: string | null
+  // Alguma aberta com deadline estourado.
+  overdue: boolean
+}
+
+// Progresso derivado de cada nota TODOS, numa passada (vem das tasks com
+// `parentNoteId`, não do Markdown).
+export function todosProgressByNote(tasks: Task[], todayKey: string): Map<string, TodosProgress> {
+  const map = new Map<string, TodosProgress>()
+  for (const t of tasks) {
+    if (!t.parentNoteId || isDropped(t)) continue
+    let p = map.get(t.parentNoteId)
+    if (!p) {
+      p = { done: 0, total: 0, nextDeadline: null, overdue: false }
+      map.set(t.parentNoteId, p)
+    }
+    p.total++
+    if (isDone(t)) {
+      p.done++
+      continue
+    }
+    if (t.dueDate !== null && (p.nextDeadline === null || t.dueDate < p.nextDeadline)) p.nextDeadline = t.dueDate
+    if (overdueKind(t, todayKey) === 'deadline') p.overdue = true
+  }
+  return map
+}
+
+const TASK_REF_IDS_RE = /<task-ref data-id="([^"]+)"/g
+
+// Ids de todas as pills `<task-ref>` do conteúdo.
+export function taskRefIds(markdown: string): Set<string> {
+  return new Set([...markdown.matchAll(TASK_REF_IDS_RE)].map((m) => m[1]))
 }
 
 // ─── Group by da lista ──────────────────────────────────────────────────────
 
-export type TaskGroupBy = 'date' | 'project' | 'status' | 'group'
+export type TaskGroupBy = 'date' | 'project' | 'status' | 'todos'
 
 export interface TaskSection {
   key: string
   label: string
   tone?: 'overdue'
-  // Subtítulos (Group by projeto): label null = tasks sem group, sem subtítulo.
+  // Subtítulos (Group by projeto/TODOS): label null = sem subtítulo.
   subgroups?: Array<{ label: string | null; tasks: Task[] }>
   // Todas as tasks da seção, na ordem de exibição.
   tasks: Task[]
@@ -548,7 +607,8 @@ export function groupTasksBy(
   tasks: Task[],
   todayKey: string,
   notebooks: Notebook[],
-  statuses: TaskStatusDef[]
+  statuses: TaskStatusDef[],
+  todosById: Map<string, TodosInfo>
 ): TaskSection[] {
   let sections: TaskSection[]
   if (mode === 'date') {
@@ -590,23 +650,14 @@ export function groupTasksBy(
         collapsible: true,
       },
     ]
-  } else if (mode === 'group') {
-    // Frentes cruzando projetos: subtítulo = projeto de cada task.
+  } else if (mode === 'todos') {
+    // Uma seção por nota TODOS (cruza projetos): subtítulo = projeto de cada
+    // task; "No TODOS" no fim.
     const nameById = new Map(notebooks.map((nb) => [nb.id, nb.name || 'unnamed']))
-    const byGroup = new Map<string | null, Task[]>()
-    for (const t of tasks) {
-      if (!isOpen(t)) continue
-      const list = byGroup.get(t.group) ?? []
-      list.push(t)
-      byGroup.set(t.group, list)
-    }
-    const names = [...byGroup.keys()]
-      .filter((g): g is string => g !== null)
-      .sort((a, b) => a.localeCompare(b))
-    const order: Array<string | null> = byGroup.has(null) ? [...names, null] : names
-    sections = order.map((g) => {
+    const byTodos = byTodosId(tasks.filter(isOpen), todosById)
+    sections = [...byTodos.keys()].map((todosId) => {
       const byProject = new Map<string, Task[]>()
-      for (const t of byGroup.get(g)!) {
+      for (const t of byTodos.get(todosId)!) {
         const list = byProject.get(t.notebookId) ?? []
         list.push(t)
         byProject.set(t.notebookId, list)
@@ -615,8 +666,8 @@ export function groupTasksBy(
         .map(([id, list]) => ({ label: nameById.get(id) ?? 'unnamed', tasks: list.sort(compareTasks) }))
         .sort((a, b) => (a.label ?? '').localeCompare(b.label ?? ''))
       return {
-        key: `group:${g ?? ''}`,
-        label: g ?? 'No group',
+        key: `todos:${todosId ?? ''}`,
+        label: todosId === null ? 'No TODOS' : todosLabel(todosById, todosId),
         subgroups,
         tasks: subgroups.flatMap((sg) => sg.tasks),
         collapsible: false,
@@ -642,7 +693,7 @@ export function groupTasksBy(
       ...[...byNotebook.keys()].filter((id) => !known.has(id)).map((id) => ({ id, name: 'unnamed' })),
     ]
     sections = order.map(({ id, name }) => {
-      const subgroups = subgroupsByGroup(byNotebook.get(id) ?? [])
+      const subgroups = subgroupsByTodos(byNotebook.get(id) ?? [], todosById)
       return {
         key: `project:${id}`,
         label: name,
@@ -661,17 +712,41 @@ export function groupTasksBy(
   return sections.filter((s) => s.tasks.length > 0)
 }
 
-// Sem group primeiro (sem subtítulo), depois os groups em ordem alfabética.
-function subgroupsByGroup(tasks: Task[]): Array<{ label: string | null; tasks: Task[] }> {
-  const byGroup = new Map<string | null, Task[]>()
+function todosLabel(todosById: Map<string, TodosInfo>, id: string): string {
+  return todosById.get(id)?.title.trim() || 'Untitled'
+}
+
+// Tasks por TODOS: as TODOS por título (alfabético), sem TODOS (chave null) no
+// fim. Pai inexistente conta como sem TODOS.
+export function byTodosId(tasks: Task[], todosById: Map<string, TodosInfo>): Map<string | null, Task[]> {
+  const groups = new Map<string | null, Task[]>()
   for (const t of tasks) {
-    const list = byGroup.get(t.group) ?? []
+    const key = t.parentNoteId && todosById.has(t.parentNoteId) ? t.parentNoteId : null
+    const list = groups.get(key) ?? []
     list.push(t)
-    byGroup.set(t.group, list)
+    groups.set(key, list)
   }
-  return [...byGroup.keys()]
-    .sort((a, b) => (a === null ? -1 : b === null ? 1 : a.localeCompare(b)))
-    .map((label) => ({ label, tasks: byGroup.get(label)!.sort(compareTasks) }))
+  const ids = [...groups.keys()]
+    .filter((k): k is string => k !== null)
+    .sort((a, b) => todosLabel(todosById, a).localeCompare(todosLabel(todosById, b)))
+  const ordered = new Map<string | null, Task[]>(ids.map((id) => [id, groups.get(id)!]))
+  const none = groups.get(null)
+  if (none) ordered.set(null, none)
+  return ordered
+}
+
+// Subtítulos por TODOS dentro do projeto: sem TODOS primeiro (sem subtítulo),
+// depois as TODOS em ordem alfabética.
+function subgroupsByTodos(
+  tasks: Task[],
+  todosById: Map<string, TodosInfo>
+): Array<{ label: string | null; tasks: Task[] }> {
+  const groups = byTodosId(tasks, todosById)
+  const none = groups.get(null)
+  const named = [...groups.entries()]
+    .filter(([id]) => id !== null)
+    .map(([id, list]) => ({ label: todosLabel(todosById, id!), tasks: list.sort(compareTasks) }))
+  return none ? [{ label: null, tasks: none.sort(compareTasks) }, ...named] : named
 }
 
 // ─── Projeto por `#Nome` (quick add e bloco /tasks) ─────────────────────────
@@ -749,7 +824,11 @@ export function filterTasksForBlock(
 }
 
 // Texto legível do bloco (cópia para o clipboard): a lista, não o filtro.
-export function renderTasksBlockText(filterText: string, tasks: Task[]): string {
+export function renderTasksBlockText(
+  filterText: string,
+  tasks: Task[],
+  todosTitle: (noteId: string) => string | undefined
+): string {
   const lines = [`Tasks — ${filterText.trim() || 'this week'}`]
   if (tasks.length === 0) lines.push('(no tasks)')
   for (const t of tasks) {
@@ -758,8 +837,9 @@ export function renderTasksBlockText(filterText: string, tasks: Task[]): string 
       plan ? formatDueShort(plan) : '',
       t.dueDate && t.dueDate !== plan ? `deadline ${formatDueShort(t.dueDate)}` : '',
     ].filter(Boolean)
-    const group = t.group ? `${t.group} | ` : ''
-    lines.push(`- [ ] ${group}${t.title}${dates.length ? ` (${dates.join(', ')})` : ''}`)
+    const parent = t.parentNoteId ? todosTitle(t.parentNoteId) : undefined
+    const prefix = parent !== undefined ? `TODOS ${parent.trim() || 'Untitled'}: ` : ''
+    lines.push(`- [ ] ${prefix}${t.title}${dates.length ? ` (${dates.join(', ')})` : ''}`)
   }
   return lines.join('\n')
 }
@@ -812,7 +892,7 @@ export function nextOccurrenceDate(rec: TaskRecurrence, anchorKey: string, today
 }
 
 // Próxima ocorrência de uma task recorrente concluída: mesmo título, projeto,
-// group, important, metadados e regra; nasce em To do, sem nota-corpo. Mantém o formato
+// TODOS, important, metadados e regra; nasce em To do, sem nota-corpo. Mantém o formato
 // das datas da original (só do date, só deadline, ou ambos com o mesmo
 // intervalo entre eles).
 export function buildNextOccurrence(
@@ -841,7 +921,7 @@ export function buildNextOccurrence(
     noteId: null,
     dueDate,
     scheduledDate,
-    group: task.group,
+    parentNoteId: task.parentNoteId,
     important: task.important,
     recurrence: rec.freq === 'monthly' ? { freq: 'monthly', day: monthlyDay(rec, anchor) } : rec,
     recurrenceNextId: null,
@@ -895,6 +975,8 @@ export interface TasksQuery {
   period?: TasksQueryPeriod
   project?: string
   status?: string
+  // Título da nota TODOS (contém, sem caixa/acentos).
+  todos?: string
 }
 
 const QUERY_LIMIT = 100
@@ -911,8 +993,11 @@ export function queryTasksText(
   q: TasksQuery,
   todayKey: string,
   checklist?: Map<string, ChecklistProgress>,
-  statuses: TaskStatusDef[] = BUILTIN_STATUS_DEFS
+  statuses: TaskStatusDef[] = BUILTIN_STATUS_DEFS,
+  resolveNoteTitle: (noteId: string) => string | undefined = () => undefined
 ): string {
+  const todosTitle = (t: Task) => (t.parentNoteId ? resolveNoteTitle(t.parentNoteId) ?? null : null)
+  const wantedTodos = q.todos?.trim() ? normalizeName(q.todos.trim()) : null
   let notebookId: string | null = null
   if (q.project) {
     const nb = findProjectByTag(notebooks, q.project.replace(/^#/, '').replace(/\s+/g, ''))
@@ -930,6 +1015,7 @@ export function queryTasksText(
   const matches = tasks
     .filter((t) => {
       if (notebookId !== null && t.notebookId !== notebookId) return false
+      if (wantedTodos !== null && !normalizeName(todosTitle(t) ?? '').includes(wantedTodos)) return false
       // "doing" no chat = em andamento como na UI (inclui status custom).
       if (statusId === 'doing' ? !isInProgress(t) : statusId && t.status !== statusId) return false
       const plan = planDate(t)
@@ -964,7 +1050,8 @@ export function queryTasksText(
         todayKey,
         names.get(t.notebookId) ?? 'unnamed',
         checklist?.get(t.id) ?? null,
-        statuses
+        statuses,
+        todosTitle(t)
       )
     )
   if (matches.length > QUERY_LIMIT) lines.push(`(${matches.length - QUERY_LIMIT} more not shown)`)
@@ -972,15 +1059,18 @@ export function queryTasksText(
 }
 
 // Uma task em uma linha para os chats (tool `query_tasks` e contexto do chat
-// das Anotações): status, título, projeto/group e os metadados.
+// das Anotações): status, título, projeto/TODOS e os metadados.
 export function taskLineForAi(
   t: Task,
   todayKey: string,
   projectName: string | null,
   checklist: ChecklistProgress | null,
-  statuses: TaskStatusDef[] = BUILTIN_STATUS_DEFS
+  statuses: TaskStatusDef[] = BUILTIN_STATUS_DEFS,
+  todosTitle: string | null = null
 ): string {
-  const where = [projectName, t.group].filter(Boolean).join(' / ')
+  const where = [projectName, todosTitle !== null ? `TODOS "${todosTitle.trim() || 'Untitled'}"` : null]
+    .filter(Boolean)
+    .join(' / ')
   const late = overdueKind(t, todayKey)
   const meta = [
     t.scheduledDate ? `do ${t.scheduledDate}` : '',

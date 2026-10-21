@@ -52,8 +52,16 @@ export function ChatPanel({
   taskChecklist,
 }: ChatPanelProps) {
   const { statuses } = useTasksEnv()
-  const tasksSnapshotRef = useRef<TasksSnapshot>({ tasks, notebooks, todayKey, checklist: taskChecklist, statuses })
-  tasksSnapshotRef.current = { tasks, notebooks, todayKey, checklist: taskChecklist, statuses }
+  const resolveNoteTitle = (noteId: string) => notes.find((n) => n.id === noteId)?.title
+  const tasksSnapshotRef = useRef<TasksSnapshot>({
+    tasks,
+    notebooks,
+    todayKey,
+    checklist: taskChecklist,
+    statuses,
+    resolveNoteTitle,
+  })
+  tasksSnapshotRef.current = { tasks, notebooks, todayKey, checklist: taskChecklist, statuses, resolveNoteTitle }
   const {
     conversations,
     folders,

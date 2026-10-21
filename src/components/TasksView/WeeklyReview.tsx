@@ -75,10 +75,10 @@ export function WeeklyReview({
     () => new Map(notebooks.map((nb) => [nb.id, nb.color ?? null])),
     [notebooks]
   )
-  const { search } = useTasksEnv()
+  const { search, todosById } = useTasksEnv()
   const projectTasks = useMemo(
-    () => filterTasksForView(tasks, filter, search),
-    [tasks, filter, search]
+    () => filterTasksForView(tasks, filter, search, todosById),
+    [tasks, filter, search, todosById]
   )
   const summary = useMemo(() => computeTaskSummary(projectTasks, todayKey), [projectTasks, todayKey])
 

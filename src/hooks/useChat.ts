@@ -9,6 +9,7 @@ import {
   onOpenRouterError,
   onOpenRouterReasoning,
   onOpenRouterToolCall,
+  onOpenRouterToolCallStarted,
   startOpenRouterStreamMessages,
   type ChatMessageInput,
   type ContentBlock,
@@ -139,6 +140,28 @@ can edit it, removing parts you judge to be less important or condensing
 the information further. Don't be afraid to make mistakes.`
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Mensagem system da 1ª rodada sempre que o turno tem tools: o texto escrito
+// antes de uma tool call sai do balão (a rodada seguinte responde sozinha).
+const TOOLS_FIRST_SYSTEM_PROMPT =
+  'If you need a tool, call it before writing any text of your reply. Do not start answering and then call a tool.'
+
+// Junta o 1º trecho de uma rodada ao que já está no balão, com uma linha em
+// branco entre eles: colado num bloco cercado (```), o parse não o fecha.
+function joinRound(prev: string, next: string): string {
+  if (!prev || prev.endsWith('\n\n')) return prev + next
+  return prev + (prev.endsWith('\n') ? '\n' : '\n\n') + next
+}
+
+// Tira do balão o texto de uma rodada que virou tool call (e o separador do
+// joinRound); o que veio de rodadas anteriores fica.
+function withoutRoundText(msgs: ChatMessage[], assistantId: string, roundText: string): ChatMessage[] {
+  return msgs.map((m) =>
+    m.id === assistantId && m.content.endsWith(roundText)
+      ? { ...m, content: m.content.slice(0, -roundText.length).trimEnd() }
+      : m
+  )
+}
+
 // ─── System prompt do chat do leitor (pasta por livro) ───────────────────────
 // Gravado programaticamente como systemPrompt (modo `replace`) da pasta do
 // livro quando ela é CRIADA em `ensureScopedFolder` (kind 'book'). Depois da criação o
@@ -260,6 +283,8 @@ export interface TasksSnapshot {
   checklist: Map<string, ChecklistProgress> | (() => Promise<Map<string, ChecklistProgress>>)
   // Registro de status (enum da tool e nomes nas respostas).
   statuses: TaskStatusDef[]
+  // Título de nota (TODOS das tasks e filtro `todos` da tool).
+  resolveNoteTitle: (noteId: string) => string | undefined
 }
 
 export type ConversationLocation =
@@ -1382,6 +1407,10 @@ export function useChat(
     convId: string
     assistantId: string
     model: string
+    // Texto desta rodada já no balão (sai se ela virar tool call) e se o
+    // thinking dela já começou: o 1º trecho de cada rodada é separado do anterior.
+    roundText: string
+    roundThinking: boolean
   } | null>(null)
   const conversationsRef = useRef<ChatConversation[]>(conversations)
   conversationsRef.current = conversations
@@ -2213,10 +2242,12 @@ export function useChat(
       const chunk = await onOpenRouterChunk(({ requestId, text }) => {
         const stream = activeStreamRef.current
         if (!stream || stream.requestId !== requestId) return
+        const first = stream.roundText === ''
+        stream.roundText += text
         updateMessages(stream.convId, (msgs) =>
           msgs.map((m) =>
             m.id === stream.assistantId
-              ? { ...m, content: m.content + text }
+              ? { ...m, content: first ? joinRound(m.content, text) : m.content + text }
               : m
           )
         )
@@ -2224,13 +2255,30 @@ export function useChat(
       const reasoning = await onOpenRouterReasoning(({ requestId, text }) => {
         const stream = activeStreamRef.current
         if (!stream || stream.requestId !== requestId) return
+        const first = !stream.roundThinking
+        stream.roundThinking = true
         updateMessages(stream.convId, (msgs) =>
           msgs.map((m) =>
             m.id === stream.assistantId
-              ? { ...m, thinking: (m.thinking ?? '') + text }
+              ? { ...m, thinking: first ? joinRound(m.thinking ?? '', text) : (m.thinking ?? '') + text }
               : m
           )
         )
+      })
+      // A rodada virou tool call e haverá rodada seguinte (há handler): o texto
+      // dela sai do balão, e a próxima rodada escreve a resposta sozinha. O
+      // thinking fica (é o caminho até a tool); o backend não emite mais
+      // conteúdo desta rodada. Se a 1ª tool é a da memória, o texto fica até o
+      // tool_call: sendo só memória, ele é a resposta (ver o handler do turno).
+      const toolCallStarted = await onOpenRouterToolCallStarted(({ requestId, toolName }) => {
+        const stream = activeStreamRef.current
+        if (!stream || stream.requestId !== requestId) return
+        if (!toolCallHandlerRef.current) return
+        if (toolName === 'update_folder_memory') return
+        const roundText = stream.roundText
+        stream.roundText = ''
+        if (!roundText) return
+        updateMessages(stream.convId, (msgs) => withoutRoundText(msgs, stream.assistantId, roundText))
       })
       const done = await onOpenRouterDone(({ requestId, model: doneModel, completionTokens, durationSecs }) => {
         const stream = activeStreamRef.current
@@ -2351,12 +2399,13 @@ export function useChat(
       if (cancelled) {
         chunk()
         reasoning()
+        toolCallStarted()
         done()
         err()
         toolCall()
         return
       }
-      unlisteners.push(chunk, reasoning, done, err, toolCall)
+      unlisteners.push(chunk, reasoning, toolCallStarted, done, err, toolCall)
     })().catch((e) => console.error('failed to subscribe to openrouter events', e))
     return () => {
       cancelled = true
@@ -2471,8 +2520,13 @@ export function useChat(
       // Documentos anexados sao armazenados como paths no filesystem; ler conteudo
       // a partir do disco para mensagens antigas (paralelo via Promise.all).
       const currentConv = conversationsRef.current.find((c) => c.id === targetId)
+      // Balão do assistant vazio (app fechado durante a tool) fica fora: alguns
+      // provedores recusam mensagem vazia.
+      const priorMessages = (currentConv?.messages ?? []).filter(
+        (m) => !(m.role === 'assistant' && !m.content.trim())
+      )
       const historyForApi: ChatMessageInput[] = await Promise.all(
-        (currentConv?.messages ?? []).map(async (m) => {
+        priorMessages.map(async (m) => {
           const docBlocks: ContentBlock[] = m.attachedDocs && m.attachedDocs.length > 0
             ? await Promise.all(
                 m.attachedDocs.map(async (d) => {
@@ -2845,18 +2899,8 @@ export function useChat(
             ]
           : trimmed
 
-      const apiMessages: ChatMessageInput[] = [
-        ...systemMessages,
-        ...(ephemeralSystemMessage ? [ephemeralSystemMessage] : []),
-        ...(ragSystemMessage ? [ragSystemMessage] : []),
-        ...(searchSystemMessage ? [searchSystemMessage] : []),
-        ...historyForApi,
-        { role: 'user', content: userContent },
-      ]
-      if (import.meta.env.DEV) console.log('[useChat] context sent to AI:', apiMessages)
-
       const requestId = assistantId
-      activeStreamRef.current = { requestId, convId: targetId, assistantId, model }
+      activeStreamRef.current = { requestId, convId: targetId, assistantId, model, roundText: '', roundThinking: false }
 
       // Build tool definitions for models that support tool use
       const deepResearchToolParameters = {
@@ -2961,6 +3005,10 @@ export function useChat(
                   type: 'string',
                   description: 'Project (notebook) name, without spaces or "#". Omit for all projects.',
                 },
+                todos: {
+                  type: 'string',
+                  description: 'Title of a TODOS note — a deliverable that groups tasks. Omit for all.',
+                },
                 status: {
                   type: 'string',
                   // Built-ins pelo id; custom pelo nome (lista dinâmica).
@@ -3044,6 +3092,17 @@ export function useChat(
       }
       const toolsPayload: object[] | undefined = toolDefs.length > 0 ? toolDefs : undefined
 
+      const apiMessages: ChatMessageInput[] = [
+        ...systemMessages,
+        ...(ephemeralSystemMessage ? [ephemeralSystemMessage] : []),
+        ...(ragSystemMessage ? [ragSystemMessage] : []),
+        ...(searchSystemMessage ? [searchSystemMessage] : []),
+        ...(toolsPayload ? [{ role: 'system' as const, content: TOOLS_FIRST_SYSTEM_PROMPT }] : []),
+        ...historyForApi,
+        { role: 'user', content: userContent },
+      ]
+      if (import.meta.env.DEV) console.log('[useChat] context sent to AI:', apiMessages)
+
       // Stop enquanto as tools eram montadas (hasTavilyKey, snapshot de tasks):
       // o cancel() já limpou o turno (placeholder, isStreaming e
       // activeStreamRef), mas o stream ainda não tinha começado. Não começa.
@@ -3057,7 +3116,22 @@ export function useChat(
       if (toolsPayload) {
         toolCallHandlerRef.current = async (p: StreamToolCallPayload) => {
           if (p.requestId !== requestId) return
-          if (!activeStreamRef.current) return
+          const stream = activeStreamRef.current
+          if (stream?.requestId !== requestId) return
+          // Turno ainda ativo: Stop zera o activeStreamRef e um send() novo põe
+          // o dele, então depois de cada await este turno só segue (e só toca
+          // nos refs) se o stream ativo ainda for o dele.
+          const isActive = () => activeStreamRef.current?.assistantId === assistantId
+
+          // Texto da rodada mantido no tool_call_started (a 1ª tool era a da
+          // memória). Só memória: a resposta já está no balão e fica, sem 2ª
+          // rodada. Com outra tool junto: o texto sai e a 2ª rodada responde.
+          const keptText = stream.roundText
+          const memoryOnly = p.toolCalls.every((tc) => tc.toolName === 'update_folder_memory')
+          if (keptText && !memoryOnly) {
+            stream.roundText = ''
+            updateMessages(targetId, (msgs) => withoutRoundText(msgs, assistantId, keptText))
+          }
 
           // NÃO zera activeStreamRef/isStreaming aqui: zerar cedo destrava
           // `canSend` (ChatPanel) durante a execução da tool, permitindo que um
@@ -3162,7 +3236,8 @@ export function useChat(
                       query,
                       snapshot.todayKey,
                       checklist,
-                      snapshot.statuses
+                      snapshot.statuses,
+                      snapshot.resolveNoteTitle
                     )
                   } catch (err) {
                     console.warn('query_tasks failed:', err)
@@ -3227,8 +3302,16 @@ export function useChat(
               }
             }
 
-            if (toolCancelledRef.current) {
+            // Stop durante a tool (e talvez já um turno novo): os refs não são
+            // mais deste turno; não abre a 2ª rodada nem mexe neles.
+            if (!isActive()) return
+            if (keptText && memoryOnly) {
+              updateMessages(targetId, (msgs) =>
+                msgs.map((m) => (m.id === assistantId ? { ...m, model } : m))
+              )
               toolCallHandlerRef.current = null
+              activeStreamRef.current = null
+              setIsStreaming(false)
               return
             }
             const toolTasksMessage: ChatMessageInput | null =
@@ -3285,7 +3368,14 @@ export function useChat(
               console.log('[useChat] context sent to AI (post tool-call):', toolApiMessages)
 
             const requestId2 = crypto.randomUUID()
-            activeStreamRef.current = { requestId: requestId2, convId: targetId, assistantId, model }
+            activeStreamRef.current = {
+              requestId: requestId2,
+              convId: targetId,
+              assistantId,
+              model,
+              roundText: '',
+              roundThinking: false,
+            }
             setIsStreaming(true)
             toolCallHandlerRef.current = null
 
@@ -3296,6 +3386,7 @@ export function useChat(
               thinking: thinkingEnabled,
             })
           } catch (toolErr) {
+            if (!isActive()) return
             toolCallHandlerRef.current = null
             const message =
               toolErr instanceof Error ? toolErr.message : String(toolErr ?? 'unknown error')

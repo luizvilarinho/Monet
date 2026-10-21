@@ -1,0 +1,262 @@
+/* Base (backdrop, card, linhas, inputs) em StatusManagerModal.module.css;
+   aqui só o layout em duas colunas do "Note types". */
+.card {
+  max-width: 760px;
+}
+
+.columns {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: var(--space-6);
+  max-height: 65vh;
+  min-height: 0;
+}
+
+.types {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  overflow-y: auto;
+}
+
+/* "Reorder types…" da lista de notas: aviso no topo da lista de tipos. */
+.reorderHint {
+  margin: 0 0 var(--space-1);
+  padding: var(--space-1h) var(--space-2);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  font-size: 12px;
+  line-height: var(--lh-ui);
+  color: var(--text-secondary);
+}
+
+.typeRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-0);
+  border-radius: var(--radius-md);
+}
+
+.typeRowActive {
+  background: var(--surface-1);
+}
+
+.typeButton {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1h);
+  height: var(--control-md);
+  background: transparent;
+  border: none;
+  padding: 0 var(--space-2);
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.typeName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Setas de reordenar: mesma área do .delete, sem o vermelho no hover. */
+.action {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-sm);
+  height: var(--control-sm);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.action:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.action:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  overflow-y: auto;
+  padding-right: var(--space-1);
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-md);
+}
+
+.label {
+  flex: 0 0 56px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Seletor de ícone: busca + grade agrupada com rolagem própria. */
+.iconField {
+  align-items: flex-start;
+}
+
+.iconField .label {
+  line-height: var(--control-md);
+}
+
+.iconPicker {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1h);
+}
+
+.icons {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1h);
+  max-height: 192px;
+  overflow-y: auto;
+  padding-right: var(--space-1);
+}
+
+.iconGroup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.iconGroupLabel {
+  flex-basis: 100%;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-sm);
+  height: var(--control-sm);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.iconButton:hover {
+  color: var(--text-primary);
+}
+
+.iconActive {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.section {
+  margin: var(--space-2) 0 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.props {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1h);
+}
+
+.prop {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.type {
+  flex: 0 0 64px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.inList {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.inList input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+/* Opções do select, recuadas sob a propriedade. */
+.options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding-left: var(--space-4);
+}
+
+.select {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  height: var(--control-md);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-1h);
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-primary);
+  outline: none;
+}
+
+.select:focus {
+  border-color: var(--accent);
+}
+
+.template {
+  min-height: 120px;
+  resize: vertical;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1h);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: var(--lh-ui);
+  color: var(--text-primary);
+  outline: none;
+}
+
+.template:focus {
+  border-color: var(--accent);
+}
+
+.empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}

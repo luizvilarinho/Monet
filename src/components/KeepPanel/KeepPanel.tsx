@@ -23,7 +23,8 @@ import { TasksProvider } from '../Editor/TasksContext'
 import { taskStatusPluginKey, type TaskStatusStorage } from '../Editor/TaskStatus'
 import { TimePicker } from '../Editor/TimePicker'
 import { CalendarView } from '../CalendarView/CalendarView'
-import { isTaskBodyNote } from '../../lib/tasks'
+import { isTaskBodyNote, type TodosInfo } from '../../lib/tasks'
+import { isTodosNote } from '../../lib/noteTypes'
 import styles from './KeepPanel.module.css'
 
 function getMarkdown(editor: TiptapEditor): string {
@@ -63,7 +64,26 @@ export function KeepPanel() {
   const { tasks, tasksById, updateTask, reload: reloadTasks } = useTasks()
   // Registro de status (SQLite) para o bloco `/tasks` mostrar nomes/cores custom.
   const { statuses } = useTaskStatuses()
-  const tasksEnv = useMemo(() => ({ ...DEFAULT_TASKS_ENV, statuses }), [statuses])
+  // Notas TODOS: título no chip das tasks do bloco `/tasks`; abrir vai para a main.
+  const todosById = useMemo(
+    () =>
+      new Map<string, TodosInfo>(
+        allNotes.filter(isTodosNote).map((n) => [n.id, { id: n.id, title: n.title, notebookId: n.notebookId }])
+      ),
+    [allNotes]
+  )
+  const tasksEnv = useMemo(
+    () => ({
+      ...DEFAULT_TASKS_ENV,
+      statuses,
+      todosById,
+      onOpenNote: (noteId: string) => {
+        void invoke('open_note_in_main', { noteId })
+        void getCurrentWindow().hide()
+      },
+    }),
+    [statuses, todosById]
+  )
   const reloadTasksRef = useRef(reloadTasks)
   reloadTasksRef.current = reloadTasks
   // Cadernos para o `#Projeto` dos blocos `/tasks` da nota.
@@ -313,8 +333,14 @@ export function KeepPanel() {
       onToggleTask: (id: string, done: boolean) => {
         void updateTask(id, { status: done ? 'done' : 'todo' })
       },
+      statuses,
+      onSetStatus: (id: string, status: string) => {
+        void updateTask(id, { status })
+      },
+      todosTitle: (noteId: string) => todosById.get(noteId)?.title,
+      currentNoteId: note?.id ?? null,
     }),
-    [tasksById, todayKey, notebooks, updateTask]
+    [tasksById, todayKey, notebooks, updateTask, statuses, todosById, note?.id]
   )
   const headerDate = note?.title ?? formatCalendarTitle(new Date())
   const headerWeekday = getWeekdayName(parseCalendarTitle(headerDate) ?? new Date())

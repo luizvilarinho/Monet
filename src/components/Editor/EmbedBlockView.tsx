@@ -19,6 +19,8 @@ export function EmbedBlockView({ node, updateAttributes, editor, selected }: Nod
   const body = response?.response ?? ''
 
   const [renderedHtml, setRenderedHtml] = useState('')
+  // React 19 regrava o innerHTML se o objeto muda a cada render (perde a seleção).
+  const inner = useMemo(() => ({ __html: renderedHtml }), [renderedHtml])
 
   useEffect(() => {
     if (collapsed) return
@@ -61,7 +63,7 @@ export function EmbedBlockView({ node, updateAttributes, editor, selected }: Nod
         body ? (
           <div
             className={styles.body}
-            dangerouslySetInnerHTML={{ __html: renderedHtml }}
+            dangerouslySetInnerHTML={inner}
           />
         ) : (
           <div className={styles.empty}>Response not available.</div>

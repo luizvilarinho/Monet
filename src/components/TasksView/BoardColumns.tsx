@@ -3,7 +3,7 @@ import type { Task } from '../../types'
 import { useCardDrag } from './useCardDrag'
 import styles from './BoardColumns.module.css'
 
-// Colunas de cards arrastáveis, comuns a Kanban (status), Projects e Groups.
+// Colunas de cards arrastáveis, comuns a Kanban (status), Projects e TODOS.
 // O drop (mouse manual, useCardDrag) devolve `(taskId, columnKey)`.
 export interface BoardColumn {
   key: string
@@ -76,8 +76,9 @@ export function BoardColumns({ columns, onDrop, onClearColumn, renderCard }: Boa
             </div>
             <div className={styles.cards}>
               {c.sections
-                ? c.sections.map((s) => (
-                    <div key={s.label ?? ''} className={styles.section}>
+                ? c.sections.map((s, i) => (
+                    // Índice na chave: duas TODOS podem ter o mesmo título.
+                    <div key={`${i}-${s.label ?? ''}`} className={styles.section}>
                       {s.label !== null && (
                         <span className={styles.sectionLabel} title={s.label}>
                           {s.label}

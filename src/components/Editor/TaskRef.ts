@@ -3,15 +3,17 @@ import { ReactNodeViewRenderer } from '@tiptap/react'
 import { TASK_REF_TAG } from '../../lib/tasks'
 import { TaskRefView } from './TaskRefView'
 
-// Pill inline que vincula um item de checklist a uma task da tabela `tasks`.
-// Só o id fica na nota: prazo e status vivem na tabela e chegam à view via
-// TasksContext — mudar a task nunca reescreve o conteúdo da nota.
+// Node inline que vincula um item de checklist a uma task da tabela `tasks`
+// (a view desenha o card: abrir + propriedades). Só o id fica na nota: prazo e
+// status vivem na tabela e chegam à view via TasksContext — mudar a task nunca
+// reescreve o conteúdo da nota. Não selecionável: clique na linha de
+// propriedades não vira NodeSelection (digitar em seguida apagaria o vínculo).
 export const TaskRef = Node.create({
   name: 'taskRef',
   group: 'inline',
   inline: true,
   atom: true,
-  selectable: true,
+  selectable: false,
   draggable: false,
 
   addAttributes() {

@@ -13,6 +13,8 @@ import type {
   Note,
   Notebook,
   NoteSummary,
+  NoteType,
+  SelectOption,
   Subject,
   Task,
   TaskRecurrence,
@@ -21,7 +23,8 @@ import type {
   TaskView,
   TaskViewConfig,
 } from '../types'
-import { BUILTIN_STATUS_DEFS } from '../lib/tasks'
+import { BUILTIN_STATUS_DEFS, TASK_COLOR_PALETTE } from '../lib/tasks'
+import { TODOS_DEFAULT_TEMPLATE, TODOS_TYPE_ID } from '../lib/noteTypes'
 import { CALENDAR_NOTEBOOK_ID, parseCalendarTitle } from '../lib/calendar'
 import type { StorageAdapter } from './index'
 
@@ -46,6 +49,20 @@ interface NoteRow {
   date: string | null
   created_at: number
   updated_at: number
+  // Colunas de ensureNotesColumns (ausentes até o primeiro setter de tipo).
+  type_id?: string | null
+  properties?: string | null
+}
+
+interface NoteTypeRow {
+  id: string
+  name: string
+  icon: string | null
+  color: string | null
+  template: string | null
+  sort_order: number
+  builtin: number
+  created_at: number
 }
 
 interface SubjectRow {
@@ -165,6 +182,21 @@ function rowToNote(r: NoteRow): Note {
     date: r.date ?? null,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
+    typeId: r.type_id ?? null,
+    properties: parseMetadata(r.properties ?? null),
+  }
+}
+
+function rowToNoteType(r: NoteTypeRow): NoteType {
+  return {
+    id: r.id,
+    name: r.name,
+    icon: r.icon ?? null,
+    color: r.color ?? null,
+    template: r.template ?? null,
+    sortOrder: r.sort_order,
+    builtin: r.builtin === 1,
+    createdAt: r.created_at,
   }
 }
 
@@ -284,7 +316,7 @@ interface TaskRow {
   note_id: string | null
   due_date: string | null
   scheduled_date: string | null
-  task_group: string | null
+  parent_note_id: string | null
   important: number | null
   recurrence: string | null
   recurrence_next_id: string | null
@@ -305,6 +337,11 @@ interface MetadataDefRow {
   type: string
   sort_order: number
   created_at: number
+  // Colunas de METADATA_DEFS_EXTRA_COLUMNS.
+  scope: string | null
+  note_type_id: string | null
+  options: string | null
+  show_in_list: number | null
 }
 
 interface TaskStatusRow {
@@ -344,12 +381,15 @@ function rowToTaskView(r: TaskViewRow): TaskView {
   let config: TaskViewConfig = { base: 'list', project: null, summary: null, text: '', groupBy: null }
   try {
     const parsed = JSON.parse(r.config) as Partial<TaskViewConfig>
+    // Visões salvas antes dos TODOS: 'groups'/'group' são lidos como 'todos'
+    // (sem regravar a linha).
     config = {
-      base: typeof parsed.base === 'string' ? parsed.base : 'list',
+      base: typeof parsed.base === 'string' ? (parsed.base === 'groups' ? 'todos' : parsed.base) : 'list',
       project: typeof parsed.project === 'string' ? parsed.project : null,
       summary: typeof parsed.summary === 'string' ? parsed.summary : null,
       text: typeof parsed.text === 'string' ? parsed.text : '',
-      groupBy: typeof parsed.groupBy === 'string' ? parsed.groupBy : null,
+      groupBy:
+        typeof parsed.groupBy === 'string' ? (parsed.groupBy === 'group' ? 'todos' : parsed.groupBy) : null,
     }
   } catch {
     // config inválida: usa o padrão
@@ -391,6 +431,24 @@ function parseMetadata(raw: string | null): Record<string, MetadataValue> {
   }
 }
 
+// Opções do select gravadas como JSON; inválidas viram null.
+function parseSelectOptions(raw: string | null): SelectOption[] | null {
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return null
+    const valid: SelectOption[] = []
+    for (const o of parsed as Array<Partial<SelectOption> | null>) {
+      if (o && typeof o.id === 'string' && typeof o.name === 'string') {
+        valid.push({ id: o.id, name: o.name, color: typeof o.color === 'string' ? o.color : null })
+      }
+    }
+    return valid
+  } catch {
+    return null
+  }
+}
+
 function rowToMetadataDef(r: MetadataDefRow): MetadataDef {
   return {
     id: r.id,
@@ -398,6 +456,10 @@ function rowToMetadataDef(r: MetadataDefRow): MetadataDef {
     type: r.type as MetadataType,
     sortOrder: r.sort_order,
     createdAt: r.created_at,
+    scope: r.scope === 'note' ? 'note' : 'task',
+    noteTypeId: r.note_type_id ?? null,
+    options: parseSelectOptions(r.options),
+    showInList: r.show_in_list === 1,
   }
 }
 
@@ -410,7 +472,7 @@ function rowToTask(r: TaskRow): Task {
     noteId: r.note_id,
     dueDate: r.due_date,
     scheduledDate: r.scheduled_date ?? null,
-    group: r.task_group ?? null,
+    parentNoteId: r.parent_note_id ?? null,
     important: r.important === 1,
     recurrence: parseRecurrence(r.recurrence),
     recurrenceNextId: r.recurrence_next_id ?? null,
@@ -477,6 +539,7 @@ const TASKS_TABLES_SQL = [
 // as que faltam (PRAGMA table_info). Linhas existentes ficam com NULL.
 const TASKS_EXTRA_COLUMNS = [
   { name: 'scheduled_date', ddl: 'scheduled_date TEXT' },
+  // Dormente: backup do group até a limpeza (D11). Só getLegacyTaskGroups lê.
   { name: 'task_group', ddl: 'task_group TEXT' },
   { name: 'important', ddl: 'important INTEGER NOT NULL DEFAULT 0' },
   { name: 'recurrence', ddl: 'recurrence TEXT' },
@@ -484,7 +547,43 @@ const TASKS_EXTRA_COLUMNS = [
   { name: 'doing_since', ddl: 'doing_since INTEGER' },
   { name: 'planned_day', ddl: 'planned_day TEXT' },
   { name: 'metadata', ddl: 'metadata TEXT' },
+  { name: 'parent_note_id', ddl: 'parent_note_id TEXT' },
 ]
+
+// Colunas de metadata_defs dos tipos de nota, mesmo padrão. `scope` separa as
+// defs de task das de nota (D2): as existentes ficam 'task' pelo DEFAULT.
+const METADATA_DEFS_EXTRA_COLUMNS = [
+  { name: 'scope', ddl: "scope TEXT NOT NULL DEFAULT 'task'" },
+  { name: 'note_type_id', ddl: 'note_type_id TEXT' },
+  { name: 'options', ddl: 'options TEXT' },
+  { name: 'show_in_list', ddl: 'show_in_list INTEGER NOT NULL DEFAULT 0' },
+]
+
+// Colunas de notes dos tipos de nota (ensureNotesColumns).
+const NOTES_EXTRA_COLUMNS = [
+  { name: 'type_id', ddl: 'type_id TEXT' },
+  { name: 'properties', ddl: 'properties TEXT' },
+]
+
+// Adiciona as colunas que faltam (PRAGMA table_info). Outra janela (main/keep)
+// pode ter adicionado a coluna entre o PRAGMA e o ALTER: "duplicate column
+// name" conta como sucesso.
+async function addMissingColumns(
+  db: Database,
+  table: string,
+  columns: Array<{ name: string; ddl: string }>
+): Promise<void> {
+  const cols = await db.select<Array<{ name: string }>>(`PRAGMA table_info(${table})`)
+  const existing = new Set(cols.map((c) => c.name))
+  for (const col of columns) {
+    if (existing.has(col.name)) continue
+    try {
+      await db.execute(`ALTER TABLE ${table} ADD COLUMN ${col.ddl}`)
+    } catch (e) {
+      if (!String(e).toLowerCase().includes('duplicate column')) throw e
+    }
+  }
+}
 
 // O banco roda em modo WAL (default do SQLite). Com o pool de múltiplas
 // conexões do tauri-plugin-sql, o autocheckpoint PASSIVE quase nunca
@@ -510,6 +609,12 @@ export class TauriStorage implements StorageAdapter {
   private lastCheckpoint = 0
   private tasksTablesReady: Promise<void> | null = null
   private notebookColorReady: Promise<void> | null = null
+  private notesColumnsReady: Promise<void> | null = null
+  private noteTypesTableReady: Promise<void> | null = null
+  // Fila das DDLs idempotentes (ensure*): uma por vez nesta janela, para não
+  // disputarem entre si o lock de escrita do monet.db no cold start (que já
+  // é disputado com as outras janelas e com o scan do Rust).
+  private ddlQueue: Promise<unknown> = Promise.resolve()
 
   private db(): Promise<Database> {
     if (!this.dbPromise) {
@@ -523,6 +628,15 @@ export class TauriStorage implements StorageAdapter {
       })
     }
     return this.dbPromise
+  }
+
+  // Enfileira `run` atrás da DDL anterior, mesmo que ela tenha falhado.
+  // Nunca chame um `ensure*` de dentro de um `run`: ele esperaria a própria
+  // fila e travaria todas as DDLs da janela.
+  private serialDdl(run: () => Promise<void>): Promise<void> {
+    const p = this.ddlQueue.then(run, run)
+    this.ddlQueue = p.catch(() => {})
+    return p
   }
 
   private async load(): Promise<Database> {
@@ -747,20 +861,6 @@ export class TauriStorage implements StorageAdapter {
     this.scheduleCheckpoint()
   }
 
-  async searchNotes(query: string): Promise<Note[]> {
-    const db = await this.db()
-    const q = `%${query.trim().toLowerCase()}%`
-    const rows = await db.select<NoteRow[]>(
-      `SELECT * FROM notes
-        WHERE LOWER(title) LIKE $1
-           OR LOWER(content) LIKE $1
-           OR LOWER(tags) LIKE $1
-        ORDER BY updated_at DESC`,
-      [q]
-    )
-    return rows.map(rowToNote)
-  }
-
   // Garante idempotente que reminder_state existe. Ela é criada pela migration
   // v11, mas builds antigos do MSI aplicaram uma v11 diferente
   // (notes_rag_doc_ids) no DB de produção, deixando o sistema de migrations
@@ -783,7 +883,7 @@ export class TauriStorage implements StorageAdapter {
   // fica sem DDL no cold start.
   private ensureNotebookColorColumn(db: Database): Promise<void> {
     if (!this.notebookColorReady) {
-      const p = (async () => {
+      const p = this.serialDdl(async () => {
         const cols = await db.select<Array<{ name: string }>>('PRAGMA table_info(notebooks)')
         if (cols.some((c) => c.name === 'color')) return
         try {
@@ -791,7 +891,7 @@ export class TauriStorage implements StorageAdapter {
         } catch (e) {
           if (!String(e).toLowerCase().includes('duplicate column')) throw e
         }
-      })()
+      })
       this.notebookColorReady = p
       p.catch(() => {
         if (this.notebookColorReady === p) this.notebookColorReady = null
@@ -805,23 +905,13 @@ export class TauriStorage implements StorageAdapter {
   // zera para tentar de novo na próxima chamada.
   private ensureTasksTables(db: Database): Promise<void> {
     if (!this.tasksTablesReady) {
-      const p = (async () => {
+      const p = this.serialDdl(async () => {
         for (const sql of TASKS_TABLES_SQL) await db.execute(sql)
-        const cols = await db.select<Array<{ name: string }>>(
-          'PRAGMA table_info(notebook_tasks)'
+        await addMissingColumns(db, 'notebook_tasks', TASKS_EXTRA_COLUMNS)
+        await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_notebook_tasks_parent_note ON notebook_tasks(parent_note_id)'
         )
-        const existing = new Set(cols.map((c) => c.name))
-        for (const col of TASKS_EXTRA_COLUMNS) {
-          if (!existing.has(col.name)) {
-            try {
-              await db.execute(`ALTER TABLE notebook_tasks ADD COLUMN ${col.ddl}`)
-            } catch (e) {
-              // Outra janela (main/keep) pode ter adicionado a coluna entre o
-              // PRAGMA e o ALTER: "duplicate column name" conta como sucesso.
-              if (!String(e).toLowerCase().includes('duplicate column')) throw e
-            }
-          }
-        }
+        await addMissingColumns(db, 'metadata_defs', METADATA_DEFS_EXTRA_COLUMNS)
         // Seed dos built-ins (ids fixos) e backfill aproximado de doing_since;
         // cada statement é independente e idempotente.
         for (const def of BUILTIN_STATUS_DEFS) {
@@ -834,13 +924,57 @@ export class TauriStorage implements StorageAdapter {
         await db.execute(
           "UPDATE notebook_tasks SET doing_since = updated_at WHERE status = 'doing' AND doing_since IS NULL"
         )
-      })()
+      })
       this.tasksTablesReady = p
       p.catch(() => {
         if (this.tasksTablesReady === p) this.tasksTablesReady = null
       })
     }
     return this.tasksTablesReady
+  }
+
+  // `notes.type_id`/`properties`, no padrão do ensureNotebookColorColumn: só
+  // roda nos setters e nas operações de tipo (a leitura via `SELECT *` já traz
+  // as colunas quando existem, sem DDL no cold start).
+  private ensureNotesColumns(db: Database): Promise<void> {
+    if (!this.notesColumnsReady) {
+      const p = this.serialDdl(() => addMissingColumns(db, 'notes', NOTES_EXTRA_COLUMNS))
+      this.notesColumnsReady = p
+      p.catch(() => {
+        if (this.notesColumnsReady === p) this.notesColumnsReady = null
+      })
+    }
+    return this.notesColumnsReady
+  }
+
+  private ensureNoteTypesTable(db: Database): Promise<void> {
+    if (!this.noteTypesTableReady) {
+      const p = this.serialDdl(async () => {
+        await db.execute(
+          `CREATE TABLE IF NOT EXISTS note_types (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            icon TEXT,
+            color TEXT,
+            template TEXT,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            builtin INTEGER NOT NULL DEFAULT 0,
+            created_at INTEGER NOT NULL
+          )`
+        )
+        // Tipo embutido TODOS (entregável): id fixo, idempotente.
+        await db.execute(
+          `INSERT OR IGNORE INTO note_types (id, name, icon, color, template, sort_order, builtin, created_at)
+           VALUES ($1, 'TODOS', 'checks', $2, $3, 0, 1, $4)`,
+          [TODOS_TYPE_ID, TASK_COLOR_PALETTE[6], TODOS_DEFAULT_TEMPLATE, Date.now()]
+        )
+      })
+      this.noteTypesTableReady = p
+      p.catch(() => {
+        if (this.noteTypesTableReady === p) this.noteTypesTableReady = null
+      })
+    }
+    return this.noteTypesTableReady
   }
 
   async getTasks(): Promise<Task[]> {
@@ -856,7 +990,7 @@ export class TauriStorage implements StorageAdapter {
     const db = await this.db()
     await this.ensureTasksTables(db)
     await db.execute(
-      `INSERT INTO notebook_tasks (id, title, status, notebook_id, note_id, due_date, created_at, updated_at, completed_at, source_note_id, reschedule_count, sort_order, scheduled_date, task_group, important, recurrence, recurrence_next_id, doing_since, planned_day, metadata)
+      `INSERT INTO notebook_tasks (id, title, status, notebook_id, note_id, due_date, created_at, updated_at, completed_at, source_note_id, reschedule_count, sort_order, scheduled_date, parent_note_id, important, recurrence, recurrence_next_id, doing_since, planned_day, metadata)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
        ON CONFLICT(id) DO UPDATE SET
          title = excluded.title,
@@ -870,7 +1004,7 @@ export class TauriStorage implements StorageAdapter {
          reschedule_count = excluded.reschedule_count,
          sort_order = excluded.sort_order,
          scheduled_date = excluded.scheduled_date,
-         task_group = excluded.task_group,
+         parent_note_id = excluded.parent_note_id,
          important = excluded.important,
          recurrence = excluded.recurrence,
          recurrence_next_id = excluded.recurrence_next_id,
@@ -891,7 +1025,7 @@ export class TauriStorage implements StorageAdapter {
         t.rescheduleCount,
         t.sortOrder,
         t.scheduledDate,
-        t.group,
+        t.parentNoteId,
         t.important ? 1 : 0,
         t.recurrence ? JSON.stringify(t.recurrence) : null,
         t.recurrenceNextId,
@@ -900,6 +1034,48 @@ export class TauriStorage implements StorageAdapter {
         Object.keys(t.metadata).length > 0 ? JSON.stringify(t.metadata) : null,
       ]
     )
+    this.scheduleCheckpoint()
+  }
+
+  // Único leitor do `task_group` dormente: a migração group → TODOS (D7).
+  async getLegacyTaskGroups(): Promise<Array<{ taskId: string; notebookId: string; group: string }>> {
+    const db = await this.db()
+    await this.ensureTasksTables(db)
+    const rows = await db.select<Array<{ id: string; notebook_id: string; task_group: string }>>(
+      "SELECT id, notebook_id, task_group FROM notebook_tasks WHERE task_group IS NOT NULL AND TRIM(task_group) <> ''"
+    )
+    return rows.map((r) => ({ taskId: r.id, notebookId: r.notebook_id, group: r.task_group }))
+  }
+
+  // Linhas da migração group → TODOS já resolvidas (migradas ou desmarcadas),
+  // pelo id determinístico da nota. Fica no banco, e não no localStorage, para
+  // acompanhar o DB (clone prod→dev, dev × prod).
+  private ensureTodosMigrationTable(db: Database): Promise<void> {
+    return this.serialDdl(async () => {
+      await db.execute(
+        `CREATE TABLE IF NOT EXISTS todos_migration_done (
+          note_id TEXT PRIMARY KEY,
+          done_at INTEGER NOT NULL
+        )`
+      )
+    })
+  }
+
+  async getTodosMigrationDone(): Promise<string[]> {
+    const db = await this.db()
+    await this.ensureTodosMigrationTable(db)
+    const rows = await db.select<{ note_id: string }[]>('SELECT note_id FROM todos_migration_done')
+    return rows.map((r) => r.note_id)
+  }
+
+  async markTodosMigrationDone(noteIds: string[]): Promise<void> {
+    if (noteIds.length === 0) return
+    const db = await this.db()
+    await this.ensureTodosMigrationTable(db)
+    const now = Date.now()
+    for (const id of noteIds) {
+      await db.execute('INSERT OR IGNORE INTO todos_migration_done (note_id, done_at) VALUES ($1, $2)', [id, now])
+    }
     this.scheduleCheckpoint()
   }
 
@@ -957,29 +1133,132 @@ export class TauriStorage implements StorageAdapter {
   async saveMetadataDef(d: MetadataDef): Promise<void> {
     const db = await this.db()
     await this.ensureTasksTables(db)
+    // `scope` só no INSERT: uma def não muda de escopo.
     await db.execute(
-      `INSERT INTO metadata_defs (id, name, type, sort_order, created_at)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO metadata_defs (id, name, type, sort_order, created_at, scope, note_type_id, options, show_in_list)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        ON CONFLICT(id) DO UPDATE SET
          name = excluded.name,
          type = excluded.type,
-         sort_order = excluded.sort_order`,
-      [d.id, d.name, d.type, d.sortOrder, d.createdAt]
+         sort_order = excluded.sort_order,
+         note_type_id = excluded.note_type_id,
+         options = excluded.options,
+         show_in_list = excluded.show_in_list`,
+      [
+        d.id,
+        d.name,
+        d.type,
+        d.sortOrder,
+        d.createdAt,
+        d.scope,
+        d.noteTypeId,
+        d.options ? JSON.stringify(d.options) : null,
+        d.showInList ? 1 : 0,
+      ]
     )
     this.scheduleCheckpoint()
   }
 
   // Duas execuções separadas (sem BEGIN/COMMIT: pool sqlx): tira a chave do
-  // JSON das tasks e depois apaga a definição; reexecutar é idempotente.
+  // JSON das tasks (scope 'task') ou das notas (scope 'note') e depois apaga a
+  // definição; reexecutar é idempotente. Um escopo nunca toca o outro (D2).
   async deleteMetadataDef(id: string): Promise<void> {
     const db = await this.db()
     await this.ensureTasksTables(db)
-    await db.execute(
-      `UPDATE notebook_tasks SET metadata = json_remove(metadata, '$."' || $1 || '"')
-       WHERE metadata IS NOT NULL AND json_valid(metadata)`,
+    const rows = await db.select<Array<{ scope: string | null }>>(
+      'SELECT scope FROM metadata_defs WHERE id = $1',
       [id]
     )
+    if (rows[0]?.scope === 'note') {
+      await this.ensureNotesColumns(db)
+      await this.removeNotePropertyKey(db, id)
+    } else {
+      await db.execute(
+        `UPDATE notebook_tasks SET metadata = json_remove(metadata, '$."' || $1 || '"')
+         WHERE metadata IS NOT NULL AND json_valid(metadata)`,
+        [id]
+      )
+    }
     await db.execute('DELETE FROM metadata_defs WHERE id = $1', [id])
+    this.scheduleCheckpoint()
+  }
+
+  private async removeNotePropertyKey(db: Database, defId: string): Promise<void> {
+    await db.execute(
+      `UPDATE notes SET properties = json_remove(properties, '$."' || $1 || '"')
+       WHERE properties IS NOT NULL AND json_valid(properties)`,
+      [defId]
+    )
+  }
+
+  async getNoteTypes(): Promise<NoteType[]> {
+    const db = await this.db()
+    await this.ensureNoteTypesTable(db)
+    const rows = await db.select<NoteTypeRow[]>(
+      'SELECT * FROM note_types ORDER BY sort_order ASC, id ASC'
+    )
+    return rows.map(rowToNoteType)
+  }
+
+  async saveNoteType(t: NoteType): Promise<void> {
+    const db = await this.db()
+    await this.ensureNoteTypesTable(db)
+    // `builtin` só no INSERT: um tipo não vira (nem deixa de ser) embutido.
+    await db.execute(
+      `INSERT INTO note_types (id, name, icon, color, template, sort_order, builtin, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT(id) DO UPDATE SET
+         name = excluded.name,
+         icon = excluded.icon,
+         color = excluded.color,
+         template = excluded.template,
+         sort_order = excluded.sort_order`,
+      [t.id, t.name, t.icon, t.color, t.template, t.sortOrder, t.builtin ? 1 : 0, t.createdAt]
+    )
+    this.scheduleCheckpoint()
+  }
+
+  // Passos idempotentes nesta ordem (sem BEGIN/COMMIT: pool sqlx): valores das
+  // propriedades do tipo, defs do tipo, tipo das notas e, por fim, o tipo.
+  // Falha no meio é segura e reexecutar termina o serviço. Built-in não sai.
+  async deleteNoteType(id: string): Promise<void> {
+    const db = await this.db()
+    await this.ensureTasksTables(db)
+    await this.ensureNotesColumns(db)
+    await this.ensureNoteTypesTable(db)
+    const type = await db.select<Array<{ builtin: number }>>(
+      'SELECT builtin FROM note_types WHERE id = $1',
+      [id]
+    )
+    if (type[0]?.builtin === 1) return
+    const defs = await db.select<Array<{ id: string }>>(
+      "SELECT id FROM metadata_defs WHERE scope = 'note' AND note_type_id = $1",
+      [id]
+    )
+    for (const def of defs) await this.removeNotePropertyKey(db, def.id)
+    await db.execute("DELETE FROM metadata_defs WHERE scope = 'note' AND note_type_id = $1", [id])
+    await db.execute('UPDATE notes SET type_id = NULL WHERE type_id = $1', [id])
+    await db.execute('DELETE FROM note_types WHERE id = $1 AND builtin = 0', [id])
+    this.scheduleCheckpoint()
+  }
+
+  // Setters pontuais, fora do UPSERT do saveNote (que não conhece tipo nem
+  // propriedades). Não mexem em `updated_at`: não reordenam a lista nem
+  // interferem nas comparações de versão entre janelas.
+  async setNoteType(noteId: string, typeId: string | null): Promise<void> {
+    const db = await this.db()
+    await this.ensureNotesColumns(db)
+    await db.execute('UPDATE notes SET type_id = $1 WHERE id = $2', [typeId, noteId])
+    this.scheduleCheckpoint()
+  }
+
+  async setNoteProperties(noteId: string, properties: Record<string, MetadataValue>): Promise<void> {
+    const db = await this.db()
+    await this.ensureNotesColumns(db)
+    await db.execute('UPDATE notes SET properties = $1 WHERE id = $2', [
+      Object.keys(properties).length > 0 ? JSON.stringify(properties) : null,
+      noteId,
+    ])
     this.scheduleCheckpoint()
   }
 

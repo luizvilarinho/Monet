@@ -12,7 +12,7 @@ export const TASK_VIEWS: TaskViewDef[] = [
   { id: 'week', label: 'Week' },
   { id: 'kanban', label: 'Kanban' },
   { id: 'projects', label: 'Projects', title: 'Columns by project' },
-  { id: 'groups', label: 'Groups', title: 'Columns by group' },
+  { id: 'todos', label: 'TODOS', title: 'Columns by TODOS' },
   { id: 'plan', label: 'My Day', title: 'Plan today' },
   { id: 'review', label: 'Review', title: 'Weekly review' },
 ]
@@ -22,7 +22,9 @@ export type TasksMainView = string
 // A visão de revisão nunca é lembrada entre sessões.
 export const EPHEMERAL_VIEW = 'review'
 
-// Valor inválido (ou visão removida) cai em List.
+// Valor inválido (ou visão removida) cai em List; o Groups board antigo
+// (localStorage e visões salvas) virou o TODOS board.
 export function resolveMainView(id: string | null | undefined): TasksMainView {
+  if (id === 'groups') return 'todos'
   return TASK_VIEWS.some((v) => v.id === id) ? (id as string) : 'list'
 }

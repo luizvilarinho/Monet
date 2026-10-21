@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { X } from '@phosphor-icons/react'
 import styles from './TaskEditorModal.module.css'
 
-// Modal das visões que não são List (Week, Kanban, Projects, Groups, My Day,
+// Modal das visões que não são List (Week, Kanban, Projects, TODOS, My Day,
 // Review): mostra o mesmo editor da nota-corpo (com a barra de propriedades)
 // que a List abre ao lado. Fecha com Esc, clique fora ou o botão.
 interface TaskEditorModalProps {

@@ -50,6 +50,7 @@
   --lh-row: 20px;     /* linhas de lista de 13px */
   --flow-p: 0.75em;   /* parágrafo↔parágrafo */
   --measure: 68ch;    /* largura máxima do corpo */
+  --measure-note: 80ch; /* corpo da nota no Editor (coluna larga, ao lado do sumário) */
 
   /* Raio (0 continua deliberado nos blocos de status e pills da task) */
   --radius-sm: 4px;   /* inputs, chips, botões pequenos */

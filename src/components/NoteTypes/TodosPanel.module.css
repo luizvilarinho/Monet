@@ -1,0 +1,92 @@
+/* Mesmo eixo lateral do editor (título, tags e corpo). */
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0 var(--pad-content-x) var(--space-2);
+}
+
+.summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.label {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+/* Deadline estourado numa task aberta. */
+.overdue {
+  color: var(--accent-danger);
+}
+
+/* Tudo concluído. */
+.complete {
+  color: color-mix(in srgb, var(--status-done, #5cc185) 70%, var(--text-muted));
+}
+
+.outside {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-1) 0 var(--space-1) var(--space-2);
+  border-left: 2px solid var(--border);
+}
+
+.outsideTitle {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+  min-width: 0;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+}
+
+.itemTitle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.itemTitle:hover {
+  text-decoration: underline;
+}
+
+.insert {
+  flex-shrink: 0;
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  padding: 0 var(--space-1);
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.insert:hover {
+  text-decoration: underline;
+}

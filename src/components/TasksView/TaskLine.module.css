@@ -92,12 +92,23 @@
   text-overflow: ellipsis;
 }
 
-.group {
+/* Chip da TODOS: clicável (abre a nota). */
+.todos {
   flex-shrink: 1;
   min-width: 0;
   max-width: 120px;
+  cursor: pointer;
+}
+
+.todos > span {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.todos:hover {
+  text-decoration: underline;
 }
 
 .important {

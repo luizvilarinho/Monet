@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { nanoid } from 'nanoid'
 import type { TaskView, TaskViewConfig } from '../types'
 import { storage } from '../storage'
-import { emitTasksChanged, onTasksChangedElsewhere } from '../lib/tasksEvents'
+import { emitTasksChanged, loadAndSyncWithRetry } from '../lib/tasksEvents'
 
 // Visões salvas da TasksView (SQLite, compartilhadas entre janelas).
 export function useTaskViews() {
@@ -13,14 +13,15 @@ export function useTaskViews() {
   const reload = useCallback(async () => {
     try {
       setViews(await storage.getTaskViews())
+      return true
     } catch (err) {
       console.error('failed to load task views', err)
+      return false
     }
   }, [])
 
   useEffect(() => {
-    void reload()
-    return onTasksChangedElsewhere(() => void reload())
+    return loadAndSyncWithRetry(reload)
   }, [reload])
 
   const persist = useCallback(async (op: () => Promise<void>, what: string) => {

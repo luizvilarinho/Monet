@@ -47,6 +47,8 @@ interface NotebookTasksSectionProps {
   onToggleTask: (id: string, done: boolean) => void
   onCreateTask: (draft: NewTaskDraft) => Promise<void>
   onShowAll: () => void
+  // Nota TODOS aberta no editor: o "+ task" já nasce nela (D8).
+  defaultTodosNoteId?: string | null
 }
 
 export function NotebookTasksSection({
@@ -59,13 +61,15 @@ export function NotebookTasksSection({
   onToggleTask,
   onCreateTask,
   onShowAll,
+  defaultTodosNoteId = null,
 }: NotebookTasksSectionProps) {
   const [collapsed, setCollapsed] = useState(() => readStorage(COLLAPSED_KEY) === '1')
   const [height, setHeight] = useState(() => {
     const saved = Number(readStorage(HEIGHT_KEY))
     return saved >= MIN_HEIGHT ? saved : DEFAULT_HEIGHT
   })
-  const { statuses } = useTasksEnv()
+  const { statuses, todosById } = useTasksEnv()
+  const todosList = useMemo(() => [...todosById.values()], [todosById])
   const [draft, setDraft] = useState('')
   const sectionRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<{ startY: number; startHeight: number; max: number } | null>(null)
@@ -80,8 +84,9 @@ export function NotebookTasksSection({
   const lateTone = late.includes('deadline') ? styles.lateDeadline : styles.latePlan
 
   const parsed = useMemo(
-    () => parseQuickAdd(draft, { notebooks, todayKey, ignored: NO_SET, confirmed: NO_SET, statuses }),
-    [draft, notebooks, todayKey, statuses]
+    () =>
+      parseQuickAdd(draft, { notebooks, todayKey, ignored: NO_SET, confirmed: NO_SET, statuses, todos: todosList }),
+    [draft, notebooks, todayKey, statuses, todosList]
   )
 
   async function handleCreate() {
@@ -93,6 +98,7 @@ export function NotebookTasksSection({
       status: parsed.status,
       important: parsed.important,
       project: parsed.project ?? { notebookId },
+      todos: parsed.todos ?? (defaultTodosNoteId ? { noteId: defaultTodosNoteId } : null),
     }
     setDraft('')
     await onCreateTask(next)
@@ -152,7 +158,7 @@ export function NotebookTasksSection({
         }}
         placeholder="+ task"
         aria-label="new task in this notebook"
-        title="Try: today, tomorrow, fri, 17/10, !fri (deadline), @status, !! (important)"
+        title="Try: today, tomorrow, fri, 17/10, !fri (deadline), >TODOS, @status, !! (important)"
       />
       {parsed.tokens.some((t) => !t.needsConfirm) && (
         <div className={styles.tokens}>

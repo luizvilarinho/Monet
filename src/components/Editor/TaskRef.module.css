@@ -1,39 +1,155 @@
-.pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 0 6px;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--accent-task) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent-task) 45%, transparent);
-  color: var(--accent-task);
-  font-size: 0.8em;
-  line-height: 1.5;
-  white-space: nowrap;
-  vertical-align: baseline;
-  cursor: pointer;
+/* Node do card da task: ícone de abrir (no fim do título) + linha de
+   propriedades. No card do Editor a linha vai para baixo do título
+   (`.monetTaskProps` em Editor.module.css); fora dele tudo fica inline. */
+.ref {
   -webkit-user-select: none;
   user-select: none;
 }
 
+/* Abre a task: âncora visível do node no fim do título (o cursor antes/depois
+   dele fica distinguível; Backspace o remove como removia o chip). */
+.open {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: var(--space-0);
+  padding: var(--space-0);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  vertical-align: middle;
+  font: inherit;
+}
+
+button.open {
+  cursor: pointer;
+}
+
+button.open:hover {
+  color: var(--accent-task);
+  background: var(--surface-3);
+}
+
+.props {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: var(--space-1);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.pill,
+.status {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: var(--space-0);
+  padding: 0 var(--space-1h);
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font: inherit;
+  max-width: 16em;
+}
+
+.text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status {
+  --status-color: var(--text-muted);
+  gap: var(--space-1);
+  border-color: color-mix(in srgb, var(--status-color) 45%, transparent);
+  background: color-mix(in srgb, var(--status-color) 14%, transparent);
+  color: var(--status-color);
+  font-weight: 500;
+}
+
+.status:not(:disabled) {
+  cursor: pointer;
+}
+
+.status:not(:disabled):hover {
+  border-color: var(--status-color);
+}
+
+.status:disabled {
+  cursor: default;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 50%;
+}
+
+.status .dot {
+  background: var(--status-color);
+}
+
+.important {
+  color: var(--accent-task);
+}
+
 .overdue {
-  background: color-mix(in srgb, var(--accent-danger) 12%, transparent);
-  border-color: color-mix(in srgb, var(--accent-danger) 45%, transparent);
   color: var(--accent-danger);
+  border-color: color-mix(in srgb, var(--accent-danger) 45%, transparent);
 }
 
 .late {
-  background: color-mix(in srgb, var(--accent-late) 12%, transparent);
-  border-color: color-mix(in srgb, var(--accent-late) 45%, transparent);
   color: var(--accent-late);
 }
 
-.closed {
+/* Done/Dropped: propriedades neutras (o status mantém a cor). */
+.closed .pill {
   color: var(--text-muted);
   border-color: var(--border);
-  background: transparent;
-  text-decoration: line-through;
 }
 
-.selected {
-  outline: 2px solid color-mix(in srgb, var(--accent-task) 60%, transparent);
+.menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 140px;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+.menuItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--control-md);
+  padding: 0 var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.menuItem:hover {
+  background: var(--surface-3);
+}
+
+.menuName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

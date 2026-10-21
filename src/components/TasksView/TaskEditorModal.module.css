@@ -25,6 +25,12 @@
   outline: none;
 }
 
+/* No modal o corpo usa a largura toda do card: a medida de leitura do
+   Editor (--measure-note) sobrava como faixa vazia à direita. */
+.card :global(.ProseMirror) > * {
+  max-width: none;
+}
+
 .close {
   position: absolute;
   top: var(--space-3);

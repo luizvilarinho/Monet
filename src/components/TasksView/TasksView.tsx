@@ -89,20 +89,20 @@ export function TasksView({
     [notebooks]
   )
 
-  const { statuses, search } = useTasksEnv()
+  const { statuses, search, todosById } = useTasksEnv()
   const notebookColorById = useMemo(
     () => new Map(notebooks.map((nb) => [nb.id, nb.color ?? null])),
     [notebooks]
   )
 
   const projectTasks = useMemo(
-    () => filterTasksForView(tasks, filter, search),
-    [tasks, filter, search]
+    () => filterTasksForView(tasks, filter, search, todosById),
+    [tasks, filter, search, todosById]
   )
   const summary = useMemo(() => computeTaskSummary(projectTasks, todayKey), [projectTasks, todayKey])
   const sections = useMemo(
-    () => groupTasksBy(groupBy, projectTasks, todayKey, notebooks, statuses),
-    [groupBy, projectTasks, todayKey, notebooks, statuses]
+    () => groupTasksBy(groupBy, projectTasks, todayKey, notebooks, statuses, todosById),
+    [groupBy, projectTasks, todayKey, notebooks, statuses, todosById]
   )
   const filtered = useMemo(
     () => (summaryFilter ? filterBySummary(projectTasks, summaryFilter, todayKey) : []),
@@ -132,9 +132,9 @@ export function TasksView({
         key={t.id}
         task={t}
         todayKey={todayKey}
-        projectName={filter === null && groupBy !== 'project' && groupBy !== 'group' ? notebookNameById.get(t.notebookId) : undefined}
+        projectName={filter === null && groupBy !== 'project' && groupBy !== 'todos' ? notebookNameById.get(t.notebookId) : undefined}
         projectColor={notebookColorById.get(t.notebookId) ?? null}
-        showGroup={summaryFilter !== null || (groupBy !== 'project' && groupBy !== 'group')}
+        showTodos={summaryFilter !== null || (groupBy !== 'project' && groupBy !== 'todos')}
         checklist={checklist.get(t.id)}
         maxMetadata={2}
         list
@@ -245,11 +245,11 @@ export function TasksView({
                 </div>
                 {!collapsed &&
                   (section.subgroups
-                    ? section.subgroups.map((g) => (
-                        <div key={g.label ?? ''} className={styles.subgroup}>
+                    ? section.subgroups.map((g, i) => (
+                        <div key={`${i}-${g.label ?? ''}`} className={styles.subgroup}>
                           {g.label !== null && (
                             <span
-                              className={`${styles.subgroupLabel} ${groupBy === 'project' ? styles.subgroupGroup : ''}`}
+                              className={`${styles.subgroupLabel} ${groupBy === 'project' ? styles.subgroupTodos : ''}`}
                               title={g.label}
                             >
                               {g.label}

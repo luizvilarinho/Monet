@@ -26,3 +26,41 @@ export function onTasksChangedElsewhere(onForeign: () => void): () => void {
     unlisten?.()
   }
 }
+
+// Leitura inicial dos registros (tasks, status, metadados, visões, tipos): no
+// cold start as DDLs do ensure* disputam o lock do monet.db e a 1ª leitura pode
+// falhar. `load` devolve false em falha; novas tentativas em 1, 2, 4 e 8 s.
+// Devolve o cleanup síncrono.
+const LOAD_RETRIES = 4
+
+function loadWithRetry(load: () => Promise<boolean>): () => void {
+  let cancelled = false
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const run = (attempt: number) => {
+    void load().then((ok) => {
+      if (!ok && !cancelled && attempt < LOAD_RETRIES) {
+        timer = setTimeout(() => run(attempt + 1), 1000 * 2 ** attempt)
+      }
+    })
+  }
+  run(0)
+  return () => {
+    cancelled = true
+    clearTimeout(timer)
+  }
+}
+
+// `loadWithRetry` na montagem e de novo a cada mudança vinda de outra janela:
+// um reload que falha depois do 1º sucesso também ganha novas tentativas.
+// Devolve o cleanup síncrono.
+export function loadAndSyncWithRetry(load: () => Promise<boolean>): () => void {
+  let cancelLoad = loadWithRetry(load)
+  const off = onTasksChangedElsewhere(() => {
+    cancelLoad()
+    cancelLoad = loadWithRetry(load)
+  })
+  return () => {
+    cancelLoad()
+    off()
+  }
+}

@@ -1,10 +1,10 @@
 import { createContext, useContext } from 'react'
 import type { MetadataDef, TaskStatusDef, TaskView, TaskViewConfig } from '../../types'
-import { BUILTIN_STATUS_DEFS } from '../../lib/tasks'
+import { BUILTIN_STATUS_DEFS, type TodosInfo } from '../../lib/tasks'
 
 // Estado compartilhado das visões de Tasks (registro de status, visões
-// salvas, busca, ações de projeto), entregue pelo App para evitar repassar as
-// mesmas props por TasksView/Week/Kanban/Projects/Groups/Today/Review.
+// salvas, busca, ações de projeto, notas TODOS), entregue pelo App para evitar
+// repassar as mesmas props por TasksView/Week/Kanban/Projects/TODOS/Today/Review.
 export interface TasksEnv {
   statuses: TaskStatusDef[]
   onManageStatuses: () => void
@@ -19,12 +19,17 @@ export interface TasksEnv {
   onDeleteView: (id: string) => void
   // Id da visão salva aplicada (null = visão built-in).
   activeSavedViewId: string | null
-  // Busca de texto (título/group), válida para todas as visões.
+  // Busca de texto (título/TODOS), válida para todas as visões.
   search: string
   onSearchChange: (text: string) => void
   // Mover a task (e a nota-corpo) para o projeto `notebookId`.
   onMoveTaskToProject: (taskId: string, notebookId: string) => void
   onSetProjectColor: (notebookId: string, color: string | null) => void
+  // Notas TODOS por id (pai ausente daqui = sem TODOS).
+  todosById: Map<string, TodosInfo>
+  onOpenNote: (noteId: string) => void
+  // Cria uma nota TODOS no caderno e devolve o id.
+  onCreateTodos: (notebookId: string, title: string) => Promise<string>
 }
 
 const noop = () => {}
@@ -44,6 +49,9 @@ export const DEFAULT_TASKS_ENV: TasksEnv = {
   onSearchChange: noop,
   onMoveTaskToProject: noop,
   onSetProjectColor: noop,
+  todosById: new Map(),
+  onOpenNote: noop,
+  onCreateTodos: () => Promise.reject(new Error('TODOS cannot be created here.')),
 }
 
 const TasksEnvContext = createContext<TasksEnv>(DEFAULT_TASKS_ENV)

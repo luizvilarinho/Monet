@@ -44,11 +44,13 @@ const ASSISTANT_FOLDER_KEY = 'monet:assistant-folder-id'
 // tasks da main. O checklist vem das notas-corpo das tasks e só é lido quando
 // a tool é chamada (uma consulta por nota-corpo).
 async function loadTasksSnapshot(): Promise<TasksSnapshot> {
-  const [tasks, notebooks, statuses] = await Promise.all([
+  const [tasks, notebooks, statuses, summaries] = await Promise.all([
     storage.getTasks(),
     storage.getNotebooks(),
     storage.getTaskStatuses(),
+    storage.getNoteSummaries(),
   ])
+  const titleById = new Map(summaries.map((n) => [n.id, n.title]))
   const checklist = async () => {
     const progressById = new Map<string, ChecklistProgress>()
     await Promise.all(
@@ -61,7 +63,14 @@ async function loadTasksSnapshot(): Promise<TasksSnapshot> {
     )
     return progressById
   }
-  return { tasks, notebooks, todayKey: dateKeyFromMs(Date.now()), checklist, statuses }
+  return {
+    tasks,
+    notebooks,
+    todayKey: dateKeyFromMs(Date.now()),
+    checklist,
+    statuses,
+    resolveNoteTitle: (id) => titleById.get(id),
+  }
 }
 
 // Listas do "Save to note", lidas do storage ao abrir o modal. As notas vêm

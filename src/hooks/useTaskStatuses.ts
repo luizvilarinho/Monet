@@ -3,7 +3,7 @@ import { nanoid } from 'nanoid'
 import type { TaskStatusDef } from '../types'
 import { storage } from '../storage'
 import { BUILTIN_STATUS_DEFS, isTerminalStatus } from '../lib/tasks'
-import { emitTasksChanged, onTasksChangedElsewhere } from '../lib/tasksEvents'
+import { emitTasksChanged, loadAndSyncWithRetry } from '../lib/tasksEvents'
 
 // Registro de status (SQLite, compartilhado entre janelas). Antes da primeira
 // leitura, e se ela falhar, vale o registro built-in. Abertos na ordem do
@@ -24,6 +24,7 @@ function normalizeOrder(open: TaskStatusDef[], list: TaskStatusDef[]): TaskStatu
 export function useTaskStatuses(opts?: { onRemoved?: (id: string) => void }) {
   const [statuses, setStatuses] = useState<TaskStatusDef[]>(BUILTIN_STATUS_DEFS)
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [loadFailed, setLoadFailed] = useState(false)
   const statusesRef = useRef(statuses)
   statusesRef.current = statuses
   const onRemovedRef = useRef(opts?.onRemoved)
@@ -32,14 +33,17 @@ export function useTaskStatuses(opts?: { onRemoved?: (id: string) => void }) {
   const reload = useCallback(async () => {
     try {
       setStatuses(withBuiltins(await storage.getTaskStatuses()))
+      setLoadFailed(false)
+      return true
     } catch (err) {
       console.error('failed to load task statuses', err)
+      setLoadFailed(true)
+      return false
     }
   }, [])
 
   useEffect(() => {
-    void reload()
-    return onTasksChangedElsewhere(() => void reload())
+    return loadAndSyncWithRetry(reload)
   }, [reload])
 
   const persist = useCallback(async (op: () => Promise<void>, what: string): Promise<boolean> => {
@@ -134,5 +138,14 @@ export function useTaskStatuses(opts?: { onRemoved?: (id: string) => void }) {
     [patch]
   )
 
-  return { statuses, saveError, reload, create, rename, update, remove, reorder }
+  return {
+    statuses,
+    saveError: saveError ?? (loadFailed ? 'Failed to load task statuses.' : null),
+    reload,
+    create,
+    rename,
+    update,
+    remove,
+    reorder,
+  }
 }

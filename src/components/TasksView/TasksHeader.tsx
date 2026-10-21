@@ -3,13 +3,14 @@ import { DotsThree, GearSix, MagnifyingGlass, X } from '@phosphor-icons/react'
 import { useConfirm } from '../../hooks/useConfirm'
 import {
   INBOX_NOTEBOOK_ID,
+  normalizeName,
   splitPipeTitle,
   type ProjectChoice,
   type TaskGroupBy,
   type TaskSummary,
   type TaskSummaryKey,
 } from '../../lib/tasks'
-import { parseQuickAdd } from '../../lib/taskQuickAdd'
+import { parseQuickAdd, type QuickAddResult } from '../../lib/taskQuickAdd'
 import type { Notebook, Task, TaskStatus } from '../../types'
 import { ProjectPicker } from './ProjectPicker'
 import { useTasksEnv } from './TasksEnv'
@@ -25,6 +26,8 @@ export interface NewTaskDraft {
   status: TaskStatus | null
   important: boolean
   project: ProjectChoice
+  // Nota TODOS (`>Nome` ou contexto); `newTitle` cria a TODOS no projeto.
+  todos: QuickAddResult['todos']
 }
 
 // Cabeçalho das Tasks: seletor de visão, filtro de projeto, faixa de resumo
@@ -46,7 +49,7 @@ interface TasksHeaderProps {
   // Group by da lista (só na visão List).
   groupBy?: TaskGroupBy
   onGroupByChange?: (mode: TaskGroupBy) => void
-  // Converte "group | título" das tasks dadas (após confirmação).
+  // Converte "TODOS | título" das tasks dadas (após confirmação).
   onConvertPipeTitles: (tasks: Task[]) => void
 }
 
@@ -64,7 +67,7 @@ const GROUP_BY_LABEL: Record<TaskGroupBy, string> = {
   date: 'Date',
   project: 'Project',
   status: 'Status',
-  group: 'Group',
+  todos: 'TODOS',
 }
 
 export function TasksHeader({
@@ -83,7 +86,8 @@ export function TasksHeader({
   onGroupByChange,
   onConvertPipeTitles,
 }: TasksHeaderProps) {
-  const { statuses, onManageStatuses, search, onSearchChange } = useTasksEnv()
+  const { statuses, onManageStatuses, search, onSearchChange, todosById } = useTasksEnv()
+  const todosList = useMemo(() => [...todosById.values()], [todosById])
   const [newTitle, setNewTitle] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
   const { confirm, modal } = useConfirm()
@@ -99,13 +103,13 @@ export function TasksHeader({
 
   const newProjectValue = newProject ?? { notebookId: filter ?? INBOX_NOTEBOOK_ID }
 
-  // Tasks do filtro atual sem group cujo título tem "group | título".
+  // Tasks do filtro atual sem TODOS cujo título tem "TODOS | título".
   const convertible = useMemo(
     () =>
       tasks.filter(
         (t) =>
           (filter === null || t.notebookId === filter) &&
-          t.group === null &&
+          t.parentNoteId === null &&
           splitPipeTitle(t.title) !== null
       ),
     [tasks, filter]
@@ -117,9 +121,21 @@ export function TasksHeader({
     const split = sample ? splitPipeTitle(sample.title) : null
     if (!split) return
     const n = convertible.length
+    // TODOS novas: prefixos (por caderno) sem nota TODOS de mesmo título.
+    const created = new Set<string>()
+    for (const t of convertible) {
+      const prefix = normalizeName(splitPipeTitle(t.title)!.prefix)
+      const exists = todosList.some(
+        (todos) => todos.notebookId === t.notebookId && normalizeName(todos.title.trim()) === prefix
+      )
+      if (!exists) created.add(`${t.notebookId}\u0000${prefix}`)
+    }
+    const k = created.size
     const ok = await confirm(
-      `Convert ${n} task${n === 1 ? '' : 's'}? '${sample.title}' → group '${split.group}', title '${split.title}'. Only the first '|' is used.`,
-      { title: "Convert 'group | title'", confirmLabel: 'Convert' }
+      `Convert ${n} task${n === 1 ? '' : 's'}? '${sample.title}' → TODOS '${split.prefix}', title '${split.title}'.${
+        k > 0 ? ` Creates ${k} new TODOS note${k === 1 ? '' : 's'}.` : ''
+      } Only the first '|' is used.`,
+      { title: "Convert 'TODOS | title'", confirmLabel: 'Convert' }
     )
     if (ok) onConvertPipeTitles(convertible)
   }
@@ -129,8 +145,8 @@ export function TasksHeader({
   const [ignored, setIgnored] = useState<Set<string>>(() => new Set())
   const [confirmed, setConfirmed] = useState<Set<string>>(() => new Set())
   const parsed = useMemo(
-    () => parseQuickAdd(newTitle, { notebooks, todayKey, ignored, confirmed, statuses }),
-    [newTitle, notebooks, todayKey, ignored, confirmed, statuses]
+    () => parseQuickAdd(newTitle, { notebooks, todayKey, ignored, confirmed, statuses, todos: todosList }),
+    [newTitle, notebooks, todayKey, ignored, confirmed, statuses, todosList]
   )
 
   function resetDraft() {
@@ -150,6 +166,7 @@ export function TasksHeader({
       important: parsed.important,
       // `#Projeto` reconhecido sobrepõe o seletor.
       project: parsed.project ?? newProjectValue,
+      todos: parsed.todos,
     }
     resetDraft()
     await onCreateTask(draft)
@@ -293,7 +310,7 @@ export function TasksHeader({
                     className={styles.menuItem}
                     onClick={() => void handleConvert()}
                   >
-                    Convert 'group | title'… ({convertible.length})
+                    Convert 'TODOS | title'… ({convertible.length})
                   </button>
                 </div>
               )}
@@ -314,7 +331,7 @@ export function TasksHeader({
           onChange={(e) => setNewTitle(e.target.value)}
           placeholder="New task…"
           aria-label="new task"
-          title="Try: today, tomorrow, fri, 17/10, !fri (deadline), #Project, @status, !! (important)"
+          title="Try: today, tomorrow, fri, 17/10, !fri (deadline), #Project, >TODOS, @status, !! (important)"
         />
         {parsed.tokens.length > 0 && (
           <div className={styles.tokens}>
@@ -328,7 +345,11 @@ export function TasksHeader({
                     type="button"
                     className={styles.tokenLabel}
                     onClick={() => setConfirmed((prev) => new Set(prev).add(t.raw.toLowerCase()))}
-                    title="Create this notebook when adding the task"
+                    title={
+                      t.kind === 'todos'
+                        ? 'Create this TODOS note when adding the task'
+                        : 'Create this notebook when adding the task'
+                    }
                   >
                     {t.label}
                   </button>

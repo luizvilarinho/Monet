@@ -1,5 +1,5 @@
 import { Fragment, useState, type CSSProperties } from 'react'
-import { CalendarBlank, Clock, Flag, Repeat, Sun, Target, Trash } from '@phosphor-icons/react'
+import { CalendarBlank, Checks, Clock, Flag, Repeat, Sun, Target, Trash } from '@phosphor-icons/react'
 import { formatMetadataValue, visibleMetadata } from '../../lib/metadata'
 import {
   describeRecurrence,
@@ -11,6 +11,7 @@ import {
   SNOOZE_OPTIONS,
   statusColor,
   statusName,
+  todosTitleOf,
   type ChecklistProgress,
   type SnoozeKind,
 } from '../../lib/tasks'
@@ -19,8 +20,8 @@ import { useTasksEnv } from './TasksEnv'
 import styles from './TaskCard.module.css'
 
 // Card de task das visões de Tasks (List, Today, Week, Kanban, Projects,
-// Groups, Review): bloco de status sólido no topo, deadline à direita, título,
-// "Projeto | group", metadados key/value e um rodapé com datas, checklist,
+// TODOS, Review): bloco de status sólido no topo, deadline à direita, título,
+// "Projeto | TODOS", metadados key/value e um rodapé com datas, checklist,
 // reagendamentos e ações. Na List vira uma linha (ver `list`).
 interface TaskCardProps {
   task: Task
@@ -29,14 +30,15 @@ interface TaskCardProps {
   projectName?: string
   // Quadradinho antes do nome do projeto (null = contorno).
   projectColor?: string | null
-  showGroup?: boolean
+  // Chip da TODOS (falso onde a seção já é a TODOS ou o projeto).
+  showTodos?: boolean
   // Falso no Week, onde a coluna já é a data.
   showScheduled?: boolean
   // Kanban: a coluna já é o status; só o quadrado de cor + tempo.
   compactStatus?: boolean
   maxMetadata?: 2 | 3
   // List: linha sem caixa; status e ações (fixas, à direita) na linha de
-  // metadados, sob o título; deadline na linha do título; group em roxo.
+  // metadados, sob o título; deadline na linha do título; TODOS em roxo.
   list?: boolean
   checklist?: ChecklistProgress | null
   // Task aberta no editor.
@@ -61,7 +63,7 @@ export function TaskCard({
   todayKey,
   projectName,
   projectColor = null,
-  showGroup = true,
+  showTodos = true,
   showScheduled = true,
   compactStatus = false,
   maxMetadata = 3,
@@ -77,14 +79,14 @@ export function TaskCard({
   planned = false,
   onTogglePlan,
 }: TaskCardProps) {
-  const { statuses, metadataDefs } = useTasksEnv()
+  const { statuses, metadataDefs, todosById, onOpenNote } = useTasksEnv()
   const [snoozeOpen, setSnoozeOpen] = useState(false)
   const open = isOpen(task)
   const late = overdueKind(task, todayKey)
   // Tempo no status só existe em `doing` (único com registro de entrada).
   const elapsed =
     task.status === 'doing' && task.doingSince !== null ? formatElapsed(Date.now() - task.doingSince) : null
-  const group = showGroup ? task.group : null
+  const todos = showTodos ? todosTitleOf(task, todosById) : null
   const metadata = visibleMetadata(task, metadataDefs)
   const scheduled =
     showScheduled && task.scheduledDate && task.scheduledDate !== task.dueDate ? task.scheduledDate : null
@@ -234,7 +236,7 @@ export function TaskCard({
           </span>
           {list && dueEl}
         </div>
-        {(list || projectName || group) && (
+        {(list || projectName || todos) && (
           <div className={styles.ctx}>
             {list && statusEl}
             {projectName && (
@@ -247,11 +249,22 @@ export function TaskCard({
                 <span className={styles.ellipsis}>{projectName}</span>
               </span>
             )}
-            {projectName && group && <span className={styles.sep}>|</span>}
-            {group && (
-              <span className={`${styles.group} ${list ? styles.groupList : ''} ${styles.ellipsis}`} title={`Group: ${group}`}>
-                {group}
-              </span>
+            {projectName && todos && <span className={styles.sep}>|</span>}
+            {todos && task.parentNoteId && (
+              <button
+                type="button"
+                className={`${styles.todos} ${list ? styles.todosList : ''}`}
+                title={`Open TODOS: ${todos}`}
+                // Não inicia o arraste do card nem abre a task.
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onOpenNote(task.parentNoteId!)
+                }}
+              >
+                <Checks size={11} aria-hidden />
+                <span className={styles.ellipsis}>{todos}</span>
+              </button>
             )}
             {list && actionsEl}
           </div>

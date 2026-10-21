@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import type { Note, Notebook, Task, TaskStatusDef } from '../types'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { MetadataDef, Note, Notebook, NoteType, Task, TaskStatusDef } from '../types'
 import {
   NOTES_INDEX_CHANGED_EVENT,
   notesIndexDelete,
@@ -12,14 +12,17 @@ import {
 import { buildNoteFileText, buildTasksSummaryText, loadEmbedResponses, noteDate } from '../lib/noteFileText'
 import { ocrTextsForContent } from '../lib/imageOcr'
 import { dateKeyFromMs } from '../lib/calendar'
-import { checklistProgress, statusName, tasksSummaryNoteId } from '../lib/tasks'
+import { checklistProgress, statusName, tasksSummaryNoteId, todosProgressByNote } from '../lib/tasks'
+import { canHaveType, isTodosNote, propertiesForAi, TODOS_TYPE_ID, typeDefs } from '../lib/noteTypes'
+import { readerLinkedNoteIds } from '../lib/readerNoteLink'
 
 // Espelha as notas de cada caderno no RAG (pasta gerenciada `origin='notes'`).
 // O sync vai só do app para o disco: o hook compara o array de notas com o que
 // já foi enviado e enfileira os jobs numa fila serial (concorrência 1), o que
 // garante que a última versão de cada nota prevaleça. Montado só na janela main.
 // Tasks: a nota-corpo leva os metadados da task no texto, e cada caderno com
-// tasks ganha um documento-resumo sintético (`note:tasks-<notebookId>`).
+// tasks ganha um documento-resumo sintético (`note:tasks-<notebookId>`). A nota
+// TODOS leva o progresso das tasks dela.
 
 const DEBOUNCE_MS = 10_000
 
@@ -42,6 +45,9 @@ interface Params {
   tasksLoadFailed: boolean
   // Registro de status (nomes no texto indexado).
   statuses: TaskStatusDef[]
+  // Tipos de nota e propriedades (scope 'note'): `Type:` e valores no texto.
+  noteTypes: NoteType[]
+  noteDefs: MetadataDef[]
   // A leitura inicial de notas ou cadernos falhou: as listas vazias não são
   // confiáveis e a reconciliação não roda (senão apagaria todas as cópias).
   loadFailed: boolean
@@ -70,7 +76,8 @@ function jobDocKey(job: Job): string | null {
 function taskSignature(
   task: Task,
   projectName: string | undefined,
-  statusLabel: string
+  statusLabel: string,
+  todosTitle: string | undefined
 ): string {
   return JSON.stringify([
     task.title,
@@ -80,7 +87,8 @@ function taskSignature(
     task.noteId,
     task.dueDate,
     task.scheduledDate,
-    task.group,
+    task.parentNoteId,
+    todosTitle,
     task.important,
     task.recurrence,
     task.rescheduleCount,
@@ -100,6 +108,8 @@ export function useNotesIndexSync({
   tasksLoaded,
   tasksLoadFailed,
   statuses,
+  noteTypes,
+  noteDefs,
   loadFailed,
   hasApiKey,
   activeNoteId,
@@ -115,14 +125,20 @@ export function useNotesIndexSync({
   tasksRef.current = tasks
   const statusesRef = useRef(statuses)
   statusesRef.current = statuses
+  const noteTypesRef = useRef(noteTypes)
+  noteTypesRef.current = noteTypes
+  const noteDefsRef = useRef(noteDefs)
+  noteDefsRef.current = noteDefs
   const hasApiKeyRef = useRef(hasApiKey)
   hasApiKeyRef.current = hasApiKey
 
   const disabledRef = useRef<Set<string>>(new Set())
   const lastSyncedRef = useRef(new Map<string, { notebookId: string; fileText: string }>())
   const lastSeenNoteRef = useRef(new Map<string, Note>())
-  // taskId → { assinatura, caderno } da última versão vista.
-  const lastSeenTaskRef = useRef(new Map<string, { sig: string; notebookId: string }>())
+  // taskId → { assinatura, caderno, TODOS } da última versão vista.
+  const lastSeenTaskRef = useRef(
+    new Map<string, { sig: string; notebookId: string; parentNoteId: string | null }>()
+  )
   const debounceTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
   const knownNotebooksRef = useRef(new Map<string, string>())
   const reconciledRef = useRef(false)
@@ -130,6 +146,8 @@ export function useNotesIndexSync({
   const queueRef = useRef<Job[]>([])
   const runningRef = useRef(false)
   const prevActiveNoteIdRef = useRef<string | null>(activeNoteId)
+  // typeId → assinatura (nome + propriedades) da última versão vista do tipo.
+  const typeSigRef = useRef(new Map<string, string>())
 
   const resolveNoteTitle = useCallback(
     (noteId: string) => notesRef.current.find((n) => n.id === noteId)?.title,
@@ -142,6 +160,18 @@ export function useNotesIndexSync({
       const projectName = task
         ? notebooksRef.current.find((nb) => nb.id === task.notebookId)?.name
         : undefined
+      const type = note.typeId ? noteTypesRef.current.find((t) => t.id === note.typeId) : undefined
+      const typeContext =
+        type && canHaveType(note, readerLinkedNoteIds())
+          ? { typeName: type.name, properties: propertiesForAi(note, noteDefsRef.current) }
+          : undefined
+      const todosProgress =
+        typeContext && type?.id === TODOS_TYPE_ID
+          ? todosProgressByNote(
+              tasksRef.current.filter((t) => t.parentNoteId === note.id),
+              dateKeyFromMs(Date.now()),
+            ).get(note.id)
+          : undefined
       const embeds = await loadEmbedResponses([note.content])
       // OCR só no texto do índice; a nota não muda.
       const imageTexts = await ocrTextsForContent(note.content)
@@ -151,6 +181,8 @@ export function useNotesIndexSync({
         task ? { task, projectName: projectName ?? 'Unknown', statuses: statusesRef.current } : undefined,
         (id) => embeds.get(id),
         (dataUrl) => imageTexts.get(dataUrl),
+        typeContext,
+        todosProgress,
       )
     },
     [resolveNoteTitle],
@@ -441,8 +473,14 @@ export function useNotesIndexSync({
           currentTasks.map((t) => [
             t.id,
             {
-              sig: taskSignature(t, nameById.get(t.notebookId), statusName(t.status, statusesRef.current)),
+              sig: taskSignature(
+                t,
+                nameById.get(t.notebookId),
+                statusName(t.status, statusesRef.current),
+                t.parentNoteId ? resolveNoteTitle(t.parentNoteId) : undefined,
+              ),
               notebookId: t.notebookId,
+              parentNoteId: t.parentNoteId,
             },
           ]),
         )
@@ -464,6 +502,7 @@ export function useNotesIndexSync({
     loadFailed,
     enqueue,
     clearTimers,
+    resolveNoteTitle,
   ])
 
   // Diff incremental das notas.
@@ -497,8 +536,16 @@ export function useNotesIndexSync({
     }
   }, [notes, enqueue, enqueueUpsertNow, scheduleUpsert, scheduleTasksSummary, cancelDebounce])
 
-  // Diff de tasks (inclui renomear o caderno-projeto): reindexa a nota-corpo
-  // e o resumo dos cadernos afetados (origem e destino num move).
+  // Títulos das TODOS: renomear uma reindexa as notas-corpo das tasks dela
+  // (a linha `TODOS:` entra na assinatura da task).
+  const todosTitlesKey = useMemo(
+    () => notes.filter(isTodosNote).map((n) => `${n.id}\u0000${n.title}`).join('\u0001'),
+    [notes],
+  )
+
+  // Diff de tasks (inclui renomear o caderno-projeto ou a TODOS): reindexa a
+  // nota-corpo, a TODOS atual e a anterior (progresso) e o resumo dos cadernos
+  // afetados (origem e destino num move).
   useEffect(() => {
     if (!reconciledRef.current) return
     const seen = lastSeenTaskRef.current
@@ -506,25 +553,60 @@ export function useNotesIndexSync({
     const nameById = new Map(notebooks.map((nb) => [nb.id, nb.name]))
     const affected = new Set<string>()
     const currentIds = new Set<string>()
+    const scheduleTodos = (noteId: string | null) => {
+      const nbId = noteId ? notesRef.current.find((n) => n.id === noteId)?.notebookId : null
+      if (noteId && nbId && !disabled.has(nbId)) scheduleUpsert(noteId)
+    }
     for (const task of tasks) {
       currentIds.add(task.id)
-      const sig = taskSignature(task, nameById.get(task.notebookId), statusName(task.status, statuses))
+      const sig = taskSignature(
+        task,
+        nameById.get(task.notebookId),
+        statusName(task.status, statuses),
+        task.parentNoteId ? resolveNoteTitle(task.parentNoteId) : undefined,
+      )
       const prev = seen.get(task.id)
       if (prev?.sig === sig) continue
-      seen.set(task.id, { sig, notebookId: task.notebookId })
+      seen.set(task.id, { sig, notebookId: task.notebookId, parentNoteId: task.parentNoteId })
       affected.add(task.notebookId)
       if (prev) affected.add(prev.notebookId)
       if (task.noteId && !disabled.has(task.notebookId)) scheduleUpsert(task.noteId)
+      scheduleTodos(task.parentNoteId)
+      if (prev && prev.parentNoteId !== task.parentNoteId) scheduleTodos(prev.parentNoteId)
     }
     for (const [taskId, prev] of [...seen]) {
       if (currentIds.has(taskId)) continue
       seen.delete(taskId)
       affected.add(prev.notebookId)
+      scheduleTodos(prev.parentNoteId)
     }
     for (const nbId of affected) {
       if (!disabled.has(nbId)) scheduleTasksSummary(nbId)
     }
-  }, [tasks, notebooks, statuses, scheduleUpsert, scheduleTasksSummary])
+  }, [tasks, notebooks, statuses, todosTitlesKey, resolveNoteTitle, scheduleUpsert, scheduleTasksSummary])
+
+  // Diff de tipos: renomear o tipo ou mudar as propriedades dele (nome, tipo
+  // de dado, opções, ordem) reindexa as notas daquele tipo. Trocar o tipo ou os
+  // valores de uma nota já cai no diff de notas (o setter troca o objeto).
+  useEffect(() => {
+    const seen = typeSigRef.current
+    const disabled = disabledRef.current
+    for (const type of noteTypes) {
+      const sig = JSON.stringify([
+        type.name,
+        typeDefs(noteDefs, type.id).map((d) => [d.name, d.type, d.options]),
+      ])
+      const prev = seen.get(type.id)
+      seen.set(type.id, sig)
+      // Antes da reconciliação só registra a base (ela reenvia tudo).
+      if (prev === undefined || prev === sig || !reconciledRef.current) continue
+      for (const note of notesRef.current) {
+        if (note.typeId === type.id && note.notebookId && !disabled.has(note.notebookId)) {
+          scheduleUpsert(note.id)
+        }
+      }
+    }
+  }, [noteTypes, noteDefs, scheduleUpsert])
 
   // Diff de cadernos: apagado → remove a pasta; renomeado → reindexa todas as
   // notas do caderno (o nome "Notes — <Caderno>" vai no cabeçalho dos chunks).

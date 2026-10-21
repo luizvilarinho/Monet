@@ -1,4 +1,4 @@
-import { CalendarBlank, Flag, Repeat, Target } from '@phosphor-icons/react'
+import { CalendarBlank, Checks, Flag, Repeat, Target } from '@phosphor-icons/react'
 import {
   describeRecurrence,
   formatDueShort,
@@ -10,6 +10,7 @@ import {
   planDate,
   statusColor,
   statusName,
+  todosTitleOf,
   type ChecklistProgress,
 } from '../../lib/tasks'
 import type { Task } from '../../types'
@@ -69,7 +70,7 @@ interface TaskMetaProps {
 }
 
 function TaskMeta({ task, todayKey, projectName, checklist }: TaskMetaProps) {
-  const { statuses } = useTasksEnv()
+  const { statuses, todosById, onOpenNote } = useTasksEnv()
   const plan = planDate(task)
   const late = overdueKind(task, todayKey)
   const date = plan
@@ -77,14 +78,14 @@ function TaskMeta({ task, todayKey, projectName, checklist }: TaskMetaProps) {
   const deadline = task.dueDate !== null && task.dueDate !== plan ? task.dueDate : null
   const postponed = task.rescheduleCount
   const doing = isInProgress(task)
-  const group = task.group
+  const todos = todosTitleOf(task, todosById)
   if (
     !date &&
     !deadline &&
     postponed < 1 &&
     !doing &&
     !projectName &&
-    !group &&
+    !todos &&
     !task.important &&
     !task.recurrence &&
     !checklist
@@ -134,9 +135,18 @@ function TaskMeta({ task, todayKey, projectName, checklist }: TaskMetaProps) {
         </span>
       )}
       {projectName && <span className={`${styles.chip} ${styles.project}`}>{projectName}</span>}
-      {group && (
-        <span className={`${styles.chip} ${styles.group}`} title={`Group: ${group}`}>
-          {group}
+      {todos && (
+        <span
+          className={`${styles.chip} ${styles.todos}`}
+          title={`Open TODOS: ${todos}`}
+          role="link"
+          onClick={(e) => {
+            e.stopPropagation()
+            onOpenNote(task.parentNoteId!)
+          }}
+        >
+          <Checks size={11} aria-hidden />
+          <span>{todos}</span>
         </span>
       )}
       {task.important && (

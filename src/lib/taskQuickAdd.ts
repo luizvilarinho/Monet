@@ -7,6 +7,7 @@ import {
   formatDueShort,
   normalizeName,
   type ProjectChoice,
+  type TodosInfo,
 } from './tasks'
 
 // Quick add do "New task…": tokens isolados (separados por espaço) viram
@@ -16,9 +17,12 @@ import {
 //   #Projeto  → caderno existente; nome desconhecido só após confirmação
 //   @status   → status pelo nome (sem espaços, sem diferenciar maiúsculas)
 //   !!        → important
+//   >Nome     → nota TODOS (título sem espaços igual, senão o primeiro que
+//               começa com Nome, preferindo as do `#Projeto`); desconhecida só
+//               após confirmação (cria a TODOS)
 // Repetição do mesmo tipo: o último vence (os anteriores ficam no título).
 
-export type QuickAddTokenKind = 'date' | 'deadline' | 'project' | 'status' | 'important'
+export type QuickAddTokenKind = 'date' | 'deadline' | 'project' | 'status' | 'important' | 'todos'
 
 export interface QuickAddToken {
   start: number
@@ -27,7 +31,7 @@ export interface QuickAddToken {
   raw: string
   kind: QuickAddTokenKind
   label: string
-  // `#Nome` sem caderno correspondente: só vale depois de confirmado.
+  // `#Nome`/`>Nome` sem caderno/TODOS correspondente: só vale depois de confirmado.
   needsConfirm?: boolean
 }
 
@@ -38,6 +42,8 @@ export interface QuickAddResult {
   status: TaskStatus | null
   important: boolean
   project: ProjectChoice | null
+  // TODOS existente ou título de uma TODOS nova (criada ao adicionar).
+  todos: { noteId: string } | { newTitle: string } | null
   tokens: QuickAddToken[]
 }
 
@@ -46,10 +52,31 @@ interface QuickAddOptions {
   todayKey: string
   // Tokens (raw, minúsculo) descartados pelo usuário: ficam no título.
   ignored: Set<string>
-  // Projetos novos (`#Nome`, raw minúsculo) confirmados pelo usuário.
+  // Projetos/TODOS novos (`#Nome`/`>Nome`, raw minúsculo) confirmados pelo usuário.
   confirmed: Set<string>
   // Registro de status (padrão: built-ins).
   statuses?: TaskStatusDef[]
+  // Notas TODOS existentes (token `>Nome`).
+  todos?: TodosInfo[]
+}
+
+function compactName(s: string): string {
+  return normalizeName(s).replace(/\s+/g, '')
+}
+
+// TODOS de `>Nome`: título igual (sem espaços/acentos/caixa), senão a primeira
+// cujo título começa com o nome — as do projeto reconhecido antes, depois por
+// título.
+function findTodosByTag(todos: TodosInfo[], name: string, notebookId: string | null): TodosInfo | undefined {
+  const wanted = compactName(name)
+  if (!wanted) return undefined
+  const exact = todos.filter((t) => compactName(t.title) === wanted)
+  const candidates = exact.length > 0 ? exact : todos.filter((t) => compactName(t.title).startsWith(wanted))
+  return [...candidates].sort(
+    (a, b) =>
+      Number(b.notebookId === notebookId) - Number(a.notebookId === notebookId) ||
+      a.title.localeCompare(b.title)
+  )[0]
 }
 
 const WEEKDAYS: Record<string, number> = {
@@ -111,7 +138,7 @@ function dayLabel(key: string): string {
 }
 
 export function parseQuickAdd(input: string, opts: QuickAddOptions): QuickAddResult {
-  const { notebooks, todayKey, ignored, confirmed, statuses = BUILTIN_STATUS_DEFS } = opts
+  const { notebooks, todayKey, ignored, confirmed, statuses = BUILTIN_STATUS_DEFS, todos: todosList = [] } = opts
   const accepted = new Map<QuickAddTokenKind, QuickAddToken>()
   const pending: QuickAddToken[] = []
   let scheduledDate: string | null = null
@@ -119,6 +146,9 @@ export function parseQuickAdd(input: string, opts: QuickAddOptions): QuickAddRes
   let status: TaskStatus | null = null
   let important = false
   let project: ProjectChoice | null = null
+  let todos: QuickAddResult['todos'] = null
+  // `>Nome`: resolvido depois do laço, para preferir as TODOS do `#Projeto`.
+  let todosWord: { start: number; end: number; raw: string; name: string } | null = null
 
   for (const m of input.matchAll(/\S+/g)) {
     const raw = m[0]
@@ -169,6 +199,22 @@ export function parseQuickAdd(input: string, opts: QuickAddOptions): QuickAddRes
         pending.push({ ...base, kind: 'project', label: `Create #${name}?`, needsConfirm: true })
       }
     }
+    if (raw.length > 1 && raw.startsWith('>')) todosWord = { ...base, name: raw.slice(1) }
+  }
+
+  if (todosWord) {
+    const projectId = project && 'notebookId' in project ? project.notebookId : null
+    const found = findTodosByTag(todosList, todosWord.name, projectId)
+    const base = { start: todosWord.start, end: todosWord.end, raw: todosWord.raw }
+    if (found) {
+      todos = { noteId: found.id }
+      accepted.set('todos', { ...base, kind: 'todos', label: `TODOS ${found.title.trim() || 'Untitled'}` })
+    } else if (confirmed.has(todosWord.raw.toLowerCase())) {
+      todos = { newTitle: todosWord.name }
+      accepted.set('todos', { ...base, kind: 'todos', label: `TODOS ${todosWord.name}` })
+    } else {
+      pending.push({ ...base, kind: 'todos', label: `Create TODOS '${todosWord.name}'?`, needsConfirm: true })
+    }
   }
 
   const tokens = [...accepted.values()].sort((a, b) => a.start - b.start)
@@ -187,6 +233,7 @@ export function parseQuickAdd(input: string, opts: QuickAddOptions): QuickAddRes
     status,
     important,
     project,
+    todos,
     tokens: [...tokens, ...pending].sort((a, b) => a.start - b.start),
   }
 }

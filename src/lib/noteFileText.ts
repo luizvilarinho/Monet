@@ -10,6 +10,7 @@ import {
   planDate,
   statusName,
   type ChecklistProgress,
+  type TodosProgress,
 } from './tasks'
 
 export const COMMAND_LINE_RE = /^\/[a-zA-Z]/
@@ -38,7 +39,7 @@ const IMAGE_TEXT_BUDGET = 2000
 const IMAGE_SLOT_RE = /\uE000(\d+)\uE001/g
 const TEXT_BLOCK_TAGS = new Set(['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'PRE'])
 
-function decodeEntities(text: string): string {
+export function decodeEntities(text: string): string {
   return text
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
@@ -228,7 +229,8 @@ function taskMetadataLines(
     `Deadline: ${task.dueDate ?? 'none'}`,
     `Created: ${dateKeyFromMs(task.createdAt)}`,
   ]
-  if (task.group) lines.splice(1, 0, `Group: ${task.group}`)
+  const todos = task.parentNoteId ? resolveNoteTitle(task.parentNoteId) : undefined
+  if (todos !== undefined) lines.splice(1, 0, `TODOS (deliverable note): ${todos.trim() || 'Untitled'}`)
   if (task.important) lines.push('Important: yes')
   if (task.recurrence) lines.push(`Repeats: ${describeRecurrence(task.recurrence)}`)
   if (task.rescheduleCount > 0) lines.push(`Postponed: ${task.rescheduleCount}x`)
@@ -243,14 +245,18 @@ function taskMetadataLines(
 
 // Texto do arquivo .md espelhado no RAG. Retorna '' para nota sem título e
 // sem corpo (o backend remove o documento nesse caso). Nota-corpo de task
-// recebe os metadados da task logo abaixo do título. Notas linkadas entram só
-// com o título: elas já são indexadas sozinhas.
+// recebe os metadados da task logo abaixo do título; nota com tipo, o tipo e
+// as propriedades com valor entre `Date:` e `Tags:` (a TODOS, também o
+// progresso das tasks dela). Notas linkadas entram só com o título: elas já
+// são indexadas sozinhas.
 export function buildNoteFileText(
   note: Note,
   resolveNoteTitle: (noteId: string) => string | undefined,
   taskContext?: { task: Task; projectName: string; statuses: TaskStatusDef[] },
   resolveEmbed?: (commandId: string) => AiResponse | undefined,
   resolveImageText?: (dataUrl: string) => string | undefined,
+  typeContext?: { typeName: string; properties: Array<{ name: string; value: string }> },
+  todosProgress?: TodosProgress,
 ): string {
   const title = note.title.trim()
   const body = cleanNoteContentForAi(note.content, { resolveNoteTitle, resolveEmbed, resolveImageText })
@@ -269,6 +275,14 @@ export function buildNoteFileText(
   }
   const date = noteDate(note)
   if (date) header.push(`Date: ${date}`)
+  if (typeContext) {
+    header.push(`Type: ${typeContext.typeName}`)
+    for (const p of typeContext.properties) header.push(`${p.name}: ${p.value}`)
+  }
+  if (todosProgress) {
+    const next = todosProgress.nextDeadline ? ` · next deadline ${todosProgress.nextDeadline}` : ''
+    header.push(`Tasks: ${todosProgress.done}/${todosProgress.total} done${next}`)
+  }
   if (note.tags.length > 0) header.push(`Tags: ${note.tags.join(', ')}`)
   return body ? `${header.join('\n')}\n\n${body}` : header.join('\n')
 }

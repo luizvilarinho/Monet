@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { nanoid } from 'nanoid'
-import type { Note } from '../types'
+import type { MetadataValue, Note } from '../types'
 import { storage } from '../storage'
 
 export function useNotes() {
@@ -34,7 +34,10 @@ export function useNotes() {
       const i = prev.findIndex((n) => n.id === note.id)
       if (i >= 0) {
         const next = prev.slice()
-        next[i] = note
+        // Tipo e propriedades vêm sempre da memória: o saveNote não os grava e
+        // quem monta a `Note` do zero (keep, assistant, merge, mover) não os
+        // conhece; só setType/setProperties mudam esses campos.
+        next[i] = { ...note, typeId: prev[i].typeId, properties: prev[i].properties }
         return next
       }
       return [note, ...prev]
@@ -61,6 +64,37 @@ export function useNotes() {
     }
   }, [])
 
+  // Setters pontuais (fora do saveNote): otimista em memória; em falha, relê
+  // do banco. Devolvem false quando a gravação falha.
+  const persistField = useCallback(
+    async (noteId: string, patch: Pick<Note, 'typeId'> | Pick<Note, 'properties'>, op: () => Promise<void>) => {
+      setNotes((prev) => prev.map((n) => (n.id === noteId ? { ...n, ...patch } : n)))
+      try {
+        await op()
+        setSaveError(null)
+        return true
+      } catch (err) {
+        console.error('failed to save note type', err)
+        setSaveError('Failed to save note type or properties.')
+        void refresh().catch((e) => console.error('failed to reload notes', e))
+        return false
+      }
+    },
+    [refresh]
+  )
+
+  const setType = useCallback(
+    (noteId: string, typeId: string | null) =>
+      persistField(noteId, { typeId }, () => storage.setNoteType(noteId, typeId)),
+    [persistField]
+  )
+
+  const setProperties = useCallback(
+    (noteId: string, properties: Record<string, MetadataValue>) =>
+      persistField(noteId, { properties }, () => storage.setNoteProperties(noteId, properties)),
+    [persistField]
+  )
+
   const create = useCallback(
     async (notebookId: string, subjectId?: string | null) => {
       const now = Date.now()
@@ -80,5 +114,5 @@ export function useNotes() {
     [save]
   )
 
-  return { notes, loaded, loadFailed, save, remove, create, refresh, saveError }
+  return { notes, loaded, loadFailed, save, remove, create, refresh, setType, setProperties, saveError }
 }

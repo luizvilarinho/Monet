@@ -1,5 +1,5 @@
 import { useCallback } from 'react'
-import { compareTasks, isOpen } from '../../lib/tasks'
+import { byTodosId, compareTasks, isOpen, type TodosInfo } from '../../lib/tasks'
 import type { Notebook, Task } from '../../types'
 import { BoardView, type BoardViewProps } from './BoardView'
 import type { BoardColumn } from './BoardColumns'
@@ -7,7 +7,7 @@ import { ProjectColorButton } from './ProjectColorButton'
 import { useTasksEnv } from './TasksEnv'
 
 // Visão Projects: uma coluna por projeto (caderno, inclusive Inbox) com as
-// tasks abertas, em subseções por group ("No group" ao final). Projeto sem
+// tasks abertas, em subseções por TODOS ("No TODOS" ao final). Projeto sem
 // tasks abertas não aparece. Arrastar para outra coluna move a task e a
 // nota-corpo para o projeto.
 type ProjectsBoardProps = Omit<
@@ -15,31 +15,23 @@ type ProjectsBoardProps = Omit<
   'ariaLabel' | 'columnsFor' | 'onDrop' | 'showProject' | 'compactStatus'
 >
 
-const NO_GROUP = 'No group'
-
-// Subseções por group: alfabético, sem group por último (com rótulo só se
-// houver algum group nomeado).
-function sectionsByGroup(tasks: Task[]): Array<{ label: string | null; tasks: Task[] }> {
-  const byGroup = new Map<string | null, Task[]>()
-  for (const t of tasks) {
-    const list = byGroup.get(t.group) ?? []
-    list.push(t)
-    byGroup.set(t.group, list)
-  }
-  const named = [...byGroup.keys()]
-    .filter((g): g is string => g !== null)
-    .sort((a, b) => a.localeCompare(b))
-  const sections: Array<{ label: string | null; tasks: Task[] }> = named.map((g) => ({
-    label: g,
-    tasks: byGroup.get(g)!.sort(compareTasks),
-  }))
-  const none = byGroup.get(null)
-  if (none) sections.push({ label: named.length > 0 ? NO_GROUP : null, tasks: none.sort(compareTasks) })
-  return sections
+// Subseções por TODOS: alfabético, sem TODOS por último (com rótulo só se
+// houver alguma TODOS).
+function sectionsByTodos(
+  tasks: Task[],
+  todosById: Map<string, TodosInfo>
+): Array<{ label: string | null; tasks: Task[] }> {
+  const groups = byTodosId(tasks, todosById)
+  const named = [...groups.entries()]
+    .filter(([id]) => id !== null)
+    .map(([id, list]) => ({ label: todosById.get(id!)?.title.trim() || 'Untitled', tasks: list.sort(compareTasks) }))
+  const none = groups.get(null)
+  if (!none) return named
+  return [...named, { label: named.length > 0 ? 'No TODOS' : null, tasks: none.sort(compareTasks) }]
 }
 
 export function ProjectsBoard(props: ProjectsBoardProps) {
-  const { onMoveTaskToProject, onSetProjectColor } = useTasksEnv()
+  const { onMoveTaskToProject, onSetProjectColor, todosById } = useTasksEnv()
   const { notebooks } = props
 
   const columnsFor = useCallback(
@@ -62,7 +54,7 @@ export function ProjectsBoard(props: ProjectsBoardProps) {
         .filter((nb) => byNotebook.has(nb.id))
         .map((nb) => {
           const list = byNotebook.get(nb.id)!
-          const sections = sectionsByGroup(list)
+          const sections = sectionsByTodos(list, todosById)
           return {
             key: nb.id,
             title: nb.name || 'unnamed',
@@ -80,7 +72,7 @@ export function ProjectsBoard(props: ProjectsBoardProps) {
           }
         })
     },
-    [notebooks, onSetProjectColor]
+    [notebooks, onSetProjectColor, todosById]
   )
 
   const onDrop = useCallback(
