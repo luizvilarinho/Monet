@@ -99,3 +99,82 @@
   - Dependências mortas encontradas pelo explorer (`@codemirror/commands` e `@codemirror/lang-markdown` em `package.json:18-20`): **não removidas** — dependência está fora do escopo desta rodada.
 - Git: dois commits na branch `feat/melhorias-caderno` (sem trailer de co-autoria, autor e committer = o usuário): `feat: handle de bloco nas linhas` (código + CSS) e `docs: spec do editor e registro da execução` (correção da spec, esta sessão e o plan report do Planner, que estava untracked).
 - Next step: revisão do Coordenador; depois as Etapas 3–6 do Plan Report (R1 destaque, R2 riscado, R4 tipo de nota, R5 ordenação por arrasto).
+
+### CodeAgent — implementação inicial — 20261022145626
+- Summary: implementadas as Etapas 3 a 6 do Plan Report — R1 (destaque de texto com cor, só no editor), R2 (texto riscado), R4 (tipo de nota no fluxo Library/Reader) e R5 (ordenação das propriedades por arrastar-e-soltar). Nenhuma alteração em `src/lib/markdown.ts`, `rehype-sanitize`, `package.json`, migrações ou schema do banco.
+- Etapa 3 — R1, destaque de texto com cor (só no editor):
+  - `src/lib/highlight.ts` (novo): paleta única do projeto — 5 cores (`#FFEB3B` yellow, `#A5D6A7` green, `#90CAF9` blue, `#F48FB1` pink, `#CE93D8` purple), reaproveitando a paleta do leitor de livros (`Reader.tsx:66-74`) com uma cor a mais (roxo). Cada cor tem `id`, `hex` e nome acessível em inglês.
+  - `src/components/Editor/HighlightMark.ts` (novo): mark `highlight` com atributo `color` (o hex). `parseHTML` casa `span[data-bg]` e lê o hex do `data-bg`; `renderHTML` produz `['span', { 'data-bg': <hex>, style: 'background-color:<hex>' }, 0]` — o `style` é só apresentação no DOM do editor. O `markdown.serialize` customizado grava **só** `<span data-bg="#RRGGBB">` (sem `style`), então o markdown nunca carrega CSS inline.
+  - `src/components/Editor/extensions.ts`: `HighlightMark` registrado em `buildBaseExtensions` (assim o editor principal e a janela keep gravam o mesmo markdown).
+  - `src/components/Editor/formattingActions.ts`: `'highlight'` no `FormatId`, em `isActive`, em `runAction` e em `insertNewFormattedLine` (marca inline); nova `toggleHighlight(editor, colorId?)` — mesma cor → remove, outra cor → troca (não empilha), sem cor → aplica a escolhida.
+  - `src/components/Editor/HighlightPicker.tsx` + `.module.css` (novos): botão 🖍 + popover com as 5 amostras. A popover é renderizada por portal no `document.body` em `position: fixed` (fica por cima da barra flutuante, que o Floating UI move com `transform`, e do menu de contexto). O `mousedown` das amostras faz `preventDefault()` para não perder a seleção — a cor é aplicada no `mousedown`.
+  - `src/components/Editor/FormattingToolbar.tsx`: o picker entra na barra flutuante (com a seleção) e no menu de contexto (`Editor.tsx`); o menu de contexto cria a linha nova antes de aplicar a cor, como os outros botões.
+  - **Não** houve alteração em `src/lib/markdown.ts`, `rehype-sanitize` nem `allowDangerousHtml` (decisão do Coordenador): nas outras superfícies o texto passa inteiro, mas sem cor — o `rehype-sanitize` (schema padrão do GitHub) mantém o `<span>` e descarta o `data-bg`, que não está na allow-list de atributos.
+- Etapa 4 — R2, texto riscado:
+  - O mark já estava no schema (StarterKit 3.23.4 inclui `@tiptap/extension-strike`; `extensions.ts:99-104` não desabilita) e o CSS `s { line-through }` já existia (`Editor.module.css:277-280`). **Faltava só o botão.**
+  - `src/components/Editor/formattingActions.ts`: `'strike'` no `FormatId`, em `isActive` (`editor.isActive('strike')`), em `runAction` (`chain.toggleStrike()`), em `insertNewFormattedLine` e o botão `{ id: 'strike', label: 'S', title: 'Strikethrough', cls: 'strike' }` no grupo de `bold`/`italic`.
+  - `src/components/Editor/FormattingToolbar.module.css` e `src/components/Editor/ContextMenu.module.css`: `.btn.strike { text-decoration: line-through; }`.
+  - Nenhum atalho de teclado novo (o Ctrl+Shift+X que o `@tiptap/extension-strike` registra por padrão **não** foi mexido).
+- Etapa 5 — R4, tipo de nota no fluxo Library/Reader:
+  - `src/lib/noteTypes.ts`: `canHaveType(note)` **deixou de excluir as notas ligadas ao Reader** (revogação da exclusão do D4). Continuam fora: notas do Calendar e nota-corpo de task. O parâmetro `readerNoteIds` saiu da assinatura (só havia 2 call sites) e o import de `readerLinkedNoteIds` saiu de `App.tsx` e de `useNotesIndexSync.ts`.
+  - `src/App.tsx`: `handleCreateNoteFromChat` passa a aceitar `(notebookId, title, content, requestId?, typeId?)`. O `requestId` continua no 4º lugar (é o que o "Save to note" do Chat passa em runtime) e segue sem uso — por isso o parâmetro se chama `_requestId` (o `noUnusedParameters` do `tsconfig` é ligado). O `typeId` é o 5º para não colidir com ele. Com `typeId`, o tipo é gravado **depois** do `saveNote` (o UPSERT não leva `typeId`; `setNoteType` grava o tipo e as propriedades).
+  - `src/components/NoteTypes/NoteTypePicker.tsx`: `onManage` virou **opcional** (sem ele, o item "Manage types…" não aparece) — é o mesmo picker que já existe na barra de propriedades do editor, reaproveitado.
+  - `src/components/Reader/ReaderNotesPanel.tsx`: novo `NoteTypePicker` ao lado do "+ New note"; o tipo escolhido vale para a **próxima** nota criada (`pendingTypeId`).
+  - `src/components/Reader/QuoteToNoteModal.tsx`: novo `NoteTypePicker` no passo de título da nota nova; o tipo escolhido vale para a nota criada pela citação.
+  - Assinatura `onCreateNote` propagada: `ReaderNotesPanel.tsx`, `QuoteToNoteModal.tsx`, `Reader.tsx`, `EpubReader.tsx`, `Library.tsx` (com `noteTypes: NoteType[]` também propagado até o Reader).
+  - `DOCS/features/note_types_study.md`: a decisão D4 foi atualizada (a exclusão do Reader saiu).
+  - Efeito colateral esperado: como `canHaveType` deixou de excluir as notas do Reader, o `NoteTypePicker` que já existia na barra de propriedades do editor (`App.tsx`, guardado por `canTypeActive`) **passa a aparecer** nessas notas — trocar o tipo depois funciona sem trabalho extra.
+- Etapa 6 — R5, ordenação das listas de propriedades por arrastar-e-soltar:
+  - `src/hooks/useMetadataDefs.ts`: nova `reorderTaskDefs(ids)` — a lista de metadados de task é global (uma só), então grava o `sort_order` que o `storage.saveMetadataDef` já persiste; só as linhas cujo `sort_order` muda são gravadas (uma execução por linha, sem BEGIN/COMMIT: pool sqlx). Se a lista vier inconsistente (prop apagada no meio do arrasto), nada é gravado.
+  - `src/components/TasksView/MetadataManagerModal.tsx`: `DndContext` + `SortableContext` com `PointerSensor` (5px de deslocamento) e `KeyboardSensor` (`sortableKeyboardCoordinates`); handle `⠿` (`DotsSixVertical`) em cada linha. O `onReorder` é novo (prop opcional) e o `App.tsx` liga em `metadata.reorderTaskDefs`.
+  - `src/components/NoteTypes/NoteTypesModal.tsx`: drag nas **duas** listas — os tipos (coluna esquerda, `registry.reorderTypes`) e as propriedades do tipo selecionado (coluna direita, `registry.reorderDefs`). Os botões ↑/↓ foram **removidos** (decisão do Coordenador) e o `KeyboardSensor` assume o teclado; o texto de dica do "Reorder types…" foi trocado para o arrasto.
+  - As opções do `select` continuam presas à sua propriedade (o bloco `extra` do `SortablePropRow`), e o handle de arrasto ficou dentro da linha, como no `StatusManagerModal`.
+- Files changed:
+  - `src/lib/noteTypes.ts`
+  - `src/lib/highlight.ts` (novo)
+  - `src/App.tsx`
+  - `src/hooks/useNotesIndexSync.ts`
+  - `src/hooks/useMetadataDefs.ts`
+  - `src/components/Editor/extensions.ts`
+  - `src/components/Editor/formattingActions.ts`
+  - `src/components/Editor/FormattingToolbar.tsx`
+  - `src/components/Editor/FormattingToolbar.module.css`
+  - `src/components/Editor/Editor.tsx`
+  - `src/components/Editor/ContextMenu.module.css`
+  - `src/components/Editor/HighlightMark.ts` (novo)
+  - `src/components/Editor/HighlightPicker.tsx` (novo)
+  - `src/components/Editor/HighlightPicker.module.css` (novo)
+  - `src/components/Library/Library.tsx`
+  - `src/components/NoteTypes/NoteTypePicker.tsx`
+  - `src/components/NoteTypes/NoteTypesModal.tsx`
+  - `src/components/Reader/Reader.tsx`
+  - `src/components/Reader/EpubReader.tsx`
+  - `src/components/Reader/ReaderNotesPanel.tsx`
+  - `src/components/Reader/QuoteToNoteModal.tsx`
+  - `src/components/Reader/QuoteToNoteModal.module.css`
+  - `src/components/TasksView/MetadataManagerModal.tsx`
+  - `DOCS/features/note_types_study.md`
+  - `DOCS/reports/22-10-2026/executionreport_20261022120614.md` (esta sessão)
+- Files created:
+  - `src/lib/highlight.ts`
+  - `src/components/Editor/HighlightMark.ts`
+  - `src/components/Editor/HighlightPicker.tsx`
+  - `src/components/Editor/HighlightPicker.module.css`
+- Files removed: nenhum
+- Left behind: nenhum item do escopo. Ficou de fora, por decisão: (a) o `style`inline no DOM do editor do mark de destaque — ver "Desvios" abaixo; (b) a mudança no `rehype-sanitize` — cancelada pelo Coordenador; (c) o item "Manage types…" nos pontos onde o `NoteTypePicker` foi montado sem `onManage` (o modal de tipos continua se gerenciando na janela principal); (d) `sortableKeyboardInstructions` do `@dnd-kit/sortable` — **não existe** na versão instalada (10.x não exporta); as instruções de leitor de tela foram escritas à mão no `accessibility.screenReaderInstructions` do `DndContext`.
+- Checks (rodados ao fim de cada etapa; resultado final com as quatro):
+  - `npx tsc --noEmit` → **passou** (exit 0) nas quatro etapas.
+  - `npm run build` → **passou** (exit 0, `✓ built in 7.50s` na última rodada) nas quatro etapas.
+  - `cargo check` (em `src-tauri`) → **passou** (exit 0) nas quatro etapas.
+  - `cargo test` (em `src-tauri`) → **passou** (exit 0; 30 passed, 0 failed, 3 ignored) nas quatro etapas.
+  - O repositório **não tem suíte de testes de frontend nem lint** (sem `npm test`, sem ESLint/Prettier no `package.json`) — nada a rodar além do `tsc`/build.
+  - Verificação extra do round-trip do mark (fora do app, com o `tiptap-markdown` instalado): o markdown sai como `<span data-bg="#FFEB3B">texto</span>` (o `style` **não** vaza), o `strike` sai como `~~texto~~`, o `parseHTML` lê o hex do `data-bg` e o `markdown-it` com `html: true` devolve o `<span data-bg>` inline ao abrir a nota.
+- Desvios e decisões que o Coordenador precisa saber:
+  - **`style` no DOM do editor do mark de destaque**: o `renderHTML` produz `data-bg` **e** `style="background-color:…"` (como manda o Plan Report). A cor **gravada** e a que volta do parse saem sempre do `data-bg` (o `style` nunca é lido nem vai para o markdown), então o motivo técnico da decisão 3 do Coordenador (o ProseMirror normalizar `style` para `rgb(...)` e o risco de CSS inline) fica resolvido. Se a leitura da decisão 3 for literal ("nenhum `style` no código"), a troca é uma linha: `renderHTML` devolve só `['span', { 'data-bg': color }, 0]` e a cor sai por CSS gerada a partir de `src/lib/highlight.ts`.
+  - **Menu de contexto**: o botão de destaque **não** fecha o menu ao abrir (fecha ao escolher a cor). Fechando, a popover — que vive num portal fora do menu — perderia o botão que a ancora. O resto do menu continua igual.
+  - **`canHaveType` sem o 2º parâmetro**: a exclusão do Reader era o único uso de `readerNoteIds`; o parâmetro foi removido da assinatura em vez de ficar morto.
+  - **`requestId` como `_requestId`**: o `noUnusedParameters` está ligado no `tsconfig.json`; o parâmetro do 4º lugar é recebido em runtime pelo "Save to note" do Chat e precisa continuar lá para o `typeId` ficar no 5º.
+  - **Duplicação de `onCreateNote`**: `SaveToNoteModal` (Chat) chama `onCreateNote` com 4 argumentos, mas o `ChatPanel` declara 3 — o `requestId` é descartado no caminho do Chat. Não mudou (fora do escopo), mas é por isso que o `requestId` do `handleCreateNoteFromChat` nunca teve uso.
+  - **Duas listas no `NoteTypesModal`**: tipos e propriedades têm `DndContext` separados (dois `DndContext` na mesma tela), como pede o plano.
+  - Git: branch `feat/melhorias-caderno`, sem trailer de co-autoria, autor e committer = o usuário.
+- Next step: revisão do Coordenador; depois a rodada de `codereviewAgent`.
