@@ -37,6 +37,14 @@ Ponto de entrada para a documentação do projeto. Leia este arquivo primeiro pa
 
 ---
 
+## Backlog
+
+| Arquivo | Quando usar |
+| --- | --- |
+| `DOCS/backlog.md` | Bugs e ideias registrados e ainda sem task (com causa conferida no código quando houver). Consulte ao abrir uma task nova ou ao procurar pendências de entregas anteriores. |
+
+---
+
 ## Estudos
 
 | Arquivo | Quando usar |

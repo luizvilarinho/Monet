@@ -255,6 +255,8 @@ export async function notesIndexUpsert(args: {
   fileText: string
   // `YYYY-MM-DD`, vai no cabeçalho dos chunks.
   noteDate: string | null
+  // `YYYY-MM-DD` do arquivamento (null = nota ativa), também no cabeçalho.
+  archived: string | null
 }): Promise<NotesIndexUpsertResult> {
   return invoke<NotesIndexUpsertResult>('notes_index_upsert', args)
 }

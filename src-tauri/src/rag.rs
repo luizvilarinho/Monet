@@ -555,6 +555,8 @@ pub(crate) struct DocMeta {
     pub doc_date: Option<String>,
     pub folder_label: Option<String>,
     pub source_url: Option<String>,
+    // Data de arquivamento da nota (`YYYY-MM-DD`), quando arquivada.
+    pub archived: Option<String>,
 }
 
 pub(crate) fn header_part(s: &str) -> String {
@@ -575,15 +577,21 @@ fn is_iso_date(s: &str) -> bool {
         })
 }
 
-// Nota: os metadados vêm do próprio upsert (título, pasta "Notes — <caderno>"
-// e data da nota), sem consultar o banco.
-pub(crate) fn note_meta(title: &str, folder: &str, note_date: Option<&str>) -> DocMeta {
+// Nota: os metadados vêm do próprio upsert (título, pasta "Notes — <caderno>",
+// data da nota e data de arquivamento), sem consultar o banco.
+pub(crate) fn note_meta(
+    title: &str,
+    folder: &str,
+    note_date: Option<&str>,
+    archived: Option<&str>,
+) -> DocMeta {
     DocMeta {
         kind: "note",
         title: header_part(title),
         doc_date: note_date.map(str::trim).filter(|d| is_iso_date(d)).map(String::from),
         folder_label: non_empty(Some(folder)),
         source_url: None,
+        archived: archived.map(str::trim).filter(|d| is_iso_date(d)).map(String::from),
     }
 }
 
@@ -646,6 +654,7 @@ fn derive_meta(row: &DocRow, file_text: &str) -> DocMeta {
             doc_date: web.as_ref().and_then(|w| w.retrieved.clone()),
             folder_label,
             source_url: web.map(|w| w.source),
+            archived: None,
         };
     }
     if let Some((date, title)) = meeting_from_path(&row.path, &row.name) {
@@ -655,6 +664,7 @@ fn derive_meta(row: &DocRow, file_text: &str) -> DocMeta {
             doc_date: Some(date),
             folder_label,
             source_url: None,
+            archived: None,
         };
     }
     let title = if row.mime == "text/markdown" {
@@ -668,6 +678,7 @@ fn derive_meta(row: &DocRow, file_text: &str) -> DocMeta {
         doc_date: row.file_date.clone().filter(|d| is_iso_date(d)),
         folder_label,
         source_url: None,
+        archived: None,
     }
 }
 
@@ -736,15 +747,17 @@ fn meeting_from_path(path: &str, file_name: &str) -> Option<(String, String)> {
     Some((date, title))
 }
 
-// `[<título> · <tipo> · <data> · <pasta> · <seção> · p. <página>]`, sem as
-// partes vazias.
+// `[<título> · <tipo> · <data> · <pasta> · Archived: <data> · <seção> ·
+// p. <página>]`, sem as partes vazias.
 pub(crate) fn build_header(meta: &DocMeta, section: Option<&str>, page: Option<u32>) -> String {
     let page = page.map(|p| format!("p. {}", p));
+    let archived = meta.archived.as_deref().map(|d| format!("Archived: {}", d));
     let parts: Vec<&str> = [
         Some(meta.title.as_str()),
         Some(meta.kind),
         meta.doc_date.as_deref(),
         meta.folder_label.as_deref(),
+        archived.as_deref(),
         section,
         page.as_deref(),
     ]
@@ -1261,6 +1274,15 @@ pub fn filter_doc_ids(
     Ok(out)
 }
 
+#[derive(Serialize, Clone, Copy, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RagTimings {
+    pub rewrite_ms: u64,
+    pub embedding_ms: u64,
+    pub search_ms: u64,
+    pub rerank_ms: u64,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RagResponse {
@@ -1280,6 +1302,8 @@ pub struct RagResponse {
     pub candidates: Vec<RagCandidate>,
     // Trechos enviados ao modelo, melhor primeiro.
     pub selected: Vec<RagCandidate>,
+    // Tempo de cada etapa (0 = etapa pulada ou não executada).
+    pub timings: RagTimings,
 }
 
 // Mantém os candidatos sem data e os com data no período. Só vale se algum
@@ -1327,6 +1351,9 @@ pub async fn retrieve(
     key: &str,
     req: &RagRequest,
 ) -> Result<RagResponse, String> {
+    // Tempo de cada etapa do pipeline (0 = etapa pulada); vai na resposta para
+    // a linha de tempos do chat.
+    let mut timings = RagTimings::default();
     let original = req.message.trim().to_string();
     // Filtros: o escopo encolhe antes da reescrita e da busca.
     let filtered: Vec<String>;
@@ -1340,7 +1367,11 @@ pub async fn retrieve(
     };
     let searchable = !doc_ids.is_empty() && !original.is_empty();
     let rewrite = if req.use_rewrite && searchable {
-        rewrite_query(key, &req.rewrite_model, &req.history, &original, &req.current_date).await
+        let rewrite_started = std::time::Instant::now();
+        let rewrite =
+            rewrite_query(key, &req.rewrite_model, &req.history, &original, &req.current_date).await;
+        timings.rewrite_ms = rewrite_started.elapsed().as_millis() as u64;
+        rewrite
     } else {
         None
     };
@@ -1368,30 +1399,38 @@ pub async fn retrieve(
         nothing_relevant: false,
         candidates: vec![],
         selected: vec![],
+        timings: RagTimings::default(),
     };
     if !searchable {
         // Escopo com documentos, mas nenhum passou nos filtros.
         response.nothing_relevant = req.filters.is_some()
             && !req.doc_ids.is_empty()
             && !response.original_query.is_empty();
+        response.timings = timings;
         return Ok(response);
     }
 
+    let embedding_started = std::time::Instant::now();
     let embedding = embed_query(key, &query).await?;
+    timings.embedding_ms = embedding_started.elapsed().as_millis() as u64;
+    let search_started = std::time::Instant::now();
     let found = {
         let conn = vec_db.lock().map_err(|e| e.to_string())?;
         hybrid_search(&conn, doc_ids, &embedding, &response.keywords, HYBRID_K_EACH, HYBRID_POOL)?
     };
+    timings.search_ms = search_started.elapsed().as_millis() as u64;
     let mut candidates: Vec<RagCandidate> = found.into_iter().map(RagCandidate::from).collect();
     if let Some(range) = &response.date_range {
         apply_date_range(&mut candidates, range);
     }
     if candidates.is_empty() {
         response.nothing_relevant = true;
+        response.timings = timings;
         return Ok(response);
     }
 
     let scores = if req.use_rerank {
+        let rerank_started = std::time::Instant::now();
         let docs: Vec<String> = candidates
             .iter()
             .map(|c| trim_to_chars(&format!("{}\n{}", c.header, c.content), RERANK_DOC_CHARS))
@@ -1399,7 +1438,7 @@ pub async fn retrieve(
         // top_n = todos: o custo é o mesmo e o trace mostra o rerank de cada
         // candidato; a seleção corta em MAX_SELECTED.
         let call = rerank(key, RERANK_MODEL, &query, &docs, docs.len());
-        match tokio::time::timeout(RERANK_TIMEOUT, call).await {
+        let result = match tokio::time::timeout(RERANK_TIMEOUT, call).await {
             Ok(Ok(scores)) => Some(scores),
             Ok(Err(e)) => {
                 eprintln!("rag rerank failed: {}", e);
@@ -1409,7 +1448,9 @@ pub async fn retrieve(
                 eprintln!("rag rerank timed out");
                 None
             }
-        }
+        };
+        timings.rerank_ms = rerank_started.elapsed().as_millis() as u64;
+        result
     } else {
         None
     };
@@ -1424,6 +1465,7 @@ pub async fn retrieve(
         }
     }
     response.candidates = candidates;
+    response.timings = timings;
     Ok(response)
 }
 
@@ -1595,17 +1637,28 @@ mod tests {
             doc_date: None,
             folder_label: None,
             source_url: None,
+            archived: None,
         };
         assert_eq!(build_header(&meta, None, None), "[Manual · document]");
         assert_eq!(build_header(&meta, Some(""), Some(12)), "[Manual · document · p. 12]");
 
-        let note = note_meta("Spec", "Notes — Migration", Some("2026-10-17"));
+        let note = note_meta("Spec", "Notes — Migration", Some("2026-10-17"), None);
         assert_eq!(
             build_header(&note, Some("Versions"), None),
             "[Spec · note · 2026-10-17 · Notes — Migration · Versions]"
         );
         assert_eq!(meta_sig(&note), "[Spec · note · 2026-10-17 · Notes — Migration]");
-        assert_eq!(note_meta("A", "", Some("17/10/2026")).doc_date, None);
+        assert_eq!(note_meta("A", "", Some("17/10/2026"), None).doc_date, None);
+
+        // Nota arquivada: a data entra no cabeçalho antes da seção e muda a
+        // assinatura (reembede no próximo upsert).
+        let archived =
+            note_meta("Spec", "Notes — Migration", Some("2026-10-17"), Some("2026-10-20"));
+        assert_eq!(
+            build_header(&archived, None, None),
+            "[Spec · note · 2026-10-17 · Notes — Migration · Archived: 2026-10-20]"
+        );
+        assert_ne!(meta_sig(&archived), meta_sig(&note));
     }
 
     // Banco em memória com o schema do vec db (vec_chunks, chunks_meta e

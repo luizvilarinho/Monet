@@ -117,9 +117,15 @@ export function useTasks() {
   // Recorrente que entra em `done` gera a próxima ocorrência uma única vez:
   // `recurrenceNextId` aponta para ela, então desmarcar e remarcar não duplica.
   const updateTasks = useCallback(
-    async (changes: Array<{ id: string; patch: TaskPatch }>): Promise<boolean> => {
+    async (
+      changes: Array<{ id: string; patch: TaskPatch }>,
+      opts?: { freshBase?: boolean }
+    ): Promise<boolean> => {
       const now = Date.now()
-      const current = tasksRef.current
+      // `freshBase`: base relida do banco antes do patch (ver updateTaskFresh).
+      const current = opts?.freshBase
+        ? await storage.getTasks().catch(() => tasksRef.current)
+        : tasksRef.current
       const nextById = new Map<string, Task>()
       const prevById = new Map<string, Task>()
       for (const { id, patch } of changes) {
@@ -141,7 +147,10 @@ export function useTasks() {
         generated.push(occurrence)
         nextById.set(id, { ...next, recurrenceNextId: occurrence.id })
       }
-      setTasks((list) => [...list.map((t) => nextById.get(t.id) ?? t), ...generated])
+      setTasks((list) => [
+        ...(opts?.freshBase ? current : list).map((t) => nextById.get(t.id) ?? t),
+        ...generated,
+      ])
       return persist(async () => {
         for (const t of nextById.values()) await storage.saveTask(t)
         for (const t of generated) await storage.saveTask(t)
@@ -152,6 +161,13 @@ export function useTasks() {
 
   const updateTask = useCallback(
     (id: string, patch: TaskPatch) => updateTasks([{ id, patch }]),
+    [updateTasks]
+  )
+
+  // A keep não recebe o evento `tasks-changed` da main antes do clique: com a
+  // base velha, regravar a linha inteira desfazia título/metadados mais novos.
+  const updateTaskFresh = useCallback(
+    (id: string, patch: TaskPatch) => updateTasks([{ id, patch }], { freshBase: true }),
     [updateTasks]
   )
 
@@ -197,6 +213,7 @@ export function useTasks() {
     reload,
     createTasks,
     updateTask,
+    updateTaskFresh,
     updateTasks,
     deleteTasks,
     reassignStatus,

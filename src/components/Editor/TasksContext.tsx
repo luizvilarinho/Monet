@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react'
-import type { ChecklistProgress } from '../../lib/tasks'
+import type { ChecklistProgress, ProjectChoice, TaskPatch, TodosInfo } from '../../lib/tasks'
 import type { MetadataDef, Notebook, Task, TaskStatus, TaskStatusDef } from '../../types'
 
 export interface TasksContextValue {
@@ -20,6 +20,17 @@ export interface TasksContextValue {
   todosTitle?: (noteId: string) => string | undefined
   // Nota aberta no editor (o card só cita a TODOS quando é outra nota).
   currentNoteId?: string | null
+  // Card da task na nota TODOS (R5): edição dos campos no popover, com os
+  // mesmos controles da barra de propriedades. Opcionais: a keep não os passa.
+  onUpdateTask?: (id: string, patch: TaskPatch) => void
+  onMoveTask?: (id: string, project: ProjectChoice) => void
+  todosOptions?: TodosInfo[]
+  onOpenTodos?: (noteId: string) => void
+  onCreateTodos?: (notebookId: string, title: string) => Promise<string>
+  onManageMetadata?: (focusId?: string) => void
+  // Shift+click no ↗ do card: abre a task no modal sem trocar a nota.
+  onOpenTaskModal?: (id: string) => void
+  currentNoteIsTodos?: boolean
 }
 
 const EMPTY: TasksContextValue = { tasksById: new Map(), todayKey: '' }

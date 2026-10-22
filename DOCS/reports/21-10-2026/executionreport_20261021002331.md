@@ -167,3 +167,8 @@
   - pedido do Coordenador
 - Decision: buildAgent na branch `feature/archive-notes` (working tree sem commit), versão 1.5.0 mantida; `latest.json` com nova assinatura, pub_date e notes incluindo o arquivar. A etapa de revisão (codereviewAgent) não rodou para o arquivar; Coordenador avisado.
 - Next step: buildAgent
+
+### Orchestrator — encerramento — 20261021053500
+- Summary: arquivar notas entregue na 1.5.0 (build regerado pelo buildAgent, latest.json com nova assinatura). Commit `28b5479 feat: arquivar notas` na `feature/archive-notes`, push, merge fast-forward na `develop` e push da `develop`.
+- Decision: a revisão (codereviewAgent) não rodou para esta task, por decisão do Coordenador de fechar a versão. Ficaram para trás: `query_tasks` do Assistant sem marca de TODOS arquivada; `Archived:` só no 1º chunk do RAG; ferramenta `get_note` (consulta direta por nome) e porteiro Jev registrados como ideias para task própria.
+- Next step: Coordenador publica a release v1.5.0 no GitHub com o .msi

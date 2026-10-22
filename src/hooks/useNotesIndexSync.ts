@@ -9,7 +9,13 @@ import {
   notesIndexSetNotebookEnabled,
   notesIndexUpsert,
 } from '../lib/documents'
-import { buildNoteFileText, buildTasksSummaryText, loadEmbedResponses, noteDate } from '../lib/noteFileText'
+import {
+  buildNoteFileText,
+  buildTasksSummaryText,
+  collectLinkedNoteIds,
+  loadEmbedResponses,
+  noteDate,
+} from '../lib/noteFileText'
 import { ocrTextsForContent } from '../lib/imageOcr'
 import { dateKeyFromMs } from '../lib/calendar'
 import { checklistProgress, statusName, tasksSummaryNoteId, todosProgressByNote } from '../lib/tasks'
@@ -155,6 +161,14 @@ export function useNotesIndexSync({
     (noteId: string) => notesRef.current.find((n) => n.id === noteId)?.title,
     [],
   )
+  // Título que pode entrar no texto indexado: nota de caderno com a IA
+  // desligada sai como inexistente (TODOS/nota linkada de outra nota).
+  const resolveAiNoteTitle = useCallback((noteId: string) => {
+    const note = notesRef.current.find((n) => n.id === noteId)
+    if (!note) return undefined
+    if (note.notebookId && disabledRef.current.has(note.notebookId)) return undefined
+    return note.title
+  }, [])
   const isNoteArchived = useCallback(
     (noteId: string) => !!notesRef.current.find((n) => n.id === noteId)?.archivedAt,
     [],
@@ -183,7 +197,7 @@ export function useNotesIndexSync({
       const imageTexts = await ocrTextsForContent(note.content)
       return buildNoteFileText(
         note,
-        resolveNoteTitle,
+        resolveAiNoteTitle,
         task
           ? {
               task,
@@ -198,7 +212,7 @@ export function useNotesIndexSync({
         todosProgress,
       )
     },
-    [resolveNoteTitle, isNoteArchived],
+    [resolveAiNoteTitle, isNoteArchived],
   )
 
   const clearTimers = useCallback(() => {
@@ -241,6 +255,7 @@ export function useNotesIndexSync({
             title: note.title,
             fileText,
             noteDate: indexNoteDate(note),
+            archived: note.archivedAt ? dateKeyFromMs(note.archivedAt) : null,
           })
           if (result === 'no_key') {
             // Sem chave nada indexa: descarta os upserts pendentes e deixa a
@@ -264,7 +279,7 @@ export function useNotesIndexSync({
             lastSyncedRef.current.delete(summaryId)
             return
           }
-          const fileText = buildTasksSummaryText(notebook.name, nbTasks, resolveNoteTitle, (t) => {
+          const fileText = buildTasksSummaryText(notebook.name, nbTasks, resolveAiNoteTitle, (t) => {
             const body = t.noteId ? notesRef.current.find((n) => n.id === t.noteId) : undefined
             return body ? checklistProgress(body.content) : null
           }, statusesRef.current, isNoteArchived)
@@ -277,6 +292,7 @@ export function useNotesIndexSync({
             title: `Tasks — ${notebook.name}`,
             fileText,
             noteDate: null,
+            archived: null,
           })
           if (result === 'no_key') {
             queueRef.current = queueRef.current.filter(
@@ -311,7 +327,7 @@ export function useNotesIndexSync({
         }
       }
     },
-    [fileTextFor, resolveNoteTitle, isNoteArchived, clearTimers, forgetNotebook],
+    [fileTextFor, resolveAiNoteTitle, isNoteArchived, clearTimers, forgetNotebook],
   )
 
   const drain = useCallback(async () => {
@@ -408,6 +424,36 @@ export function useNotesIndexSync({
           enqueue({ kind: 'upsertTasksSummary', notebookId })
         }, DEBOUNCE_MS),
       )
+    },
+    [cancelDebounce, enqueue],
+  )
+
+  // Reindexa quem cita as notas de `noteIds` (apagadas ou com a IA desligada):
+  // notas com nota linkada, nota-corpo de task com TODOS/origem nelas e o
+  // resumo dos cadernos dessas tasks. Sem isso o título antigo fica no texto
+  // já indexado (R11a/R10b).
+  const reindexReferrers = useCallback(
+    (noteIds: Set<string>) => {
+      if (noteIds.size === 0) return
+      const disabled = disabledRef.current
+      for (const note of notesRef.current) {
+        if (noteIds.has(note.id)) continue
+        if (!note.notebookId || disabled.has(note.notebookId)) continue
+        if (!collectLinkedNoteIds(note.content).some((id) => noteIds.has(id))) continue
+        cancelDebounce(note.id)
+        enqueue({ kind: 'upsert', noteId: note.id })
+      }
+      const affected = new Set<string>()
+      for (const task of tasksRef.current) {
+        if (disabled.has(task.notebookId)) continue
+        const refers =
+          (task.parentNoteId !== null && noteIds.has(task.parentNoteId)) ||
+          (task.sourceNoteId !== null && noteIds.has(task.sourceNoteId))
+        if (!refers) continue
+        if (task.noteId) enqueue({ kind: 'upsert', noteId: task.noteId })
+        affected.add(task.notebookId)
+      }
+      for (const notebookId of affected) enqueue({ kind: 'upsertTasksSummary', notebookId })
     },
     [cancelDebounce, enqueue],
   )
@@ -543,13 +589,18 @@ export function useNotesIndexSync({
       const task = tasksRef.current.find((t) => t.noteId === note.id)
       if (task && !disabled.has(task.notebookId)) scheduleTasksSummary(task.notebookId)
     }
+    const deletedIds: string[] = []
     for (const noteId of [...seen.keys()]) {
       if (currentIds.has(noteId)) continue
       seen.delete(noteId)
       cancelDebounce(noteId)
       enqueue({ kind: 'delete', noteId })
+      deletedIds.push(noteId)
     }
-  }, [notes, enqueue, enqueueUpsertNow, scheduleUpsert, scheduleTasksSummary, cancelDebounce])
+    // Quem citava as notas apagadas (nota linkada, TODOS/origem) é regravado
+    // sem os títulos órfãos.
+    if (deletedIds.length > 0) reindexReferrers(new Set(deletedIds))
+  }, [notes, enqueue, enqueueUpsertNow, scheduleUpsert, scheduleTasksSummary, cancelDebounce, reindexReferrers])
 
   // Títulos das TODOS: renomear ou arquivar/desarquivar uma reindexa as
   // notas-corpo das tasks dela e o resumo (a linha `TODOS:` entra na
@@ -680,6 +731,14 @@ export function useNotesIndexSync({
       await new Promise<void>((resolve) => {
         enqueue({ kind: 'setEnabled', notebookId, enabled, done: resolve })
       })
+      // Quem cita notas deste caderno é regravado sem os títulos ao desligar e
+      // com eles ao religar. Antes do retorno: desligar é justamente o caso que
+      // precisa da regravação.
+      reindexReferrers(
+        new Set(
+          notesRef.current.filter((n) => n.notebookId === notebookId).map((n) => n.id),
+        ),
+      )
       if (!enabled || !hasApiKeyRef.current) return
       // Carga inicial do caderno religado.
       for (const note of notesRef.current) {
@@ -689,7 +748,7 @@ export function useNotesIndexSync({
         enqueue({ kind: 'upsertTasksSummary', notebookId })
       }
     },
-    [enqueue],
+    [enqueue, reindexReferrers],
   )
 
   return { disabledNotebookIds, setNotebookIndexEnabled }

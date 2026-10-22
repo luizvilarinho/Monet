@@ -488,3 +488,26 @@
 .addInput:focus {
   border-color: var(--accent-task);
 }
+
+/* Layout compacto do popover do card (~360px): uma coluna e selects do
+   tamanho da coluna; o rótulo fica um pouco mais estreito. */
+.compact {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1h);
+}
+
+.compact .row {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.compact .project select,
+.compact .project input {
+  min-width: 0;
+  width: 100%;
+  max-width: none;
+}
+
+.compact .label {
+  flex-basis: 92px;
+}

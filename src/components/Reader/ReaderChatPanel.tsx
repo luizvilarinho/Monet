@@ -5,6 +5,7 @@ import {
   useChat,
   type ChatMessage,
   type ChatConversation,
+  type ChatTimings,
 } from '../../hooks/useChat'
 import { useStickToBottom } from '../../hooks/useStickToBottom'
 import { renderMarkdown } from '../../lib/markdown'
@@ -93,6 +94,7 @@ export function ReaderChatPanel({
     isStreaming,
     ragSearching,
     ragTraces,
+    chatTimings,
     error,
     send,
     cancel,
@@ -385,6 +387,7 @@ export function ReaderChatPanel({
                 bookFolder && setFolderMemoryEnabled(bookFolder.id, v)
               }
               dailyNotesTool={{ supported: models.find((m) => m.id === model)?.supportsTools ?? false }}
+              notesTool={{ supported: models.find((m) => m.id === model)?.supportsTools ?? false }}
             />
           </div>
           <ModelSelector
@@ -465,6 +468,7 @@ export function ReaderChatPanel({
                 message={m}
                 isStreaming={m.id === streamingMessageId}
                 trace={ragTraces[m.id]}
+                timings={chatTimings[m.id]}
               />
             ))
           )}
@@ -549,9 +553,10 @@ interface ReaderChatBubbleProps {
   message: ChatMessage
   isStreaming: boolean
   trace?: RagResponse
+  timings?: ChatTimings
 }
 
-function ReaderChatBubble({ message, isStreaming, trace }: ReaderChatBubbleProps) {
+function ReaderChatBubble({ message, isStreaming, trace, timings }: ReaderChatBubbleProps) {
   const isUser = message.role === 'user'
   const [html, setHtml] = useState('')
   const isStreamingPlaceholder = !isUser && message.content.length === 0
@@ -603,7 +608,7 @@ function ReaderChatBubble({ message, isStreaming, trace }: ReaderChatBubbleProps
           void openUrl(href)
         }}
       />
-      <MessageSources message={message} trace={trace} />
+      <MessageSources message={message} trace={trace} timings={timings} />
     </>
   )
 }

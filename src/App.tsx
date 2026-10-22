@@ -53,6 +53,7 @@ import { DueTodayBlock } from './components/TasksView/DueTodayBlock'
 import { WeeklyReview } from './components/TasksView/WeeklyReview'
 import { TaskPropertiesBar } from './components/TasksView/TaskPropertiesBar'
 import { TaskEditorModal } from './components/TasksView/TaskEditorModal'
+import { TaskModalEditor } from './components/TasksView/TaskModalEditor'
 import type { TaskChanges } from './components/TasksView/useTaskKeyboard'
 import { Toolbar, type ActiveMode } from './components/Toolbar/Toolbar'
 import { useAi } from './hooks/useAi'
@@ -119,6 +120,7 @@ import {
   isTaskBodyNote,
   isTasksSubject,
   normalizeName,
+  rewriteTaskRefItemTitle,
   splitPipeTitle,
   summaryMatches,
   stripPipePrefix,
@@ -903,6 +905,16 @@ function App() {
     [selectTask]
   )
 
+  // Modal da task aberto de dentro de uma nota (sem trocar a nota de trás).
+  // Separado de `taskModalId`, que é das visões em quadro.
+  const [noteTaskModalId, setNoteTaskModalId] = useState<string | null>(null)
+  const openTaskModalInPlace = useCallback(
+    (id: string) => {
+      if (tasksById.has(id)) setNoteTaskModalId(id)
+    },
+    [tasksById]
+  )
+
   // "New task…" das Tasks (lista e Week board), com os campos do quick add.
   // TODOS nova (`>Nome` confirmado) nasce no projeto da task.
   const createNewTask = useCallback(
@@ -977,25 +989,44 @@ function App() {
     setTasksViewOpen(false)
   }, [activeId, activeNotebookId])
 
-  // Sync do título da task a partir do texto do item na nota de ORIGEM
-  // (source_note_id). Cópias coladas em outras notas nunca sobrescrevem.
-  // Só sincroniza quando o texto do item muda (a 1ª leitura só registra), para
-  // não desfazer o título editado direto na nota-corpo.
-  const seenSourceTitlesRef = useRef(new Map<string, string>())
+  // Título da task ⇄ texto do item (checklist com o <task-ref>) nas "casas" da
+  // task: a nota de ORIGEM (source_note_id) e a TODOS dela (parent_note_id,
+  // onde o "Insert into checklist" põe o item). Cópias coladas em outras notas
+  // não sincronizam. Dois efeitos:
+  //  - item → task: editar o texto do item renomeia a task;
+  //  - task → item (espelho): renomear a task fora do item (modal, lista,
+  //    quick add, keep) reescreve o item nas casas.
+  // Para um não ecoar o outro: o espelho grava como "visto" o texto que
+  // escreveu (o item → task não o lê como edição) e a leitura do item → task
+  // mais velha que a gravação do espelho é descartada (snapshot de `notes`
+  // anterior ao render); o item → task marca a nota de onde veio o título, e o
+  // espelho não reescreve essa nota (o usuário pode estar digitando nela).
+  // Chave do "visto" do item → task: nota + task (a task tem até duas casas).
+  const seenItemTitlesRef = useRef(new Map<string, string>())
+  // Títulos da task vistos pelo espelho.
+  const seenTaskTitlesRef = useRef(new Map<string, string>())
+  // Título que o item → task gravou e a nota de onde veio.
+  const titlesFromItemRef = useRef(new Map<string, { title: string; noteId: string }>())
+  // `updatedAt` da última gravação do espelho por nota.
+  const mirrorWritesRef = useRef(new Map<string, number>())
   useEffect(() => {
     const timer = setTimeout(() => {
-      const seen = seenSourceTitlesRef.current
+      const seen = seenItemTitlesRef.current
       for (const note of notes) {
         if (!note.content.includes('<task-ref')) continue
+        // Snapshot anterior à gravação do espelho: o item ainda tem o texto velho.
+        if (note.updatedAt < (mirrorWritesRef.current.get(note.id) ?? 0)) continue
         for (const { id, title } of extractTaskRefTitles(note.content)) {
           const task = tasksById.get(id)
-          if (!task || task.sourceNoteId !== note.id) continue
-          const previous = seen.get(id)
-          seen.set(id, title)
+          if (!task || (task.sourceNoteId !== note.id && task.parentNoteId !== note.id)) continue
+          const key = `${note.id}\u0000${id}`
+          const previous = seen.get(key)
+          seen.set(key, title)
           // Task com TODOS: o prefixo "<TODOS> | " do item não volta ao título.
           const prefix = task.parentNoteId ? todosById.get(task.parentNoteId)?.title ?? null : null
           const synced = stripPipePrefix(title, prefix)
           if (previous !== undefined && previous !== title && task.title !== synced) {
+            titlesFromItemRef.current.set(id, { title: synced, noteId: note.id })
             void updateProjectTask(id, { title: synced })
           }
         }
@@ -1003,6 +1034,59 @@ function App() {
     }, 1000)
     return () => clearTimeout(timer)
   }, [notes, tasksById, todosById, updateProjectTask])
+
+  // Espelho (task → item): uma gravação por nota, sobre a base mais nova (a
+  // keep e o assistant gravam por fora); item que já mostra o título não é
+  // regravado (rewriteTaskRefItemTitle). O `calendar-note-updated` manda a
+  // keep recarregar a nota se estiver nela.
+  useEffect(() => {
+    const timer = setTimeout(async () => {
+      const seen = seenTaskTitlesRef.current
+      const fromItem = titlesFromItemRef.current
+      const ids = new Set(tasks.map((t) => t.id))
+      for (const id of seen.keys()) if (!ids.has(id)) seen.delete(id)
+      const renamedByNote = new Map<string, Task[]>()
+      for (const task of tasks) {
+        const previous = seen.get(task.id)
+        seen.set(task.id, task.title)
+        // A 1ª passada só registra: não reescreve o que já estava lá.
+        if (previous === undefined || previous === task.title) continue
+        // Consumido só quando o título muda: o item → task marca antes de a
+        // task nova chegar ao estado.
+        const origin = fromItem.get(task.id)
+        fromItem.delete(task.id)
+        const skip = origin?.title === task.title ? origin.noteId : null
+        for (const noteId of new Set([task.sourceNoteId, task.parentNoteId])) {
+          if (!noteId || noteId === skip) continue
+          const list = renamedByNote.get(noteId) ?? []
+          list.push(task)
+          renamedByNote.set(noteId, list)
+        }
+      }
+      for (const [noteId, renamed] of renamedByNote) {
+        const local = notesRef.current.find((n) => n.id === noteId)
+        if (!local || !local.content.includes('<task-ref')) continue
+        const stored = await storage.getNote(noteId).catch(() => null)
+        const base = stored && stored.updatedAt > local.updatedAt ? stored : local
+        let content = base.content
+        for (const task of renamed) {
+          const prefix = task.parentNoteId ? todosById.get(task.parentNoteId)?.title ?? null : null
+          content = rewriteTaskRefItemTitle(content, task.id, task.title, prefix)
+        }
+        if (content === base.content) continue
+        const renamedIds = new Set(renamed.map((t) => t.id))
+        for (const { id, title } of extractTaskRefTitles(content)) {
+          if (renamedIds.has(id)) seenItemTitlesRef.current.set(`${noteId}\u0000${id}`, title)
+        }
+        const updatedAt = Date.now()
+        mirrorWritesRef.current.set(noteId, updatedAt)
+        if (await saveNote({ ...base, content, updatedAt })) {
+          void emit('calendar-note-updated', { noteId })
+        }
+      }
+    }, 1000)
+    return () => clearTimeout(timer)
+  }, [tasks, todosById, saveNote])
 
   useEffect(() => {
     if (!notebooksLoaded) return
@@ -1224,6 +1308,89 @@ function App() {
     [notebooks, notebookOrder]
   )
 
+  // Navegação para nota/caderno usada pelos cards de task (antes do contexto
+  // do editor, que expõe `onOpenTodos`).
+  const handleNavigateToNote = useCallback(
+    (notebookId: string, noteId: string, subjectId?: string | null) => {
+      setActiveMode('notebook')
+      setActiveNotebookId(notebookId)
+      setActiveSubjectId(subjectId ?? null)
+      setActiveId(noteId)
+      setActiveTag(null)
+      setSearch('')
+    },
+    []
+  )
+
+  const handleNoteLinkNavigation = useCallback(
+    (noteId: string) => {
+      const note = notes.find((n) => n.id === noteId)
+      if (!note || !note.notebookId) return
+      handleNavigateToNote(note.notebookId, noteId)
+    },
+    [notes, handleNavigateToNote]
+  )
+
+  const activeNote = useMemo(
+    () => notes.find((n) => n.id === activeId) ?? null,
+    [notes, activeId]
+  )
+  const activeNoteRef = useRef<Note | null>(null)
+  activeNoteRef.current = activeNote
+  // Booleano (e não a nota): o contexto dos cards não muda a cada tecla.
+  const activeNoteIsTodos = !!activeNote && isTodosNote(activeNote)
+
+  // Task e nota-corpo do modal aberto de dentro de uma nota (R4). A nota-corpo
+  // apagada por fora vira `undefined`: o modal cai no caso "sem nota-corpo".
+  const noteTaskModalTask = noteTaskModalId ? tasksById.get(noteTaskModalId) : undefined
+  const noteTaskModalNote = noteTaskModalTask?.noteId
+    ? notes.find((n) => n.id === noteTaskModalTask.noteId)
+    : undefined
+
+  // Grava a nota-corpo do modal sobre a base da memória (não da render).
+  const updateModalNote = useCallback(
+    (patch: Partial<Note>) => {
+      const task = noteTaskModalTask
+      const current = task?.noteId ? notesRef.current.find((n) => n.id === task.noteId) : undefined
+      if (current) void saveNote({ ...current, ...patch, updatedAt: Date.now() })
+    },
+    [noteTaskModalTask, saveNote]
+  )
+  const addBodyNoteToModalTask = useCallback(async () => {
+    const task = noteTaskModalTask
+    // `noteTaskModalNote` (e não `task.noteId`): a nota-corpo apagada por fora
+    // deixa o id velho na task, e o "Add body note" precisa recriá-la.
+    if (!task || noteTaskModalNote) return
+    const note = await createTaskNote(task.notebookId, task.title)
+    await updateTask(task.id, { noteId: note.id })
+  }, [noteTaskModalTask, noteTaskModalNote, createTaskNote, updateTask])
+  // Provider do corpo do modal: sem `onOpenTask`/`onOpenTaskModal` (nada
+  // navega atrás do modal).
+  const modalTasksContext = useMemo(
+    () => ({
+      tasksById,
+      todayKey: today,
+      checklist: taskChecklist,
+      statuses: statusRegistry,
+      metadataDefs: metadata.defs,
+      todosTitle: (noteId: string) => todosById.get(noteId)?.title,
+      currentNoteId: noteTaskModalNote?.id ?? null,
+      onSetStatus: (id: string, status: string) => void updateTask(id, { status }),
+      onToggleTask: handleToggleLinkedTask,
+    }),
+    [
+      tasksById,
+      today,
+      taskChecklist,
+      statusRegistry,
+      metadata.defs,
+      todosById,
+      noteTaskModalNote?.id,
+      updateTask,
+      handleToggleLinkedTask,
+    ]
+  )
+
   const tasksContextValue = useMemo(
     () => ({
       tasksById,
@@ -1239,6 +1406,16 @@ function App() {
       metadataDefs: metadata.defs,
       todosTitle: (noteId: string) => todosById.get(noteId)?.title,
       currentNoteId: activeId,
+      onUpdateTask: (id: string, patch: TaskPatch) => void updateTask(id, patch),
+      onMoveTask: (id: string, project: ProjectChoice) => void moveProjectTask(id, project),
+      todosOptions,
+      onOpenTodos: handleNoteLinkNavigation,
+      onCreateTodos: createTodosNote,
+      onManageMetadata: (focusId?: string) => setMetadataManager({ focusId: focusId ?? null }),
+      currentNoteIsTodos: activeNoteIsTodos,
+      // Shift+click no ↗ da task: modal sem trocar a nota, em qualquer nota.
+      // Nas visões em quadro o editor já está num modal: fica o clique simples.
+      onOpenTaskModal: tasksBoardOpen ? undefined : openTaskModalInPlace,
     }),
     [
       tasksById,
@@ -1252,6 +1429,13 @@ function App() {
       metadata.defs,
       todosById,
       activeId,
+      activeNoteIsTodos,
+      tasksBoardOpen,
+      moveProjectTask,
+      todosOptions,
+      handleNoteLinkNavigation,
+      createTodosNote,
+      openTaskModalInPlace,
     ]
   )
 
@@ -1300,13 +1484,6 @@ function App() {
         .sort((a, b) => (b.archivedAt ?? 0) - (a.archivedAt ?? 0)),
     [subjectFilteredNotes]
   )
-
-  const activeNote = useMemo(
-    () => notes.find((n) => n.id === activeId) ?? null,
-    [notes, activeId]
-  )
-  const activeNoteRef = useRef<Note | null>(null)
-  activeNoteRef.current = activeNote
 
   // Task cuja nota-corpo está aberta no editor (null = nota comum).
   const activeTask = useMemo(
@@ -1549,10 +1726,6 @@ function App() {
     }
   }, [activeNote, responses])
 
-  const resolveNoteTitle = useCallback(
-    (noteId: string) => notes.find((n) => n.id === noteId)?.title,
-    [notes]
-  )
   const isNoteArchived = useCallback(
     (noteId: string) => !!notes.find((n) => n.id === noteId)?.archivedAt,
     [notes]
@@ -1560,6 +1733,27 @@ function App() {
   const resolveNoteContent = useCallback(
     (noteId: string) => notes.find((n) => n.id === noteId)?.content,
     [notes]
+  )
+  // Resolvedores dos pontos que geram texto para a IA: nota de caderno com a
+  // indexação de IA desligada conta como inexistente (só as referências — a
+  // nota aberta e a seleção do NotesChat seguem como hoje).
+  const resolveAiNoteTitle = useCallback(
+    (noteId: string) => {
+      const note = notes.find((n) => n.id === noteId)
+      if (!note) return undefined
+      if (note.notebookId && disabledNotebookIds.has(note.notebookId)) return undefined
+      return note.title
+    },
+    [notes, disabledNotebookIds]
+  )
+  const resolveAiNoteContent = useCallback(
+    (noteId: string) => {
+      const note = notes.find((n) => n.id === noteId)
+      if (!note) return undefined
+      if (note.notebookId && disabledNotebookIds.has(note.notebookId)) return undefined
+      return note.content
+    },
+    [notes, disabledNotebookIds]
   )
 
   const handleCommand = useCallback(
@@ -1618,9 +1812,9 @@ function App() {
       const imageTexts = await ocrTextsForContent(contextContents.join('\n'))
       const toAiText = (content: string) =>
         cleanNoteContentForAi(content, {
-          resolveNoteTitle,
+          resolveNoteTitle: resolveAiNoteTitle,
           resolveEmbed: (id) => embeds.get(id),
-          resolveLinkedNoteContent: resolveNoteContent,
+          resolveLinkedNoteContent: resolveAiNoteContent,
           resolveImageText: (dataUrl) => imageTexts.get(dataUrl),
         })
       const noteText = toAiText(noteContent)
@@ -1783,7 +1977,7 @@ function App() {
       })
       return true
     },
-    [activeId, activeNote, modelId, models.length, start, addErrorCard, notes, setRightTab, resolveNoteTitle, resolveNoteContent]
+    [activeId, activeNote, modelId, models.length, start, addErrorCard, notes, setRightTab, resolveAiNoteTitle, resolveAiNoteContent]
   )
 
   const effectiveNotebookWidth = notebookCollapsed ? COLLAPSED_PANEL_WIDTH : notebookWidth
@@ -2298,18 +2492,6 @@ function App() {
     [createNote, saveNote]
   )
 
-  const handleNavigateToNote = useCallback(
-    (notebookId: string, noteId: string, subjectId?: string | null) => {
-      setActiveMode('notebook')
-      setActiveNotebookId(notebookId)
-      setActiveSubjectId(subjectId ?? null)
-      setActiveId(noteId)
-      setActiveTag(null)
-      setSearch('')
-    },
-    []
-  )
-
   // "Save to note" da janela assistant (Ctrl+M): a main grava, para a lista e
   // a nota aberta no Editor refletirem a mudança. Só roda pelo clique do
   // usuário no modal da assistant.
@@ -2342,15 +2524,6 @@ function App() {
         return { note }
       }),
     [handleCreateNotebookFromChat, handleCreateNoteFromChat, saveNote]
-  )
-
-  const handleNoteLinkNavigation = useCallback(
-    (noteId: string) => {
-      const note = notes.find((n) => n.id === noteId)
-      if (!note || !note.notebookId) return
-      handleNavigateToNote(note.notebookId, noteId)
-    },
-    [notes, handleNavigateToNote]
   )
 
   const handleOpenResponseInChat = useCallback((response: AiResponse) => {
@@ -2755,6 +2928,7 @@ function App() {
       }
       isCalendarNote={activeNote.notebookId === calendarNotebookId}
       previewMode={previewMode}
+      focusMode={focusMode}
       onAskAi={handleAskAi}
       onEditorReady={handleEditorReady}
       taskStatuses={taskStatuses}
@@ -2917,6 +3091,7 @@ function App() {
             tasks={tasks}
             todayKey={today}
             taskChecklist={taskChecklist}
+            disabledNotebookIds={disabledNotebookIds}
           />
         </div>
       ) : (
@@ -3175,9 +3350,9 @@ function App() {
               projectTasks={chatProjectTasks}
               todayKey={today}
               taskChecklist={taskChecklist}
-              resolveNoteTitle={resolveNoteTitle}
+              resolveNoteTitle={resolveAiNoteTitle}
               isNoteArchived={isNoteArchived}
-              resolveNoteContent={resolveNoteContent}
+              resolveNoteContent={resolveAiNoteContent}
               tasks={tasks}
               notebooks={orderedNotebooks}
               getSelectionText={getNotesSelectionText}
@@ -3261,6 +3436,63 @@ function App() {
       />
       {tasksBoardOpen && activeTask?.id === taskModalId && noteEditor && (
         <TaskEditorModal onClose={() => setTaskModalId(null)}>{noteEditor}</TaskEditorModal>
+      )}
+      {noteTaskModalTask && (
+        <TaskEditorModal onClose={() => setNoteTaskModalId(null)}>
+          <TaskModalEditor
+            task={noteTaskModalTask}
+            note={noteTaskModalNote}
+            notebookName={notebooks.find((nb) => nb.id === noteTaskModalNote?.notebookId)?.name}
+            subjectName={noteTaskModalNote?.subjectId ? TASKS_SUBJECT_NAME : undefined}
+            previewMode={previewMode}
+            onNoteChange={updateModalNote}
+            onAddBodyNote={addBodyNoteToModalTask}
+            onUpdate={(patch) => void updateTask(noteTaskModalTask.id, patch)}
+            onMove={(project) => void moveProjectTask(noteTaskModalTask.id, project)}
+            onCreateTasks={(inputs, opts) =>
+              createProjectTasks(
+                inputs.map((i) => ({
+                  title: i.title,
+                  status: i.checked ? 'done' : 'todo',
+                  dueDate: opts.dueDate,
+                  sourceNoteId: noteTaskModalNote?.id ?? null,
+                  parentNoteId: null,
+                })),
+                opts.project
+              )
+            }
+            onToggleLinkedTask={handleToggleLinkedTask}
+            taskStatuses={taskStatuses}
+            notebooks={orderedNotebooks}
+            statuses={statusRegistry}
+            todosOptions={todosOptions}
+            metadataDefs={metadata.defs}
+            onCreateMetadataDef={metadata.create}
+            onManageMetadata={(focusId) => setMetadataManager({ focusId: focusId ?? null })}
+            sourceNoteExists={
+              noteTaskModalTask.sourceNoteId !== null &&
+              notes.some((n) => n.id === noteTaskModalTask.sourceNoteId)
+            }
+            onOpenSourceNote={() => {
+              setNoteTaskModalId(null)
+              if (noteTaskModalTask?.sourceNoteId) {
+                handleNoteLinkNavigation(noteTaskModalTask.sourceNoteId)
+              }
+            }}
+            onOpenTodos={(todoNoteId) => {
+              setNoteTaskModalId(null)
+              handleNoteLinkNavigation(todoNoteId)
+            }}
+            onCreateTodos={createTodosNote}
+            onDelete={() => noteTaskModalTask && void deleteProjectTasks([noteTaskModalTask.id])}
+            suggestedTaskNotebookId={
+              noteTaskModalNote?.notebookId && noteTaskModalNote.notebookId !== calendarNotebookId
+                ? noteTaskModalNote.notebookId
+                : INBOX_NOTEBOOK_ID
+            }
+            tasksContext={modalTasksContext}
+          />
+        </TaskEditorModal>
       )}
       <StatusManagerModal
         open={statusManagerOpen}

@@ -232,6 +232,11 @@
   max-width: none;
 }
 
+/* Modo focus: a medida de leitura (--measure-note) sai e o corpo usa a
+   largura disponível. Especificidade (0,2,0) vence `.proseEditor > h1`
+   (0,1,1), então os headings também soltam. */
+.editor.focus .proseEditor > :global(*) { max-width: none; }
+
 .proseEditor :global(p) {
   margin: var(--flow-p) 0;
 }
@@ -413,17 +418,43 @@
 }
 .proseEditor :global(ul[data-type="taskList"] li[data-task-status] > div > p:first-of-type) {
   position: relative;
-  padding-bottom: calc(var(--lh-row) + var(--space-1));
+  /* Altura do bloco de propriedades custom (0 sem ele; ver regras abaixo). */
+  --task-meta-h: 0px;
+  padding-bottom: calc(var(--lh-row) + var(--space-1) + var(--task-meta-h));
+}
+/* Bloco de propriedades custom (`.monetTaskMeta`, `data-rows` = linhas): a
+   altura é reservada no parágrafo pelo número de linhas, sem medir no JS.
+   Divisória (1px) + respiro + 16px por linha; até 3 + "+N more". */
+.proseEditor :global(ul[data-type="taskList"] li[data-task-status] > div > p:first-of-type:has(.monetTaskMeta[data-rows="1"])) {
+  --task-meta-h: calc(var(--space-1h) + 1px + var(--space-1) + 16px);
+}
+.proseEditor :global(ul[data-type="taskList"] li[data-task-status] > div > p:first-of-type:has(.monetTaskMeta[data-rows="2"])) {
+  --task-meta-h: calc(var(--space-1h) + 1px + var(--space-1) + 32px);
+}
+.proseEditor :global(ul[data-type="taskList"] li[data-task-status] > div > p:first-of-type:has(.monetTaskMeta[data-rows="3"])) {
+  --task-meta-h: calc(var(--space-1h) + 1px + var(--space-1) + 48px);
+}
+.proseEditor :global(ul[data-type="taskList"] li[data-task-status] > div > p:first-of-type:has(.monetTaskMeta[data-rows="4"])) {
+  --task-meta-h: calc(var(--space-1h) + 1px + var(--space-1) + 64px);
 }
 /* Linha de propriedades (TaskRefView): uma linha só; o que não cabe é cortado. */
 .proseEditor :global(ul[data-type="taskList"] li[data-task-status] > div > p:first-of-type .monetTaskProps) {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 0;
+  bottom: var(--task-meta-h);
   height: var(--lh-row);
   margin-left: 0;
   overflow: hidden;
+}
+.proseEditor :global(ul[data-type="taskList"] li[data-task-status] > div > p:first-of-type .monetTaskMeta) {
+  display: grid;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  /* O respiro de cima (--space-1h) fica fora da divisória. */
+  height: calc(var(--task-meta-h) - var(--space-1h));
 }
 
 /* Subtasks aninhadas — indentação visual para hierarquia */

@@ -495,6 +495,19 @@ function itemPlainText(s: string): string {
     .replace(/&amp;/g, '&')
 }
 
+// Inverso do itemPlainText: aplica o mesmo conjunto que MD_ESCAPE_RE desescapa,
+// nesta ordem, para o texto voltar igual ao ser relido. Os 4 caracteres que
+// viram entidades saem sem a barra (`\&` seria lido como `&` literal pelo
+// markdown-it e o item apareceria com `&amp;`).
+function escapeTaskItemText(s: string): string {
+  return s
+    .replace(/[!-/:-@[-`{-~]/g, (c) => ('&<>"'.includes(c) ? c : `\\${c}`)) // pontuação Markdown, menos & < > "
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
 // Título de cada item de checklist vinculado a uma task no markdown da nota.
 export function extractTaskRefTitles(
   markdown: string
@@ -536,6 +549,54 @@ export function stripPipePrefix(title: string, prefix: string | null): string {
   const split = splitPipeTitle(title)
   if (!split || normalizeName(split.prefix) !== normalizeName(prefix.trim())) return title
   return split.title
+}
+
+// Nós inline sem texto (`<task-ref …></task-ref>`, nota linkada…): sobrevivem
+// à reescrita do item; o texto entre eles é o título.
+const EMPTY_INLINE_NODE_RE = /<([a-z][\w-]*)\b[^>]*>\s*<\/\1>/gi
+
+// Título da task → texto do item: só as linhas cujo PRIMEIRO <task-ref> é a
+// task mudam. O título é TODO o texto do item, antes e depois do <task-ref>
+// (o mesmo critério do extractTaskRefTitles; digitar no fim do item escreve
+// depois do nó). A reescrita põe o título antes e os nós depois — trocar só o
+// trecho de antes duplicava o resto. Item que já mostra o título (mesmo texto
+// visível, com ou sem o prefixo da TODOS) não é regravado: o escape daqui
+// difere do serializer do editor, e regravar mudaria a formatação.
+export function rewriteTaskRefItemTitle(
+  markdown: string,
+  taskId: string,
+  title: string,
+  todosTitle: string | null
+): string {
+  const compactTitle = title.replace(/\s+/g, ' ').trim()
+  // Título vazio nunca apaga o item (a task pode estar sendo editada).
+  if (!compactTitle) return markdown
+  const lines = markdown.split('\n').map((raw) => {
+    const eol = raw.endsWith('\r') ? '\r' : ''
+    const line = eol ? raw.slice(0, -1) : raw
+    const m = line.match(TASK_LINE_RE)
+    if (!m) return raw
+    const item = m[1]
+    const ref = item.match(TASK_REF_ID_RE)
+    if (!ref || ref[1] !== taskId) return raw
+    const visible = itemPlainText(item.replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim()
+    if (stripPipePrefix(visible, todosTitle) === compactTitle) return raw
+    // Prefixo "<TODOS> | " no início do item: preserva o trecho cru até o
+    // primeiro `|`.
+    const firstTag = item.search(/<[a-z/]/i)
+    const lead = firstTag < 0 ? item : item.slice(0, firstTag)
+    let prefixRaw = ''
+    if (todosTitle !== null) {
+      const split = splitPipeTitle(itemPlainText(lead))
+      if (split && normalizeName(split.prefix) === normalizeName(todosTitle.trim())) {
+        prefixRaw = lead.slice(0, lead.indexOf('|') + 1) + ' '
+      }
+    }
+    const nodes = item.match(EMPTY_INLINE_NODE_RE) ?? []
+    const next = `${prefixRaw}${escapeTaskItemText(compactTitle)} ${nodes.join(' ')}`
+    return line.slice(0, line.length - item.length) + next + eol
+  })
+  return lines.join('\n')
 }
 
 export interface TodosProgress {

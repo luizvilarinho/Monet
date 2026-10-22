@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { ChatMessage } from '../../hooks/useChat'
+import type { ChatMessage, ChatTimings } from '../../hooks/useChat'
 import { useRagDetailed } from '../../hooks/useRagDetailed'
 import { isRagSourceOpenable, openRagSource, type RagResponse, type RagSource } from '../../lib/rag'
 import { RagInspector } from './RagInspector'
@@ -9,6 +9,9 @@ interface MessageSourcesProps {
   message: ChatMessage
   // Trace do RAG desta resposta (só em memória, com o modo detalhado ligado).
   trace?: RagResponse
+  // Tempos da resposta (só em memória); a linha compacta sai com o modo
+  // detalhado ligado, mesmo sem fontes.
+  timings?: ChatTimings
 }
 
 function sourceMeta(s: RagSource): string {
@@ -24,16 +27,46 @@ function sourceTitle(s: RagSource): string {
   return 'Open file'
 }
 
+function seconds(ms: number): string {
+  return `${(ms / 1000).toFixed(2)}s`
+}
+
+// Linha compacta: RAG com as etapas medidas, 1ª palavra, rodadas de tool e o
+// total do turno. Etapa pulada não entra.
+function timingLine(t: ChatTimings): string {
+  const parts: string[] = []
+  const stages = [
+    t.rewriteMs !== undefined && `rewrite ${seconds(t.rewriteMs)}`,
+    t.embeddingMs !== undefined && `embed ${seconds(t.embeddingMs)}`,
+    t.searchMs !== undefined && `search ${seconds(t.searchMs)}`,
+    t.rerankMs !== undefined && `rerank ${seconds(t.rerankMs)}`,
+  ].filter((s): s is string => !!s)
+  if (t.ragSkipped) parts.push('RAG skipped')
+  else if (stages.length > 0) {
+    const total = (t.rewriteMs ?? 0) + (t.embeddingMs ?? 0) + (t.searchMs ?? 0) + (t.rerankMs ?? 0)
+    parts.push(`RAG ${seconds(total)} (${stages.join(' · ')})`)
+  }
+  if (t.rewriteFailed) parts.push('rewrite failed')
+  if (t.rerankFailed) parts.push('rerank failed')
+  if (t.firstWordMs !== undefined) parts.push(`first word ${seconds(t.firstWordMs)}`)
+  if (t.toolRounds > 0) parts.push(`${t.toolRounds} tool round${t.toolRounds > 1 ? 's' : ''}`)
+  if (t.totalMs !== undefined) parts.push(`total ${seconds(t.totalMs)}`)
+  if (t.interrupted) parts.push('interrupted')
+  return parts.join(' · ')
+}
+
 // "Sources (n)" abaixo da resposta que usou o RAG, e o inspetor quando houver
 // trace. Usado nos 4 chats (Chat, Anotações, Reader e Assistant).
-export function MessageSources({ message, trace }: MessageSourcesProps) {
+export function MessageSources({ message, trace, timings: timingsData }: MessageSourcesProps) {
   const [open, setOpen] = useState(false)
   const [detailed] = useRagDetailed()
   const sources = message.ragSources ?? []
   const showInspector = detailed && !!trace
+  const timings = detailed && timingsData ? timingLine(timingsData) : ''
 
   if (message.role !== 'assistant') return null
-  if (sources.length === 0 && !message.ragNothingFound && !showInspector) return null
+  const hasFooter = sources.length > 0 || !!message.ragNothingFound || showInspector || !!timings
+  if (!hasFooter) return null
 
   return (
     <div className={styles.wrap}>
@@ -87,6 +120,7 @@ export function MessageSources({ message, trace }: MessageSourcesProps) {
         <p className={styles.empty}>No relevant sources found in your documents</p>
       ) : null}
       {showInspector && trace && <RagInspector trace={trace} />}
+      {timings && <p className={styles.timings}>{timings}</p>}
     </div>
   )
 }

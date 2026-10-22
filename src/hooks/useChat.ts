@@ -15,9 +15,11 @@ import {
   type ContentBlock,
   type StreamToolCallPayload,
 } from '../lib/openrouter'
-import type { AiModel, Notebook, Task, TaskStatusDef } from '../types'
+import type { AiModel, Note, Notebook, Task, TaskStatusDef } from '../types'
 import {
   queryTasksText,
+  taskLineForAi,
+  todosProgressByNote,
   type ChecklistProgress,
   type TasksQuery,
 } from '../lib/tasks'
@@ -52,6 +54,7 @@ import {
 } from '../lib/rag'
 import { CALENDAR_NOTEBOOK_ID, dateKeyFromMs, getWeekdayName } from '../lib/calendar'
 import { cleanNoteContentForAi, loadEmbedResponses, noteDate } from '../lib/noteFileText'
+import { isTodosNote } from '../lib/noteTypes'
 import { ocrTextsForContent } from '../lib/imageOcr'
 import { storage } from '../storage'
 
@@ -228,6 +231,27 @@ export interface ChatMessage {
   ragSources?: RagSource[]
   // A busca na base não achou nada relevante.
   ragNothingFound?: true
+  // Nota em que a mensagem do usuário foi escrita (chat do Notebook).
+  noteId?: string
+  noteTitle?: string
+  // A seleção do editor entrou no contexto enviado.
+  hadSelection?: boolean
+}
+
+// Tempos de uma resposta (linha compacta abaixo do assistant): efêmeros, não
+// entram no ChatMessage nem na conversa salva. 0/ausente = etapa pulada.
+export interface ChatTimings {
+  rewriteMs?: number
+  embeddingMs?: number
+  searchMs?: number
+  rerankMs?: number
+  rewriteFailed?: boolean
+  rerankFailed?: boolean
+  firstWordMs?: number
+  toolRounds: number
+  totalMs?: number
+  ragSkipped?: boolean
+  interrupted?: boolean
 }
 
 export interface ChatConversation {
@@ -271,6 +295,9 @@ export interface ChatTools {
   // Tools "Daily notes" (get_day, notes_by_date): leem notas datadas de
   // qualquer caderno, fora do escopo da pasta. Opt-in.
   dailyNotes: boolean
+  // Tool "Notes" (get_note): consulta uma nota por título, escolhida pelo
+  // modelo. Ligada por padrão (cadernos com a IA desligada ficam de fora).
+  notes: boolean
 }
 
 // Estado atual das tasks para a tool `query_tasks` (fornecido pelo App).
@@ -285,8 +312,7 @@ export interface TasksSnapshot {
   statuses: TaskStatusDef[]
   // Título de nota (TODOS das tasks e filtro `todos` da tool).
   resolveNoteTitle: (noteId: string) => string | undefined
-  // TODOS arquivada (`(archived)` nas linhas). O Assistant não passa: as
-  // notas dele vêm do getNoteSummaries, sem `archived_at`.
+  // TODOS arquivada (`(archived)` nas linhas).
   isNoteArchived?: (noteId: string) => boolean
 }
 
@@ -294,7 +320,13 @@ export type ConversationLocation =
   | { type: 'loose'; index: number }
   | { type: 'folder'; folderId: string; index: number }
 
-const DEFAULT_TOOLS: ChatTools = { webSearch: false, deepResearch: false, tasks: false, dailyNotes: false }
+const DEFAULT_TOOLS: ChatTools = {
+  webSearch: false,
+  deepResearch: false,
+  tasks: false,
+  dailyNotes: false,
+  notes: true,
+}
 
 function loadTools(): ChatTools {
   try {
@@ -308,6 +340,8 @@ function loadTools(): ChatTools {
           deepResearch: !!p.deepResearch,
           tasks: !!p.tasks,
           dailyNotes: !!p.dailyNotes,
+          // Ligada por padrão: só desliga com escolha explícita.
+          notes: p.notes !== false,
         }
       }
     }
@@ -1188,6 +1222,8 @@ export interface UseChatResult {
   // Trace do inspetor por id de mensagem assistant; só em memória e só com
   // o modo detalhado ligado.
   ragTraces: Record<string, RagResponse>
+  // Tempos de cada resposta (linha compacta); só em memória, por id de mensagem.
+  chatTimings: Record<string, ChatTimings>
   thinkingEnabled: boolean
   toggleThinking: () => void
   error: string | null
@@ -1195,7 +1231,12 @@ export interface UseChatResult {
     text: string,
     imageDataUrl?: string,
     documents?: Array<{ name: string; type: string; data: string }>,
-    opts?: { ephemeralContext?: string; excludeNoteId?: string | null }
+    opts?: {
+      ephemeralContext?: string
+      excludeNoteId?: string | null
+      // Nota em que a mensagem foi escrita (chip/registro do chat do Notebook).
+      noteContext?: { noteId: string; noteTitle: string; hadSelection: boolean }
+    }
   ) => Promise<void>
   cancel: () => void
   selectConversation: (id: string) => void
@@ -1247,6 +1288,14 @@ const NOTES_TOOL_BUDGET = 24000
 const NOTES_TOOL_MIN_SHARE = 1500
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
+// ─── Tool "Notes" (get_note) ─────────────────────────────────────────────────
+// Corpo da nota devolvido, total da resposta (corta o corpo) e tasks de uma
+// TODOS; candidatos quando o título casa com mais de uma nota.
+const GET_NOTE_BODY_BUDGET = 4000
+const GET_NOTE_TOTAL_BUDGET = 6000
+const GET_NOTE_MAX_TASKS = 40
+const GET_NOTE_CANDIDATES = 5
+
 function foldText(s: string): string {
   return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim()
 }
@@ -1270,7 +1319,12 @@ async function notesByDateText(
   ])
   const disabled = new Set(disabledIds)
   const notebookName = new Map(notebooks.map((nb) => [nb.id, nb.name]))
-  const titles = new Map(summaries.map((n) => [n.id, n.title]))
+  // Só títulos de caderno ligado: nota linkada de caderno desligado sai "untitled".
+  const titles = new Map(
+    summaries
+      .filter((n) => !n.notebookId || !disabled.has(n.notebookId))
+      .map((n) => [n.id, n.title])
+  )
   const wanted = notebook ? foldText(notebook) : ''
   const picked = notes
     .filter((n) => n.notebookId === null || !disabled.has(n.notebookId))
@@ -1322,6 +1376,107 @@ async function notesByDateText(
   }
   if (omitted > 0) blocks.push(`(${omitted} more note(s) omitted: content budget reached; ask for a shorter period.)`)
   return blocks.join('\n---\n')
+}
+
+// Uma nota por título, como texto para a IA: cabeçalho (caderno, tipo,
+// arquivada, data, tags), as tasks quando é uma TODOS e um trecho limitado do
+// corpo. Lê o storage na hora da chamada — nunca um snapshot: nota apagada ou
+// de caderno com a IA desligada não pode aparecer (R11b/R10b). Não vira fonte
+// [n]: não é o RAG.
+async function getNoteText(title: string, notebook: string | undefined): Promise<string> {
+  const missing = `No note titled "${title}".`
+  const [notebooks, summaries, types, disabledIds] = await Promise.all([
+    storage.getNotebooks(),
+    storage.getNoteSummaries(),
+    storage.getNoteTypes(),
+    notesIndexGetDisabledNotebooks(),
+  ])
+  const disabled = new Set(disabledIds)
+  const notebookName = new Map(notebooks.map((nb) => [nb.id, nb.name]))
+  // Caderno desligado sai antes do casamento: nem o título dele aparece.
+  const visible = summaries.filter((n) => !n.notebookId || !disabled.has(n.notebookId))
+  const wantedNotebook = notebook ? foldText(notebook) : ''
+  const pool = wantedNotebook
+    ? visible.filter((n) =>
+        foldText(notebookName.get(n.notebookId ?? '') ?? '').includes(wantedNotebook)
+      )
+    : visible
+  // Igual → começa com → contém; o primeiro nível com resultado decide.
+  const wanted = foldText(title)
+  const exact = pool.filter((n) => foldText(n.title) === wanted)
+  const prefix =
+    exact.length > 0 ? exact : pool.filter((n) => foldText(n.title).startsWith(wanted))
+  const matches =
+    prefix.length > 0 ? prefix : pool.filter((n) => foldText(n.title).includes(wanted))
+  if (matches.length === 0) return missing
+  if (matches.length > 1) {
+    const notes = await Promise.all(
+      matches.slice(0, GET_NOTE_CANDIDATES).map((n) => storage.getNote(n.id))
+    )
+    const lines = notes
+      .filter((n): n is Note => !!n)
+      .map((n) => {
+        const folder = n.notebookId ? notebookName.get(n.notebookId) ?? 'Untitled' : 'No notebook'
+        const type = n.typeId ? types.find((t) => t.id === n.typeId)?.name : undefined
+        const archived = n.archivedAt ? ` · archived ${dateKeyFromMs(n.archivedAt)}` : ''
+        return `- ${n.title.trim() || 'Untitled'} · ${folder}${type ? ` · ${type}` : ''}${archived}`
+      })
+    return `${matches.length} notes match "${title}". Ask the user which one, then look it up again with the exact title:\n${lines.join('\n')}`
+  }
+  const note = await storage.getNote(matches[0].id)
+  if (!note) return missing
+  const lines = [`# ${note.title.trim() || 'Untitled'}`]
+  lines.push(
+    `Notebook: ${note.notebookId ? notebookName.get(note.notebookId) ?? 'Untitled' : 'No notebook'}`
+  )
+  const type = note.typeId ? types.find((t) => t.id === note.typeId)?.name : undefined
+  if (type) lines.push(`Type: ${type}`)
+  if (note.archivedAt) lines.push(`Archived: ${dateKeyFromMs(note.archivedAt)}`)
+  const date = noteDate(note)
+  if (date) lines.push(`Date: ${date}`)
+  if (note.tags.length > 0) lines.push(`Tags: ${note.tags.join(', ')}`)
+  if (isTodosNote(note)) {
+    const [allTasks, statuses] = await Promise.all([
+      storage.getTasks(),
+      storage.getTaskStatuses(),
+    ])
+    const today = dateKeyFromMs(Date.now())
+    const tasks = allTasks.filter(
+      (t) => t.parentNoteId === note.id && !disabled.has(t.notebookId)
+    )
+    const progress = todosProgressByNote(tasks, today).get(note.id)
+    lines.push(`Tasks: ${progress?.done ?? 0}/${progress?.total ?? 0} done`)
+    for (const t of tasks.slice(0, GET_NOTE_MAX_TASKS)) {
+      lines.push(
+        taskLineForAi(t, today, notebookName.get(t.notebookId) ?? null, null, statuses, null)
+      )
+    }
+    if (tasks.length > GET_NOTE_MAX_TASKS) {
+      lines.push(`(${tasks.length - GET_NOTE_MAX_TASKS} more not shown)`)
+    }
+  }
+  const visibleTitles = new Map(visible.map((n) => [n.id, n.title]))
+  const [embeds, imageTexts] = await Promise.all([
+    loadEmbedResponses([note.content]),
+    ocrTextsForContent(note.content),
+  ])
+  // Sem resolveLinkedNoteContent: 1 nível não expande (privacidade).
+  let body = cleanNoteContentForAi(note.content, {
+    resolveNoteTitle: (id) => visibleTitles.get(id),
+    resolveEmbed: (id) => embeds.get(id),
+    resolveImageText: (url) => imageTexts.get(url),
+  }).trim()
+  if (body.length > GET_NOTE_BODY_BUDGET) {
+    body = `${body.slice(0, GET_NOTE_BODY_BUDGET)} [truncated]`
+  }
+  const header = lines.join('\n')
+  if (!body) return header
+  const room = GET_NOTE_TOTAL_BUDGET - header.length - 2
+  if (body.length > room) {
+    const marker = ' [truncated]'
+    body = room > marker.length ? `${body.slice(0, room - marker.length)}${marker}` : ''
+  }
+  return body ? `${header}\n\n${body}` : header
 }
 
 export function useChat(
@@ -1389,6 +1544,19 @@ export function useChat(
   const [webSearchActive, setWebSearchActive] = useState<boolean>(false)
   const [ragSearching, setRagSearching] = useState<boolean>(false)
   const [ragTraces, setRagTraces] = useState<Record<string, RagResponse>>({})
+  const [chatTimings, setChatTimings] = useState<Record<string, ChatTimings>>({})
+  // Início do turno e rodadas de tool por id do assistant (linha de tempos).
+  const turnStartedAtRef = useRef(new Map<string, number>())
+  const toolRoundsRef = useRef(new Map<string, number>())
+  const patchTimings = useCallback(
+    (id: string, patch: Partial<ChatTimings>) =>
+      setChatTimings((prev) => {
+        // toolRounds começa em 0 e só é sobrescrito por um patch que o traga.
+        const current = prev[id] ?? { toolRounds: 0 }
+        return { ...prev, [id]: { ...current, ...patch } }
+      }),
+    []
+  )
   const [folderMemoryUpdatedAt, setFolderMemoryUpdatedAt] = useState<number | null>(null)
   const [webSourcesSaved, setWebSourcesSaved] = useState<{ count: number; at: number } | null>(null)
   const toolCallHandlerRef = useRef<((p: StreamToolCallPayload) => void) | null>(null)
@@ -2247,6 +2415,11 @@ export function useChat(
         const stream = activeStreamRef.current
         if (!stream || stream.requestId !== requestId) return
         const first = stream.roundText === ''
+        // 1ª palavra do modelo: reescrito a cada rodada (vale a última).
+        if (first) {
+          const started = turnStartedAtRef.current.get(stream.assistantId) ?? Date.now()
+          patchTimings(stream.assistantId, { firstWordMs: Date.now() - started })
+        }
         stream.roundText += text
         updateMessages(stream.convId, (msgs) =>
           msgs.map((m) =>
@@ -2303,6 +2476,11 @@ export function useChat(
               : m
           )
         )
+        // Total do turno: o done da 2ª rodada sobrescreve o da 1ª.
+        const started = turnStartedAtRef.current.get(stream.assistantId)
+        if (started !== undefined) patchTimings(stream.assistantId, { totalMs: Date.now() - started })
+        turnStartedAtRef.current.delete(stream.assistantId)
+        toolRoundsRef.current.delete(stream.assistantId)
         toolCallHandlerRef.current = null
         activeStreamRef.current = null
         setIsStreaming(false)
@@ -2369,6 +2547,10 @@ export function useChat(
           )
         )
         setError(message)
+        patchTimings(stream.assistantId, {
+          totalMs: Date.now() - (turnStartedAtRef.current.get(stream.assistantId) ?? Date.now()),
+          interrupted: true,
+        })
         toolCallHandlerRef.current = null
         activeStreamRef.current = null
         setIsStreaming(false)
@@ -2415,14 +2597,19 @@ export function useChat(
       cancelled = true
       unlisteners.forEach((u) => u())
     }
-  }, [updateMessages])
+  }, [updateMessages, patchTimings])
 
   const send = useCallback(
     async (
       text: string,
       imageDataUrl?: string,
       documents?: Array<{ name: string; type: string; data: string }>,
-      opts?: { ephemeralContext?: string; excludeNoteId?: string | null }
+      opts?: {
+        ephemeralContext?: string
+        excludeNoteId?: string | null
+        // Nota em que a mensagem foi escrita (chip/registro do chat do Notebook).
+        noteContext?: { noteId: string; noteTitle: string; hadSelection: boolean }
+      }
     ) => {
       const trimmed = text.trim()
       if (!trimmed && !imageDataUrl && (!documents || documents.length === 0)) return
@@ -2589,8 +2776,12 @@ export function useChat(
         imageDataUrl: imageDataUrl || undefined,
         attachedDocs: persistedDocs.length > 0 ? persistedDocs : undefined,
         timestamp: new Date().toISOString(),
+        ...(opts?.noteContext ?? {}),
       }
       const assistantId = nanoid()
+      const startedAt = Date.now()
+      turnStartedAtRef.current.delete(assistantId)
+      turnStartedAtRef.current.set(assistantId, startedAt)
       const assistantMsg: ChatMessage = {
         id: assistantId,
         role: 'assistant',
@@ -2609,6 +2800,10 @@ export function useChat(
           )
         )
         setError(message)
+        patchTimings(assistantId, {
+          totalMs: Date.now() - (turnStartedAtRef.current.get(assistantId) ?? Date.now()),
+          interrupted: true,
+        })
         librarianContextRef.current = null
         activeStreamRef.current = null
         setIsStreaming(false)
@@ -2818,6 +3013,7 @@ export function useChat(
       // Fontes do RAG automático; as tools de busca continuam a numeração.
       let turnRagSources: RagSource[] = []
       const ragGateResult = trimmed ? ragGate(trimmed) : 'skip'
+      if (ragScope && ragGateResult === 'skip') patchTimings(assistantId, { ragSkipped: true })
       if (ragScope && ragGateResult !== 'skip') {
         try {
           setRagSearching(true)
@@ -2846,6 +3042,15 @@ export function useChat(
               localStorage.getItem(RAG_REWRITE_MODEL_KEY)
             )
             selected = trace.selected
+            // Tempos das etapas do RAG (independente do modo detalhado).
+            patchTimings(assistantId, {
+              rewriteMs: trace.timings.rewriteMs,
+              embeddingMs: trace.timings.embeddingMs,
+              searchMs: trace.timings.searchMs,
+              rerankMs: trace.timings.rerankMs,
+              rewriteFailed: trace.rewriteFailed,
+              rerankFailed: trace.rerankFailed,
+            })
             if (import.meta.env.DEV) console.log('[useChat] RAG retrieve:', trace)
           }
           const hasOtherContext = !!ephemeralSystemMessage
@@ -3062,6 +3267,28 @@ export function useChat(
           },
         })
       }
+      // get_note: com a tool "Notes" ligada (padrão), busca uma nota por título
+      // em qualquer caderno com a IA ligada, fora do escopo da pasta.
+      if (supportsTools && toolsRef.current.notes) {
+        toolDefs.push({
+          type: 'function',
+          function: {
+            name: 'get_note',
+            description: "Look up one note by title and read it: metadata (notebook, type, archived), tasks when it is a TODOS and a bounded body excerpt. Use it for direct lookups by name; for open questions use the knowledge base search.",
+            parameters: {
+              type: 'object',
+              properties: {
+                title: { type: 'string', description: 'The note title (or its beginning).' },
+                notebook: {
+                  type: 'string',
+                  description: 'Only notes of the notebook whose name contains this text. Omit for all notebooks.',
+                },
+              },
+              required: ['title'],
+            },
+          },
+        })
+      }
       // search_knowledge_base: com escopo de RAG na pasta, para o modelo
       // refinar a busca (tipo, período, caderno) dentro desse escopo.
       if (supportsTools && ragScope) {
@@ -3127,6 +3354,11 @@ export function useChat(
           // nos refs) se o stream ativo ainda for o dele.
           const isActive = () => activeStreamRef.current?.assistantId === assistantId
 
+          // Rodadas de tool do turno (a linha de tempos mostra o total).
+          const rounds = (toolRoundsRef.current.get(assistantId) ?? 0) + 1
+          toolRoundsRef.current.set(assistantId, rounds)
+          patchTimings(assistantId, { toolRounds: rounds })
+
           // Texto da rodada mantido no tool_call_started (a 1ª tool era a da
           // memória). Só memória: a resposta já está no balão e fica, sem 2ª
           // rodada. Com outra tool junto: o texto sai e a 2ª rodada responde.
@@ -3151,6 +3383,9 @@ export function useChat(
             // fontes da resposta (cópia): a numeração [n] continua a do RAG.
             const kbResults: string[] = []
             const noteResults: string[] = []
+            // Resultado de get_note (bucket próprio: a mensagem de sistema não
+            // fala em "notas por data").
+            const getNoteResults: string[] = []
             const sources: RagSource[] = turnRagSources.map((s) => ({ ...s, rowids: [...s.rowids] }))
             for (const tc of p.toolCalls) {
               let parsedArgs: { query?: string; queries?: unknown; memory?: unknown } = {}
@@ -3298,6 +3533,17 @@ export function useChat(
                   result = 'Notes are unavailable right now.'
                 }
                 noteResults.push(`${tc.toolName} ${tc.argumentsJson} (today is ${currentDate}):\n${result}`)
+              } else if (tc.toolName === 'get_note') {
+                const args = parsedArgs as Record<string, unknown>
+                const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
+                try {
+                  getNoteResults.push(
+                    await getNoteText(str(args.title), str(args.notebook) || undefined)
+                  )
+                } catch (err) {
+                  console.warn('get_note failed:', err)
+                  getNoteResults.push('Notes are unavailable right now.')
+                }
               } else if (tc.toolName === 'update_folder_memory') {
                 const newMemory = typeof parsedArgs.memory === 'string' ? parsedArgs.memory : null
                 if (newMemory !== null && containingFolder) {
@@ -3340,6 +3586,13 @@ export function useChat(
                     content: `You looked up the user's notes by date. Answer from these notes only; do not invent notes or entries. Cite them inline as [n] right after the claim they support.\n\n${noteResults.join('\n\n')}`,
                   }
                 : null
+            const toolGetNoteMessage: ChatMessageInput | null =
+              getNoteResults.length > 0
+                ? {
+                    role: 'system',
+                    content: `You looked up notes by title. Use what was returned to answer; if the note was not found or several match, say so instead of guessing. Do not invent note content.\n\n${getNoteResults.join('\n---\n')}`,
+                  }
+                : null
             // Fontes trazidas pelas tools (qualquer uma): somam-se às do RAG na
             // mensagem e tiram o aviso "nada relevante" do RAG automático.
             const toolFound = sources.length > turnRagSources.length
@@ -3360,6 +3613,7 @@ export function useChat(
               ...(toolTasksMessage ? [toolTasksMessage] : []),
               ...(toolKbMessage ? [toolKbMessage] : []),
               ...(toolNotesMessage ? [toolNotesMessage] : []),
+              ...(toolGetNoteMessage ? [toolGetNoteMessage] : []),
               // Esta rodada vai sem tools: sem o aviso, prompts como o da
               // memória levam o modelo a pedir outra tool (e não responder).
               {
@@ -3440,6 +3694,24 @@ export function useChat(
     const stream = activeStreamRef.current
     if (!stream) return
     void cancelOpenRouterStream(stream.requestId)
+    // Placeholder vazio removido = a linha de tempos não tem o que mostrar;
+    // com texto já no balão, a resposta fica marcada como interrompida.
+    const conv = conversationsRef.current.find((c) => c.id === stream.convId)
+    const lastMsg = conv?.messages[conv.messages.length - 1]
+    const placeholderRemoved = !!lastMsg && lastMsg.id === stream.assistantId && lastMsg.content === ''
+    if (placeholderRemoved) {
+      setChatTimings((prev) => {
+        if (!(stream.assistantId in prev)) return prev
+        const next = { ...prev }
+        delete next[stream.assistantId]
+        return next
+      })
+    } else {
+      patchTimings(stream.assistantId, {
+        totalMs: Date.now() - (turnStartedAtRef.current.get(stream.assistantId) ?? Date.now()),
+        interrupted: true,
+      })
+    }
     updateMessages(stream.convId, (msgs) => {
       const last = msgs[msgs.length - 1]
       if (last && last.id === stream.assistantId && last.content === '') {
@@ -3449,7 +3721,7 @@ export function useChat(
     })
     activeStreamRef.current = null
     setIsStreaming(false)
-  }, [updateMessages])
+  }, [updateMessages, patchTimings])
 
   // Registro desta instância em `mountedChats`. Antes de apagar ou fundir uma
   // pasta, para o turno em andamento numa conversa dela (antes do stream
@@ -3506,6 +3778,7 @@ export function useChat(
     webSearchActive,
     ragSearching,
     ragTraces,
+    chatTimings,
     thinkingEnabled,
     toggleThinking: () => setThinkingEnabled((v) => !v),
     error,

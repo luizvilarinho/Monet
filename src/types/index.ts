@@ -39,7 +39,10 @@ export interface Note {
 }
 
 // Nota sem o conteúdo (listas e títulos de notas linkadas).
-export type NoteSummary = Pick<Note, 'id' | 'notebookId' | 'title' | 'date' | 'createdAt' | 'updatedAt'>
+export type NoteSummary = Pick<
+  Note,
+  'id' | 'notebookId' | 'title' | 'date' | 'createdAt' | 'updatedAt' | 'archivedAt'
+>
 
 // Id de um status do registro `task_statuses`: built-ins (todo/doing/done/
 // dropped) ou custom (`st_<id>`).

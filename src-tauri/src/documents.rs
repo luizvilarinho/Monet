@@ -2477,6 +2477,7 @@ pub async fn notes_index_upsert(
     title: String,
     file_text: String,
     note_date: Option<String>,
+    archived: Option<String>,
 ) -> Result<String, String> {
     let safe_nb = safe_path_component(&notebook_id)?;
     let safe_note = safe_path_component(&note_id)?;
@@ -2561,7 +2562,12 @@ pub async fn notes_index_upsert(
         "" => "Untitled".to_string(),
         t => t.to_string(),
     };
-    let meta = crate::rag::note_meta(&source_name, &folder_name, note_date.as_deref());
+    let meta = crate::rag::note_meta(
+        &source_name,
+        &folder_name,
+        note_date.as_deref(),
+        archived.as_deref(),
+    );
 
     // Sem mudança só com o mesmo conteúdo, o mesmo caderno e o índice na
     // versão atual com os mesmos metadados. Mover entre cadernos reembute,
@@ -2910,7 +2916,7 @@ mod tests {
         assert_eq!(chunks[2].section.as_deref(), Some("Setup"));
 
         // A seção igual ao título sai do cabeçalho.
-        let meta = crate::rag::note_meta("Guide", "Notes — Docs", None);
+        let meta = crate::rag::note_meta("Guide", "Notes — Docs", None, None);
         let prepared = prepare_chunks(&meta, &segments);
         assert_eq!(prepared[0].0.section, None);
         assert_eq!(prepared[0].1, "[Guide · note · Notes — Docs · p. 1]");
@@ -2950,7 +2956,7 @@ mod tests {
     }
 
     fn index_doc(conn: &mut Connection, doc: &str, texts: &[&str]) {
-        let meta = crate::rag::note_meta(doc, "Notes — Test", None);
+        let meta = crate::rag::note_meta(doc, "Notes — Test", None, None);
         let segments: Vec<(String, Option<u32>)> =
             texts.iter().map(|t| (t.to_string(), None)).collect();
         let chunks: Vec<(ChunkPiece, String)> = segments

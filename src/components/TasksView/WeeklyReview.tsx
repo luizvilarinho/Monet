@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import {
   addDaysKey,
+  byTodosId,
   compareTasks,
   computeTaskSummary,
   endOfWeekKey,
@@ -129,13 +130,21 @@ export function WeeklyReview({
 
   function buildMarkdown(): string {
     const lines = [`## Weekly review — ${weekLabel}`, '', `Done: ${done.length} · Slipped: ${slipped.length}`]
-    if (done.length > 0) lines.push('', '### Done', ...done.map((t) => `- ${t.title}`))
+    if (done.length > 0) {
+      lines.push('', '### Done')
+      for (const group of groupsOf(done)) {
+        if (group.label !== null) lines.push(`#### ${group.label}`)
+        lines.push(...group.tasks.map((t) => `- ${t.title}`))
+      }
+    }
     if (slipped.length > 0) {
-      lines.push(
-        '',
-        '### Slipped',
-        ...slipped.map((t) => `- ${t.title}${t.rescheduleCount > 0 ? ` (↻${t.rescheduleCount})` : ''}`)
-      )
+      lines.push('', '### Slipped')
+      for (const group of groupsOf(slipped)) {
+        if (group.label !== null) lines.push(`#### ${group.label}`)
+        lines.push(
+          ...group.tasks.map((t) => `- ${t.title}${t.rescheduleCount > 0 ? ` (↻${t.rescheduleCount})` : ''}`)
+        )
+      }
     }
     if (reflection.trim()) lines.push('', '### Reflection', reflection.trim())
     return lines.join('\n')
@@ -158,6 +167,55 @@ export function WeeklyReview({
         onSelect={() => onOpenTask(t)}
         onToggle={(isDone) => onToggleTask(t.id, isDone)}
       />
+    )
+  }
+
+  // TODOS por título (alfabético) com o "sem TODOS" no fim, como na lista.
+  // Sem nenhuma TODOS na lista: um grupo só, sem título (label null).
+  function groupsOf(list: Task[]) {
+    const groups = [...byTodosId(list, todosById).entries()]
+    const flat = groups.length === 1 && groups[0][0] === null
+    return groups.map(([id, group]) => ({
+      id,
+      label: flat ? null : id ? todosById.get(id)?.title.trim() || 'Untitled' : 'No TODOS',
+      tasks: group,
+    }))
+  }
+
+  function renderGrouped(
+    list: Task[],
+    emptyText: string,
+    renderRow: (t: Task) => ReactNode = (t) => <div key={t.id}>{renderLine(t)}</div>
+  ) {
+    if (list.length === 0) return <span className={styles.empty}>{emptyText}</span>
+    return (
+      <>
+        {groupsOf(list).map((group) => (
+          <div key={group.id ?? ''} className={styles.group}>
+            {group.label !== null && (
+              <h4 className={styles.groupTitle}>
+                {group.label} <span className={styles.count}>{group.tasks.length}</span>
+              </h4>
+            )}
+            {group.tasks.map((t) => renderRow(t))}
+          </div>
+        ))}
+      </>
+    )
+  }
+
+  function renderSelectRow(t: Task) {
+    return (
+      <div key={t.id} className={styles.selectRow}>
+        <input
+          type="checkbox"
+          className={styles.selectBox}
+          checked={selected.has(t.id)}
+          onChange={() => toggleSelected(t.id)}
+          aria-label={`select "${t.title}"`}
+        />
+        <div className={styles.selectLine}>{renderLine(t)}</div>
+      </div>
     )
   }
 
@@ -186,67 +244,44 @@ export function WeeklyReview({
           <h3 className={styles.sectionTitle}>
             Done this week <span className={styles.count}>{done.length}</span>
           </h3>
-          {done.length === 0 ? (
-            <span className={styles.empty}>Nothing done yet this week.</span>
-          ) : (
-            done.map((t) => <div key={t.id}>{renderLine(t)}</div>)
-          )}
+          {renderGrouped(done, 'Nothing done yet this week.')}
         </div>
 
         <div className={styles.section}>
           <h3 className={styles.sectionTitle}>
             Slipped <span className={styles.count}>{slipped.length}</span>
           </h3>
-          {slipped.length === 0 ? (
-            <span className={styles.empty}>Nothing slipped.</span>
-          ) : (
-            slipped.map((t) => <div key={t.id}>{renderLine(t)}</div>)
-          )}
+          {renderGrouped(slipped, 'Nothing slipped.')}
         </div>
 
         <div className={styles.section}>
           <h3 className={styles.sectionTitle}>
             Still open this week <span className={styles.count}>{stillOpen.length}</span>
           </h3>
-          {stillOpen.length === 0 ? (
-            <span className={styles.empty}>No pending tasks for this week.</span>
-          ) : (
-            <>
-              <div className={styles.actions}>
-                <label className={styles.selectAll}>
-                  <input
-                    type="checkbox"
-                    checked={selectedOpen.length === stillOpen.length}
-                    onChange={(e) =>
-                      setSelected(e.target.checked ? new Set(stillOpen.map((t) => t.id)) : new Set())
-                    }
-                  />
-                  Select all
-                </label>
-                <button
-                  type="button"
-                  className={styles.button}
-                  disabled={selectedOpen.length === 0}
-                  onClick={moveToNextMonday}
-                  title={`Set the do date to ${formatDueShort(nextMonday)} (deadline unchanged)`}
-                >
-                  Move to next Monday{selectedOpen.length > 0 ? ` (${selectedOpen.length})` : ''}
-                </button>
-              </div>
-              {stillOpen.map((t) => (
-                <div key={t.id} className={styles.selectRow}>
-                  <input
-                    type="checkbox"
-                    className={styles.selectBox}
-                    checked={selected.has(t.id)}
-                    onChange={() => toggleSelected(t.id)}
-                    aria-label={`select "${t.title}"`}
-                  />
-                  <div className={styles.selectLine}>{renderLine(t)}</div>
-                </div>
-              ))}
-            </>
+          {stillOpen.length > 0 && (
+            <div className={styles.actions}>
+              <label className={styles.selectAll}>
+                <input
+                  type="checkbox"
+                  checked={selectedOpen.length === stillOpen.length}
+                  onChange={(e) =>
+                    setSelected(e.target.checked ? new Set(stillOpen.map((t) => t.id)) : new Set())
+                  }
+                />
+                Select all
+              </label>
+              <button
+                type="button"
+                className={styles.button}
+                disabled={selectedOpen.length === 0}
+                onClick={moveToNextMonday}
+                title={`Set the do date to ${formatDueShort(nextMonday)} (deadline unchanged)`}
+              >
+                Move to next Monday{selectedOpen.length > 0 ? ` (${selectedOpen.length})` : ''}
+              </button>
+            </div>
           )}
+          {renderGrouped(stillOpen, 'No pending tasks for this week.', renderSelectRow)}
         </div>
 
         <div className={styles.section}>

@@ -23,7 +23,7 @@ export function TodosPanel({ progress, outside, statuses, onOpenTask, onInsert, 
   return (
     <div className={styles.panel}>
       <div className={`${styles.summary} ${tone}`}>
-        <span className={styles.label}>TODOS</span>
+        <span className={styles.label}>Tasks</span>
         <span>
           {done}/{total}
         </span>

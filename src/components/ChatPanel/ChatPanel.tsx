@@ -34,6 +34,9 @@ export interface ChatPanelProps {
   tasks: Task[]
   todayKey: string
   taskChecklist: Map<string, ChecklistProgress>
+  // Cadernos com a indexação de IA desligada: títulos deles não entram nas
+  // tools (query_tasks).
+  disabledNotebookIds: Set<string>
 }
 
 export function ChatPanel({
@@ -50,9 +53,15 @@ export function ChatPanel({
   tasks,
   todayKey,
   taskChecklist,
+  disabledNotebookIds,
 }: ChatPanelProps) {
   const { statuses } = useTasksEnv()
-  const resolveNoteTitle = (noteId: string) => notes.find((n) => n.id === noteId)?.title
+  const resolveNoteTitle = (noteId: string) => {
+    const note = notes.find((n) => n.id === noteId)
+    if (!note) return undefined
+    if (note.notebookId && disabledNotebookIds.has(note.notebookId)) return undefined
+    return note.title
+  }
   const isNoteArchived = (noteId: string) => !!notes.find((n) => n.id === noteId)?.archivedAt
   const tasksSnapshotRef = useRef<TasksSnapshot>({
     tasks,
@@ -89,6 +98,7 @@ export function ChatPanel({
     webSearchActive,
     ragSearching,
     ragTraces,
+    chatTimings,
     thinkingEnabled,
     toggleThinking,
     error,
@@ -253,7 +263,7 @@ export function ChatPanel({
                 onSaveToNote={(content) =>
                   setSaveTarget({ messageId: m.id, content })
                 }
-                footer={<MessageSources message={m} trace={ragTraces[m.id]} />}
+                footer={<MessageSources message={m} trace={ragTraces[m.id]} timings={chatTimings[m.id]} />}
               />
             ))
           )}

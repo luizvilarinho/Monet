@@ -370,6 +370,7 @@ export function ChatComposer({
             onToggleFolderWebResearch={(v) => activeFolder && setFolderWebResearchEnabled(activeFolder.id, v)}
             tasksTool={{ supported: selectedModel?.supportsTools ?? false }}
             dailyNotesTool={{ supported: selectedModel?.supportsTools ?? false }}
+            notesTool={{ supported: selectedModel?.supportsTools ?? false }}
           />
           {isStreaming ? (
             <button

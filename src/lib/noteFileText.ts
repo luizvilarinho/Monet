@@ -173,6 +173,11 @@ function collectIds(content: string, re: RegExp): string[] {
   return Array.from(content.matchAll(re), (m) => m[1]).filter(Boolean)
 }
 
+// Ids das notas linkadas citadas no conteúdo (o título delas vem do índice).
+export function collectLinkedNoteIds(content: string): string[] {
+  return collectIds(content, LINKED_NOTE_ID_RE)
+}
+
 // Busca no storage as respostas da IA embutidas nos conteúdos (e nas notas
 // linkadas, 1 nível, quando o resolver vem). Em erro, a IA segue sem elas.
 export async function loadEmbedResponses(

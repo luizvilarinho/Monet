@@ -5,6 +5,7 @@ import {
   useChat,
   type ChatMessage,
   type ChatConversation,
+  type ChatTimings,
   type TasksSnapshot,
   NO_RESPONSE_MESSAGE,
 } from '../../hooks/useChat'
@@ -13,6 +14,7 @@ import { renderMarkdown } from '../../lib/markdown'
 import { notesFolderDocId } from '../../lib/documents'
 import { loadEmbedResponses } from '../../lib/noteFileText'
 import { ocrTextsForContent } from '../../lib/imageOcr'
+import { storage } from '../../storage'
 import type { ChecklistProgress } from '../../lib/tasks'
 import {
   listOpenRouterModels,
@@ -126,6 +128,7 @@ export function NotesChatPanel({
     isStreaming,
     ragSearching,
     ragTraces,
+    chatTimings,
     error,
     send,
     cancel,
@@ -145,8 +148,34 @@ export function NotesChatPanel({
   const [promptOpen, setPromptOpen] = useState(false)
   const [docsOpen, setDocsOpen] = useState(false)
   const [memoryOpen, setMemoryOpen] = useState(false)
+  // Chip do contexto: nota aberta e/ou seleção fora do envio (R8).
+  const [excludedNoteId, setExcludedNoteId] = useState<string | null>(null)
+  const [removedSelection, setRemovedSelection] = useState<string | null>(null)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const { historyRef, atBottom, onScroll, scrollToBottom } = useStickToBottom({ messages, isStreaming, activeId })
+
+  // Trocar de nota zera as remoções do chip.
+  useEffect(() => {
+    setExcludedNoteId(null)
+    setRemovedSelection(null)
+  }, [activeNote?.id])
+
+  // Seleção não re-renderiza o painel: um listener mantém o chip em dia (o
+  // texto, e não só se há seleção, para o "×" remover a seleção atual).
+  const [selection, setSelection] = useState('')
+  useEffect(() => {
+    if (!visible) {
+      setSelection('')
+      return
+    }
+    function update() {
+      setSelection(getSelectionText().trim())
+    }
+    document.addEventListener('selectionchange', update)
+    // Seleção que já existia antes de abrir o painel.
+    update()
+    return () => document.removeEventListener('selectionchange', update)
+  }, [visible, getSelectionText])
 
   const notebookFolder = useMemo(
     () => folders.find((f) => f.id === notebookFolderId) ?? null,
@@ -362,6 +391,9 @@ export function NotesChatPanel({
 
   const selectedModel = models.find((m) => m.id === model)
 
+  const noteIncluded = !!activeNote && excludedNoteId !== activeNote.id
+  const selectionIncluded = !!selection && selection !== removedSelection
+
   async function handleSend() {
     if (!canSend || !notebook) return
     // Idempotente; recria a pasta (e refresca o ref usado pelo fallback do
@@ -372,12 +404,20 @@ export function NotesChatPanel({
     // Contexto montado NO MOMENTO do envio: trocar de nota depois não afeta
     // a resposta em streaming.
     const note = activeNote
-    const selectionText = getSelectionText()
-    const embeds = await loadEmbedResponses(note ? [note.content] : [], resolveNoteContent)
-    const imageTexts = await ocrTextsForContent(note?.content ?? '')
+    // A nota pode ter sido apagada com o painel aberto (R11d): cai fora do
+    // contexto e o chip mostra que ela não vai.
+    const exists = note ? !!(await storage.getNote(note.id)) : false
+    if (note && !exists) setExcludedNoteId(note.id)
+    const attachedNote = note && exists && noteIncluded ? note : null
+    const selectionText = attachedNote && selectionIncluded ? getSelectionText() : ''
+    const embeds = await loadEmbedResponses(
+      attachedNote ? [attachedNote.content] : [],
+      resolveNoteContent
+    )
+    const imageTexts = await ocrTextsForContent(attachedNote?.content ?? '')
     const ephemeralContext = buildNotesContext({
       notebookName: notebook.name,
-      note,
+      note: attachedNote,
       selectionText,
       resolveNoteTitle,
       isNoteArchived,
@@ -392,6 +432,13 @@ export function NotesChatPanel({
     void send(text, undefined, undefined, {
       ephemeralContext,
       excludeNoteId: note?.id ?? null,
+      noteContext: attachedNote
+        ? {
+            noteId: attachedNote.id,
+            noteTitle: attachedNote.title,
+            hadSelection: !!selectionText,
+          }
+        : undefined,
     })
   }
 
@@ -467,6 +514,7 @@ export function NotesChatPanel({
                   }
                   tasksTool={{ supported: selectedModel?.supportsTools ?? false }}
                   dailyNotesTool={{ supported: selectedModel?.supportsTools ?? false }}
+                  notesTool={{ supported: selectedModel?.supportsTools ?? false }}
                 />
               </div>
               <ModelSelector
@@ -539,6 +587,7 @@ export function NotesChatPanel({
                     canInsert={canInsert}
                     onInsert={onInsertIntoNote}
                     trace={ragTraces[m.id]}
+                    timings={chatTimings[m.id]}
                   />
                 ))
               )}
@@ -581,6 +630,56 @@ export function NotesChatPanel({
 
           <div className={styles.composer}>
             {ragSearching && <RagSearchStatus />}
+            {activeNote && (
+              <div className={styles.contextChips}>
+                {noteIncluded ? (
+                  <span className={styles.contextChip}>
+                    <FileText size={11} aria-hidden />
+                    <span className={styles.contextChipText} title={activeNote.title || 'Untitled'}>
+                      {activeNote.title.trim() || 'Untitled'}
+                    </span>
+                    <button
+                      type="button"
+                      className={styles.contextChipBtn}
+                      aria-label="remove note from context"
+                      title="Remove this note from the context"
+                      onClick={() => setExcludedNoteId(activeNote.id)}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ) : (
+                  <span className={styles.contextChip} data-off>
+                    <span className={styles.contextChipText}>Note not included</span>
+                    <button
+                      type="button"
+                      className={styles.contextAdd}
+                      aria-label="add note back to context"
+                      title="Add this note back to the context"
+                      onClick={() => setExcludedNoteId(null)}
+                    >
+                      +
+                    </button>
+                  </span>
+                )}
+                {selectionIncluded && (
+                  <span className={styles.contextChip}>
+                    <span className={styles.contextChipText} title={selection}>
+                      Selection
+                    </span>
+                    <button
+                      type="button"
+                      className={styles.contextChipBtn}
+                      aria-label="remove selection from context"
+                      title="Remove the selection from the context"
+                      onClick={() => setRemovedSelection(selection)}
+                    >
+                      ×
+                    </button>
+                  </span>
+                )}
+              </div>
+            )}
             <textarea
               ref={inputRef}
               className={styles.input}
@@ -658,9 +757,10 @@ interface NotesChatBubbleProps {
   canInsert: boolean
   onInsert: (content: NoteInsert, where: 'cursor' | 'end') => void
   trace?: RagResponse
+  timings?: ChatTimings
 }
 
-function NotesChatBubble({ message, isStreaming, canInsert, onInsert, trace }: NotesChatBubbleProps) {
+function NotesChatBubble({ message, isStreaming, canInsert, onInsert, trace, timings }: NotesChatBubbleProps) {
   const isUser = message.role === 'user'
   const isEmpty = !isUser && message.content.length === 0
   const segments = useMemo(
@@ -669,7 +769,16 @@ function NotesChatBubble({ message, isStreaming, canInsert, onInsert, trace }: N
   )
 
   if (isUser) {
-    return <div className={styles.bubbleUser}>{message.content}</div>
+    return (
+      <div className={styles.bubbleUser}>
+        {message.content}
+        {message.noteTitle && (
+          <span className={styles.fromNote}>
+            From: {message.noteTitle.trim() || 'Untitled'}
+          </span>
+        )}
+      </div>
+    )
   }
 
   if (isEmpty) {
@@ -753,7 +862,7 @@ function NotesChatBubble({ message, isStreaming, canInsert, onInsert, trace }: N
           Append to note
         </button>
       </div>
-      <MessageSources message={message} trace={trace} />
+      <MessageSources message={message} trace={trace} timings={timings} />
     </div>
   )
 }

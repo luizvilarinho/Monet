@@ -1,0 +1,32 @@
+/* Task sem nota-corpo: só as propriedades e o "Add body note" (a nota só nasce
+   no clique). O card do modal já limita altura; aqui rola. */
+.noBody {
+  flex: 1;
+  overflow-y: auto;
+  padding-top: var(--pad-modal);
+}
+
+.noBodyText {
+  margin: 0 var(--pad-content-x);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.noBodyButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-start;
+  margin: var(--space-1) var(--pad-content-x) 0;
+  background: transparent;
+  border: none;
+  padding: var(--space-1) var(--space-1h);
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.noBodyButton:hover {
+  color: var(--accent-task);
+}

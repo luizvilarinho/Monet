@@ -55,6 +55,18 @@
   color: var(--text-secondary);
 }
 
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-cards);
+}
+
+.groupTitle {
+  margin: var(--space-1) 0 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 .empty {
   font-size: 12px;
   color: var(--text-muted);

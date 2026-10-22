@@ -3,7 +3,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { listen } from '@tauri-apps/api/event'
 import { FileText, Brain } from '@phosphor-icons/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { notesFolderDocId } from '../../lib/documents'
+import { notesFolderDocId, notesIndexGetDisabledNotebooks } from '../../lib/documents'
 import {
   useChat,
   ASSISTANT_FOLDER_NAME,
@@ -44,13 +44,19 @@ const ASSISTANT_FOLDER_KEY = 'monet:assistant-folder-id'
 // tasks da main. O checklist vem das notas-corpo das tasks e só é lido quando
 // a tool é chamada (uma consulta por nota-corpo).
 async function loadTasksSnapshot(): Promise<TasksSnapshot> {
-  const [tasks, notebooks, statuses, summaries] = await Promise.all([
+  const [tasks, notebooks, statuses, summaries, disabledIds] = await Promise.all([
     storage.getTasks(),
     storage.getNotebooks(),
     storage.getTaskStatuses(),
     storage.getNoteSummaries(),
+    notesIndexGetDisabledNotebooks(),
   ])
-  const titleById = new Map(summaries.map((n) => [n.id, n.title]))
+  // Cadernos com a indexação de IA desligada não contribuem com títulos para a IA.
+  const disabled = new Set(disabledIds)
+  const titleById = new Map(
+    summaries.filter((n) => !n.notebookId || !disabled.has(n.notebookId)).map((n) => [n.id, n.title])
+  )
+  const archivedById = new Map(summaries.map((n) => [n.id, n.archivedAt ?? null]))
   const checklist = async () => {
     const progressById = new Map<string, ChecklistProgress>()
     await Promise.all(
@@ -70,6 +76,7 @@ async function loadTasksSnapshot(): Promise<TasksSnapshot> {
     checklist,
     statuses,
     resolveNoteTitle: (id) => titleById.get(id),
+    isNoteArchived: (id) => archivedById.get(id) != null,
   }
 }
 
@@ -109,6 +116,7 @@ export function AssistantPanel() {
     webSearchActive,
     ragSearching,
     ragTraces,
+    chatTimings,
     thinkingEnabled,
     toggleThinking,
     error,
@@ -381,7 +389,7 @@ export function AssistantPanel() {
                 message={m}
                 isStreaming={m.id === streamingMessageId}
                 onSaveToNote={(content) => void openSaveToNote(content)}
-                footer={<MessageSources message={m} trace={ragTraces[m.id]} />}
+                footer={<MessageSources message={m} trace={ragTraces[m.id]} timings={chatTimings[m.id]} />}
               />
             ))
           )}

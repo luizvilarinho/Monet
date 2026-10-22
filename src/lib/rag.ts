@@ -44,6 +44,13 @@ export interface RagCandidate {
   finalScore: number | null
 }
 
+export interface RagTimings {
+  rewriteMs: number
+  embeddingMs: number
+  searchMs: number
+  rerankMs: number
+}
+
 export interface RagResponse {
   originalQuery: string
   rewrittenQuery: string | null
@@ -54,6 +61,7 @@ export interface RagResponse {
   nothingRelevant: boolean
   candidates: RagCandidate[]
   selected: RagCandidate[]
+  timings: RagTimings
 }
 
 // Filtros da tool `search_knowledge_base` (vazio = sem filtro).

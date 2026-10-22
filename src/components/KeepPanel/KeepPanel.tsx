@@ -61,7 +61,7 @@ export function KeepPanel() {
   const noteRef = useRef<Note | null>(null)
   noteRef.current = note
   const todayKey = useToday()
-  const { tasks, tasksById, updateTask, reload: reloadTasks } = useTasks()
+  const { tasks, tasksById, updateTaskFresh, reload: reloadTasks } = useTasks()
   // Registro de status (SQLite) para o bloco `/tasks` mostrar nomes/cores custom.
   const { statuses } = useTaskStatuses()
   // Notas TODOS: título no chip das tasks do bloco `/tasks`; abrir vai para a main.
@@ -299,9 +299,9 @@ export function KeepPanel() {
     if (!editor) return
     const storage = editor.storage as unknown as { taskStatus: TaskStatusStorage }
     storage.taskStatus.onToggleLinked = (id, checked) => {
-      void updateTask(id, { status: checked ? 'done' : 'todo' })
+      void updateTaskFresh(id, { status: checked ? 'done' : 'todo' })
     }
-  }, [editor, updateTask])
+  }, [editor, updateTaskFresh])
 
   function handleTimePickerConfirm(time: string) {
     setTimePickerPos(null)
@@ -333,16 +333,16 @@ export function KeepPanel() {
       todayKey,
       notebooks,
       onToggleTask: (id: string, done: boolean) => {
-        void updateTask(id, { status: done ? 'done' : 'todo' })
+        void updateTaskFresh(id, { status: done ? 'done' : 'todo' })
       },
       statuses,
       onSetStatus: (id: string, status: string) => {
-        void updateTask(id, { status })
+        void updateTaskFresh(id, { status })
       },
       todosTitle: (noteId: string) => todosById.get(noteId)?.title,
       currentNoteId: note?.id ?? null,
     }),
-    [tasksById, todayKey, notebooks, updateTask, statuses, todosById, note?.id]
+    [tasksById, todayKey, notebooks, updateTaskFresh, statuses, todosById, note?.id]
   )
   const headerDate = note?.title ?? formatCalendarTitle(new Date())
   const headerWeekday = getWeekdayName(parseCalendarTitle(headerDate) ?? new Date())
@@ -415,7 +415,7 @@ export function KeepPanel() {
         tasks={tasks}
         todayKey={todayKey}
         onToggleTaskDone={(id, done) => {
-          void updateTask(id, { status: done ? 'done' : 'todo' })
+          void updateTaskFresh(id, { status: done ? 'done' : 'todo' })
         }}
         onOpenTask={(taskId) => {
           void invoke('open_task_in_main', { taskId })

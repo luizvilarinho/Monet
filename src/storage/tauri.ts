@@ -818,7 +818,7 @@ export class TauriStorage implements StorageAdapter {
   async getNoteSummaries(): Promise<NoteSummary[]> {
     const db = await this.db()
     const rows = await db.select<Array<Omit<NoteRow, 'content' | 'tags' | 'subject_id'>>>(
-      'SELECT id, notebook_id, title, date, created_at, updated_at FROM notes ORDER BY updated_at DESC'
+      'SELECT id, notebook_id, title, date, created_at, updated_at, archived_at FROM notes ORDER BY updated_at DESC'
     )
     return rows.map((r) => ({
       id: r.id,
@@ -827,6 +827,7 @@ export class TauriStorage implements StorageAdapter {
       date: r.date ?? null,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
+      archivedAt: r.archived_at ?? null,
     }))
   }
 

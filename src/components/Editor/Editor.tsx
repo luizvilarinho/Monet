@@ -79,6 +79,8 @@ export interface EditorProps {
   isCalendarNote?: boolean
   disableSlashCommands?: boolean
   previewMode?: boolean
+  // Modo focus: o corpo usa a largura disponível.
+  focusMode?: boolean
   // "Ask AI" na toolbar de seleção (chat do caderno).
   onAskAi?: (text: string) => void
   // Expõe a instância do Tiptap ao App (inserir resposta do chat na nota);
@@ -163,6 +165,7 @@ export function Editor({
   isCalendarNote = false,
   disableSlashCommands,
   previewMode = false,
+  focusMode = false,
   onAskAi,
   onEditorReady,
   taskStatuses,
@@ -607,13 +610,17 @@ export function Editor({
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.key === 'f') {
+        // Dois editores convivem (modal da task sobre a nota): o Ctrl+F é do
+        // editor (ou do modal) que está com o foco.
+        const owner = document.activeElement?.closest('.ProseMirror, [aria-modal="true"]')
+        if (owner && editor && !owner.contains(editor.view.dom)) return
         e.preventDefault()
         setSearchVisible(v => !v)
       }
     }
     document.addEventListener('keydown', handler, true)
     return () => document.removeEventListener('keydown', handler, true)
-  }, [])
+  }, [editor])
 
   useEffect(() => {
     if (!editor) return
@@ -824,7 +831,7 @@ export function Editor({
   const weekdayLabel = calendarDate ? getWeekdayName(calendarDate) : null
 
   return (
-    <div className={styles.editor}>
+    <div className={`${styles.editor} ${focusMode ? styles.focus : ''}`}>
       {notebookName && (
         <span className={styles.notebookLabel}>
           {notebookName}{subjectName ? ` | ${subjectName}` : ''}

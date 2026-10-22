@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Brain, CalendarBlank, Globe, ListChecks, ListMagnifyingGlass } from '@phosphor-icons/react'
+import { Brain, CalendarBlank, FileText, Globe, ListChecks, ListMagnifyingGlass } from '@phosphor-icons/react'
 import type { ChatTools } from '../../hooks/useChat'
 import { useRagDetailed } from '../../hooks/useRagDetailed'
 import styles from './ChatToolsMenu.module.css'
@@ -48,6 +48,8 @@ export interface ChatToolsMenuProps {
   tasksTool?: { supported: boolean } | null
   // Tool "Daily notes" (get_day, notes_by_date); `supported` = o modelo aceita tools.
   dailyNotesTool?: { supported: boolean } | null
+  // Tool "Notes" (get_note); `supported` = o modelo aceita tools.
+  notesTool?: { supported: boolean } | null
 }
 
 export function ChatToolsMenu({
@@ -60,6 +62,7 @@ export function ChatToolsMenu({
   onToggleFolderWebResearch = () => {},
   tasksTool = null,
   dailyNotesTool = null,
+  notesTool = null,
 }: ChatToolsMenuProps) {
   const [open, setOpen] = useState(false)
   const [ragDetailed, setRagDetailed] = useRagDetailed()
@@ -80,7 +83,8 @@ export function ChatToolsMenu({
     (folderMemory?.enabled ? 1 : 0) +
     (folderWebResearch?.enabled ? 1 : 0) +
     (tasksTool && tools.tasks ? 1 : 0) +
-    (dailyNotesTool && tools.dailyNotes ? 1 : 0)
+    (dailyNotesTool && tools.dailyNotes ? 1 : 0) +
+    (notesTool && tools.notes ? 1 : 0)
 
   return (
     <div className={styles.wrap} ref={wrapRef}>
@@ -194,6 +198,33 @@ export function ChatToolsMenu({
                 </button>
               </div>
             )}
+            {notesTool && (
+              <div
+                className={styles.toolRow}
+                title={notesTool.supported ? undefined : 'This model does not support tools'}
+              >
+                <span className={styles.toolIcon}>
+                  <FileText size={16} />
+                </span>
+                <div className={styles.toolText}>
+                  <span className={styles.toolName}>Notes</span>
+                  <span className={styles.toolDescription}>
+                    Lets the AI look up a note by title when you name one: metadata, its tasks if it is a TODOS, and an excerpt.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={tools.notes}
+                  aria-label="toggle notes"
+                  disabled={!notesTool.supported}
+                  className={tools.notes ? styles.toggleOn : styles.toggleOff}
+                  onClick={() => onToggle('notes', !tools.notes)}
+                >
+                  <span className={styles.toggleKnob} aria-hidden="true" />
+                </button>
+              </div>
+            )}
             {folderMemory && (
               <div className={styles.toolRow}>
                 <span className={styles.toolIcon}>
@@ -247,7 +278,7 @@ export function ChatToolsMenu({
               <div className={styles.toolText}>
                 <span className={styles.toolName}>Retrieval details</span>
                 <span className={styles.toolDescription}>
-                  Shows how the knowledge base search picked each answer&apos;s sources: queries, scores and the excerpts sent. Applies to new answers.
+                  Shows how the knowledge base search picked each answer&apos;s sources (queries, scores and the excerpts sent) and how long each step took. Applies to new answers.
                 </span>
               </div>
               <button

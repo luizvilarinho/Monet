@@ -31,6 +31,27 @@ button.open:hover {
   background: var(--surface-3);
 }
 
+/* Abre o popover de campos do card (só na nota TODOS): mesmo visual do `.open`. */
+.edit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: var(--space-0);
+  padding: var(--space-0);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  vertical-align: middle;
+  font: inherit;
+  cursor: pointer;
+}
+
+.edit:hover {
+  color: var(--accent-task);
+  background: var(--surface-3);
+}
+
 .props {
   display: inline-flex;
   align-items: center;
@@ -110,6 +131,67 @@ button.open:hover {
 .closed .pill {
   color: var(--text-muted);
   border-color: var(--border);
+}
+
+/* Propriedades custom embaixo do card, depois de uma divisória, em pares
+   nome/valor (o mesmo desenho do TaskCard). Só aparecem no card do Editor
+   (`.monetTaskMeta` em Editor.module.css, que dá posição e altura). */
+.meta {
+  display: none;
+  grid-template-columns: auto 1fr;
+  grid-auto-rows: 16px;
+  column-gap: var(--space-3);
+  box-sizing: border-box;
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--hair);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.metaKey {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-muted);
+}
+
+.metaValue {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+}
+
+/* "+N more": abre o popover de campos na nota TODOS. */
+.metaMore {
+  grid-column: 1 / -1;
+  justify-self: start;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+}
+
+button.metaMore {
+  cursor: pointer;
+}
+
+button.metaMore:hover {
+  color: var(--accent-task);
+}
+
+/* Popover dos campos do card: em portal, posicionado a partir do lápis. */
+.popover {
+  position: fixed;
+  z-index: 1000;
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
 }
 
 .menu {

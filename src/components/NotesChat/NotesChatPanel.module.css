@@ -181,6 +181,14 @@
   color: var(--text-primary, #ddddf1);
 }
 
+/* Nota em que a mensagem foi escrita (R8). */
+.fromNote {
+  display: block;
+  margin-top: var(--space-0);
+  color: var(--text-muted, #7c7c93);
+  font-size: 11px;
+}
+
 .assistantBlock {
   align-self: flex-start;
   max-width: 100%;
@@ -342,6 +350,59 @@
   font-size: 12px;
   padding: 0 12px 8px;
   flex-shrink: 0;
+}
+
+/* ─── Chips do contexto enviado (nota aberta + seleção) ─────────────────── */
+.contextChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-bottom: var(--space-1h);
+}
+
+.contextChip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 100%;
+  padding: var(--space-0) var(--space-1);
+  border: 1px solid var(--border, #333340);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary, #a0a0b8);
+  font-size: 11px;
+  line-height: var(--lh-ui);
+}
+
+/* Nota removida do contexto: chip apagado, com o "+" para restaurar. */
+.contextChip[data-off] {
+  color: var(--text-muted, #7c7c93);
+  border-style: dashed;
+}
+
+.contextChipText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contextChipBtn,
+.contextAdd {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: inherit;
+  padding: 0;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.contextChipBtn:hover,
+.contextAdd:hover {
+  color: var(--text-primary, #ddddf1);
 }
 
 .composer {
