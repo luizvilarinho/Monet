@@ -11,6 +11,7 @@ import {
   type ButtonDef,
 } from './formattingActions'
 import { findEligibleTaskItems } from './TaskStatus'
+import { HighlightPicker } from './HighlightPicker'
 
 interface Props {
   editor: Editor
@@ -61,6 +62,7 @@ function renderGroups(
             isActive(editor, id) ? styles.active : '',
             cls === 'bold' ? styles.bold : '',
             cls === 'italic' ? styles.italic : '',
+            cls === 'strike' ? styles.strike : '',
           ].join(' ')}
           title={title}
           onMouseDown={(e) => {
@@ -171,9 +173,15 @@ export function FormattingToolbar({ editor, scrollEl, onAskAi, onAddToTasks }: P
         {hasSelection && renderGroups(editor, formattingGroups, 'fmt')}
         {inTable && hasSelection && <div className={styles.sep} />}
         {inTable && renderGroups(editor, TABLE_GROUPS, 'tbl')}
-        {hasSelection && (onAskAi || showAddToTasks) && (
+        {hasSelection && (
           <div className={styles.group}>
             <div className={styles.sep} />
+            <HighlightPicker
+              editor={editor}
+              className={styles.btn}
+              activeClassName={styles.active}
+            />
+            {(onAskAi || showAddToTasks) && <div className={styles.sep} />}
             {showAddToTasks && (
               <button
                 className={`${styles.btn} ${styles.addTask}`}

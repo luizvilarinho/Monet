@@ -1,13 +1,15 @@
 import type { Editor } from '@tiptap/core'
+import { DEFAULT_HIGHLIGHT_ID, highlightById } from '../../lib/highlight'
 
 export type FormatId =
   | 'h1' | 'h2' | 'h3'
-  | 'bold' | 'italic'
+  | 'bold' | 'italic' | 'strike'
   | 'ul' | 'ol' | 'todo' | 'toggle'
   | 'blockquote' | 'code' | 'codeBlock' | 'link' | 'hr' | 'table' | 'image'
   | 'colBefore' | 'colAfter' | 'delCol'
   | 'rowBefore' | 'rowAfter' | 'delRow'
   | 'delTable'
+  | 'highlight'
 
 export type ButtonDef = { id: FormatId; label: string; title: string; cls?: string }
 
@@ -20,6 +22,7 @@ export const FORMATTING_GROUPS: ButtonDef[][] = [
   [
     { id: 'bold', label: 'B', title: 'Bold (Ctrl+B)', cls: 'bold' },
     { id: 'italic', label: 'I', title: 'Italic (Ctrl+I)', cls: 'italic' },
+    { id: 'strike', label: 'S', title: 'Strikethrough', cls: 'strike' },
   ],
   [
     { id: 'ul', label: '≡', title: 'List' },
@@ -61,6 +64,7 @@ export function isActive(editor: Editor, id: FormatId): boolean {
     case 'h3': return editor.isActive('heading', { level: 3 })
     case 'bold': return editor.isActive('bold')
     case 'italic': return editor.isActive('italic')
+    case 'strike': return editor.isActive('strike')
     case 'ul': return editor.isActive('bulletList')
     case 'ol': return editor.isActive('orderedList')
     case 'todo': return editor.isActive('taskList')
@@ -80,6 +84,7 @@ export function isActive(editor: Editor, id: FormatId): boolean {
     case 'delRow':
     case 'delTable':
       return false
+    case 'highlight': return editor.isActive('highlight')
   }
 }
 
@@ -100,6 +105,7 @@ export function runAction(editor: Editor, id: FormatId) {
     case 'h3': chain.toggleHeading({ level: 3 }).run(); return
     case 'bold': chain.toggleBold().run(); return
     case 'italic': chain.toggleItalic().run(); return
+    case 'strike': chain.toggleStrike().run(); return
     case 'ul': chain.toggleBulletList().run(); return
     case 'ol': chain.toggleOrderedList().run(); return
     case 'todo': chain.toggleTaskList().run(); return
@@ -162,7 +168,29 @@ export function runAction(editor: Editor, id: FormatId) {
     case 'rowAfter': chain.addRowAfter().run(); return
     case 'delRow': chain.deleteRow().run(); return
     case 'delTable': chain.deleteTable().run(); return
+    case 'highlight': toggleHighlight(editor); return
   }
+}
+
+/**
+ * Aplica ou remove o destaque com cor (R1).
+ *
+ * - Sem destaque na seleção → aplica com a cor escolhida.
+ * - Com a MESMA cor → remove o destaque.
+ * - Com outra cor → troca a cor (o setMark substitui o mark do mesmo tipo,
+ *   então o destaque não empilha).
+ */
+export function toggleHighlight(editor: Editor, colorId?: string) {
+  const color = highlightById(colorId ?? DEFAULT_HIGHLIGHT_ID) ?? highlightById(DEFAULT_HIGHLIGHT_ID)
+  if (!color) return
+  const chain = editor.chain().focus()
+  const attrs = editor.getAttributes('highlight')
+  const current = typeof attrs.color === 'string' ? attrs.color.trim().toUpperCase() : null
+  if (editor.isActive('highlight') && current === color.hex.toUpperCase()) {
+    chain.unsetMark('highlight').run()
+    return
+  }
+  chain.setMark('highlight', { color: color.hex }).run()
 }
 
 /**
@@ -282,8 +310,10 @@ export function insertNewFormattedLine(editor: Editor, id: FormatId) {
     // usuário digita o conteúdo e o mark pode ser aplicado depois.
     case 'bold':
     case 'italic':
+    case 'strike':
     case 'code':
-    case 'link': {
+    case 'link':
+    case 'highlight': {
       chain.createParagraphNear().run()
       return
     }

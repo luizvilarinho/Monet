@@ -1,0 +1,45 @@
+.popover {
+  position: fixed;
+  z-index: 400;
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  background: var(--surface-1, #1e1e22);
+  border: 1px solid var(--border, #333340);
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  user-select: none;
+}
+
+.swatch {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 4px;
+  border: 1px solid rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+}
+
+.swatch:hover {
+  outline: 2px solid var(--accent, #7c6af5);
+  outline-offset: 1px;
+}
+
+.current {
+  outline: 2px solid var(--accent, #7c6af5);
+  outline-offset: 1px;
+}
+
+.icon {
+  line-height: 1;
+}
+
+/* Ponto com a cor do destaque ativo, no canto do botão. */
+.dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 3px;
+  border-radius: 50%;
+  vertical-align: middle;
+}

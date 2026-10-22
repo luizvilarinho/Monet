@@ -47,6 +47,7 @@ import {
 import { SearchInNote } from './SearchInNote'
 import { BlockGutter } from './BlockGutter'
 import { BlockHandle } from './BlockHandle'
+import { HighlightPicker } from './HighlightPicker'
 import { getCommandSuggestions } from './commandParser'
 import { findCommand } from '../../lib/commands'
 import type {
@@ -1052,6 +1053,7 @@ export function Editor({
                     contextMenuStyles.btn,
                     cls === 'bold' ? contextMenuStyles.bold : '',
                     cls === 'italic' ? contextMenuStyles.italic : '',
+                    cls === 'strike' ? contextMenuStyles.strike : '',
                   ].join(' ')}
                   title={title}
                   onMouseDown={() => {
@@ -1066,6 +1068,19 @@ export function Editor({
               ))}
             </div>
           ))}
+          <div className={contextMenuStyles.sep} />
+          {/* Destaque com cor (R1): abre a paleta e aplica na posição do cursor. */}
+          {editor && (
+            <div className={contextMenuStyles.group}>
+              <HighlightPicker
+                editor={editor as TiptapEditor}
+                className={contextMenuStyles.btn}
+                activeClassName={contextMenuStyles.active}
+                prepare={(ed) => insertNewFormattedLine(ed, 'highlight')}
+                onPick={() => setContextMenuPos(null)}
+              />
+            </div>
+          )}
         </div>
       )}
       {relatedContent}

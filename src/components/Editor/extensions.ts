@@ -20,6 +20,7 @@ import { TaskRef } from './TaskRef'
 import { TaskStatus } from './TaskStatus'
 import { MonetClipboard } from './MonetClipboard'
 import { isBlankParagraph } from './blankParagraph'
+import { HighlightMark } from './HighlightMark'
 
 // Custom inline-code mark — força serialização com um único backtick
 // (defaultMarkdownSerializer.marks.code usa `backticksFor` que adiciona mais
@@ -103,6 +104,9 @@ export function buildBaseExtensions(placeholder: string): AnyExtension[] {
       paragraph: false,
     }),
     InlineCode,
+    // Mark de destaque com cor (R1) — precisa entrar no conjunto base para
+    // que o editor principal e a janela keep gravem o mesmo markdown.
+    HighlightMark,
     ParagraphWithBlankLines,
     TaskList,
     LinkedTaskItem.configure({ nested: true }),

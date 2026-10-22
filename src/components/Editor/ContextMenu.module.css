@@ -55,3 +55,12 @@
 .btn.italic {
   font-style: italic;
 }
+
+.btn.strike {
+  text-decoration: line-through;
+}
+
+.btn.active {
+  background: rgba(124, 106, 245, 0.16);
+  color: var(--accent, #7c6af5);
+}
