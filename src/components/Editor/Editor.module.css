@@ -7,6 +7,8 @@
   min-width: 0;
   overflow: hidden;
   background: var(--bg-app, #0e0e10);
+  /* Eixo das barras que vivem dentro do editor (barra de propriedades). */
+  --pad-bar-x: var(--pad-editor-body);
 }
 
 .notebookLabel {
@@ -14,7 +16,7 @@
   /* Eixo único: rótulo, título, tags e corpo começam em --pad-content-x.
      --editor-pad-top pode ser sobrescrito por quem embute o Editor
      (ex.: coluna estreita do Reader). */
-  padding: var(--editor-pad-top, var(--space-8)) var(--pad-content-x) 0;
+  padding: var(--editor-pad-top, var(--space-8)) var(--pad-content-x) 0 var(--pad-editor-body);
   font-size: 12px;
   font-weight: 500;
   color: rgba(124, 106, 245, 0.6);
@@ -33,7 +35,7 @@
   color: var(--text-primary, #e8e8f0);
   border: none;
   outline: none;
-  padding: var(--space-2) var(--pad-content-x) var(--space-3);
+  padding: var(--space-2) var(--pad-content-x) var(--space-3) var(--pad-editor-body);
   font-size: 24px;
   font-weight: 600;
   letter-spacing: -0.01em;
@@ -72,7 +74,7 @@
   gap: var(--space-1h);
   /* 28px entre as tags e o corpo (12 aqui + 16 no topo do corpo), com a
      borda no meio: fronteira cabeçalho → conteúdo. */
-  padding: 0 var(--pad-content-x) var(--space-3);
+  padding: 0 var(--pad-content-x) var(--space-3) var(--pad-editor-body);
   border-bottom: 1px solid var(--border, #333340);
 }
 
@@ -204,7 +206,7 @@
   min-height: 100%;
   /* Esquerda no eixo do cabeçalho; 72px à direita reservam a faixa do
      HeadingNavigator; 50vh embaixo deixam rolar a última linha até o meio. */
-  padding: var(--space-4) 72px 50vh var(--pad-content-x);
+  padding: var(--space-4) 72px 50vh var(--pad-editor-body);
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   font-size: 14px;
   line-height: var(--lh-body);
@@ -330,7 +332,7 @@
 }
 .proseEditor :global(ul) { list-style: disc; }
 .proseEditor :global(ol) { list-style: decimal; }
-.proseEditor :global(li) { margin: 0.15em 0; }
+.proseEditor :global(li) { margin: 0.15em 0; position: relative; }
 .proseEditor :global(li > p) { margin: 0; }
 
 /* TaskList / TaskItem */
@@ -502,39 +504,24 @@
   margin-left: -12px;
 }
 
-/* Handle de arrastar — aparece à esquerda da linha do /comando executado */
-.proseEditor :global(.monetCmdDragHandle) {
-  position: absolute;
-  left: -22px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 16px;
-  height: 20px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: grab;
-  color: var(--text-muted, #606070);
-  font-size: 12px;
-  line-height: 1;
-  letter-spacing: -1px;
-  user-select: none;
-  opacity: 0;
-  transition: opacity 0.15s ease, color 0.15s ease;
-}
-.proseEditor :global(p.monetCmdExecuted:hover .monetCmdDragHandle) {
-  opacity: 0.55;
-}
-.proseEditor :global(.monetCmdDragHandle:hover) {
-  opacity: 1;
-  color: var(--text-primary, #e8e8f0);
-}
-.proseEditor :global(.monetCmdDragHandle:active) {
-  cursor: grabbing;
+/* Blocos com handle: o handle é posicionado em relação a eles. A lista entra
+   só como contexto — quem recebe handle é o item. */
+.proseEditor > :global(p),
+.proseEditor > :global(h1),
+.proseEditor > :global(h2),
+.proseEditor > :global(h3),
+.proseEditor > :global(blockquote),
+.proseEditor > :global(pre),
+.proseEditor > :global(hr),
+.proseEditor > :global(ul),
+.proseEditor > :global(ol),
+.proseEditor > :global(table) {
+  position: relative;
 }
 
-/* Handle de arrastar para TODO items */
-.proseEditor :global(.monetTaskDragHandle) {
+/* Handle genérico de bloco — aparece à esquerda da linha no hover do bloco.
+   Arrasta o bloco; clique arma a lixeira; segundo clique apaga. */
+.proseEditor :global(.monetBlockHandle) {
   position: absolute;
   left: -22px;
   top: 50%;
@@ -553,15 +540,57 @@
   opacity: 0;
   transition: opacity 0.15s ease, color 0.15s ease;
 }
-.proseEditor :global(ul[data-type="taskList"] li:hover .monetTaskDragHandle) {
+.proseEditor :global(.monetBlockHandle::before) {
+  content: '⋮⋮';
+}
+.proseEditor :global(p:hover .monetBlockHandle),
+.proseEditor :global(h1:hover .monetBlockHandle),
+.proseEditor :global(h2:hover .monetBlockHandle),
+.proseEditor :global(h3:hover .monetBlockHandle),
+.proseEditor :global(blockquote:hover .monetBlockHandle),
+.proseEditor :global(pre:hover .monetBlockHandle),
+.proseEditor :global(li:hover .monetBlockHandle) {
   opacity: 0.55;
 }
-.proseEditor :global(.monetTaskDragHandle:hover) {
+.proseEditor :global(.monetBlockHandle:hover) {
   opacity: 1;
   color: var(--text-primary, #e8e8f0);
 }
-.proseEditor :global(.monetTaskDragHandle:active) {
+.proseEditor :global(.monetBlockHandle:active) {
   cursor: grabbing;
+}
+/* Armado: o glifo vira lixeira no mesmo lugar (mesmo elemento, só o ::before). */
+.proseEditor :global(.monetBlockHandle.is-armed) {
+  cursor: pointer;
+  color: #ff8b8b;
+}
+.proseEditor :global(.monetBlockHandle.is-armed::before) {
+  content: '🗑';
+  letter-spacing: 0;
+}
+
+/* Handle em item de lista: ancora pela borda esquerda da LISTA (mesma
+   convenção do "+" do gutter), para não cobrir o marcador do item. A lista
+   simples recua 1.4em (o padding do `ul`); o checklist não recua nada. */
+.proseEditor :global(li .monetBlockHandle) {
+  left: calc(-1.4em - 22px);
+}
+.proseEditor :global(ul[data-type="taskList"] li .monetBlockHandle) {
+  left: -22px;
+}
+
+/* Bloco sem conteúdo (hr, imagem, tabela, toggle): o widget não cabe dentro do
+   nó, então fica antes dele — flutuado na margem esquerda. O hover vem do
+   irmão seguinte (o próprio bloco), não do handle. */
+.proseEditor :global(.monetBlockHandle.is-float) {
+  position: static;
+  float: left;
+  margin-left: -22px;
+  top: auto;
+  transform: none;
+}
+.proseEditor :global(.monetBlockHandle.is-float:has(+ :hover)) {
+  opacity: 0.55;
 }
 
 /* "+" do gutter flutuante (BlockGutter): linha abaixo, Shift = acima */

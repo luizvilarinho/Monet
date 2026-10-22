@@ -46,6 +46,7 @@ import {
 } from './TaskStatus'
 import { SearchInNote } from './SearchInNote'
 import { BlockGutter } from './BlockGutter'
+import { BlockHandle } from './BlockHandle'
 import { getCommandSuggestions } from './commandParser'
 import { findCommand } from '../../lib/commands'
 import type {
@@ -78,6 +79,8 @@ export interface EditorProps {
   onNavigateToNote?: (noteId: string) => void
   isCalendarNote?: boolean
   disableSlashCommands?: boolean
+  // Sem o handle genérico de bloco (⋮⋮) nas linhas do editor.
+  disableBlockHandles?: boolean
   previewMode?: boolean
   // Modo focus: o corpo usa a largura disponível.
   focusMode?: boolean
@@ -164,6 +167,7 @@ export function Editor({
   onNavigateToNote,
   isCalendarNote = false,
   disableSlashCommands,
+  disableBlockHandles = false,
   previewMode = false,
   focusMode = false,
   onAskAi,
@@ -219,6 +223,8 @@ export function Editor({
   isCalendarNoteRef.current = isCalendarNote
   const disableSlashCommandsRef = useRef(disableSlashCommands)
   disableSlashCommandsRef.current = disableSlashCommands
+  const disableBlockHandlesRef = useRef(disableBlockHandles)
+  disableBlockHandlesRef.current = disableBlockHandles
   const previewModeRef = useRef(previewMode)
   previewModeRef.current = previewMode
   const onEditorReadyRef = useRef(onEditorReady)
@@ -239,6 +245,17 @@ export function Editor({
         : [
             CommandExtension.configure({
               getResponses: () => responsesRef.current,
+              onRemoveResponse: (id) => {
+                onRemoveResponseRef.current?.(id)
+              },
+            }),
+          ]),
+      // Handle genérico de bloco (⋮⋮). Fora de buildBaseExtensions de
+      // propósito: a janela Keep não recebe.
+      ...(disableBlockHandles || previewMode
+        ? []
+        : [
+            BlockHandle.configure({
               onRemoveResponse: (id) => {
                 onRemoveResponseRef.current?.(id)
               },
@@ -929,7 +946,12 @@ export function Editor({
               <EditorContent editor={editor} />
             </EditorResponsesProvider>
           </EditorNotesProvider>
-          <BlockGutter editor={editor} scrollEl={scrollEl} disabled={previewMode} />
+          <BlockGutter
+            editor={editor}
+            scrollEl={scrollEl}
+            disabled={previewMode}
+            blockHandles={!disableBlockHandlesRef.current}
+          />
         </div>
         <HeadingNavigator
           content={value}

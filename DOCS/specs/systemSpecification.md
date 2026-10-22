@@ -23,7 +23,7 @@ A IA é silenciosa por padrão e só age quando chamada. Isso diferencia o produ
 | --------------- | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | Desktop shell   | **Tauri 2** (Rust)                                                                  | Bundle leve ~10MB, gera `.msix` para Microsoft Store                   |
 | UI              | **React 18** + TypeScript                                                           | Componentização, reutilizável no webapp futuro                         |
-| Editor          | **CodeMirror 6**                                                                    | Markdown em tempo real, extensível para parser de `/comandos`          |
+| Editor          | **Tiptap 3** (ProseMirror)                                                          | Markdown em tempo real, extensível para parser de `/comandos`          |
 | Estilo          | **CSS Modules** + variáveis CSS                                                     | Sem framework CSS, tema escuro nativo                                  |
 | Banco local     | **SQLite** via `tauri-plugin-sql` (`monet.db`) + `rusqlite` direto (`monet-vec.db`) | Notas/cadernos no plugin, vetores em arquivo separado com `sqlite-vec` |
 | RAG             | **OpenRouter** (`google/gemini-embedding-2-preview`, 768 dim) + **`sqlite-vec`**    | Embeddings via API; KNN local em SQLite virtual table `vec0`           |
@@ -56,7 +56,7 @@ monet/
 │   │
 │   ├── components/
 │   │   ├── Editor/
-│   │   │   ├── Editor.tsx      # CodeMirror 6 wrapper
+│   │   │   ├── Editor.tsx      # Editor Tiptap 3 / ProseMirror
 │   │   │   ├── commandParser.ts # Parser de /comandos
 │   │   │   └── Editor.module.css
 │   │   ├── Sidebar/

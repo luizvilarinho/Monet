@@ -282,6 +282,7 @@ export function ReaderNotesPanel({
                 value={activeNote.content}
                 onChange={(content) => handleUpdateActive({ content })}
                 disableSlashCommands
+                disableBlockHandles
               />
             ) : (
               <p className={styles.empty}>

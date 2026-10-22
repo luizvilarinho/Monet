@@ -125,7 +125,10 @@
   flex-direction: column;
   overflow: hidden;
   /* Coluna estreita: o eixo do Editor (40px na tela de notas) cai para a
-     borda de painel lateral, e o topo do cabeçalho da nota encolhe junto. */
+     borda de painel lateral, e o topo do cabeçalho da nota encolhe junto.
+     O painel de notas não ganha handle, então o eixo do corpo também
+     acompanha o do painel. */
   --pad-content-x: var(--pad-panel);
+  --pad-editor-body: var(--pad-content-x);
   --editor-pad-top: var(--space-4);
 }

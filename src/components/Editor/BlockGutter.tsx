@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { Plus } from '@phosphor-icons/react'
 import type { Editor as TiptapEditor } from '@tiptap/core'
-import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
-import { TextSelection, type EditorState } from '@tiptap/pm/state'
+import { TextSelection } from '@tiptap/pm/state'
 import { isPotentialCommandLine } from './commandParser'
+import { resolveBlockUnit } from './blockUnit'
+import type { BlockUnit } from './blockUnit'
 import styles from './Editor.module.css'
 
 // "+" flutuante à esquerda do bloco sob o mouse: clique insere uma linha
@@ -14,11 +15,8 @@ interface BlockGutterProps {
   editor: TiptapEditor | null
   scrollEl: HTMLDivElement | null
   disabled: boolean
-}
-
-interface BlockUnit {
-  pos: number
-  node: ProseMirrorNode
+  // Há handle em toda linha: o "+" precisa ficar ao lado dele, não em cima.
+  blockHandles: boolean
 }
 
 interface GutterState {
@@ -33,39 +31,6 @@ const GUTTER_OFFSET = 22
 const BESIDE_HANDLE_OFFSET = 40
 // Mouse além disso acima/abaixo do bloco (ex.: o respiro no fim da nota) esconde.
 const VERTICAL_SLACK = 16
-const ITEM_TYPES = new Set(['taskItem', 'listItem'])
-
-// Unidade de bloco do ponto: item de lista/checklist; tabela inteira; filho
-// direto do toggle (ou o toggle, sobre o cabeçalho); senão o bloco de topo.
-// Nó atômico (embed, /tasks, nota linkada, imagem) cai como o próprio nó.
-// A cadeia vem dos ancestrais de `pos`: o `inside` é o elemento sob o ponto
-// (padding de `ul`/toggle) e só vale para nó atômico ou cabeçalho do toggle.
-function resolveBlockUnit(state: EditorState, pos: number, inside: number, onToggleHeader: boolean): BlockUnit | null {
-  const { doc } = state
-  const chain: BlockUnit[] = []
-  const insideNode = inside >= 0 ? doc.nodeAt(inside) : null
-  if (insideNode && (insideNode.isAtom || (insideNode.type.name === 'toggleBlock' && onToggleHeader))) {
-    const $inside = doc.resolve(inside)
-    for (let d = 1; d <= $inside.depth; d++) chain.push({ pos: $inside.before(d), node: $inside.node(d) })
-    chain.push({ pos: inside, node: insideNode })
-  } else {
-    const $pos = doc.resolve(pos)
-    if ($pos.depth >= 1) {
-      for (let d = 1; d <= $pos.depth; d++) chain.push({ pos: $pos.before(d), node: $pos.node(d) })
-    } else if ($pos.nodeAfter) chain.push({ pos, node: $pos.nodeAfter })
-    else if ($pos.nodeBefore) chain.push({ pos: pos - $pos.nodeBefore.nodeSize, node: $pos.nodeBefore })
-  }
-  if (chain.length === 0) return null
-  const table = chain.find((u) => u.node.type.name === 'table')
-  if (table) return table
-  for (let i = chain.length - 1; i >= 0; i--) {
-    if (ITEM_TYPES.has(chain[i].node.type.name)) return chain[i]
-  }
-  for (let i = chain.length - 1; i >= 0; i--) {
-    if (chain[i].node.type.name === 'toggleBlock') return chain[i + 1] ?? chain[i]
-  }
-  return chain[0]
-}
 
 // Topo do "+" centralizado na 1ª linha do bloco (blocos sem texto: no topo).
 function firstLineTop(editor: TiptapEditor, unit: BlockUnit, rect: DOMRect): number {
@@ -84,6 +49,7 @@ function computeGutter(
   scrollEl: HTMLDivElement,
   clientX: number,
   clientY: number,
+  blockHandles: boolean,
 ): GutterState | null {
   const { view } = editor
   // Nó atômico (imagem, embed) na borda esquerda do conteúdo vale como está;
@@ -105,7 +71,7 @@ function computeGutter(
     const r = content?.getBoundingClientRect()
     onToggleHeader = !r || r.height === 0 || clientY < r.top
   }
-  const unit = resolveBlockUnit(view.state, coords.pos, coords.inside, onToggleHeader)
+  const unit = resolveBlockUnit(view.state.doc, coords.pos, coords.inside, onToggleHeader)
   if (!unit) return null
   const { doc } = view.state
   // Parágrafo vazio final: o Enter já cobre.
@@ -124,7 +90,7 @@ function computeGutter(
   // Item de lista: alinha pela lista, para não cobrir o marcador do item.
   const anchorLeft =
     type === 'listItem' && dom.parentElement ? dom.parentElement.getBoundingClientRect().left : rect.left
-  const besideHandle = type === 'taskItem' || dom.classList.contains('monetCmdExecuted')
+  const besideHandle = blockHandles || type === 'taskItem' || dom.classList.contains('monetCmdExecuted')
   const hostRect = scrollEl.getBoundingClientRect()
   const left = anchorLeft - hostRect.left - (besideHandle ? BESIDE_HANDLE_OFFSET : GUTTER_OFFSET)
   // O `.body` corta o que passa da borda esquerda: sem ⋮⋮ encosta em 0; ao
@@ -171,7 +137,7 @@ function insertAround(editor: TiptapEditor, unit: BlockUnit, where: 'above' | 'b
   view.focus()
 }
 
-export function BlockGutter({ editor, scrollEl, disabled }: BlockGutterProps) {
+export function BlockGutter({ editor, scrollEl, disabled, blockHandles }: BlockGutterProps) {
   const [gutter, setGutter] = useState<GutterState | null>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
 
@@ -191,7 +157,7 @@ export function BlockGutter({ editor, scrollEl, disabled }: BlockGutterProps) {
         hide()
         return
       }
-      const next = computeGutter(editor, scrollEl, e.clientX, e.clientY)
+      const next = computeGutter(editor, scrollEl, e.clientX, e.clientY, blockHandles)
       setGutter((prev) => (sameGutter(prev, next) ? prev : next))
     }
     const onMove = (e: MouseEvent) => {
@@ -218,7 +184,7 @@ export function BlockGutter({ editor, scrollEl, disabled }: BlockGutterProps) {
       editor.off('transaction', onTransaction)
       hide()
     }
-  }, [editor, scrollEl, disabled])
+  }, [editor, scrollEl, disabled, blockHandles])
 
   if (!editor || !gutter) return null
 

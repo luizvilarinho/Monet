@@ -38,6 +38,10 @@
   /* Semânticos (o que os componentes devem usar primeiro) */
   --pad-panel: var(--space-4);        /* NotebookList, Sidebar, Calendar, ChatSidebar */
   --pad-content-x: var(--space-10);   /* Editor (título, tags, corpo, barra de propriedades) */
+  /* Eixo do corpo do editor: 56px = handle (22px) + "+" do gutter (16px) + folga.
+     Independe de --pad-content-x: o painel de notas do Reader sobrepõe os dois
+     (16px) e não ganha handle. */
+  --pad-editor-body: calc(var(--space-10) + var(--space-4));
   --pad-modal: var(--space-6);
   --gap-section: var(--space-6);
   --gap-cards: var(--space-3);
