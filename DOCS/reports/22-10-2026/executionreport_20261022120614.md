@@ -178,3 +178,41 @@
   - **Duas listas no `NoteTypesModal`**: tipos e propriedades têm `DndContext` separados (dois `DndContext` na mesma tela), como pede o plano.
   - Git: branch `feat/melhorias-caderno`, sem trailer de co-autoria, autor e committer = o usuário.
 - Next step: revisão do Coordenador; depois a rodada de `codereviewAgent`.
+
+### CodeAgent — revisão das Etapas 3 e 4 — 20261022150000
+- Summary: revisão do parcial deixado pela rodada cancelada e das Etapas 3 (R1) e 4 (R2) do Plan Report. **A revisão não achou defeito no código das Etapas 3 e 4** — o wiring do picker, do mark e do botão de riscado está completo e correto. A entrega desta rodada foi a **verificação em execução** do round-trip (que a rodada anterior não tinha feito) e o registro do achado de concorrência abaixo.
+- Inputs:
+  - `DOCS/reports/22-10-2026/planreport_20261022132806.md` (Etapa 3: linhas 322–408; Etapa 4: linhas 412–459)
+  - `DOCS/reports/22-10-2026/taskreport_20261022113934.md`, `explorerreport_20261022121907.md`, `executionreport_20261022120614.md`
+- O que foi recuperado do parcial (rodada cancelada) — já estava no disco, sem commit, e foi conferido item a item:
+  - `src/lib/highlight.ts` (novo): paleta de 5 cores (`#FFEB3B` yellow, `#A5D6A7` green, `#90CAF9` blue, `#F48FB1` pink, `#CE93D8` purple), `DEFAULT_HIGHLIGHT_ID`, `highlightById`, `highlightByHex`, `DEFAULT_HIGHLIGHT_HEX`. **Completo.**
+  - `src/components/Editor/HighlightMark.ts` (novo): mark `highlight` com atributo `color`, `parseHTML` = `span[data-bg]`, `renderHTML` = `['span', { 'data-bg': <hex>, style: 'background-color:<hex>' }, 0]`, `markdown.serialize` próprio (só `data-bg`). **Completo.**
+  - `src/components/Editor/HighlightPicker.tsx` + `.module.css` (novos): botão 🖍 + popover com as 5 amostras por portal no `document.body`. **Completo.**
+  - `extensions.ts` (`HighlightMark` em `buildBaseExtensions`), `formattingActions.ts` (`FormatId`/`isActive`/`runAction`/`insertNewFormattedLine` + `toggleHighlight`), `FormattingToolbar.tsx` (picker na barra flutuante) e `Editor.tsx` (picker no menu de contexto, com `prepare`/`onPick`). **Completo** — a ligação que ficou pela metade (menu de contexto) está certa: `prepare` → `insertNewFormattedLine(ed, 'highlight')`, `onPick` → `setContextMenuPos(null)`.
+- Verificação em execução (fora do app, com o `tiptap-markdown` e o `markdown-it` instalados em `node_modules`):
+  - **API do `tiptap-markdown` confirmada nesta versão** (0.9.0): o `addStorage().markdown.serialize` com `open`/`close` é a via correta — `MarkdownSerializer.serializeMark()` lê `extension.storage.markdown.serialize` e o `MarkdownSerializerState` chama `info.open(state, mark, parent, index)`. O `HTMLMark` (que serializaria o `renderHTML` inteiro, `style` incluso) **não** é usado pelo mark `highlight`.
+  - **Markdown gerado**: `<span data-bg="#FFEB3B">texto</span>` (outra cor: `<span data-bg="#90CAF9">texto</span>`). A string do markdown **não contém "style"** — o `style` do `renderHTML` é só apresentação e não vaza.
+  - **DOM do editor** (`renderHTML`): `['span', {'data-bg':'#FFEB3B','style':'background-color:#FFEB3B'}, 0]` → a cor aparece dentro do editor. Nenhuma regra de CSS do editor sobrescreve o `background-color` do `span` (o `Editor.module.css` só tem `:global(em)`, `:global(s)`, `:global(a)` etc. — nenhuma regra de `span`).
+  - **Volta da cor**: a regra de parse do mark é `[{ tag: 'span[data-bg]' }]` e o `getAttrs` devolve `{"color":"#FFEB3B"}` (sem `data-bg`, cai no default `#FFEB3B`).
+  - **Abertura da nota**: o `markdown-it` com `html: true` devolve `<p><span data-bg="#FFEB3B">texto</span></p>` — o HTML inline chega ao editor, que reconstrói a cor pela regra de parse.
+  - **Mesma cor / outra cor**: no nível do ProseMirror, `setMark` com outra cor **substitui** (fica um mark só, `["highlight:#90CAF9"]` — não empilha) e `unsetMark` remove. O `toggleHighlight` (`formattingActions.ts:183-194`) compara a cor atual antes de aplicar, então a mesma cor remove e outra cor troca.
+  - **Fora do editor**: `renderMarkdown` e `renderNoteContent` (sem alteração — decisão do Coordenador) devolvem `<p>antes texto depois</p>`: o texto passa inteiro, sem cor e sem `style` no HTML.
+  - **`strike`**: o mark já está no schema (StarterKit 3.23.4) e o round-trip sai como `~~texto~~` (o `tiptap-markdown` traz o spec de `strike`).
+- Etapa 4 (R2) — conferida no código: `'strike'` no `FormatId`, em `isActive` (`editor.isActive('strike')`), em `runAction` (`chain.toggleStrike()`), em `insertNewFormattedLine` (caso dos marks inline) e o botão `{ id: 'strike', label: 'S', title: 'Strikethrough', cls: 'strike' }` no grupo de `bold`/`italic`; `.btn.strike { text-decoration: line-through; }` nas duas superfícies; `cls === 'strike'` treatment no bubble e no menu de contexto. O CSS `s { line-through }` do editor já existia (`Editor.module.css:277-280`).
+- Checks (rodados nesta sessão, com a árvore no estado atual):
+  - `npx tsc --noEmit` → **passou** (exit 0).
+  - `npm run build` → **passou** (exit 0, `✓ built in 7.87s`).
+  - `cargo check` (em `src-tauri`) → **passou** (exit 0).
+  - `cargo test` (em `src-tauri`) → **passou** (exit 0; 30 passed, 0 failed, 3 ignored).
+  - O repositório **não tem suíte de testes de frontend nem lint** — nada a rodar além do `tsc`/build.
+- Files changed:
+  - `DOCS/reports/22-10-2026/executionreport_20261022120614.md` (esta sessão)
+- Files created: nenhum (os scripts de verificação foram temporários e removidos)
+- Files removed: nenhum
+- Desvios e decisões que o Coordenador precisa saber:
+  - **A rodada "cancelada" não estava parada.** Ela continuou rodando **em paralelo** com esta sessão (mesma working tree, mesma branch) e implementou e commitou as Etapas 3 a 6 por conta própria (`0715266` = Etapas 3 e 4, `28bfca7` = Etapas 5 e 6, `0fb5496` = registro). Quando esta sessão começou a escrever, os arquivos da Etapa 3 já estavam commitados e a Etapa 5 já estava em andamento — por isso esta rodada virou **revisão + verificação**, sem alteração de código. Nenhum arquivo do escopo de outro agente foi tocado.
+  - **`insertNewFormattedLine` e o `strike`**: o explorer havia anotado que o `strike` "não precisa de caso" em `insertNewFormattedLine`; o Plan Report (fonte da verdade) manda entrar no caso dos marks inline, e é o que está no código. Na prática a diferença é pequena (`createParagraphNear` só age fora de texto inline), mas sem o caso o botão do menu de contexto cairia no `default: return` e ficaria inerte quando o cursor está numa posição de bloco.
+  - **Cor no DOM do editor**: o `renderHTML` mantém o `style="background-color:…"` (como manda o plano) — a cor gravada e a que volta do parse saem sempre do `data-bg`, e o markdown nunca leva `style`. Já sinalizado na sessão anterior; se a leitura da decisão 3 for literal ("nenhum `style` no código"), a troca é uma linha em `HighlightMark.ts:35`.
+  - **Corpo do commit `0715266` truncado**: a mensagem termina em `... gravado no markdown como <span data-bg="` (cortada no meio). Não é funcional, mas é ruído na história — se quiser, dá para reescrever com `git rebase`/`commit --amend` (fora do escopo desta sessão).
+  - **`renderNoteContent` e HTML de bloco**: HTML cru de nível de bloco (ex.: `<div data-type="toggleBlock">`) é descartado por esse pipeline — **comportamento pré-existente**, não ligado ao destaque (o `span` é HTML inline e passa). Não foi alterado (`src/lib/markdown.ts` fora do escopo, por decisão do Coordenador).
+- Git: branch `feat/melhorias-caderno`. Esta sessão **não alterou código** — o commit das Etapas 3 e 4 já existia (`0715266 feat: destaque com cor e texto riscado no editor`, autor e committer = o usuário, sem trailer de co-autoria). O único commit desta sessão é o registro deste relatório.
