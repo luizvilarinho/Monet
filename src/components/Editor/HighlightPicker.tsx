@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
+import { HighlighterCircle } from '@phosphor-icons/react'
 import type { Editor } from '@tiptap/core'
 import { HIGHLIGHT_COLORS, highlightByHex } from '../../lib/highlight'
 import { toggleHighlight } from './formattingActions'
@@ -111,11 +112,13 @@ export function HighlightPicker({
         }}
         type="button"
       >
-        <span className={styles.icon} aria-hidden="true">
-          🖍
-        </span>
+        <HighlighterCircle size={15} aria-hidden="true" />
         {activeColor && (
-          <span className={styles.dot} style={{ background: activeColor.hex }} aria-hidden="true" />
+          <span
+            className={styles.dot}
+            style={{ '--hl': activeColor.hex } as CSSProperties}
+            aria-hidden="true"
+          />
         )}
       </button>
       {open &&
@@ -126,7 +129,8 @@ export function HighlightPicker({
               <button
                 key={color.id}
                 className={[styles.swatch, activeColor?.id === color.id ? styles.current : ''].join(' ')}
-                style={{ background: color.hex }}
+                // A amostra mostra a tinta como ela fica no texto (App.css).
+                style={{ '--hl': color.hex } as CSSProperties}
                 title={color.name}
                 aria-label={color.name}
                 onMouseDown={(e) => {

@@ -3,8 +3,9 @@
 // cards, `renderNoteContent`) mostram o texto inteiro, mas sem cor.
 //
 // A paleta é a mesma do leitor de livros (`src/components/Reader/Reader.tsx`)
-// com uma cor a mais (roxo). A UI do projeto é em inglês, então os nomes
-// acessíveis dos swatches também são.
+// com uma cor a mais (roxo). O hex é a identidade da cor (é o que fica gravado);
+// na tela ele vira tinta translúcida (regra `span[data-bg]` em App.css). A UI
+// do projeto é em inglês, então os nomes acessíveis dos swatches também são.
 
 export interface HighlightColor {
   /** Identificador estável da cor (usado pela UI e pelo botão ativo). */

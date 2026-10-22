@@ -83,6 +83,17 @@
 html, body, #root { height: 100%; margin: 0; overflow: hidden; }
 body { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif; }
 
+/* Destaque de texto (mark `highlight`, src/lib/highlight.ts): a cor gravada
+   chega como `--hl` e vira tinta translúcida; o texto mantém a cor do tema.
+   Global para valer em todo editor Tiptap (principal, Reader, modal de task,
+   janela Keep). */
+.ProseMirror span[data-bg] {
+  background-color: color-mix(in srgb, var(--hl, #ffeb3b) 34%, transparent);
+  border-radius: 3px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
 .app {
   display: flex;
   flex-direction: column;

@@ -5,7 +5,6 @@ import type { EditorState, Transaction } from '@tiptap/pm/state'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { EditorView } from '@tiptap/pm/view'
 import { getCommandLineStatus, isPotentialCommandLine, parseCommandLine } from './commandParser'
-import { ITEM_TYPES } from './blockUnit'
 import type { AiResponse } from '../../types'
 
 export type CommandPersistedStatus = 'executed' | 'invalid' | 'incomplete'
@@ -272,63 +271,6 @@ function deleteCommandLine(
     tr = tr.delete(paragraphPos, paragraphEnd)
   }
   view.dispatch(tr)
-}
-
-export function computeDropTarget(view: EditorView, clientX: number, clientY: number): number | null {
-  const dropResult = view.posAtCoords({ left: clientX, top: clientY })
-  if (!dropResult) return null
-  const $drop = view.state.doc.resolve(dropResult.pos)
-  if ($drop.depth === 0) return dropResult.pos
-  const blockStart = $drop.before(1)
-  const blockEnd = $drop.after(1)
-  const blockDom = view.nodeDOM(blockStart)
-  if (blockDom instanceof HTMLElement) {
-    const rect = blockDom.getBoundingClientRect()
-    return clientY < rect.top + rect.height / 2 ? blockStart : blockEnd
-  }
-  return blockStart
-}
-
-/**
- * Computes a drop target position within a list for item reordering.
- * Returns a position between list items (before or after an item),
- * clamped within [listPos+1, listEnd-1].
- */
-export function computeListDropTarget(
-  view: EditorView,
-  clientX: number,
-  clientY: number,
-  listPos: number,
-  listEnd: number
-): number | null {
-  const dropResult = view.posAtCoords({ left: clientX, top: clientY })
-  if (!dropResult) return null
-
-  const doc = view.state.doc
-  const $drop = doc.resolve(dropResult.pos)
-
-  // Walk up to find a list item ancestor or direct child of the list
-  for (let d = $drop.depth; d >= 1; d--) {
-    const node = $drop.node(d)
-    if (ITEM_TYPES.has(node.type.name)) {
-      const itemPos = $drop.before(d)
-      // Only accept items that belong to our list
-      if (itemPos < listPos || itemPos >= listEnd) break
-      const itemDom = view.nodeDOM(itemPos)
-      if (itemDom instanceof HTMLElement) {
-        const rect = itemDom.getBoundingClientRect()
-        // Drop before or after this item based on cursor vertical position
-        return clientY < rect.top + rect.height / 2
-          ? itemPos
-          : itemPos + node.nodeSize
-      }
-      return itemPos
-    }
-  }
-
-  // Fallback: clamp raw position to inside the list
-  const clamped = Math.max(listPos + 1, Math.min(dropResult.pos, listEnd - 1))
-  return clamped
 }
 
 function makeButtonsWidget(

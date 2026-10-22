@@ -1,6 +1,7 @@
+/* Acima do modal da task (z-index 1000): a popover vai por portal ao body. */
 .popover {
   position: fixed;
-  z-index: 400;
+  z-index: 1100;
   display: flex;
   gap: 6px;
   padding: 6px;
@@ -11,12 +12,14 @@
   user-select: none;
 }
 
+/* Mesma tinta do texto destacado (App.css), com borda na cor cheia. */
 .swatch {
   width: 20px;
   height: 20px;
   padding: 0;
   border-radius: 4px;
-  border: 1px solid rgba(0, 0, 0, 0.35);
+  border: 1px solid color-mix(in srgb, var(--hl) 70%, transparent);
+  background: color-mix(in srgb, var(--hl) 34%, transparent);
   cursor: pointer;
 }
 
@@ -30,10 +33,6 @@
   outline-offset: 1px;
 }
 
-.icon {
-  line-height: 1;
-}
-
 /* Ponto com a cor do destaque ativo, no canto do botão. */
 .dot {
   display: inline-block;
@@ -42,4 +41,5 @@
   margin-left: 3px;
   border-radius: 50%;
   vertical-align: middle;
+  background: var(--hl);
 }

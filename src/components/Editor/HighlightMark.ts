@@ -11,8 +11,10 @@ import { DEFAULT_HIGHLIGHT_HEX } from '../../lib/highlight'
 // bater com a paleta) e `style` abriria risco de CSS inline nas superfícies
 // que renderizam markdown.
 //
-// O `style` que aparece no DOM do editor é só apresentação — ele não é lido
-// de volta (o parse usa o `data-bg`) e não vai para o markdown.
+// No DOM do editor a cor entra como `--hl` (só apresentação: não é lida de
+// volta — o parse usa o `data-bg` — e não vai para o markdown). A regra em
+// App.css transforma `--hl` numa tinta translúcida e o texto mantém a cor do
+// tema: fundo sólido claro com texto claro ficava ilegível no tema escuro.
 export const HighlightMark = Mark.create({
   name: 'highlight',
 
@@ -32,7 +34,7 @@ export const HighlightMark = Mark.create({
 
   renderHTML({ mark }: { mark: ProseMirrorMark }) {
     const color = typeof mark.attrs.color === 'string' ? mark.attrs.color : DEFAULT_HIGHLIGHT_HEX
-    return ['span', { 'data-bg': color, style: `background-color:${color}` }, 0]
+    return ['span', { 'data-bg': color, style: `--hl:${color}` }, 0]
   },
 
   addStorage() {

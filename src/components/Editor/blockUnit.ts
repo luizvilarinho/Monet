@@ -11,9 +11,8 @@ export interface BlockUnit {
   node: ProseMirrorNode
 }
 
-// Itens de lista (simples e de checklist) e os contêineres que os agrupam.
+// Itens de lista (simples e de checklist).
 export const ITEM_TYPES = new Set(['taskItem', 'listItem'])
-export const LIST_TYPES = new Set(['bulletList', 'orderedList', 'taskList'])
 
 export function resolveBlockUnit(
   doc: ProseMirrorNode,
@@ -46,40 +45,22 @@ export function resolveBlockUnit(
   return chain[0]
 }
 
-// Resolve a unidade a partir do início de um bloco (posição antes do nó), e
-// não de um ponto solto: em `pos` a cadeia de ancestrais de um item seria a
-// LISTA, não o item — por isso o item resolve a partir de `pos + 1`.
-export function resolveBlockUnitAt(doc: ProseMirrorNode, pos: number): BlockUnit | null {
-  const nodeAfter = doc.resolve(pos).nodeAfter
-  if (nodeAfter && ITEM_TYPES.has(nodeAfter.type.name)) {
-    return resolveBlockUnit(doc, pos + 1, -1, false)
-  }
-  return resolveBlockUnit(doc, pos, -1, false)
+export function isCommandLine(node: ProseMirrorNode | null | undefined): boolean {
+  return node?.type.name === 'paragraph' && isPotentialCommandLine(node.textContent)
 }
 
-// Intervalo da unidade de movimento/delete. A linha de um /comando é o
-// parágrafo + o embedBlock da resposta: os dois andam e apagam juntos.
+// Intervalo da unidade de movimento/delete. A linha de um /comando e o
+// embedBlock da resposta logo abaixo são um par indivisível — partindo de
+// qualquer um dos dois.
 export function blockRange(doc: ProseMirrorNode, unit: BlockUnit): { from: number; to: number } {
+  let from = unit.pos
   let to = unit.pos + unit.node.nodeSize
-  if (unit.node.type.name === 'paragraph' && isPotentialCommandLine(unit.node.textContent)) {
+  if (isCommandLine(unit.node)) {
     const next = doc.nodeAt(to)
     if (next?.type.name === 'embedBlock') to += next.nodeSize
+  } else if (unit.node.type.name === 'embedBlock') {
+    const prev = doc.resolve(from).nodeBefore
+    if (prev && isCommandLine(prev)) from -= prev.nodeSize
   }
-  return { from: unit.pos, to }
-}
-
-// A lista (bulletList/orderedList/taskList) que contém o item em `itemPos`.
-export function findListRange(
-  doc: ProseMirrorNode,
-  itemPos: number
-): { listPos: number; listEnd: number } | null {
-  const $pos = doc.resolve(itemPos)
-  for (let d = $pos.depth; d >= 1; d--) {
-    const node = $pos.node(d)
-    if (LIST_TYPES.has(node.type.name)) {
-      const listPos = $pos.before(d)
-      return { listPos, listEnd: listPos + node.nodeSize }
-    }
-  }
-  return null
+  return { from, to }
 }

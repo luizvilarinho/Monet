@@ -115,7 +115,9 @@ export function useMetadataDefs(opts?: { onRemoved?: (id: string) => void }) {
       // Lista inconsistente (prop apagada no meio do arrasto): não grava nada.
       if (ordered.length !== siblings.length) return
       const byId = new Map(ordered.map((d) => [d.id, d]))
-      setDefs((list) => list.map((d) => byId.get(d.id) ?? d))
+      // Reordena o array também: o modal e os controles de task leem na ordem
+      // do array, e esta janela não recarrega com o próprio evento.
+      setDefs((list) => list.map((d) => byId.get(d.id) ?? d).sort((a, b) => a.sortOrder - b.sortOrder))
       await persist(async () => {
         for (const d of ordered) if (before.get(d.id) !== d.sortOrder) await storage.saveMetadataDef(d)
       }, 'reorder task properties')

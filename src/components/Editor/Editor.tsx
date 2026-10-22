@@ -218,14 +218,15 @@ export function Editor({
   responsesRef.current = responses ?? []
   const onRemoveResponseRef = useRef(onRemoveResponse)
   onRemoveResponseRef.current = onRemoveResponse
+  const handleGutterRemoveResponse = useCallback((id: string) => {
+    onRemoveResponseRef.current?.(id)
+  }, [])
   const onNavigateToNoteRef = useRef(onNavigateToNote)
   onNavigateToNoteRef.current = onNavigateToNote
   const isCalendarNoteRef = useRef(isCalendarNote)
   isCalendarNoteRef.current = isCalendarNote
   const disableSlashCommandsRef = useRef(disableSlashCommands)
   disableSlashCommandsRef.current = disableSlashCommands
-  const disableBlockHandlesRef = useRef(disableBlockHandles)
-  disableBlockHandlesRef.current = disableBlockHandles
   const previewModeRef = useRef(previewMode)
   previewModeRef.current = previewMode
   const onEditorReadyRef = useRef(onEditorReady)
@@ -251,17 +252,9 @@ export function Editor({
               },
             }),
           ]),
-      // Handle genérico de bloco (⋮⋮). Fora de buildBaseExtensions de
-      // propósito: a janela Keep não recebe.
-      ...(disableBlockHandles || previewMode
-        ? []
-        : [
-            BlockHandle.configure({
-              onRemoveResponse: (id) => {
-                onRemoveResponseRef.current?.(id)
-              },
-            }),
-          ]),
+      // Marca do bloco sob o handle do gutter (arrasto/menu). Fora de
+      // buildBaseExtensions de propósito: a janela Keep não tem gutter.
+      ...(disableBlockHandles ? [] : [BlockHandle]),
     ],
     content: value,
     editorProps: {
@@ -951,7 +944,8 @@ export function Editor({
             editor={editor}
             scrollEl={scrollEl}
             disabled={previewMode}
-            blockHandles={!disableBlockHandlesRef.current}
+            blockHandles={!disableBlockHandles}
+            onRemoveResponse={handleGutterRemoveResponse}
           />
         </div>
         <HeadingNavigator
