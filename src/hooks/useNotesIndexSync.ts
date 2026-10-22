@@ -20,7 +20,6 @@ import { ocrTextsForContent } from '../lib/imageOcr'
 import { dateKeyFromMs } from '../lib/calendar'
 import { checklistProgress, statusName, tasksSummaryNoteId, todosProgressByNote } from '../lib/tasks'
 import { canHaveType, isTodosNote, propertiesForAi, TODOS_TYPE_ID, typeDefs } from '../lib/noteTypes'
-import { readerLinkedNoteIds } from '../lib/readerNoteLink'
 
 // Espelha as notas de cada caderno no RAG (pasta gerenciada `origin='notes'`).
 // O sync vai só do app para o disco: o hook compara o array de notas com o que
@@ -182,7 +181,7 @@ export function useNotesIndexSync({
         : undefined
       const type = note.typeId ? noteTypesRef.current.find((t) => t.id === note.typeId) : undefined
       const typeContext =
-        type && canHaveType(note, readerLinkedNoteIds())
+        type && canHaveType(note)
           ? { typeName: type.name, properties: propertiesForAi(note, noteDefsRef.current) }
           : undefined
       const todosProgress =

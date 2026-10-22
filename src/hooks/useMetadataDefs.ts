@@ -100,6 +100,29 @@ export function useMetadataDefs(opts?: { onRemoved?: (id: string) => void }) {
     [persist]
   )
 
+  // Reordena os metadados de task (R5). A lista de props de task é global (uma
+  // só, sem escopo por tipo), então não há `typeId` aqui. Grava só as linhas
+  // cujo sort_order mudou, uma execução por linha (sem BEGIN/COMMIT: pool
+  // sqlx); falha parcial só deixa a ordem misturada.
+  const reorderTaskDefs = useCallback(
+    async (ids: string[]) => {
+      const siblings = defsRef.current
+      const before = new Map(siblings.map((d) => [d.id, d.sortOrder]))
+      const ordered = ids
+        .map((id) => siblings.find((d) => d.id === id))
+        .filter((d): d is MetadataDef => !!d)
+        .map((d, i) => ({ ...d, sortOrder: i }))
+      // Lista inconsistente (prop apagada no meio do arrasto): não grava nada.
+      if (ordered.length !== siblings.length) return
+      const byId = new Map(ordered.map((d) => [d.id, d]))
+      setDefs((list) => list.map((d) => byId.get(d.id) ?? d))
+      await persist(async () => {
+        for (const d of ordered) if (before.get(d.id) !== d.sortOrder) await storage.saveMetadataDef(d)
+      }, 'reorder task properties')
+    },
+    [persist]
+  )
+
   return {
     defs,
     saveError: saveError ?? (loadFailed ? 'Failed to load task properties.' : null),
@@ -107,5 +130,6 @@ export function useMetadataDefs(opts?: { onRemoved?: (id: string) => void }) {
     create,
     rename,
     remove,
+    reorderTaskDefs,
   }
 }

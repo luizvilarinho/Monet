@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { Book, Note, Notebook } from '../../types'
+import type { Book, Note, Notebook, NoteType } from '../../types'
 import { storage } from '../../storage'
 import { booksDeleteFile, importBook } from '../../lib/books'
 import { useConfirm } from '../../hooks/useConfirm'
@@ -16,8 +16,17 @@ import styles from './Library.module.css'
 export interface LibraryProps {
   notebooks: Notebook[]
   notes: Note[]
+  // Tipos de nota (vêm da janela principal): repassados ao Reader.
+  noteTypes: NoteType[]
   onCreateNotebook: (name: string) => Promise<Notebook>
-  onCreateNote: (notebookId: string, title: string, content: string) => Promise<Note>
+  // `requestId` fica no 4º lugar (mesma assinatura do Chat) e o `typeId` no 5º.
+  onCreateNote: (
+    notebookId: string,
+    title: string,
+    content: string,
+    requestId?: string,
+    typeId?: string | null,
+  ) => Promise<Note>
   onSaveNote: (note: Note) => Promise<void>
 }
 
@@ -33,6 +42,7 @@ const OPEN_BOOK_KEY = 'monet:reader-open-book'
 export function Library({
   notebooks,
   notes,
+  noteTypes,
   onCreateNotebook,
   onCreateNote,
   onSaveNote,
@@ -167,6 +177,7 @@ export function Library({
         onLoadError={() => localStorage.removeItem(OPEN_BOOK_KEY)}
         notebooks={notebooks}
         notes={notes}
+        noteTypes={noteTypes}
         onCreateNotebook={onCreateNotebook}
         onCreateNote={onCreateNote}
         onSaveNote={onSaveNote}
@@ -183,6 +194,7 @@ export function Library({
         onLoadError={() => localStorage.removeItem(OPEN_BOOK_KEY)}
         notebooks={notebooks}
         notes={notes}
+        noteTypes={noteTypes}
         onCreateNotebook={onCreateNotebook}
         onCreateNote={onCreateNote}
         onSaveNote={onSaveNote}

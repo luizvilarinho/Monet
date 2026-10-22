@@ -233,6 +233,13 @@
   margin-top: var(--space-2);
 }
 
+/* Seletor de tipo da nota nova (linha própria, abaixo do título). */
+.typeRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .btnPrimary,
 .btnSecondary {
   height: var(--control-lg);

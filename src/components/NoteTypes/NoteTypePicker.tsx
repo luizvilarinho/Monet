@@ -14,8 +14,8 @@ interface NoteTypePickerProps {
   // Tipo atual (id órfão, de tipo apagado em outra janela, chega como null).
   type: NoteType | null
   onChange: (typeId: string | null) => void
-  // Modal geral.
-  onManage: () => void
+  // Modal geral (opcional: sem ele, o item "Manage types…" não aparece).
+  onManage?: () => void
   // Modal focado no tipo atual (só com tipo).
   onEditType?: () => void
   archived?: boolean
@@ -109,9 +109,11 @@ export function NoteTypePicker({
               <span className={styles.itemName}>Edit type…</span>
             </button>
           )}
-          <button type="button" role="menuitem" className={styles.item} onClick={() => run(onManage)}>
-            <span className={styles.itemName}>Manage types…</span>
-          </button>
+          {onManage && (
+            <button type="button" role="menuitem" className={styles.item} onClick={() => run(onManage)}>
+              <span className={styles.itemName}>Manage types…</span>
+            </button>
+          )}
           {onSetArchived && (
             <>
               <div className={styles.sep} role="separator" />

@@ -27,14 +27,14 @@ export function typeDefs(defs: MetadataDef[], typeId: string | null | undefined)
     .sort((a, b) => a.sortOrder - b.sortOrder)
 }
 
-// Só notas de caderno (D4): fora o Calendar, a nota-corpo de task e as notas
-// ligadas ao Reader.
-export function canHaveType(note: Note, readerNoteIds: Set<string>): boolean {
+// Só notas de caderno (D4): fora o Calendar e a nota-corpo de task.
+// A exclusão das notas ligadas ao Reader foi REVOGADA (2026-10-22): o tipo
+// passa a ser escolhido no painel de notas do Reader, antes de criar a nota.
+export function canHaveType(note: Note): boolean {
   return (
     !!note.notebookId &&
     note.notebookId !== CALENDAR_NOTEBOOK_ID &&
-    !isTaskBodyNote(note) &&
-    !readerNoteIds.has(note.id)
+    !isTaskBodyNote(note)
   )
 }
 

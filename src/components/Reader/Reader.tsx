@@ -20,6 +20,7 @@ import type {
   BookHighlightRect,
   Note,
   Notebook,
+  NoteType,
   PdfBook,
 } from '../../types'
 import { storage } from '../../storage'
@@ -42,11 +43,17 @@ export interface ReaderProps {
   onLoadError?: () => void
   notebooks: Notebook[]
   notes: Note[]
+  // Tipos de nota (vêm da janela principal): o escolhido no painel de notas
+  // vale para a próxima nota criada.
+  noteTypes: NoteType[]
   onCreateNotebook: (name: string) => Promise<Notebook>
+  // `requestId` fica no 4º lugar (mesma assinatura do Chat) e o `typeId` no 5º.
   onCreateNote: (
     notebookId: string,
     title: string,
     content: string,
+    requestId?: string,
+    typeId?: string | null,
   ) => Promise<Note>
   onSaveNote: (note: Note) => Promise<void>
 }
@@ -389,6 +396,7 @@ export function Reader({
   onLoadError,
   notebooks,
   notes,
+  noteTypes,
   onCreateNotebook,
   onCreateNote,
   onSaveNote,
@@ -2083,6 +2091,7 @@ export function Reader({
           book={book}
           notebooks={notebooks}
           notes={notes}
+          noteTypes={noteTypes}
           onCreateNote={onCreateNote}
           onSaveNote={onSaveNote}
           open={sideOpen && sideTab === 'notes'}
@@ -2095,6 +2104,7 @@ export function Reader({
           open={quoteModal.open}
           notebooks={notebooks}
           notes={notes}
+          noteTypes={noteTypes}
           onCreateNotebook={onCreateNotebook}
           onCreateNote={onCreateNote}
           onSaveNote={onSaveNote}

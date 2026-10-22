@@ -432,7 +432,7 @@ Visão (`productVision.md`): ① sustenta a permanência no tema · ② mantém 
 1. **D1 — Tags:** converter `#Task`/`#TODOS` (e tags com nome de tipo) em tipo na migração e manter o critério de corte do `tags_study` (remover se o filtro transversal não pegar até ~12/11)? Ou remover as tags já junto com a fase 3?
 2. **D2 — Metadados custom de task:** remover o "+ Add property" da task e reservar `metadata_defs` para propriedades de tipo de nota (recomendado)? Ou manter escondido em "avançado" (T12 do estudo de entregas)?
 3. **D3 — `select` no MVP:** entra o single-select (recomendado; é o que mais rende em lista e filtro)? Multi-select fica fora?
-4. **D4 — Quais notas podem ter tipo:** Reader/Library sim; notas diárias do Calendar não (no MVP); nota-corpo de task nunca. De acordo?
+4. **D4 — Quais notas podem ter tipo:** Reader/Library sim; notas diárias do Calendar não (no MVP); nota-corpo de task nunca. De acordo? — **Resposta vigente (2026-10-22): sim, Reader/Library podem ter tipo.** A exclusão do Reader saiu de `canHaveType` (R4); o tipo é escolhido **antes de criar** a nota, no painel de notas do Reader e no fluxo de citação. Calendar e nota-corpo de task continuam sem tipo.
 5. **D5 — Busca:**
    - fazer a S1 (cliente) agora e deixar o FTS5 como plano B por volume?
    - incluir a linha "Buscar por significado…" (RAG, sob demanda) na fase 4?
@@ -456,7 +456,7 @@ Visão (`productVision.md`): ① sustenta a permanência no tema · ② mantém 
 | **D1** | Tags **não** são removidas por enquanto | Sem conversão automática de tags em tipo; tags seguem como estão. O corte do `tags_study` fica em aberto |
 | **D2** | Metadados custom de task **ficam** | Conflito a evitar: hoje o picker da task lista **todas** as `metadata_defs` e apagar uma def limpa as tasks (`stripMetadata`). Com tipos reaproveitando a mesma tabela, as propriedades de nota (ex.: "Professor") apareceriam na task. Solução: coluna `scope` (`'task'` \| `'note'`) em `metadata_defs`, padrão `ensure*`; defs atuais = `'task'`; cada picker filtra pelo seu escopo. `notebook_tasks.metadata` **não** sai na limpeza |
 | **D3** | `select` de **seleção única** no MVP; multi-select fora | — |
-| **D4** | **Só notas de caderno** podem ter tipo | Fora: notas do Reader/Library, notas diárias do Calendar e nota-corpo de task |
+| **D4** | **Notas de caderno e notas do Reader/Library** podem ter tipo | **Revogada parcialmente (2026-10-22):** a exclusão do Reader saiu de `canHaveType` (`src/lib/noteTypes.ts`) — o tipo é escolhido antes de criar a nota, no painel de notas do Reader e no fluxo de citação. Fora: notas diárias do Calendar e nota-corpo de task |
 | **D5** | Recomendação aceita | S1 (busca no cliente) agora; FTS5 como plano B por volume; "Buscar por significado" (RAG, sob demanda) na fase 4; tasks nos resultados do Ctrl+P |
 | **D6** | Coluna nova `parent_note_id` | `source_note_id` segue como origem |
 | **D7** | (a) a nota do print era teste e será apagada pelo Coordenador — sem conversão de nota existente | (b) e (c) seguem o desenho do §5: group só com concluídas vira TODOS com opção de desmarcar no dry-run; mesmo nome em cadernos diferentes = TODOS separadas |

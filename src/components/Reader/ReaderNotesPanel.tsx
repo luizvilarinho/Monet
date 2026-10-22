@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Book, Note, Notebook } from '../../types'
+import type { Book, Note, NoteType, Notebook } from '../../types'
 import {
   getReaderNoteLink,
   setReaderNoteLink,
   unlinkBookFromReaderNote,
 } from '../../lib/readerNoteLink'
 import { Editor } from '../Editor/Editor'
+import { NoteTypePicker } from '../NoteTypes/NoteTypePicker'
 import styles from './ReaderNotesPanel.module.css'
 
 // Aba "Notes" da coluna lateral do Reader, no mesmo padrão SEMPRE MONTADO do
@@ -27,7 +28,17 @@ interface ReaderNotesPanelProps {
   book: Book
   notebooks: Notebook[]
   notes: Note[]
-  onCreateNote: (notebookId: string, title: string, content: string) => Promise<Note>
+  // Tipos de nota (vêm da janela principal): o escolhido aqui vale para a
+  // PRÓXIMA nota criada.
+  noteTypes: NoteType[]
+  // `requestId` fica no 4º lugar (mesma assinatura do Chat) e o `typeId` no 5º.
+  onCreateNote: (
+    notebookId: string,
+    title: string,
+    content: string,
+    requestId?: string,
+    typeId?: string | null
+  ) => Promise<Note>
   onSaveNote: (note: Note) => Promise<void>
   open: boolean
   onClose: () => void
@@ -37,6 +48,7 @@ export function ReaderNotesPanel({
   book,
   notebooks,
   notes,
+  noteTypes,
   onCreateNote,
   onSaveNote,
   open,
@@ -44,6 +56,8 @@ export function ReaderNotesPanel({
 }: ReaderNotesPanelProps) {
   const [selectedNotebookId, setSelectedNotebookId] = useState<string | null>(null)
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null)
+  // Tipo que será aplicado à próxima nota criada neste painel.
+  const [pendingTypeId, setPendingTypeId] = useState<string | null>(null)
   const notebookRestoreDoneRef = useRef(false)
   const noteRestoreDoneRef = useRef(false)
 
@@ -181,7 +195,8 @@ export function ReaderNotesPanel({
 
   async function handleCreateNote() {
     if (!selectedNotebookId) return
-    const note = await onCreateNote(selectedNotebookId, '', '')
+    // O 4º parâmetro é o `requestId` (a assinatura do Chat) — aqui não existe.
+    const note = await onCreateNote(selectedNotebookId, '', '', undefined, pendingTypeId)
     setSelectedNoteId(note.id)
     setReaderNoteLink(book.id, selectedNotebookId, note.id)
   }
@@ -268,6 +283,14 @@ export function ReaderNotesPanel({
             >
               + New note
             </button>
+            {/* Tipo da PRÓXIMA nota criada (o que já existe fica com o tipo
+                que tem). Sem "Manage types…": os tipos se gerenciam na janela
+                principal. */}
+            <NoteTypePicker
+              types={noteTypes}
+              type={noteTypes.find((t) => t.id === pendingTypeId) ?? null}
+              onChange={(id) => setPendingTypeId(id)}
+            />
           </div>
 
           <div className={styles.editorWrap}>

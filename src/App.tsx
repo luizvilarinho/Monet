@@ -91,7 +91,6 @@ import {
   planTodosMigration,
   type MigrationRow,
 } from './lib/todosMigration'
-import { readerLinkedNoteIds } from './lib/readerNoteLink'
 import { SIDEBAR_WIDTH_KEY, SIDEBAR_WIDE_WIDTH_KEY, WIDE_MAX_WIDTH } from './hooks/useSidebarResize'
 import { useTaskViews } from './hooks/useTaskViews'
 import { useToday } from './hooks/useToday'
@@ -1492,8 +1491,7 @@ function App() {
   )
 
   // Tipo da nota aberta: só nota de caderno (D4); id órfão = sem tipo.
-  const readerNoteIds = useMemo(() => readerLinkedNoteIds(), [activeId])
-  const canTypeActive = !!activeNote && !activeTask && canHaveType(activeNote, readerNoteIds)
+  const canTypeActive = !!activeNote && !activeTask && canHaveType(activeNote)
   const activeNoteType =
     canTypeActive && activeNote?.typeId
       ? noteTypes.types.find((t) => t.id === activeNote.typeId) ?? null
@@ -2473,7 +2471,15 @@ function App() {
   )
 
   const handleCreateNoteFromChat = useCallback(
-    async (notebookId: string, title: string, content: string) => {
+    async (
+      notebookId: string,
+      title: string,
+      content: string,
+      // `requestId` continua no 4º lugar (é o que o "Save to note" do Chat
+      // passa) e segue sem uso aqui; o `typeId` é o 5º para não colidir com ele.
+      _requestId?: string,
+      typeId?: string | null
+    ) => {
       const note = await createNote(notebookId)
       const filled: Note = {
         ...note,
@@ -2482,6 +2488,10 @@ function App() {
         updatedAt: Date.now(),
       }
       if (!(await saveNote(filled))) throw new Error('Failed to save note.')
+      if (typeId) {
+        // O tipo fica fora do UPSERT do saveNote (de propósito): grava depois.
+        await setNoteType(filled.id, typeId)
+      }
       setNoteOrder((prev) => {
         const next = [filled.id, ...prev.filter((x) => x !== filled.id)]
         saveNoteOrder(next)
@@ -2489,7 +2499,7 @@ function App() {
       })
       return filled
     },
-    [createNote, saveNote]
+    [createNote, saveNote, setNoteType]
   )
 
   // "Save to note" da janela assistant (Ctrl+M): a main grava, para a lista e
@@ -3066,6 +3076,7 @@ function App() {
           <Library
             notebooks={orderedNotebooks}
             notes={notes}
+            noteTypes={noteTypes.types}
             onCreateNotebook={handleCreateNotebookFromChat}
             onCreateNote={handleCreateNoteFromChat}
             onSaveNote={async (note) => {
@@ -3513,6 +3524,7 @@ function App() {
         tasks={tasks}
         onRename={metadata.rename}
         onRemove={(id) => void metadata.remove(id)}
+        onReorder={(ids) => void metadata.reorderTaskDefs(ids)}
       />
       {noteTypesOpen && (
         <NoteTypesModal

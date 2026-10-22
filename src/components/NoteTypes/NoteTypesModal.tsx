@@ -1,6 +1,23 @@
-import { useRef, useState, type KeyboardEvent } from 'react'
+import { useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { ArrowDown, ArrowUp, Trash, X } from '@phosphor-icons/react'
+import {
+  closestCenter,
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+import { DotsSixVertical, Trash, X } from '@phosphor-icons/react'
 import { useConfirm } from '../../hooks/useConfirm'
 import {
   MAX_PROPERTY_NAME,
@@ -16,6 +33,66 @@ import { ColorDots } from '../TasksView/ColorDots'
 import { TYPE_ICON_GROUPS, TypeIcon } from './TypeIcon'
 import styles from '../TasksView/StatusManagerModal.module.css'
 import own from './NoteTypesModal.module.css'
+
+// Handle de arrasto: só ele inicia o drag (o input de renomear e os botões
+// continuam clicáveis). O teclado assume o arrasto (KeyboardSensor).
+function SortableTypeRow({
+  id,
+  label,
+  className,
+  children,
+}: {
+  id: string
+  label: string
+  className?: string
+  children: ReactNode
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : undefined,
+  }
+  return (
+    <div ref={setNodeRef} style={style} className={className}>
+      <span className={styles.dragHandle} {...attributes} {...listeners} aria-label={label}>
+        <DotsSixVertical size={12} weight="bold" aria-hidden />
+      </span>
+      {children}
+    </div>
+  )
+}
+
+function SortablePropRow({
+  id,
+  label,
+  children,
+  extra,
+}: {
+  id: string
+  label: string
+  children: ReactNode
+  // Bloco que fica abaixo da linha (as opções do select).
+  extra?: ReactNode
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : undefined,
+  }
+  return (
+    <div ref={setNodeRef} style={style} className={own.prop}>
+      <div className={styles.row}>
+        <span className={styles.dragHandle} {...attributes} {...listeners} aria-label={label}>
+          <DotsSixVertical size={12} weight="bold" aria-hidden />
+        </span>
+        {children}
+      </div>
+      {extra}
+    </div>
+  )
+}
 
 // "Note types": tipos globais (nome, ícone, cor, ordem, template) e as
 // propriedades de cada um (nome, tipo de dado fixo após criar, "show in list",
@@ -62,6 +139,12 @@ export function NoteTypesModal({ onClose, focusTypeId, reorder = false, registry
   notesRef.current = notes
   const cancelRef = useRef(false)
   const onDraftKeys = draftKeys(cancelRef)
+  // O teclado assume o arrasto (KeyboardSensor do dnd-kit); o ponteiro precisa
+  // de 5px de deslocamento para não competir com o clique no input.
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  )
 
   const selected = types.find((t) => t.id === selectedId) ?? types[0] ?? null
   const selectedDefs = selected ? typeDefs(defs, selected.id) : []
@@ -104,10 +187,13 @@ export function NoteTypesModal({ onClose, focusTypeId, reorder = false, registry
     if (await run(async () => setSelectedId((await registry.createType(newTypeName)).id))) setNewTypeName('')
   }
 
-  function moveType(index: number, delta: number) {
-    const ids = types.map((t) => t.id)
-    const [id] = ids.splice(index, 1)
-    ids.splice(index + delta, 0, id)
+  function handleTypeDragEnd(event: DragEndEvent) {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const oldIndex = types.findIndex((t) => t.id === active.id)
+    const newIndex = types.findIndex((t) => t.id === over.id)
+    if (oldIndex < 0 || newIndex < 0) return
+    const ids = arrayMove(types, oldIndex, newIndex).map((t) => t.id)
     void run(() => registry.reorderTypes(ids))
   }
 
@@ -129,11 +215,14 @@ export function NoteTypesModal({ onClose, focusTypeId, reorder = false, registry
     }
   }
 
-  function moveProp(index: number, delta: number) {
+  function handlePropDragEnd(event: DragEndEvent) {
     if (!selected) return
-    const ids = selectedDefs.map((d) => d.id)
-    const [id] = ids.splice(index, 1)
-    ids.splice(index + delta, 0, id)
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const oldIndex = selectedDefs.findIndex((d) => d.id === active.id)
+    const newIndex = selectedDefs.findIndex((d) => d.id === over.id)
+    if (oldIndex < 0 || newIndex < 0) return
+    const ids = arrayMove(selectedDefs, oldIndex, newIndex).map((d) => d.id)
     void run(() => registry.reorderDefs(selected.id, ids))
   }
 
@@ -305,65 +394,60 @@ export function NoteTypesModal({ onClose, focusTypeId, reorder = false, registry
         <p className={own.section}>Properties</p>
         <div className={own.props}>
           {selectedDefs.length === 0 && <p className={own.empty}>No properties yet.</p>}
-          {selectedDefs.map((d, i) => (
-            <div key={d.id} className={own.prop}>
-              <div className={styles.row}>
-                <input
-                  className={styles.nameInput}
-                  key={d.name}
-                  defaultValue={d.name}
-                  maxLength={MAX_PROPERTY_NAME}
-                  aria-label={`rename ${d.name}`}
-                  onBlur={(e) => commitText(e.currentTarget, d.name, (v) => registry.updateDef(d.id, { name: v }))}
-                  onKeyDown={onDraftKeys}
-                />
-                <span className={own.type}>{METADATA_TYPE_LABEL[d.type]}</span>
-                <label
-                  className={own.inList}
-                  title={`Show the value in the notes list (at most ${MAX_LIST_PROPERTIES})`}
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handlePropDragEnd}
+            accessibility={{
+              screenReaderInstructions: {
+                draggable:
+                  'To pick up a property, press the space bar. While dragging, use the arrow keys to move the property. Press space again to drop it, or escape to cancel.',
+              },
+            }}
+          >
+            <SortableContext items={selectedDefs.map((d) => d.id)} strategy={verticalListSortingStrategy}>
+              {selectedDefs.map((d) => (
+                <SortablePropRow
+                  key={d.id}
+                  id={d.id}
+                  label={`drag ${d.name} to reorder`}
+                  extra={d.type === 'select' ? renderOptions(d) : undefined}
                 >
                   <input
-                    type="checkbox"
-                    checked={d.showInList}
-                    disabled={!d.showInList && listCount >= MAX_LIST_PROPERTIES}
-                    onChange={(e) => void run(() => registry.updateDef(d.id, { showInList: e.target.checked }))}
+                    className={styles.nameInput}
+                    key={d.name}
+                    defaultValue={d.name}
+                    maxLength={MAX_PROPERTY_NAME}
+                    aria-label={`rename ${d.name}`}
+                    onBlur={(e) => commitText(e.currentTarget, d.name, (v) => registry.updateDef(d.id, { name: v }))}
+                    onKeyDown={onDraftKeys}
                   />
-                  In list
-                </label>
-                <button
-                  type="button"
-                  className={own.action}
-                  disabled={i === 0}
-                  onClick={() => moveProp(i, -1)}
-                  aria-label={`move ${d.name} up`}
-                  title="Move up"
-                >
-                  <ArrowUp size={13} aria-hidden />
-                </button>
-                <button
-                  type="button"
-                  className={own.action}
-                  disabled={i === selectedDefs.length - 1}
-                  onClick={() => moveProp(i, 1)}
-                  aria-label={`move ${d.name} down`}
-                  title="Move down"
-                >
-                  <ArrowDown size={13} aria-hidden />
-                </button>
-                <button
-                  type="button"
-                  className={styles.delete}
-                  onClick={() => void handleRemoveProp(d)}
-                  aria-label={`delete ${d.name}`}
-                  title="Delete property"
-                >
-                  <Trash size={13} aria-hidden />
-                </button>
-              </div>
-              {d.type === 'select' && renderOptions(d)}
-            </div>
-          ))}
-          <div className={styles.create}>
+                  <span className={own.type}>{METADATA_TYPE_LABEL[d.type]}</span>
+                  <label
+                    className={own.inList}
+                    title={`Show the value in the notes list (at most ${MAX_LIST_PROPERTIES})`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={d.showInList}
+                      disabled={!d.showInList && listCount >= MAX_LIST_PROPERTIES}
+                      onChange={(e) => void run(() => registry.updateDef(d.id, { showInList: e.target.checked }))}
+                    />
+                    In list
+                  </label>
+                  <button
+                    type="button"
+                    className={styles.delete}
+                    onClick={() => void handleRemoveProp(d)}
+                    aria-label={`delete ${d.name}`}
+                    title="Delete property"
+                  >
+                    <Trash size={13} aria-hidden />
+                  </button>
+                </SortablePropRow>
+              ))}
+            </SortableContext>
+          </DndContext>          <div className={styles.create}>
             <input
               className={styles.nameInput}
               value={newPropName}
@@ -442,42 +526,41 @@ export function NoteTypesModal({ onClose, focusTypeId, reorder = false, registry
         <div className={own.columns}>
           <div className={own.types}>
             {reorder && (
-              <p className={own.reorderHint}>Use ↑/↓ to set the order of “By type” in the notes list.</p>
+              <p className={own.reorderHint}>Drag the handle (or focus it and use the arrow keys) to set the order of “By type” in the notes list.</p>
             )}
-            {types.map((t, i) => (
-              <div key={t.id} className={`${own.typeRow} ${t.id === selected?.id ? own.typeRowActive : ''}`}>
-                <button
-                  type="button"
-                  className={own.typeButton}
-                  style={{ color: t.color ?? undefined }}
-                  onClick={() => setSelectedId(t.id)}
-                  aria-pressed={t.id === selected?.id}
-                >
-                  <TypeIcon name={t.icon} />
-                  <span className={own.typeName}>{t.name}</span>
-                </button>
-                <button
-                  type="button"
-                  className={own.action}
-                  disabled={i === 0}
-                  onClick={() => moveType(i, -1)}
-                  aria-label={`move ${t.name} up`}
-                  title="Move up"
-                >
-                  <ArrowUp size={12} aria-hidden />
-                </button>
-                <button
-                  type="button"
-                  className={own.action}
-                  disabled={i === types.length - 1}
-                  onClick={() => moveType(i, 1)}
-                  aria-label={`move ${t.name} down`}
-                  title="Move down"
-                >
-                  <ArrowDown size={12} aria-hidden />
-                </button>
-              </div>
-            ))}
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleTypeDragEnd}
+              accessibility={{
+                screenReaderInstructions: {
+                  draggable:
+                    'To pick up a type, press the space bar. While dragging, use the arrow keys to move the type. Press space again to drop it, or escape to cancel.',
+                },
+              }}
+            >
+              <SortableContext items={types.map((t) => t.id)} strategy={verticalListSortingStrategy}>
+                {types.map((t) => (
+                  <SortableTypeRow
+                    key={t.id}
+                    id={t.id}
+                    label={`drag ${t.name} to reorder`}
+                    className={`${own.typeRow} ${t.id === selected?.id ? own.typeRowActive : ''}`}
+                  >
+                    <button
+                      type="button"
+                      className={own.typeButton}
+                      style={{ color: t.color ?? undefined }}
+                      onClick={() => setSelectedId(t.id)}
+                      aria-pressed={t.id === selected?.id}
+                    >
+                      <TypeIcon name={t.icon} />
+                      <span className={own.typeName}>{t.name}</span>
+                    </button>
+                  </SortableTypeRow>
+                ))}
+              </SortableContext>
+            </DndContext>
             <div className={styles.create}>
               <input
                 className={styles.nameInput}

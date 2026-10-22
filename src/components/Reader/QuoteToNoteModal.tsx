@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { BookQuote, Note, Notebook } from '../../types'
+import type { BookQuote, Note, NoteType, Notebook } from '../../types'
 import { appendQuoteToContent, buildQuoteBlock } from '../../lib/bookQuotes'
+import { NoteTypePicker } from '../NoteTypes/NoteTypePicker'
 import styles from './QuoteToNoteModal.module.css'
 
 const LAST_NOTEBOOK_KEY = 'monet:quote-save-last-notebook-id'
@@ -10,8 +11,18 @@ export interface QuoteToNoteModalProps {
   open: boolean
   notebooks: Notebook[]
   notes: Note[]
+  // Tipos de nota (vêm da janela principal): o escolhido aqui vale para a
+  // nota nova criada pela citação.
+  noteTypes: NoteType[]
   onCreateNotebook: (name: string) => Promise<Notebook>
-  onCreateNote: (notebookId: string, title: string, content: string) => Promise<Note>
+  // `requestId` fica no 4º lugar (mesma assinatura do Chat) e o `typeId` no 5º.
+  onCreateNote: (
+    notebookId: string,
+    title: string,
+    content: string,
+    requestId?: string,
+    typeId?: string | null
+  ) => Promise<Note>
   onSaveNote: (note: Note) => Promise<void>
   quoteText: string
   bookTitle: string
@@ -65,6 +76,7 @@ export function QuoteToNoteModal({
   open,
   notebooks,
   notes,
+  noteTypes,
   onCreateNotebook,
   onCreateNote,
   onSaveNote,
@@ -83,6 +95,8 @@ export function QuoteToNoteModal({
   const [recentlyPickedNotebookId, setRecentlyPickedNotebookId] = useState<
     string | null
   >(null)
+  // Tipo que será aplicado à nota nova criada por esta citação.
+  const [pendingTypeId, setPendingTypeId] = useState<string | null>(null)
 
   const newNotebookInputRef = useRef<HTMLInputElement | null>(null)
   const newNoteTitleInputRef = useRef<HTMLInputElement | null>(null)
@@ -219,7 +233,8 @@ export function QuoteToNoteModal({
       positionLabel,
     )
     try {
-      const note = await onCreateNote(notebookId, title, block)
+      // O 4º parâmetro é o `requestId` (a assinatura do Chat) — aqui não existe.
+      const note = await onCreateNote(notebookId, title, block, undefined, pendingTypeId)
       const quote: BookQuote = {
         id: crypto.randomUUID(),
         bookId,
@@ -421,6 +436,15 @@ export function QuoteToNoteModal({
               {titleError}
             </p>
           )}
+          {/* Tipo da nota que vai ser criada. Sem "Manage types…": os tipos se
+              gerenciam na janela principal. */}
+          <div className={styles.typeRow}>
+            <NoteTypePicker
+              types={noteTypes}
+              type={noteTypes.find((t) => t.id === pendingTypeId) ?? null}
+              onChange={(id) => setPendingTypeId(id)}
+            />
+          </div>
           <div className={styles.footerActions}>
             <button
               type="button"
