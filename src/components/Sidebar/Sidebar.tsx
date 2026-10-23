@@ -42,14 +42,13 @@ import styles from './Sidebar.module.css'
 
 const EMPTY_PROGRESS = new Map<string, TodosProgress>()
 const EMPTY_COUNTS = new Map<string, number>()
-const NO_PROPERTIES: Array<{ def: MetadataDef; text: string }> = []
 const EMPTY_NOTES: Note[] = []
 
 interface SortableNoteItemProps {
   note: Note
-  // Tipo da nota (ícone + nome acima do título, na cor do tipo), o progresso da
-  // TODOS à direita do título e, abaixo dele, até 2 propriedades "show in list"
-  // (uma por linha).
+  // Tipo da nota (ícone + nome acima do título, na cor do tipo); abaixo do
+  // título, numa linha que quebra, o progresso da TODOS e as propriedades
+  // "show in list". O título fica com a largura toda.
   type: NoteType | null
   meta: { text: string; tone: 'overdue' | 'complete' | null } | null
   properties: Array<{ def: MetadataDef; text: string }>
@@ -95,7 +94,7 @@ function SortableNoteItem({ note, type, meta, properties, isActive, dragDisabled
     <li
       ref={setNodeRef}
       style={style}
-      className={`${styles.row} ${type || properties.length > 0 ? styles.rowWrap : ''} ${isActive ? styles.active : ''}`}
+      className={`${styles.row} ${type || meta || properties.length > 0 ? styles.rowWrap : ''} ${isActive ? styles.active : ''}`}
       onClick={() => onSelect(note.id)}
     >
       <span
@@ -114,16 +113,6 @@ function SortableNoteItem({ note, type, meta, properties, isActive, dragDisabled
         </span>
       )}
       <span className={styles.rowLabel}>{note.title || 'untitled'}</span>
-      {meta && (
-        <span
-          className={`${styles.rowMeta} ${
-            meta.tone === 'overdue' ? styles.rowMetaOverdue : meta.tone === 'complete' ? styles.rowMetaComplete : ''
-          }`}
-          title={meta.text}
-        >
-          {meta.text}
-        </span>
-      )}
       {onMerge && (
         <button
           className={styles.rowMerge}
@@ -136,7 +125,7 @@ function SortableNoteItem({ note, type, meta, properties, isActive, dragDisabled
         </button>
       )}
       {onAssignSubject && (
-        <div style={{ position: 'relative' }} ref={dropdownRef}>
+        <div className={styles.rowAssignWrap} ref={dropdownRef}>
           <button
             className={`${styles.rowAssign} ${currentSubjectId ? styles.rowAssignActive : ''}`}
             onClick={(e) => { e.stopPropagation(); setDropdownOpen((v) => !v) }}
@@ -191,10 +180,20 @@ function SortableNoteItem({ note, type, meta, properties, isActive, dragDisabled
       >
         <X size={12} weight="bold" aria-hidden />
       </button>
-      {properties.length > 0 && (
-        <div className={styles.rowProps}>
+      {(meta || properties.length > 0) && (
+        <div className={styles.rowDetails}>
+          {meta && (
+            <span
+              className={`${styles.rowDetail} ${
+                meta.tone === 'overdue' ? styles.rowMetaOverdue : meta.tone === 'complete' ? styles.rowMetaComplete : ''
+              }`}
+              title={meta.text}
+            >
+              {meta.text}
+            </span>
+          )}
           {properties.map(({ def, text }) => (
-            <span key={def.id} className={styles.rowProp} title={`${def.name}: ${text}`}>
+            <span key={def.id} className={styles.rowDetail} title={`${def.name}: ${text}`}>
               {def.name}: {text}
             </span>
           ))}
@@ -248,7 +247,7 @@ export interface SidebarProps {
   onReorderTypes?: () => void
 }
 
-// Resumo à direita do título: progresso na TODOS.
+// Resumo abaixo do título: progresso na TODOS.
 function noteMeta(
   note: Note,
   todosProgress: Map<string, TodosProgress>
@@ -584,7 +583,7 @@ export function Sidebar({
                       note={n}
                       type={(n.typeId && typeById.get(n.typeId)) || null}
                       meta={noteMeta(n, todosProgress)}
-                      properties={isTodosNote(n) ? NO_PROPERTIES : listPropertyValues(n, noteDefs)}
+                      properties={listPropertyValues(n, noteDefs)}
                       isActive={n.id === activeId}
                       dragDisabled={sort !== 'manual'}
                       onSelect={onSelect}

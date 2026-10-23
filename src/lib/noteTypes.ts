@@ -7,7 +7,8 @@ import { isTaskBodyNote, normalizeName } from './tasks'
 // na lista e no RAG).
 
 // Propriedades com "show in list" por tipo, para a lista não virar tabela.
-export const MAX_LIST_PROPERTIES = 2
+// Cabem na linha de detalhes abaixo do título, que quebra.
+export const MAX_LIST_PROPERTIES = 3
 
 // Tipo embutido TODOS (entregável que agrupa tasks via `parentNoteId`).
 // Semeado pelo storage; nome fixo, sempre em maiúsculas (em PT "todos" =

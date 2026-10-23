@@ -241,3 +241,22 @@
   - Não reproduzi o drag no WebView2 do app (a instância de dev estava aberta no terminal do Coordenador); a causa achada e corrigida explica o sintoma, mas vale o teste no app.
   - Se o atraso de digitação continuar, a próxima suspeita é o re-render do `App` inteiro a cada tecla (`onChange` → `saveNote` → `setNotes`), anterior a esta entrega. Isso pede um profiling no app real.
 - Git: sem commit (aguardando o Coordenador).
+
+### Lista de notas: detalhes da TODOS abaixo do título (Coordenador + Claude Code) — 20261022205816
+- Summary: o Coordenador reportou que as propriedades "In list" não apareciam nas notas TODOS da lista e pediu que o progresso (`1/4 · ⚑ Oct 26`) e as propriedades marcadas fossem para baixo do título, que vinha cortado.
+- Causa: não era regressão. Desde `5c3a059` o `Sidebar` passava `NO_PROPERTIES` para as TODOS (o progresso ocupava a direita do título). No banco de produção (leitura só), o tipo TODOS tem `Entrega` e `Branch` com "In list" e `Onda` sem, porque o limite de 2 por tipo bloqueava a terceira. O título cortava também por outra razão: as ações da linha (merge, subject, mover, arquivar, apagar) tinham `opacity: 0`, mas continuavam no fluxo (~120px).
+- O que mudou:
+  - `Sidebar.tsx`: abaixo do título há uma linha de detalhes (`.rowDetails`) com o progresso da TODOS (mesmas cores de atrasada/completa) e as propriedades "In list", lado a lado, quebrando quando não cabem. Vale para todos os tipos. As TODOS deixam de esconder as propriedades. O wrapper do subject ganhou a classe `rowAssignWrap` (era `style` inline).
+  - `Sidebar.module.css`: saiu `.rowMeta` (à direita do título). `.rowProps`/`.rowProp` viraram `.rowDetails`/`.rowDetail` (flex com quebra). Fora do hover e sem foco dentro da linha, as ações ficam com `display: none`; o subject atribuído continua visível.
+  - `noteTypes.ts`: `MAX_LIST_PROPERTIES` passou de 2 para 3.
+- Verificação: `Sidebar` real num harness (Vite + Edge headless) com as notas, tipos e propriedades do caderno de produção, em 300px e 220px, com e sem hover, e com a TODOS atrasada. O título fica com a largura toda e os detalhes quebram em até duas linhas. `npx tsc --noEmit` e `npm run build` passaram.
+- Pendência: a `Onda` só aparece depois que o Coordenador marcar "In list" nela (Note types → TODOS); o banco de produção não foi alterado.
+- Git: sem commit (aguardando o Coordenador), na `develop`.
+
+### Chat chamando as tasks do Monet de "Jira" (Coordenador + Claude Code) — 20261023001500
+- Summary: o chat respondeu "A consulta de tarefas do Jira não encontrou nada com data de hoje", mas o Monet não tem acesso ao Jira.
+- Causa: era a tool `query_tasks` (tasks do Monet); numa resposta anterior da mesma conversa, as tasks listadas como "do Jira" vinham no formato dela (status, deadline, checklist, "adiada N vezes"). O modelo inferiu o nome a partir das notas diárias, que citam o Jira do trabalho em ~15 notas ("lançar horas no JIRA", "atualizar JIRA"…), e dos status das tasks (Selected, Waiting, doing). Nada no código menciona Jira.
+- O que mudou: `useChat.ts` — a descrição da `query_tasks` e a mensagem de sistema que entrega o resultado dizem que são as tasks do Monet, não de um tracker externo como o Jira.
+- Pendência: a nota de 23/10 já tem a frase errada (inserida pelo Insert/Append) e volta como contexto em respostas futuras; cabe ao Coordenador apagar o trecho.
+- Checks: `npx tsc --noEmit` passou. Não testado com o modelo (resposta não determinística).
+- Git: sem commit, na `develop`.

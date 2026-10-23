@@ -170,30 +170,10 @@
   white-space: nowrap;
 }
 
-/* Resumo à direita do título. */
-.rowMeta {
-  flex-shrink: 1;
-  min-width: 0;
-  max-width: 45%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-.rowMetaOverdue {
-  color: var(--accent-danger);
-}
-
-.rowMetaComplete {
-  color: color-mix(in srgb, var(--status-done) 70%, var(--text-muted));
-}
-
-/* Tipo (ícone + nome) acima do título e propriedades "show in list" abaixo
-   dele: a linha quebra e cada bloco ocupa a largura toda, recuado até o texto
-   do título (alça 12px + 2×space-0 e um gap). O tipo vem depois da alça no DOM
-   e sobe com `order`. */
+/* Tipo (ícone + nome) acima do título e detalhes (progresso da TODOS e
+   propriedades "show in list") abaixo dele: a linha quebra e cada bloco ocupa
+   a largura toda, recuado até o texto do título (alça 12px + 2×space-0 e um
+   gap). O tipo vem depois da alça no DOM e sobe com `order`. */
 .rowWrap {
   flex-wrap: wrap;
   row-gap: 0;
@@ -226,21 +206,34 @@
   white-space: nowrap;
 }
 
-.rowProps {
+/* Os detalhes seguem lado a lado e quebram para a linha de baixo quando não
+   cabem; um detalhe longo sozinho corta com reticências. */
+.rowDetails {
   flex-basis: 100%;
   min-width: 0;
   padding-left: calc(12px + 2 * var(--space-0) + var(--space-1h));
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
+  column-gap: var(--space-2);
 }
 
-.rowProp {
+.rowDetail {
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 11px;
   line-height: var(--lh-ui);
   color: var(--text-muted);
+}
+
+/* Depois de .rowDetail: o tom do progresso vence o cinza. */
+.rowMetaOverdue {
+  color: var(--accent-danger);
+}
+
+.rowMetaComplete {
+  color: color-mix(in srgb, var(--status-done) 70%, var(--text-muted));
 }
 
 .typeFilter {
@@ -431,6 +424,19 @@
 .rowAssign:hover {
   color: var(--accent, #7c6af5);
   background: rgba(124, 106, 245, 0.1);
+}
+
+.rowAssignWrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+/* Fora do hover (e sem foco dentro da linha, como com o menu de subject
+   aberto), as ações saem do fluxo: invisíveis, elas ainda ocupavam ~120px e
+   cortavam o título. O subject atribuído continua à vista. */
+.row:not(:hover):not(:focus-within) > :is(.rowMerge, .rowMove, .rowArchive, .rowDelete),
+.row:not(:hover):not(:focus-within) > .rowAssignWrap:not(:has(.rowAssignActive)) {
+  display: none;
 }
 
 .subjectDropdown {

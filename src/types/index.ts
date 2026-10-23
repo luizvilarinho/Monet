@@ -137,7 +137,7 @@ export interface MetadataDef {
   noteTypeId: string | null
   // Opções do select (null nos demais tipos).
   options: SelectOption[] | null
-  // Mostrar o valor na lista de notas (máx. 2 por tipo).
+  // Mostrar o valor na lista de notas (máx. MAX_LIST_PROPERTIES por tipo).
   showInList: boolean
 }
 

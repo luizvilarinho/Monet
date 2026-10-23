@@ -3201,7 +3201,7 @@ export function useChat(
           type: 'function',
           function: {
             name: 'query_tasks',
-            description: "Query the user's tasks (personal task list of Monet notes). Use it when the user asks about their tasks, deadlines, what is due, overdue or done. Dates are YYYY-MM-DD; 'do' is when the user plans to do it, 'deadline' is the delivery date. Weeks start on Monday.",
+            description: "Query the user's tasks (personal task list of Monet notes — not an external tracker such as Jira). Use it when the user asks about their tasks, deadlines, what is due, overdue or done. Dates are YYYY-MM-DD; 'do' is when the user plans to do it, 'deadline' is the delivery date. Weeks start on Monday.",
             parameters: {
               type: 'object',
               properties: {
@@ -3569,7 +3569,9 @@ export function useChat(
               taskResults.length > 0
                 ? {
                     role: 'system',
-                    content: `You looked up the user's tasks. Answer from these results only; do not invent tasks.\n\n${taskResults.join('\n\n')}`,
+                    // Sem isto o modelo chamava a lista de "tarefas do Jira": as
+                    // notas citam o Jira do trabalho e os status lembram os dele.
+                    content: `You looked up the user's tasks. These are the tasks the user keeps in Monet (this app), not tasks from Jira or any other external tracker — call them "your tasks in Monet". Answer from these results only; do not invent tasks.\n\n${taskResults.join('\n\n')}`,
                   }
                 : null
             const toolKbMessage: ChatMessageInput | null =
