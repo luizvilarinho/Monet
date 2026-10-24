@@ -793,12 +793,16 @@ pub async fn retrieve_baseline(
 // RRF); só embedding e busca devolvem erro.
 
 pub const DEFAULT_REWRITE_MODEL: &str = "openai/gpt-4.1-mini";
-pub const RERANK_MODEL: &str = "cohere/rerank-4-fast";
+// Voyage rerank-3-lite (2026-10-23, `rag_eval compare-rerank`): mesma
+// qualidade do cohere/rerank-4-fast no golden set, ~4x mais barato por
+// consulta (cobra por token; o Cohere, por search unit).
+pub const RERANK_MODEL: &str = "voyageai/rerank-3-lite";
 // Rerank mínimo para um trecho ir ao modelo. Todos abaixo = "nada relevante".
-// 0,25 (golden set, 2026-10-18): perguntas fora da base ficam em 0,09–0,30
-// (mediana ~0,17); o pior esperado primário do golden set tem 0,43, e um
-// secundário real, 0,27.
-pub const RERANK_THRESHOLD: f64 = 0.25;
+// 0,40 (golden set + offtopic.json, 2026-10-23): perguntas fora da base ficam
+// em até 0,37 (mediana ~0,31); a pergunta real mais fraca tem top 0,50, e a
+// partir de 0,50 uma delas fica sem trechos. A escala é do modelo: trocar de
+// reranker exige recalibrar.
+pub const RERANK_THRESHOLD: f64 = 0.40;
 // Máximo de trechos enviados ao modelo; sem rerank, os primeiros da RRF.
 const MAX_SELECTED: usize = 8;
 const RRF_FALLBACK_SELECTED: usize = 6;
@@ -829,6 +833,19 @@ fn source_weight(kind: &str) -> f64 {
 
 fn trim_to_chars(s: &str, max: usize) -> String {
     s.trim().chars().take(max).collect()
+}
+
+// Consulta usada quando não há reescrita (desligada ou falhou).
+pub fn fallback_query(message: &str) -> String {
+    trim_to_chars(message, FALLBACK_QUERY_CHARS)
+}
+
+// Documentos do rerank, na ordem dos candidatos.
+pub fn rerank_documents(candidates: &[RagCandidate]) -> Vec<String> {
+    candidates
+        .iter()
+        .map(|c| trim_to_chars(&format!("{}\n{}", c.header, c.content), RERANK_DOC_CHARS))
+        .collect()
 }
 
 #[derive(Clone, Deserialize)]
@@ -1037,7 +1054,7 @@ pub async fn rewrite_query(
     }
 }
 
-// Rerank via OpenRouter (Cohere): (índice do documento, relevance_score), na
+// Rerank via OpenRouter: (índice do documento, relevance_score), na
 // ordem devolvida (mais relevante primeiro).
 pub async fn rerank(
     key: &str,
@@ -1046,6 +1063,20 @@ pub async fn rerank(
     documents: &[String],
     top_n: usize,
 ) -> Result<Vec<(usize, f64)>, String> {
+    rerank_with_usage(key, model, query, documents, top_n)
+        .await
+        .map(|(scores, _)| scores)
+}
+
+// Igual ao `rerank`, devolvendo também o `usage` da resposta (o rag_eval
+// compara o custo dos modelos).
+pub async fn rerank_with_usage(
+    key: &str,
+    model: &str,
+    query: &str,
+    documents: &[String],
+    top_n: usize,
+) -> Result<(Vec<(usize, f64)>, serde_json::Value), String> {
     let body = serde_json::json!({
         "model": model,
         "query": query,
@@ -1081,14 +1112,16 @@ pub async fn rerank(
         .and_then(|r| r.as_array())
         .ok_or_else(|| "missing results".to_string())?;
 
-    Ok(results
+    let scores = results
         .iter()
         .filter_map(|r| {
             let index = r.get("index")?.as_u64()? as usize;
             let score = r.get("relevance_score").and_then(|s| s.as_f64()).unwrap_or(0.0);
             Some((index, score))
         })
-        .collect())
+        .collect();
+    let usage = data.get("usage").cloned().unwrap_or(serde_json::Value::Null);
+    Ok((scores, usage))
 }
 
 // Trecho do trace: colunas do chunk e as pontuações de cada etapa (None = não
@@ -1319,7 +1352,7 @@ fn apply_date_range(candidates: &mut Vec<RagCandidate>, range: &DateRange) {
 // Aplica as pontuações do rerank e os pesos nos candidatos e devolve os
 // selecionados: rerank >= limiar, ordenados por `rerank × peso`, até
 // MAX_SELECTED.
-fn select_reranked(
+pub fn select_reranked(
     candidates: &mut [RagCandidate],
     scores: &[(usize, f64)],
     threshold: f64,
@@ -1377,7 +1410,7 @@ pub async fn retrieve(
     };
     let query = match &rewrite {
         Some(r) => r.query.clone(),
-        None => trim_to_chars(&original, FALLBACK_QUERY_CHARS),
+        None => fallback_query(&original),
     };
     let fts_terms = match &rewrite {
         _ if !req.use_fts => vec![],
@@ -1431,10 +1464,7 @@ pub async fn retrieve(
 
     let scores = if req.use_rerank {
         let rerank_started = std::time::Instant::now();
-        let docs: Vec<String> = candidates
-            .iter()
-            .map(|c| trim_to_chars(&format!("{}\n{}", c.header, c.content), RERANK_DOC_CHARS))
-            .collect();
+        let docs = rerank_documents(&candidates);
         // top_n = todos: o custo é o mesmo e o trace mostra o rerank de cada
         // candidato; a seleção corta em MAX_SELECTED.
         let call = rerank(key, RERANK_MODEL, &query, &docs, docs.len());

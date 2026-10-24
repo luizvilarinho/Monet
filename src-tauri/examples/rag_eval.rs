@@ -8,7 +8,8 @@
 //   cargo run --example rag_eval -- candidates
 //   cargo run --example rag_eval -- run --label baseline --pipeline baseline
 //   cargo run --example rag_eval -- run --label hybrid --pipeline hybrid
-//   cargo run --example rag_eval -- run --pipeline full [--no-rewrite] [--no-fts] [--no-rerank] [--threshold 0.2]
+//   cargo run --example rag_eval -- run --pipeline full [--no-rewrite] [--no-fts] [--no-rerank] [--threshold 0.2] [--rewrite-model <id>]
+//   cargo run --example rag_eval -- compare-rerank --models cohere/rerank-4-fast,voyageai/rerank-3-lite
 //
 // Pipelines: `baseline` = KNN top-5 da pergunta (chat atual); `hybrid` = KNN +
 // FTS5 fundidos por RRF (rag::hybrid_search), termos FTS tirados da pergunta;
@@ -17,6 +18,11 @@
 // padrão inclui as flags. `hybrid` e `full` leem a tabela chunks_fts,
 // preenchida pelo app dev ao iniciar. Uma pergunta pode fixar `currentDate`
 // (YYYY-MM-DD) para "hoje"/"ontem"; sem ele, vale a data local de hoje.
+//
+// `compare-rerank` passa cada pergunta uma vez pela reescrita e pela híbrida e
+// manda os mesmos candidatos a cada modelo; as métricas saem por limiar, com o
+// mesmo `select_reranked` do app. `offtopic.json` (opcional, na pasta do eval)
+// tem perguntas fora da base: mede quantas o limiar recusa ("nada relevante").
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -94,8 +100,23 @@ struct DevPaths {
     key: PathBuf,
     eval_dir: PathBuf,
     goldenset: PathBuf,
+    offtopic: PathBuf,
     candidates: PathBuf,
     results_dir: PathBuf,
+}
+
+// Pergunta fora da base: nenhum trecho deveria passar do limiar.
+#[derive(Deserialize)]
+struct OffTopicSet {
+    questions: Vec<OffTopic>,
+}
+
+#[derive(Deserialize)]
+struct OffTopic {
+    id: String,
+    question: String,
+    #[serde(default)]
+    scope: Scope,
 }
 
 fn ensure_dev(p: &Path) -> Result<(), String> {
@@ -121,6 +142,7 @@ impl DevPaths {
             vec_db: dir.join("monet-vec.db"),
             key: dir.join("openrouter_key"),
             goldenset: eval_dir.join("goldenset.json"),
+            offtopic: eval_dir.join("offtopic.json"),
             candidates: eval_dir.join("candidates.md"),
             results_dir: eval_dir.join("results"),
             eval_dir,
@@ -132,6 +154,7 @@ impl DevPaths {
             &paths.key,
             &paths.eval_dir,
             &paths.goldenset,
+            &paths.offtopic,
             &paths.candidates,
             &paths.results_dir,
         ] {
@@ -209,6 +232,17 @@ impl DevPaths {
         }
         Ok(gs)
     }
+
+    fn load_offtopic(&self) -> Result<Vec<OffTopic>, String> {
+        if !self.offtopic.exists() {
+            return Ok(vec![]);
+        }
+        let raw = fs::read_to_string(&self.offtopic)
+            .map_err(|e| format!("failed to read {}: {}", self.offtopic.display(), e))?;
+        let set: OffTopicSet = serde_json::from_str(&raw)
+            .map_err(|e| format!("invalid {}: {}", self.offtopic.display(), e))?;
+        Ok(set.questions)
+    }
 }
 
 // Timestamp YYYYMMDDHHmmss em UTC (sem dependência de crate de datas).
@@ -240,13 +274,13 @@ fn utc_timestamp() -> String {
     )
 }
 
-fn scope_ids(doc_conn: &Connection, q: &Question) -> Result<Vec<String>, String> {
+fn scope_ids(doc_conn: &Connection, scope: &Scope) -> Result<Vec<String>, String> {
     rag::resolve_scope(
         doc_conn,
-        &q.scope.ids,
-        q.scope.notebook_id.as_deref(),
-        q.scope.exclude_note_id.as_deref(),
-        q.scope.include_ai_folders,
+        &scope.ids,
+        scope.notebook_id.as_deref(),
+        scope.exclude_note_id.as_deref(),
+        scope.include_ai_folders,
     )
 }
 
@@ -380,7 +414,7 @@ fn candidates(paths: &DevPaths) -> Result<(), String> {
     for q in &pending {
         out.push_str(&format!("\n## {} · {}\n\n", q.id, q.class));
         out.push_str(&format!("**Question:** {}\n\n", q.question));
-        let doc_ids = scope_ids(&doc_conn, q)?;
+        let doc_ids = scope_ids(&doc_conn, &q.scope)?;
         out.push_str(&format!("Scope: {} searchable documents\n\n", doc_ids.len()));
         if doc_ids.is_empty() {
             out.push_str("_Scope resolved to no documents: fill `scope.ids` / `scope.notebookId`._\n");
@@ -468,6 +502,20 @@ impl Totals {
     }
 }
 
+// recall, hit e reciprocal rank dos esperados num top-k já cortado, e a
+// posição do primeiro acerto.
+fn score_retrieved(retrieved: &[String], expected: &HashSet<&str>) -> (f64, f64, f64, Option<usize>) {
+    let found = retrieved.iter().filter(|d| expected.contains(d.as_str())).count();
+    let recall = found as f64 / expected.len() as f64;
+    let first_rank = retrieved
+        .iter()
+        .position(|d| expected.contains(d.as_str()))
+        .map(|p| p + 1);
+    let hit = if first_rank.is_some() { 1.0 } else { 0.0 };
+    let rr = first_rank.map(|r| 1.0 / r as f64).unwrap_or(0.0);
+    (recall, hit, rr, first_rank)
+}
+
 fn arg_value(args: &[String], name: &str) -> Option<String> {
     args.iter()
         .position(|a| a == name)
@@ -481,6 +529,7 @@ struct FullOptions {
     fts: bool,
     rerank: bool,
     threshold: f64,
+    rewrite_model: String,
 }
 
 impl FullOptions {
@@ -496,6 +545,8 @@ impl FullOptions {
             fts: !args.iter().any(|a| a == "--no-fts"),
             rerank: !args.iter().any(|a| a == "--no-rerank"),
             threshold,
+            rewrite_model: arg_value(args, "--rewrite-model")
+                .unwrap_or_else(|| rag::DEFAULT_REWRITE_MODEL.to_string()),
         })
     }
 
@@ -509,6 +560,9 @@ impl FullOptions {
         if self.rerank && self.threshold != rag::RERANK_THRESHOLD {
             label.push_str(&format!("-t{}", self.threshold));
         }
+        if self.rewrite && self.rewrite_model != rag::DEFAULT_REWRITE_MODEL {
+            label.push_str(&format!("-{}", self.rewrite_model));
+        }
         label
     }
 }
@@ -521,6 +575,8 @@ struct FullTotals {
     nothing_relevant: usize,
     selected_chunks: usize,
     ms: u128,
+    rewrite_ms: u64,
+    rewrite_max_ms: u64,
 }
 
 // Maior pontuação de rerank de um conjunto de candidatos.
@@ -568,7 +624,7 @@ fn run(paths: &DevPaths, args: &[String]) -> Result<(), String> {
             eprintln!("warning: question {} is confirmed but has no expected documents; skipped", q.id);
             continue;
         }
-        let doc_ids = scope_ids(&doc_conn, q)?;
+        let doc_ids = scope_ids(&doc_conn, &q.scope)?;
         let mut trace = serde_json::Value::Null;
         let mut retrieved = if doc_ids.is_empty() {
             eprintln!("warning: question {} has an empty scope", q.id);
@@ -588,7 +644,7 @@ fn run(paths: &DevPaths, args: &[String]) -> Result<(), String> {
                         .collect(),
                     doc_ids: doc_ids.clone(),
                     current_date: q.current_date.clone().unwrap_or_else(|| today.clone()),
-                    rewrite_model: rag::DEFAULT_REWRITE_MODEL.to_string(),
+                    rewrite_model: opts.rewrite_model.clone(),
                     use_rewrite: opts.rewrite,
                     use_fts: opts.fts,
                     use_rerank: opts.rerank,
@@ -604,6 +660,8 @@ fn run(paths: &DevPaths, args: &[String]) -> Result<(), String> {
                 full_totals.rerank_failed += resp.rerank_failed as usize;
                 full_totals.nothing_relevant += resp.nothing_relevant as usize;
                 full_totals.selected_chunks += resp.selected.len();
+                full_totals.rewrite_ms += resp.timings.rewrite_ms;
+                full_totals.rewrite_max_ms = full_totals.rewrite_max_ms.max(resp.timings.rewrite_ms);
                 // Só números: posição de cada esperado no conjunto de
                 // candidatos (ordem da RRF) e o melhor rerank dele.
                 let expected_in_pool: Vec<serde_json::Value> = q
@@ -671,14 +729,7 @@ fn run(paths: &DevPaths, args: &[String]) -> Result<(), String> {
             })
             .collect();
         let expected_ids: HashSet<&str> = q.expected.iter().map(|e| e.document_id.as_str()).collect();
-        let found = retrieved.iter().filter(|d| expected_ids.contains(d.as_str())).count();
-        let recall = found as f64 / expected_ids.len() as f64;
-        let first_rank = retrieved
-            .iter()
-            .position(|d| expected_ids.contains(d.as_str()))
-            .map(|p| p + 1);
-        let hit = if first_rank.is_some() { 1.0 } else { 0.0 };
-        let rr = first_rank.map(|r| 1.0 / r as f64).unwrap_or(0.0);
+        let (recall, hit, rr, first_rank) = score_retrieved(&retrieved, &expected_ids);
 
         by_class.entry(q.class.as_str()).or_default().add(recall, hit, rr);
         overall.add(recall, hit, rr);
@@ -718,12 +769,14 @@ fn run(paths: &DevPaths, args: &[String]) -> Result<(), String> {
     let full_summary = if full.is_some() && overall.n > 0 {
         let n = overall.n as f64;
         println!(
-            "\nrewrite failed: {} · rerank failed: {} · nothing relevant: {} · avg selected chunks: {:.1} · avg latency: {:.0} ms",
+            "\nrewrite failed: {} · rerank failed: {} · nothing relevant: {} · avg selected chunks: {:.1} · avg latency: {:.0} ms · rewrite avg {:.0} ms, max {} ms",
             full_totals.rewrite_failed,
             full_totals.rerank_failed,
             full_totals.nothing_relevant,
             full_totals.selected_chunks as f64 / n,
-            full_totals.ms as f64 / n
+            full_totals.ms as f64 / n,
+            full_totals.rewrite_ms as f64 / n,
+            full_totals.rewrite_max_ms
         );
         json!({
             "rewriteFailed": full_totals.rewrite_failed,
@@ -731,6 +784,9 @@ fn run(paths: &DevPaths, args: &[String]) -> Result<(), String> {
             "nothingRelevant": full_totals.nothing_relevant,
             "avgSelectedChunks": full_totals.selected_chunks as f64 / n,
             "avgMs": full_totals.ms as f64 / n,
+            "rewriteModel": full.as_ref().map(|o| o.rewrite_model.as_str()),
+            "avgRewriteMs": full_totals.rewrite_ms as f64 / n,
+            "maxRewriteMs": full_totals.rewrite_max_ms,
         })
     } else {
         serde_json::Value::Null
@@ -755,13 +811,322 @@ fn run(paths: &DevPaths, args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+const OFF_TOPIC: &str = "off-topic";
+// Limiares simulados no compare-rerank: 0,00 a 0,80 de 0,05 em 0,05.
+const COMPARE_THRESHOLD_STEPS: u32 = 16;
+
+// Pergunta do compare-rerank (do golden set ou fora da base).
+struct CompareInput<'a> {
+    id: &'a str,
+    class: &'a str,
+    question: &'a str,
+    history: &'a [Turn],
+    scope: &'a Scope,
+    current_date: Option<&'a str>,
+    expected: HashSet<&'a str>,
+}
+
+// Resultado de um modelo numa pergunta. `scores` None = o rerank falhou (o
+// app cairia nos primeiros da RRF).
+struct ModelRun {
+    scores: Option<Vec<(usize, f64)>>,
+    ms: u128,
+    usage: serde_json::Value,
+}
+
+struct CompareItem<'a> {
+    input: CompareInput<'a>,
+    candidates: Vec<rag::RagCandidate>,
+    // Seleção sem rerank (os primeiros da RRF), por documento.
+    rrf_retrieved: Vec<String>,
+    runs: Vec<ModelRun>,
+}
+
+// Documentos selecionados por um modelo com um limiar, na ordem de envio.
+fn compare_retrieved(item: &CompareItem, run: &ModelRun, threshold: f64) -> Vec<String> {
+    match &run.scores {
+        Some(scores) => {
+            let mut candidates = item.candidates.clone();
+            let selected = rag::select_reranked(&mut candidates, scores, threshold);
+            ranked_documents(selected.iter().map(|c| c.document_id.as_str()))
+        }
+        None => item.rrf_retrieved.clone(),
+    }
+}
+
+// Métricas de uma seleção (por pergunta) sobre todas as perguntas: golden set
+// por classe e no geral, perguntas do golden set sem nenhum trecho e perguntas
+// fora da base recusadas.
+fn compare_metrics(items: &[CompareItem], k: usize, retrieved: impl Fn(&CompareItem) -> Vec<String>) -> serde_json::Value {
+    let mut by_class: HashMap<&str, Totals> = HashMap::new();
+    let mut overall = Totals::default();
+    let (mut golden_empty, mut offtopic, mut offtopic_rejected) = (0, 0, 0);
+    for item in items {
+        let mut docs = retrieved(item);
+        if item.input.class == OFF_TOPIC {
+            offtopic += 1;
+            offtopic_rejected += docs.is_empty() as usize;
+            continue;
+        }
+        golden_empty += docs.is_empty() as usize;
+        docs.truncate(k);
+        let (recall, hit, rr, _) = score_retrieved(&docs, &item.input.expected);
+        by_class.entry(item.input.class).or_default().add(recall, hit, rr);
+        overall.add(recall, hit, rr);
+    }
+    let classes: Vec<serde_json::Value> = CLASSES
+        .iter()
+        .filter_map(|class| {
+            let (r, h, m) = by_class.get(class)?.means();
+            Some(json!({ "class": class, "recall": r, "hit": h, "mrr": m }))
+        })
+        .collect();
+    let (r, h, m) = overall.means();
+    json!({
+        "recall": r,
+        "hit": h,
+        "mrr": m,
+        "goldenEmpty": golden_empty,
+        "offTopic": offtopic,
+        "offTopicRejected": offtopic_rejected,
+        "classes": classes,
+    })
+}
+
+// Soma os campos numéricos do `usage` de cada chamada (tokens, custo...): o
+// formato varia por provedor.
+fn sum_usage(runs: impl Iterator<Item = serde_json::Value>) -> serde_json::Value {
+    let mut sums: std::collections::BTreeMap<String, f64> = std::collections::BTreeMap::new();
+    for usage in runs {
+        if let Some(obj) = usage.as_object() {
+            for (field, value) in obj {
+                if let Some(n) = value.as_f64() {
+                    *sums.entry(field.clone()).or_default() += n;
+                }
+            }
+        }
+    }
+    json!(sums)
+}
+
+fn compare_rerank(paths: &DevPaths, args: &[String]) -> Result<(), String> {
+    let models: Vec<String> = arg_value(args, "--models")
+        .ok_or_else(|| "missing --models <id,id,...>".to_string())?
+        .split(',')
+        .map(|m| m.trim().to_string())
+        .filter(|m| !m.is_empty())
+        .collect();
+    if models.is_empty() {
+        return Err("--models is empty".into());
+    }
+    let gs = paths.load_goldenset()?;
+    let offtopic = paths.load_offtopic()?;
+    let doc_conn = paths.open_doc_db()?;
+    let vec_conn = paths.open_vec_db()?;
+    check_fts(&vec_conn)?;
+    let vec_db = Mutex::new(vec_conn);
+    let today = rag::local_today(&doc_conn)?;
+    let key = paths.read_key()?;
+
+    let inputs = gs
+        .questions
+        .iter()
+        .filter(|q| q.confirmed && !q.expected.is_empty())
+        .map(|q| CompareInput {
+            id: &q.id,
+            class: &q.class,
+            question: &q.question,
+            history: &q.history,
+            scope: &q.scope,
+            current_date: q.current_date.as_deref(),
+            expected: q.expected.iter().map(|e| e.document_id.as_str()).collect(),
+        })
+        .chain(offtopic.iter().map(|o| CompareInput {
+            id: &o.id,
+            class: OFF_TOPIC,
+            question: &o.question,
+            history: &[],
+            scope: &o.scope,
+            current_date: None,
+            expected: HashSet::new(),
+        }));
+
+    let mut items = Vec::new();
+    for input in inputs {
+        let req = rag::RagRequest {
+            message: input.question.to_string(),
+            history: input
+                .history
+                .iter()
+                .map(|t| rag::RagTurn { role: t.role.clone(), content: t.content.clone() })
+                .collect(),
+            doc_ids: scope_ids(&doc_conn, input.scope)?,
+            current_date: input.current_date.map_or_else(|| today.clone(), String::from),
+            rewrite_model: rag::DEFAULT_REWRITE_MODEL.to_string(),
+            use_rewrite: true,
+            use_fts: true,
+            use_rerank: false,
+            threshold: rag::RERANK_THRESHOLD,
+            filters: None,
+        };
+        let resp = tauri::async_runtime::block_on(rag::retrieve(&vec_db, &key, &req))
+            .map_err(|e| format!("question {}: {}", input.id, e))?;
+        // A mesma consulta que o `retrieve` mandaria ao rerank.
+        let query = resp
+            .rewritten_query
+            .clone()
+            .unwrap_or_else(|| rag::fallback_query(&resp.original_query));
+        let docs = rag::rerank_documents(&resp.candidates);
+        let runs: Vec<ModelRun> = models
+            .iter()
+            .map(|model| {
+                if docs.is_empty() {
+                    return ModelRun { scores: Some(vec![]), ms: 0, usage: serde_json::Value::Null };
+                }
+                let started = Instant::now();
+                let result = tauri::async_runtime::block_on(rag::rerank_with_usage(
+                    &key,
+                    model,
+                    &query,
+                    &docs,
+                    docs.len(),
+                ));
+                let ms = started.elapsed().as_millis();
+                match result {
+                    Ok((scores, usage)) => ModelRun { scores: Some(scores), ms, usage },
+                    Err(e) => {
+                        eprintln!("{} · {}: rerank failed: {}", input.id, model, e);
+                        ModelRun { scores: None, ms, usage: serde_json::Value::Null }
+                    }
+                }
+            })
+            .collect();
+        eprintln!("{} ({} candidates)", input.id, docs.len());
+        items.push(CompareItem {
+            input,
+            rrf_retrieved: ranked_documents(resp.selected.iter().map(|c| c.document_id.as_str())),
+            candidates: resp.candidates,
+            runs,
+        });
+    }
+
+    let k = gs.k;
+    let thresholds: Vec<f64> = (0..=COMPARE_THRESHOLD_STEPS).map(|i| i as f64 / 20.0).collect();
+    let no_rerank = compare_metrics(&items, k, |item| item.rrf_retrieved.clone());
+    println!(
+        "\nno rerank (first RRF candidates): recall@{k} {:.3} · hit@{k} {:.3} · MRR {:.3}",
+        no_rerank["recall"].as_f64().unwrap_or(0.0),
+        no_rerank["hit"].as_f64().unwrap_or(0.0),
+        no_rerank["mrr"].as_f64().unwrap_or(0.0),
+    );
+
+    let mut model_results = Vec::new();
+    for (mi, model) in models.iter().enumerate() {
+        let calls: Vec<&ModelRun> = items.iter().map(|it| &it.runs[mi]).filter(|r| r.ms > 0).collect();
+        let failed = calls.iter().filter(|r| r.scores.is_none()).count();
+        let avg_ms = calls.iter().map(|r| r.ms).sum::<u128>() as f64 / calls.len().max(1) as f64;
+        let max_ms = calls.iter().map(|r| r.ms).max().unwrap_or(0);
+        let over_timeout = calls.iter().filter(|r| r.ms > 8000).count();
+        let usage = sum_usage(calls.iter().map(|r| r.usage.clone()));
+        println!(
+            "\n== {} · {} calls · failed {} · avg {:.0} ms · max {} ms · >8 s {} · usage {}",
+            model,
+            calls.len(),
+            failed,
+            avg_ms,
+            max_ms,
+            over_timeout,
+            usage
+        );
+        println!(
+            "{:>6} {:>10} {:>8} {:>7} {:>13} {:>17}",
+            "thresh",
+            format!("recall@{}", k),
+            format!("hit@{}", k),
+            "MRR",
+            "golden-empty",
+            "offtopic-rejected"
+        );
+        let mut by_threshold = Vec::new();
+        for &t in &thresholds {
+            let m = compare_metrics(&items, k, |item| compare_retrieved(item, &item.runs[mi], t));
+            println!(
+                "{:>6.2} {:>10.3} {:>8.3} {:>7.3} {:>13} {:>14}/{}",
+                t,
+                m["recall"].as_f64().unwrap_or(0.0),
+                m["hit"].as_f64().unwrap_or(0.0),
+                m["mrr"].as_f64().unwrap_or(0.0),
+                m["goldenEmpty"].as_u64().unwrap_or(0),
+                m["offTopicRejected"].as_u64().unwrap_or(0),
+                m["offTopic"].as_u64().unwrap_or(0)
+            );
+            by_threshold.push(json!({ "threshold": t, "metrics": m }));
+        }
+        model_results.push(json!({
+            "model": model,
+            "calls": calls.len(),
+            "failed": failed,
+            "avgMs": avg_ms,
+            "maxMs": max_ms,
+            "overTimeout": over_timeout,
+            "usage": usage,
+            "byThreshold": by_threshold,
+        }));
+    }
+
+    // Por pergunta, só números e ids: candidatos (ordem da RRF) e, por modelo,
+    // as pontuações, a latência e o usage.
+    let questions: Vec<serde_json::Value> = items
+        .iter()
+        .map(|item| {
+            json!({
+                "id": item.input.id,
+                "class": item.input.class,
+                "expected": item.input.expected.iter().collect::<Vec<_>>(),
+                "candidates": item
+                    .candidates
+                    .iter()
+                    .map(|c| json!({ "documentId": c.document_id, "kind": c.kind, "weight": c.weight }))
+                    .collect::<Vec<_>>(),
+                "runs": models
+                    .iter()
+                    .zip(&item.runs)
+                    .map(|(model, run)| json!({
+                        "model": model,
+                        "scores": run.scores,
+                        "ms": run.ms,
+                        "usage": run.usage,
+                    }))
+                    .collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+
+    let ts = utc_timestamp();
+    let result = json!({
+        "version": 1,
+        "label": "rerank-compare",
+        "createdAtUtc": ts,
+        "k": k,
+        "noRerank": no_rerank,
+        "models": model_results,
+        "questions": questions,
+    });
+    let out_path = paths.results_dir.join(format!("{}-rerank-compare.json", ts));
+    let body = serde_json::to_string_pretty(&result).map_err(|e| e.to_string())?;
+    paths.write(&out_path, &body)?;
+    println!("\nResults: {}", out_path.display());
+    Ok(())
+}
+
 fn usage() {
     eprintln!(
         "usage (from src-tauri/):\n  \
          cargo run --example rag_eval -- init\n  \
          cargo run --example rag_eval -- candidates\n  \
          cargo run --example rag_eval -- run [--label <name>] [--pipeline baseline|hybrid|full]\n    \
-         full only: [--no-rewrite] [--no-fts] [--no-rerank] [--threshold <f>]"
+         full only: [--no-rewrite] [--no-fts] [--no-rerank] [--threshold <f>] [--rewrite-model <id>]\n  \
+         cargo run --example rag_eval -- compare-rerank --models <id,id,...>"
     );
 }
 
@@ -771,6 +1136,7 @@ fn main() {
         Some("init") => init(&paths),
         Some("candidates") => candidates(&paths),
         Some("run") => run(&paths, &args[1..]),
+        Some("compare-rerank") => compare_rerank(&paths, &args[1..]),
         _ => {
             usage();
             Err("missing or unknown subcommand".into())
