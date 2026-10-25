@@ -1,14 +1,18 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
-import { X } from '@phosphor-icons/react'
+import { Tag, X } from '@phosphor-icons/react'
 import { CALENDAR_NOTEBOOK_ID } from '../../lib/calendar'
 import { notesFolderDocId } from '../../lib/documents'
+import { clipContextStart, type NoteMarkEntry } from '../../lib/noteMarks'
 import {
+  markLabelToken,
   normalizeSearch,
   parseSearchQuery,
   recentNotes,
+  searchMarks,
   searchNotes,
   searchTasks,
   typeToken,
+  type MarkSearchResult,
   type NoteSearchResult,
 } from '../../lib/noteSearch'
 import { RAG_REWRITE_MODEL_KEY, ragRetrieve } from '../../lib/rag'
@@ -21,11 +25,17 @@ interface SearchPaletteProps {
   open: boolean
   onClose: () => void
   onSelectNote: (notebookId: string, noteId: string, subjectId?: string | null) => void
+  // Marca (`has:mark`/`mark:`): abre a nota na marca.
+  onSelectMark?: (note: Note, entry: NoteMarkEntry) => void
   onSelectNotebook?: (notebookId: string) => void
   onSelectTask: (taskId: string) => void
   notebooks?: Notebook[]
   notes: Note[]
   noteTypes: NoteType[]
+  // Tags e rótulos de marca existentes (filtros `tag:` e `mark:`), os mais
+  // usados primeiro nos rótulos.
+  tags?: string[]
+  markLabels?: string[]
   tasks: Task[]
   todosById: Map<string, TodosInfo>
   statuses: TaskStatusDef[]
@@ -42,6 +52,7 @@ interface MeaningHit {
 type SearchResult =
   | { kind: 'notebook'; notebook: Notebook }
   | ({ kind: 'note' } & NoteSearchResult)
+  | ({ kind: 'mark' } & MarkSearchResult)
   | { kind: 'task'; task: Task }
   | { kind: 'meaning' }
   | ({ kind: 'meaningNote' } & MeaningHit)
@@ -57,6 +68,9 @@ interface MeaningState {
 const MAX_NOTEBOOKS = 3
 const MEANING_MIN_CHARS = 3
 const MEANING_EXCERPT_CHARS = 120
+// Rótulos clicáveis na linha de chips quando o filtro de marcas está ligado.
+const MAX_LABEL_CHIPS = 6
+const NO_STRINGS: string[] = []
 
 function noteLabel(note: Note): string | null {
   if (note.archivedAt) return 'archived'
@@ -77,11 +91,14 @@ export function SearchPalette({
   open,
   onClose,
   onSelectNote,
+  onSelectMark,
   onSelectNotebook,
   onSelectTask,
   notebooks = [],
   notes,
   noteTypes,
+  tags = NO_STRINGS,
+  markLabels = NO_STRINGS,
   tasks,
   todosById,
   statuses,
@@ -123,14 +140,27 @@ export function SearchPalette({
   }, [query])
 
   // Chips seguem o input na hora; a lista segue a consulta com debounce.
-  const liveParsed = useMemo(() => parseSearchQuery(query, notebooks, noteTypes), [query, notebooks, noteTypes])
-  const parsed = useMemo(() => parseSearchQuery(debounced, notebooks, noteTypes), [debounced, notebooks, noteTypes])
+  const vocab = useMemo(() => ({ tags, markLabels }), [tags, markLabels])
+  const liveParsed = useMemo(() => parseSearchQuery(query, notebooks, noteTypes, vocab), [query, notebooks, noteTypes, vocab])
+  const parsed = useMemo(() => parseSearchQuery(debounced, notebooks, noteTypes, vocab), [debounced, notebooks, noteTypes, vocab])
   const text = parsed.text.trim()
-  const hasFilters = parsed.notebookId !== null || parsed.typeId !== null || parsed.archived
+  const hasFilters =
+    parsed.notebookId !== null || parsed.typeId !== null || parsed.archived || parsed.marked || parsed.tag !== null
 
   const results = useMemo<SearchResult[]>(() => {
     if (!open) return []
     if (!text && !hasFilters) return recentNotes(searchable).map((r) => ({ kind: 'note', ...r }))
+    // Com `has:mark`/`mark:` os resultados são as marcas (uma linha por
+    // marca), não notas/tasks.
+    if (parsed.marked) {
+      return searchMarks(searchable, text, {
+        notebookId: parsed.notebookId,
+        typeId: parsed.typeId,
+        archived: parsed.archived,
+        tag: parsed.tag,
+        label: parsed.markLabel,
+      }).map((r): SearchResult => ({ kind: 'mark', ...r }))
+    }
     const q = normalizeSearch(text)
     const matchingNotebooks: SearchResult[] =
       hasFilters || !q
@@ -139,14 +169,19 @@ export function SearchPalette({
             .filter((nb) => normalizeSearch(nb.name).startsWith(q))
             .slice(0, MAX_NOTEBOOKS)
             .map((nb) => ({ kind: 'notebook', notebook: nb }))
-    // `type:` e `is:archived` filtram só notas: com eles a seção de tasks some.
-    const foundTasks = parsed.typeId || parsed.archived ? [] : searchTasks(tasks, text, todosById, { notebookId: parsed.notebookId })
+    // `type:`, `tag:` e `is:archived` filtram só notas: com eles a seção de
+    // tasks some.
+    const foundTasks =
+      parsed.typeId || parsed.archived || parsed.tag
+        ? []
+        : searchTasks(tasks, text, todosById, { notebookId: parsed.notebookId })
     // A nota-corpo de uma task listada não repete na seção de notas.
     const taskNoteIds = new Set(foundTasks.map((t) => t.noteId))
     const foundNotes: SearchResult[] = searchNotes(searchable, text, {
       notebookId: parsed.notebookId,
       typeId: parsed.typeId,
       archived: parsed.archived,
+      tag: parsed.tag,
     })
       .filter((r) => !(isTaskBodyNote(r.note) && taskNoteIds.has(r.note.id)))
       .map((r) => ({ kind: 'note', ...r }))
@@ -155,7 +190,7 @@ export function SearchPalette({
       ...foundNotes,
       ...foundTasks.map((task): SearchResult => ({ kind: 'task', task })),
     ]
-  }, [open, searchable, notebooks, tasks, todosById, text, hasFilters, parsed.notebookId, parsed.typeId, parsed.archived])
+  }, [open, searchable, notebooks, tasks, todosById, text, hasFilters, parsed.notebookId, parsed.typeId, parsed.archived, parsed.marked, parsed.markLabel, parsed.tag])
 
   // Escopo semântico: pastas de notas dos cadernos com IA ligada (só a do
   // `#Caderno`, se houver).
@@ -166,8 +201,9 @@ export function SearchPalette({
         .map((nb) => notesFolderDocId(nb.id)),
     [notebooks, disabledNotebookIds, parsed.notebookId]
   )
-  const canSearchMeaning = hasApiKey && text.length >= MEANING_MIN_CHARS && meaningScopeIds.length > 0
-  const meaningKey = `${parsed.notebookId ?? ''}|${parsed.typeId ?? ''}|${parsed.archived ? 'a' : ''}|${text}`
+  // A busca por significado não se aplica às marcas.
+  const canSearchMeaning = !parsed.marked && hasApiKey && text.length >= MEANING_MIN_CHARS && meaningScopeIds.length > 0
+  const meaningKey = `${parsed.notebookId ?? ''}|${parsed.typeId ?? ''}|${parsed.tag ?? ''}|${parsed.archived ? 'a' : ''}|${text}`
   const currentMeaning = meaning && meaning.key === meaningKey ? meaning : null
   const meaningKeyRef = useRef(meaningKey)
   meaningKeyRef.current = meaningKey
@@ -204,6 +240,7 @@ export function SearchPalette({
     const key = meaningKey
     const typeId = parsed.typeId
     const archivedOnly = parsed.archived
+    const tagKey = parsed.tag ? normalizeSearch(parsed.tag) : null
     const request = ++meaningRequestRef.current
     setMeaning({ key, status: 'loading', hits: [], error: null })
     try {
@@ -224,6 +261,7 @@ export function SearchPalette({
         const note = byId.get(c.documentId.slice('note:'.length))
         if (!note || seen.has(note.id) || (typeId && note.typeId !== typeId)) continue
         if (archivedOnly && !note.archivedAt) continue
+        if (tagKey && !note.tags.some((t) => normalizeSearch(t) === tagKey)) continue
         seen.add(note.id)
         // 1º chunk: pula o cabeçalho gerado (`# título`, Project:, Status:...).
         const headerEnd = c.chunkIndex === 0 && c.content.startsWith('# ') ? c.content.indexOf('\n\n') : -1
@@ -244,7 +282,7 @@ export function SearchPalette({
       console.warn('search by meaning failed:', err)
       setMeaning({ key, status: 'error', hits: [], error: err instanceof Error ? err.message : String(err) })
     }
-  }, [meaningKey, parsed.typeId, parsed.archived, meaningScopeIds, text, searchable, results.length])
+  }, [meaningKey, parsed.typeId, parsed.archived, parsed.tag, meaningScopeIds, text, searchable, results.length])
 
   const selectResult = useCallback((result: SearchResult) => {
     if (result.kind === 'meaning') {
@@ -255,6 +293,8 @@ export function SearchPalette({
       onSelectNotebook?.(result.notebook.id)
     } else if (result.kind === 'task') {
       onSelectTask(result.task.id)
+    } else if (result.kind === 'mark') {
+      if (result.note.notebookId) onSelectMark?.(result.note, result.entry)
     } else {
       const note = result.note
       if (note.notebookId) {
@@ -262,7 +302,7 @@ export function SearchPalette({
       }
     }
     onClose()
-  }, [onSelectNotebook, onSelectNote, onSelectTask, onClose, currentMeaning, runMeaningSearch])
+  }, [onSelectNotebook, onSelectNote, onSelectMark, onSelectTask, onClose, currentMeaning, runMeaningSearch])
 
   useEffect(() => {
     if (!open) return
@@ -314,11 +354,42 @@ export function SearchPalette({
     inputRef.current?.focus()
   }
 
+  // Atalho do filtro de marcas (botão sempre visível na linha de chips): liga
+  // com `has:mark`; desliga tirando também o `mark:` do rótulo.
+  const toggleMarks = () => {
+    let next = query.trim()
+    if (liveParsed.marked) {
+      for (const c of liveParsed.chips) {
+        if (c.kind === 'marked' || c.kind === 'markLabel') next = withoutToken(next, c.raw)
+      }
+    } else {
+      next = `${next} has:mark`.trim()
+    }
+    setQuery(next ? `${next} ` : '')
+    inputRef.current?.focus()
+  }
+
+  // Rótulo de marca alterna `mark:<rótulo>` (um por vez).
+  const toggleMarkLabel = (label: string) => {
+    const active = liveParsed.chips.find((c) => c.kind === 'markLabel')
+    let next = active ? withoutToken(query, active.raw) : query.trim()
+    if (!active || active.label !== label) next = `${next} ${markLabelToken(label)}`.trim()
+    setQuery(next ? `${next} ` : '')
+    inputRef.current?.focus()
+  }
+
   if (!open) return null
 
   const showRecent = !text && !hasFilters && results.length > 0
   const notebookChip = liveParsed.chips.find((c) => c.kind === 'notebook')
   const archivedChip = liveParsed.chips.find((c) => c.kind === 'archived')
+  const tagChip = liveParsed.chips.find((c) => c.kind === 'tag')
+  const labelChips = liveParsed.marked
+    ? [
+        ...(liveParsed.markLabel ? [liveParsed.markLabel] : []),
+        ...markLabels.filter((l) => l !== liveParsed.markLabel),
+      ].slice(0, MAX_LABEL_CHIPS)
+    : []
 
   const meaningLabel = !currentMeaning
     ? `Search by meaning: '${text}'`
@@ -335,12 +406,11 @@ export function SearchPalette({
           ref={inputRef}
           className={styles.input}
           type="text"
-          placeholder="Search… (#notebook, type:TODOS, is:archived)"
+          placeholder="Search… (#notebook, tag:, type:, is:archived, has:mark)"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
-        {(notebookChip || archivedChip || noteTypes.length > 0) && (
-          <div className={styles.chips}>
+        <div className={styles.chips}>
             {notebookChip && (
               <button
                 type="button"
@@ -365,7 +435,50 @@ export function SearchPalette({
                 <X size={10} aria-hidden />
               </button>
             )}
-            {noteTypes.map((t) => {
+            {tagChip && (
+              <button
+                type="button"
+                className={`${styles.chip} ${styles.chipActive}`}
+                title="Remove tag filter"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => removeChip(tagChip.raw)}
+              >
+                <Tag size={11} aria-hidden />
+                <span>{tagChip.label}</span>
+                <X size={10} aria-hidden />
+              </button>
+            )}
+            {/* Atalho do filtro de marcas: botão sempre visível, alterna
+                `has:mark` na consulta. Ligado, os rótulos viram chips. */}
+            <button
+              type="button"
+              className={`${styles.chip} ${styles.markChip} ${liveParsed.marked ? styles.chipActive : ''}`}
+              title={liveParsed.marked ? 'Remove marks filter' : 'Show marks (has:mark)'}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={toggleMarks}
+            >
+              <span>Marks</span>
+              {liveParsed.marked && <X size={10} aria-hidden />}
+            </button>
+            {labelChips.map((label) => {
+              const active = liveParsed.markLabel === label
+              return (
+                <button
+                  key={`label-${label}`}
+                  type="button"
+                  className={`${styles.chip} ${styles.markChip} ${active ? styles.chipActive : ''}`}
+                  title={active ? 'Remove label filter' : `Only "${label}" marks`}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => toggleMarkLabel(label)}
+                >
+                  <span>{label}</span>
+                  {active && <X size={10} aria-hidden />}
+                </button>
+              )
+            })}
+            {/* Com as marcas ligadas, os rótulos tomam a linha: dos tipos fica
+                só o ativo (o `type:` continua filtrando as marcas). */}
+            {noteTypes.filter((t) => !liveParsed.marked || liveParsed.typeId === t.id).map((t) => {
               const active = liveParsed.typeId === t.id
               return (
                 <button
@@ -383,8 +496,7 @@ export function SearchPalette({
                 </button>
               )
             })}
-          </div>
-        )}
+        </div>
         <div ref={listRef} className={styles.list}>
           {results.length === 0 && (text || hasFilters) && (
             <div className={styles.empty}>No results found</div>
@@ -393,11 +505,13 @@ export function SearchPalette({
           {items.map((result, i) => {
             const prev = items[i - 1]
             const header =
-              result.kind === 'task' && prev?.kind !== 'task'
-                ? 'Tasks'
-                : result.kind === 'meaningNote' && prev?.kind !== 'meaningNote'
-                  ? 'By meaning'
-                  : null
+              result.kind === 'mark' && prev?.kind !== 'mark'
+                ? 'Marks'
+                : result.kind === 'task' && prev?.kind !== 'task'
+                  ? 'Tasks'
+                  : result.kind === 'meaningNote' && prev?.kind !== 'meaningNote'
+                    ? 'By meaning'
+                    : null
             const className = `${styles.item} ${i === selectedIndex ? styles.itemActive : ''}`
             const itemProps = {
               'data-index': i,
@@ -448,6 +562,27 @@ export function SearchPalette({
                   <div className={`${styles.itemPreview} ${styles.meaningLine}`}>{meaningLabel}</div>
                 </div>
               )
+            } else if (result.kind === 'mark') {
+              const { note, entry } = result
+              const label = noteLabel(note)
+              key = `mark-${note.id}-${entry.index}`
+              body = (
+                <div {...itemProps}>
+                  {note.notebookId && notebookMap.has(note.notebookId) && (
+                    <div className={styles.itemNotebook}>{notebookMap.get(note.notebookId)}</div>
+                  )}
+                  <div className={styles.itemTitleRow}>
+                    <div className={styles.itemTitle}>{note.title || 'Untitled'}</div>
+                    {entry.label && <span className={styles.markLabel}>{entry.label}</span>}
+                    {label && <span className={styles.itemLabel}>{label}</span>}
+                  </div>
+                  <div className={styles.markPreview}>
+                    {clipContextStart(entry.before)}
+                    <mark className={styles.markText}>{entry.text}</mark>
+                    {entry.after}
+                  </div>
+                </div>
+              )
             } else {
               const note = result.note
               const label = noteLabel(note)
@@ -459,6 +594,12 @@ export function SearchPalette({
                   )}
                   <div className={styles.itemTitleRow}>
                     <div className={styles.itemTitle}>{note.title || 'Untitled'}</div>
+                    {result.kind === 'note' && result.tag && (
+                      <span className={styles.itemTag}>
+                        <Tag size={10} aria-hidden />
+                        {result.tag}
+                      </span>
+                    )}
                     {label && <span className={styles.itemLabel}>{label}</span>}
                   </div>
                   {result.kind === 'meaningNote' ? (

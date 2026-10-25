@@ -37,6 +37,9 @@ export interface ChatPanelProps {
   // Cadernos com a indexação de IA desligada: títulos deles não entram nas
   // tools (query_tasks).
   disabledNotebookIds: Set<string>
+  // Clique numa NoteMark (`==texto==`) citada na resposta: abre a nota no
+  // ponto marcado (o App decide entre abrir direto e o seletor de notas).
+  onOpenMark?: (text: string) => void
 }
 
 export function ChatPanel({
@@ -54,6 +57,7 @@ export function ChatPanel({
   todayKey,
   taskChecklist,
   disabledNotebookIds,
+  onOpenMark,
 }: ChatPanelProps) {
   const { statuses } = useTasksEnv()
   const resolveNoteTitle = (noteId: string) => {
@@ -263,6 +267,7 @@ export function ChatPanel({
                 onSaveToNote={(content) =>
                   setSaveTarget({ messageId: m.id, content })
                 }
+                onOpenMark={onOpenMark}
                 footer={<MessageSources message={m} trace={ragTraces[m.id]} timings={chatTimings[m.id]} />}
               />
             ))

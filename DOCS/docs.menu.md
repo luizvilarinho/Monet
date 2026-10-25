@@ -34,6 +34,8 @@ Ponto de entrada para a documentação do projeto. Leia este arquivo primeiro pa
 | `DOCS/specs/productVision.md`       | Visão de produto: o problema que o Monet resolve e o papel da IA como meio, não fim. Consulte ao avaliar features ou decisões de design. |
 | `DOCS/specs/systemSpecification.md` | Stack tecnológica e decisões de arquitetura do projeto. Consulte para entender restrições técnicas ou verificar versões de dependências. |
 | `DOCS/specs/PRD.md`                 | PRD: persona, proposta de valor/diferenciação, inventário de funcionalidades atuais, escopo de plataforma e não-metas. Consulte pra entender público-alvo e o que o Monet deliberadamente não faz. |
+| `DOCS/specs/notemark.md`           | Spec das marcas de atenção (v2): trecho marcado com rótulo opcional, persistido como `<mark data-mark>` (botão "Mark" na régua, Ctrl+Shift+M, `==texto==`), menu da marca, lista Marks de revisão com Resolve, seção "Marks" na coluna de cadernos, `has:mark`/`mark:` no Ctrl+P, tool `search_marks`, citação clicável no chat. Consulte ao trabalhar no editor, na busca, na IA ou no chat. |
+| `DOCS/specs/tags.md`               | Spec das tags de nota como tema transversal: autocomplete no "+ tag", tag clicável na nota, seção "Tags" com contagem e lista das notas da tag (todos os cadernos) na coluna das notas, `tag:` no Ctrl+P. Consulte ao mexer em tags, na coluna de cadernos ou na busca. |
 
 ---
 

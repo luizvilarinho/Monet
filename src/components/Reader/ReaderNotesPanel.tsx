@@ -5,6 +5,7 @@ import {
   setReaderNoteLink,
   unlinkBookFromReaderNote,
 } from '../../lib/readerNoteLink'
+import { collectNoteMarks, summarizeMarks } from '../../lib/noteMarks'
 import { Editor } from '../Editor/Editor'
 import { NoteTypePicker } from '../NoteTypes/NoteTypePicker'
 import styles from './ReaderNotesPanel.module.css'
@@ -122,6 +123,15 @@ export function ReaderNotesPanel({
   const activeNote = useMemo(
     () => notes.find((n) => n.id === selectedNoteId) ?? null,
     [notes, selectedNoteId],
+  )
+  // Rótulos de marca e tags já usados, como no editor da janela principal.
+  const markLabels = useMemo(
+    () => summarizeMarks(collectNoteMarks(notes).map((h) => h.entry)).labels.map((l) => l.label),
+    [notes],
+  )
+  const tagSuggestions = useMemo(
+    () => Array.from(new Set(notes.flatMap((n) => n.tags))).sort((a, b) => a.localeCompare(b)),
+    [notes],
   )
 
   // Efeito A — restaurar notebook vinculado ao livro (roda até completar uma
@@ -306,6 +316,8 @@ export function ReaderNotesPanel({
                 onChange={(content) => handleUpdateActive({ content })}
                 disableSlashCommands
                 disableBlockHandles
+                markLabels={markLabels}
+                tagSuggestions={tagSuggestions}
               />
             ) : (
               <p className={styles.empty}>

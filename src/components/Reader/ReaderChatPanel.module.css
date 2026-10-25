@@ -224,6 +224,19 @@
   color: var(--text-primary, #ddddf1);
 }
 
+/* Marca (`==texto==`) citada na resposta: o visual da marca no editor
+   (App.css). No Reader ela não navega (sairia do livro). */
+.bubbleAssistant :global(mark[data-nm]) {
+  background-color: color-mix(in srgb, var(--nm) 11%, transparent);
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--nm) 85%, transparent);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+  text-decoration-skip-ink: none;
+  border-radius: 2px;
+}
+
 .bubbleAssistant a {
   color: var(--accent-ai, #5dcaa5);
 }

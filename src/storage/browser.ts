@@ -59,6 +59,9 @@ export class BrowserStorage implements StorageAdapter {
   async getNoteSummaries(): Promise<NoteSummary[]> {
     throw new Error('BrowserStorage.getNoteSummaries not implemented')
   }
+  async getMarkedNotes(): Promise<Note[]> {
+    throw new Error('BrowserStorage.getMarkedNotes not implemented')
+  }
   async getBooks(): Promise<Book[]> {
     throw new Error('BrowserStorage.getBooks not implemented')
   }

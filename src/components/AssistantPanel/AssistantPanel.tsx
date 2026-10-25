@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { listen } from '@tauri-apps/api/event'
+import { emitTo, listen } from '@tauri-apps/api/event'
 import { FileText, Brain } from '@phosphor-icons/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { notesFolderDocId, notesIndexGetDisabledNotebooks } from '../../lib/documents'
@@ -389,6 +389,8 @@ export function AssistantPanel() {
                 message={m}
                 isStreaming={m.id === streamingMessageId}
                 onSaveToNote={(content) => void openSaveToNote(content)}
+                // Marca citada: a main aparece e abre a nota nela.
+                onOpenMark={(text) => void emitTo('main', 'assistant-open-mark', text)}
                 footer={<MessageSources message={m} trace={ragTraces[m.id]} timings={chatTimings[m.id]} />}
               />
             ))

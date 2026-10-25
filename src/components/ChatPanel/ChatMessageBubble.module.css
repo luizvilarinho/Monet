@@ -117,6 +117,26 @@
   margin: 0.5em 0;
 }
 
+/* Marca (`==texto==`) citada na resposta: o mesmo visual da marca no editor
+   (App.css). Cursor/hover só quando há handler (markClickable): sem ele a
+   marca é só visual, sem affordance morta. */
+.assistantBody :global(mark[data-nm]) {
+  background-color: color-mix(in srgb, var(--nm) 11%, transparent);
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--nm) 85%, transparent);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+  text-decoration-skip-ink: none;
+  border-radius: 2px;
+}
+.markClickable :global(mark[data-nm]) {
+  cursor: pointer;
+}
+.markClickable :global(mark[data-nm]:hover) {
+  background-color: color-mix(in srgb, var(--nm) 22%, transparent);
+}
+
 
 .assistantBody :global([data-img-blocked]) {
   /* URL bloqueada (localhost/rede privada) */

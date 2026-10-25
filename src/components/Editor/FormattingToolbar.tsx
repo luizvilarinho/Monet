@@ -12,6 +12,8 @@ import {
 } from './formattingActions'
 import { findEligibleTaskItems } from './TaskStatus'
 import { HighlightPicker } from './HighlightPicker'
+import { MarkButton } from './MarkButton'
+import { isSelectionMarked } from './NoteMark'
 
 interface Props {
   editor: Editor
@@ -21,6 +23,8 @@ interface Props {
   onAskAi?: (text: string) => void
   // "Add to Tasks": promove os itens de checklist selecionados a tasks.
   onAddToTasks?: () => void
+  // Rótulos de marca já usados (seta do "Mark").
+  markLabels?: string[]
 }
 
 const PLUGIN_KEY = 'monetFormattingMenu'
@@ -78,7 +82,9 @@ function renderGroups(
   ))
 }
 
-export function FormattingToolbar({ editor, scrollEl, onAskAi, onAddToTasks }: Props) {
+const NO_LABELS: string[] = []
+
+export function FormattingToolbar({ editor, scrollEl, onAskAi, onAddToTasks, markLabels = NO_LABELS }: Props) {
   const [hiddenByEscape, setHiddenByEscape] = useState(false)
   const hiddenByEscapeRef = useRef(hiddenByEscape)
   hiddenByEscapeRef.current = hiddenByEscape
@@ -111,7 +117,7 @@ export function FormattingToolbar({ editor, scrollEl, onAskAi, onAddToTasks }: P
     }
   }, [editor, hiddenByEscape])
 
-  const { inTable, hasSelection, eligibleCount } = useEditorState({
+  const { inTable, hasSelection, eligibleCount, marked } = useEditorState({
     editor,
     selector: ({ editor: ed }) => {
       const { from, to } = ed.state.selection
@@ -119,6 +125,7 @@ export function FormattingToolbar({ editor, scrollEl, onAskAi, onAddToTasks }: P
         inTable: ed.isActive('table'),
         hasSelection: from !== to,
         eligibleCount: from !== to ? findEligibleTaskItems(ed.state).length : 0,
+        marked: from !== to && isSelectionMarked(ed.state),
       }
     },
   })
@@ -181,6 +188,7 @@ export function FormattingToolbar({ editor, scrollEl, onAskAi, onAddToTasks }: P
               className={styles.btn}
               activeClassName={styles.active}
             />
+            <MarkButton editor={editor} active={marked} labels={markLabels} />
             {(onAskAi || showAddToTasks) && <div className={styles.sep} />}
             {showAddToTasks && (
               <button

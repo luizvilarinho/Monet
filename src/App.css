@@ -22,6 +22,11 @@
   --border: #2e2f2cb3;
   --hair: #34344f;
 
+  /* Marca de atenção (mark `noteMark`): âmbar dourado, separado do laranja
+     das tasks e do amarelo do highlight. Sublinhado, rótulo e fundo sutil
+     derivam desta cor. */
+  --nm: #eeb54a;
+
   /* Espaço: escala de 4px; 6px só no interior de controles e chips */
   --space-0: 2px;    /* micro: ícone↔texto, barras de progresso */
   --space-1: 4px;    /* item↔item em lista densa, padding de chip */
@@ -92,6 +97,66 @@ body { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif; }
   border-radius: 3px;
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
+}
+
+/* Marca de atenção (mark `noteMark`, src/components/Editor/NoteMark.ts): o
+   trecho é uma âncora para voltar, não um destaque de leitura — o texto fica
+   na cor do tema, com sublinhado âmbar e fundo sutil (o highlight é a tinta
+   de fundo; o link, roxo pontilhado). Nunca o amarelo default do <mark>.
+   Global para valer em todo editor Tiptap (principal, Reader, modal de task,
+   janela Keep). */
+.ProseMirror mark[data-mark] {
+  background-color: color-mix(in srgb, var(--nm) 11%, transparent);
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--nm) 85%, transparent);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+  /* Linha contínua: sem o salto nas letras com perna (p, g). */
+  text-decoration-skip-ink: none;
+  border-radius: 2px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  cursor: pointer;
+}
+
+/* Rótulo da marca, depois do trecho. inline-block: o sublinhado da marca
+   não atravessa a pílula. Não entra na seleção nem na cópia. */
+.ProseMirror mark[data-mark]:not([data-mark=""])::after {
+  content: attr(data-mark);
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--nm) 18%, transparent);
+  color: var(--nm);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 15px;
+  letter-spacing: 0.02em;
+  vertical-align: middle;
+  white-space: nowrap;
+  max-width: 14em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-decoration: none;
+  user-select: none;
+}
+
+/* Flash da navegação até a marca (lista, Ctrl+P, chat): pulso curto. */
+.ProseMirror mark[data-mark].nm-flash {
+  animation: nm-flash 1.5s ease-out;
+}
+
+@keyframes nm-flash {
+  0%,
+  100% {
+    background-color: color-mix(in srgb, var(--nm) 11%, transparent);
+  }
+  25%,
+  60% {
+    background-color: color-mix(in srgb, var(--nm) 45%, transparent);
+  }
 }
 
 .app {

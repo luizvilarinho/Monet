@@ -2,6 +2,7 @@ import type { AiResponse, Note, Task, TaskStatusDef } from '../types'
 import { storage } from '../storage'
 import { getToggleTitle } from '../components/Editor/commandParser'
 import { dateKeyFromMs, getWeekdayName, parseCalendarTitle } from './calendar'
+import { markTagsToAiText } from './noteMarks'
 import {
   checklistProgress,
   describeRecurrence,
@@ -86,7 +87,8 @@ function replaceToggleBlocks(text: string, render: (el: Element) => string): str
 // Variante de cleanContent (scoreNotes.ts) que preserva as quebras de linha,
 // porque o chunking do backend divide por parágrafos ("\n\n"). Remove base64 e
 // converte os blocos customizados do editor em texto legível para a IA:
-// respostas da IA embutidas, conteúdo dos toggles e notas linkadas.
+// respostas da IA embutidas, conteúdo dos toggles, notas linkadas e marcas
+// (`==texto== [mark: Rótulo]`, também dentro dos toggles).
 export function cleanNoteContentForAi(content: string, opts: NoteAiTextOptions): string {
   const { resolveNoteTitle, resolveEmbed, resolveLinkedNoteContent, resolveImageText } = opts
 
@@ -146,7 +148,7 @@ export function cleanNoteContentForAi(content: string, opts: NoteAiTextOptions):
   const toggleText = (el: Element) => nodeToAiText(el).replace(/\n{2,}/g, '\n').trim()
 
   return replaceToggleBlocks(
-    content
+    markTagsToAiText(content)
       .replace(EMBED_BLOCK_RE, '')
       .replace(MARKER_RE, '')
       .replace(MD_DATA_IMAGE_RE, (_, url: string) => imageText(url))

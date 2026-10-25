@@ -107,18 +107,71 @@
   font-size: 12px;
 }
 
+/* A tag abre a lista das notas com ela (todos os cadernos). */
+.tagOpen {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.tagOpen:hover {
+  color: var(--accent, #7c6af5);
+}
+
 .tagRemove {
+  display: inline-flex;
+  align-items: center;
   background: transparent;
   border: none;
   color: var(--text-muted, #606070);
   cursor: pointer;
-  font-size: 14px;
   line-height: 1;
   padding: 0;
 }
 
 .tagRemove:hover {
   color: var(--accent-warn, #ef9f27);
+}
+
+/* Autocomplete do "+ tag": lista das tags já usadas abaixo do input. */
+.tagInputWrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.tagSuggest {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 60;
+  min-width: 160px;
+  max-width: 260px;
+  margin: 0;
+  padding: var(--space-1);
+  list-style: none;
+  background: var(--surface-1, #1e1e22);
+  border: 1px solid var(--border, #333340);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+}
+
+.tagSuggest li {
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary, #a0a0b8);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tagSuggest li.tagSuggestActive {
+  background: var(--surface-2, #26262c);
+  color: var(--text-primary, #e8e8f0);
 }
 
 .tagInput {

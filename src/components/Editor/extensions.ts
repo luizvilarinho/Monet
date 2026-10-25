@@ -21,6 +21,7 @@ import { TaskStatus } from './TaskStatus'
 import { MonetClipboard } from './MonetClipboard'
 import { isBlankParagraph } from './blankParagraph'
 import { HighlightMark } from './HighlightMark'
+import { NoteMark } from './NoteMark'
 
 // Custom inline-code mark — força serialização com um único backtick
 // (defaultMarkdownSerializer.marks.code usa `backticksFor` que adiciona mais
@@ -107,6 +108,10 @@ export function buildBaseExtensions(placeholder: string): AnyExtension[] {
     // Mark de destaque com cor (R1) — precisa entrar no conjunto base para
     // que o editor principal e a janela keep gravem o mesmo markdown.
     HighlightMark,
+    // Marca de atenção (`<mark data-mark>`) — no conjunto base pelo mesmo
+    // motivo: um editor sem o mark o descartaria no parse e o autosave
+    // apagaria a marca.
+    NoteMark,
     ParagraphWithBlankLines,
     TaskList,
     LinkedTaskItem.configure({ nested: true }),

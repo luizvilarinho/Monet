@@ -32,6 +32,8 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { countNotebookChatConversations } from '../../hooks/useChat'
 import { useConfirm } from '../../hooks/useConfirm'
 import { INBOX_NOTEBOOK_ID, isTasksSubject, type NotebookTaskProgress } from '../../lib/tasks'
+import { markLabelKey, type MarkLabelFilter, type MarkSummary } from '../../lib/noteMarks'
+import { tagKey, type TagCount } from '../../lib/noteTags'
 import type { Notebook, Subject } from '../../types'
 import { NotebookPickerModal } from '../NotebookPickerModal/NotebookPickerModal'
 import styles from './NotebookList.module.css'
@@ -306,9 +308,19 @@ export interface NotebookListProps {
   onOpenDocuments: (id: string) => void
   onOpenKnowledgeBase: () => void
   notebooksWithDocs: Set<string>
-  tags: string[]
+  // Seção "Tags": tags das notas (todos os cadernos) com a contagem. O clique
+  // abre a lista das notas com a tag; clicar na tag ativa fecha a lista.
+  tags: TagCount[]
   activeTag: string | null
-  onSelectTag: (tag: string | null) => void
+  onOpenTag: (tag: string) => void
+  onCloseTags: () => void
+  // Seção "Marks": total e rótulos das marcas (todos os cadernos). O clique
+  // abre a lista de marcas no filtro; clicar no filtro ativo fecha a lista.
+  markSummary: MarkSummary
+  marksActive: boolean
+  marksFilter: MarkLabelFilter
+  onOpenMarks: (filter: MarkLabelFilter) => void
+  onCloseMarks: () => void
   onOpenSettings: () => void
   calendarNotebookId?: string | null
   // Entrada virtual "Tasks" (não é linha em `notebooks`). Enquanto ativa,
@@ -345,7 +357,13 @@ export function NotebookList({
   notebooksWithDocs,
   tags,
   activeTag,
-  onSelectTag,
+  onOpenTag,
+  onCloseTags,
+  markSummary,
+  marksActive,
+  marksFilter,
+  onOpenMarks,
+  onCloseMarks,
   onOpenSettings,
   calendarNotebookId,
   tasksActive,
@@ -371,6 +389,10 @@ export function NotebookList({
   const inputRef = useRef<HTMLInputElement>(null)
   const subjectInputRef = useRef<HTMLInputElement>(null)
   const { confirm, modal } = useConfirm()
+  // Tasks, Marks ou uma tag na coluna das notas: nenhum caderno aparece ativo.
+  const viewActive = tasksActive || marksActive || activeTag !== null
+  const activeTagKey = activeTag === null ? null : tagKey(activeTag)
+  const allMarksActive = marksActive && marksFilter === null
   const dragging = useRef(false)
   const startX = useRef(0)
   const startWidth = useRef(0)
@@ -535,7 +557,7 @@ export function NotebookList({
             </div>
             <ul className={styles.list}>
               <li
-                className={`${styles.row} ${!tasksActive && activeId === null ? styles.active : ''}`}
+                className={`${styles.row} ${!viewActive && activeId === null ? styles.active : ''}`}
                 onClick={() => onSelect(null)}
               >
                 <span className={`${styles.rowLabel} ${styles.allNotes}`}>all notes</span>
@@ -546,7 +568,7 @@ export function NotebookList({
                 if (!calNb) return null
                 return (
                   <li
-                    className={`${styles.row} ${!tasksActive && calNb.id === activeId ? styles.active : ''}`}
+                    className={`${styles.row} ${!viewActive && calNb.id === activeId ? styles.active : ''}`}
                     onClick={() => onSelect(calNb.id)}
                   >
                     <span className={styles.calendarIcon}>
@@ -590,7 +612,7 @@ export function NotebookList({
                       <Fragment key={nb.id}>
                         <SortableNotebookItem
                           nb={nb}
-                          isActive={!tasksActive && nb.id === activeId}
+                          isActive={!viewActive && nb.id === activeId}
                           hasVisibleDocs={notebooksWithDocs.has(nb.id)}
                           taskProgress={taskProgress.get(nb.id)}
                           editing={editing}
@@ -665,15 +687,60 @@ export function NotebookList({
               {tags.length === 0 ? (
                 <li className={styles.empty}>no tags</li>
               ) : (
-                tags.map((t) => (
+                tags.map((t) => {
+                  const active = tagKey(t.tag) === activeTagKey
+                  return (
+                    <li
+                      key={tagKey(t.tag)}
+                      className={`${styles.row} ${active ? styles.active : ''}`}
+                      title={`Notes tagged #${t.tag}, from every notebook`}
+                      onClick={() => (active ? onCloseTags() : onOpenTag(t.tag))}
+                    >
+                      <span className={styles.rowLabel}>#{t.tag}</span>
+                      <span className={styles.sectionCount}>{t.count}</span>
+                    </li>
+                  )
+                })
+              )}
+            </ul>
+          </section>
+
+          <hr className={styles.divider} />
+
+          <section className={styles.section}>
+            <div className={styles.header}>Marks</div>
+            <ul className={styles.list}>
+              {markSummary.total === 0 ? (
+                <li className={styles.empty}>no marks</li>
+              ) : (
+                <>
                   <li
-                    key={t}
-                    className={t === activeTag ? styles.active : undefined}
-                    onClick={() => onSelectTag(t === activeTag ? null : t)}
+                    className={`${styles.row} ${allMarksActive ? styles.active : ''}`}
+                    onClick={() => (allMarksActive ? onCloseMarks() : onOpenMarks(null))}
                   >
-                    #{t}
+                    <span className={`${styles.rowLabel} ${styles.allNotes}`}>all marks</span>
+                    <span className={styles.sectionCount}>{markSummary.total}</span>
                   </li>
-                ))
+                  {markSummary.labels.map((l) => {
+                    const active =
+                      marksActive &&
+                      marksFilter !== null &&
+                      marksFilter.label !== null &&
+                      markLabelKey(marksFilter.label) === markLabelKey(l.label)
+                    return (
+                      <li
+                        key={markLabelKey(l.label)}
+                        className={`${styles.row} ${active ? styles.active : ''}`}
+                        title={l.label}
+                        onClick={() => (active ? onCloseMarks() : onOpenMarks({ label: l.label }))}
+                      >
+                        <span className={styles.markDot} aria-hidden />
+                        <span className={styles.rowLabel}>{l.label}</span>
+                        <span className={styles.sectionCount}>{l.count}</span>
+                      </li>
+                    )
+                  })}
+                </>
               )}
             </ul>
           </section>

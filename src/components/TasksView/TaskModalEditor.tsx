@@ -51,6 +51,9 @@ interface TaskModalEditorProps {
   onCreateTodos: (notebookId: string, title: string) => Promise<string>
   onDelete: () => void
   suggestedTaskNotebookId: string
+  // Rótulos de marca e tags já usados (régua/menu da marca e "+ tag").
+  markLabels?: string[]
+  tagSuggestions?: string[]
   // Provider do corpo do modal: sem `onOpenTask`/`onOpenTaskModal` (o card
   // dentro do corpo não navega atrás do modal).
   tasksContext: TasksContextValue
@@ -81,6 +84,8 @@ export function TaskModalEditor({
   onCreateTodos,
   onDelete,
   suggestedTaskNotebookId,
+  markLabels,
+  tagSuggestions,
   tasksContext,
 }: TaskModalEditorProps) {
   const { responses, removeResponse } = useAi(note?.id ?? null)
@@ -156,6 +161,8 @@ export function TaskModalEditor({
         taskStatuses={taskStatuses}
         taskNotebooks={notebooks}
         suggestedTaskNotebookId={suggestedTaskNotebookId}
+        markLabels={markLabels}
+        tagSuggestions={tagSuggestions}
         onCreateTasks={onCreateTasks}
         onToggleLinkedTask={onToggleLinkedTask}
         topSlot={propertiesBar}

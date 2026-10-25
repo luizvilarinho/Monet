@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { nanoid } from 'nanoid'
 import type { Note, Notebook } from '../../types'
 import { formatLocalTimestamp } from '../../lib/calendar'
+import { stripMarkCitations } from '../../lib/noteMarks'
 import styles from './SaveToNoteModal.module.css'
 
 const LAST_NOTEBOOK_KEY = 'monet:chat-save-last-notebook-id'
@@ -64,7 +65,8 @@ function saveLastNotebookId(id: string): void {
 }
 
 export function buildToggleBlock(rawMarkdown: string, timestamp = formatLocalTimestamp()): string {
-  const body = rawMarkdown.trim()
+  // A citação `==texto==` de uma marca vira texto simples: a IA não cria marcas.
+  const body = stripMarkCitations(rawMarkdown).trim()
   // Pure markdown: timestamp header + content. No HTML, fully editable and rendered normally in preview.
   return `**Chat Response — ${timestamp}**\n\n${body}`
 }

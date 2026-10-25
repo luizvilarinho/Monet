@@ -54,6 +54,7 @@ import {
 } from '../lib/rag'
 import { CALENDAR_NOTEBOOK_ID, dateKeyFromMs, getWeekdayName } from '../lib/calendar'
 import { cleanNoteContentForAi, loadEmbedResponses, noteDate } from '../lib/noteFileText'
+import { extractNoteMarks, markLabelKey, summarizeMarks, type NoteMarkEntry } from '../lib/noteMarks'
 import { isTodosNote } from '../lib/noteTypes'
 import { ocrTextsForContent } from '../lib/imageOcr'
 import { storage } from '../storage'
@@ -122,6 +123,15 @@ If you're not sure about something, say so — don't fabricate. When multiple
 valid approaches exist, present the options with real trade-offs, not just
 "it depends." Never invent sources, quotes, statistics, or reading
 recommendations.
+
+## Marks
+The user marks passages in their notes as attention points — things to
+research, review or doubt later. In note text a marked passage appears as
+==text==, optionally followed by its label, e.g. ==entropy== [mark: Research].
+When you refer to a marked passage, quote it verbatim as ==text== (without the
+label): the app turns it into a link to that spot in the note. Use == only
+around the user's marks. Marks belong to the user: you never create, remove or
+resolve them.
 
 ## Language
 Always respond in the same language as the user's message.`
@@ -1477,6 +1487,73 @@ async function getNoteText(title: string, notebook: string | undefined): Promise
     body = room > marker.length ? `${body.slice(0, room - marker.length)}${marker}` : ''
   }
   return body ? `${header}\n\n${body}` : header
+}
+
+// ─── Tool "Notes" (search_marks) ────────────────────────────────────────────
+// Inventário das marcas de atenção das notas de cadernos com a IA ligada,
+// como texto para a IA: trecho, rótulo, contexto e procedência (§6.2 do
+// spec). Mesmo padrão do get_note: storage lido na hora da chamada (só as
+// notas com marca), cadernos desligados fora, saída limitada por orçamento.
+// Read-only — a IA nunca escreve marcas (R10).
+const SEARCH_MARKS_BUDGET = 5000
+const SEARCH_MARKS_MAX_MARKS = 60
+
+function labelsLine(entries: NoteMarkEntry[]): string {
+  const { labels, unlabeled } = summarizeMarks(entries)
+  const parts = labels.map((l) => `${l.label} (${l.count})`)
+  if (unlabeled > 0) parts.push(`no label (${unlabeled})`)
+  return parts.length > 0 ? `Labels in use: ${parts.join(', ')}.` : ''
+}
+
+async function searchMarksText(
+  query: string | undefined,
+  label: string | undefined,
+  notebook: string | undefined
+): Promise<string> {
+  const [notebooks, notes, disabledIds] = await Promise.all([
+    storage.getNotebooks(),
+    storage.getMarkedNotes(),
+    notesIndexGetDisabledNotebooks(),
+  ])
+  const disabled = new Set(disabledIds)
+  const notebookName = new Map(notebooks.map((nb) => [nb.id, nb.name]))
+  const wantedNotebook = notebook ? foldText(notebook) : ''
+  const visible = notes
+    .filter((n) => !!n.notebookId && !disabled.has(n.notebookId))
+    .filter(
+      (n) =>
+        !wantedNotebook ||
+        foldText(notebookName.get(n.notebookId ?? '') ?? '').includes(wantedNotebook)
+    )
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+  const pool = visible.flatMap((note) => extractNoteMarks(note.content).map((entry) => ({ note, entry })))
+  const wantedLabel = label ? markLabelKey(label) : ''
+  const wanted = query ? foldText(query) : ''
+  const found = pool.filter(
+    ({ entry }) =>
+      (!wantedLabel || (!!entry.label && markLabelKey(entry.label).includes(wantedLabel))) &&
+      (!wanted || foldText(`${entry.text} ${entry.before} ${entry.after}`).includes(wanted))
+  )
+  const inUse = labelsLine(pool.map((p) => p.entry))
+  if (found.length === 0) {
+    if (pool.length === 0) return 'The user has no marks.'
+    return [`No marks match${label ? ` the label "${label}"` : ''}${query ? ` "${query}"` : ''}.`, inUse]
+      .filter(Boolean)
+      .join(' ')
+  }
+  const lines: string[] = []
+  let used = 0
+  for (const { note, entry } of found) {
+    const where = `${note.title.trim() || 'Untitled'} · ${notebookName.get(note.notebookId ?? '') ?? 'Untitled'}${note.archivedAt ? ' · archived' : ''}`
+    const context =
+      entry.before || entry.after ? `\n  context: "${entry.before}==${entry.text}==${entry.after}"` : ''
+    const line = `- ==${entry.text}==${entry.label ? ` [mark: ${entry.label}]` : ''} — ${where}${context}`
+    if (lines.length >= SEARCH_MARKS_MAX_MARKS || used + line.length > SEARCH_MARKS_BUDGET) break
+    lines.push(line)
+    used += line.length
+  }
+  const shown = lines.length < found.length ? `; showing the ${lines.length} from the most recently edited notes` : ''
+  return [`${found.length} mark(s)${shown}.`, ...(wantedLabel ? [] : [inUse]), ...lines].filter(Boolean).join('\n')
 }
 
 export function useChat(
@@ -3288,6 +3365,31 @@ export function useChat(
             },
           },
         })
+        toolDefs.push({
+          type: 'function',
+          function: {
+            name: 'search_marks',
+            description: "List the user's marks: passages they marked in their notes as attention points (to research, review, doubt...), each with its optional label, the surrounding text, the note title and the notebook. Read-only: it never creates, removes or resolves marks, and it does not create tasks or start searches. Use it when the user asks what they marked or what is pending to research or review. Pass label when the user names one (e.g. \"marked as Research\"); the result lists the labels in use.",
+            parameters: {
+              type: 'object',
+              properties: {
+                query: {
+                  type: 'string',
+                  description: 'Only marks whose text or surrounding text contains this. Omit for all marks.',
+                },
+                label: {
+                  type: 'string',
+                  description: 'Only marks with this label (or the beginning of it). Omit for all labels.',
+                },
+                notebook: {
+                  type: 'string',
+                  description: 'Only notes of the notebook whose name contains this text. Omit for all notebooks.',
+                },
+              },
+              required: [],
+            },
+          },
+        })
       }
       // search_knowledge_base: com escopo de RAG na pasta, para o modelo
       // refinar a busca (tipo, período, caderno) dentro desse escopo.
@@ -3386,6 +3488,8 @@ export function useChat(
             // Resultado de get_note (bucket próprio: a mensagem de sistema não
             // fala em "notas por data").
             const getNoteResults: string[] = []
+            // Resultado de search_marks (bucket próprio: inventário de marcas).
+            const markResults: string[] = []
             const sources: RagSource[] = turnRagSources.map((s) => ({ ...s, rowids: [...s.rowids] }))
             for (const tc of p.toolCalls) {
               let parsedArgs: { query?: string; queries?: unknown; memory?: unknown } = {}
@@ -3544,6 +3648,21 @@ export function useChat(
                   console.warn('get_note failed:', err)
                   getNoteResults.push('Notes are unavailable right now.')
                 }
+              } else if (tc.toolName === 'search_marks') {
+                const args = parsedArgs as Record<string, unknown>
+                const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
+                try {
+                  markResults.push(
+                    await searchMarksText(
+                      str(args.query) || undefined,
+                      str(args.label) || undefined,
+                      str(args.notebook) || undefined
+                    )
+                  )
+                } catch (err) {
+                  console.warn('search_marks failed:', err)
+                  markResults.push('Marks are unavailable right now.')
+                }
               } else if (tc.toolName === 'update_folder_memory') {
                 const newMemory = typeof parsedArgs.memory === 'string' ? parsedArgs.memory : null
                 if (newMemory !== null && containingFolder) {
@@ -3595,6 +3714,13 @@ export function useChat(
                     content: `You looked up notes by title. Use what was returned to answer; if the note was not found or several match, say so instead of guessing. Do not invent note content.\n\n${getNoteResults.join('\n---\n')}`,
                   }
                 : null
+            const toolMarksMessage: ChatMessageInput | null =
+              markResults.length > 0
+                ? {
+                    role: 'system',
+                    content: `You looked up the user's marks (passages they marked as attention points). Answer from this list only; do not invent marks. Quote a referenced mark verbatim as ==text==, without the label.\n\n${markResults.join('\n\n')}`,
+                  }
+                : null
             // Fontes trazidas pelas tools (qualquer uma): somam-se às do RAG na
             // mensagem e tiram o aviso "nada relevante" do RAG automático.
             const toolFound = sources.length > turnRagSources.length
@@ -3616,6 +3742,7 @@ export function useChat(
               ...(toolKbMessage ? [toolKbMessage] : []),
               ...(toolNotesMessage ? [toolNotesMessage] : []),
               ...(toolGetNoteMessage ? [toolGetNoteMessage] : []),
+              ...(toolMarksMessage ? [toolMarksMessage] : []),
               // Esta rodada vai sem tools: sem o aviso, prompts como o da
               // memória levam o modelo a pedir outra tool (e não responder).
               {

@@ -8,7 +8,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from 'react'
-import { CalendarBlank } from '@phosphor-icons/react'
+import { CalendarBlank, X } from '@phosphor-icons/react'
 import { nanoid } from 'nanoid'
 import type { Editor as TiptapEditor } from '@tiptap/core'
 import { TextSelection } from '@tiptap/pm/state'
@@ -45,6 +45,15 @@ import {
   type TaskStatusStorage,
 } from './TaskStatus'
 import { SearchInNote } from './SearchInNote'
+import { NoteMarkMenu, NOTE_MARK_MENU_OPEN } from './NoteMarkMenu'
+import {
+  noteMarkElement,
+  noteMarkRunAt,
+  noteMarkRunIndex,
+  noteMarkRunText,
+  noteMarkRuns,
+  removeNoteMarkRun,
+} from './NoteMark'
 import { BlockGutter } from './BlockGutter'
 import { BlockHandle } from './BlockHandle'
 import { HighlightPicker } from './HighlightPicker'
@@ -58,7 +67,7 @@ import type {
   Task,
   TaskStatus,
 } from '../../types'
-import type { ProjectChoice } from '../../lib/tasks'
+import { normalizeName, type ProjectChoice } from '../../lib/tasks'
 
 export interface EditorProps {
   notebookName?: string
@@ -87,6 +96,15 @@ export interface EditorProps {
   focusMode?: boolean
   // "Ask AI" na toolbar de seleção (chat do caderno).
   onAskAi?: (text: string) => void
+  // "List" do menu da marca e Ctrl+clique numa marca: abre a lista de marcas
+  // nela (índice da marca na nota + rótulo).
+  onShowMarkInList?: (index: number, label: string | null) => void
+  // Rótulos de marca já usados (régua e menu da marca).
+  markLabels?: string[]
+  // Tags já usadas nas notas (autocomplete do "+ tag").
+  tagSuggestions?: string[]
+  // Clique numa tag da nota: lista das notas com a tag, de todos os cadernos.
+  onOpenTag?: (tag: string) => void
   // Expõe a instância do Tiptap ao App (inserir resposta do chat na nota);
   // chamado com null quando o editor é destruído.
   onEditorReady?: (editor: TiptapEditor | null) => void
@@ -106,6 +124,13 @@ export interface EditorProps {
   // Início da linha de data/tags: selo "Archived" e "+ type" da nota sem tipo.
   tagsRowSlot?: ReactNode
   onToggleLinkedTask?: (taskId: string, checked: boolean) => void
+  // Pedido sobre uma marca da nota (lista de marcas, Ctrl+P, `==` do chat):
+  // `reveal` rola até ela, põe o cursor nela, abre o menu e pisca; `resolve`
+  // desfaz a marca (o texto fica). A marca é a de índice `index`, conferida
+  // pelo texto. O App só passa o pedido quando a nota aberta é a dele;
+  // consumido uma única vez.
+  revealRequest?: { index: number; text: string; nonce: number; action: 'reveal' | 'resolve' } | null
+  onRevealConsumed?: () => void
 }
 
 function getMarkdown(editor: TiptapEditor): string {
@@ -117,6 +142,9 @@ function findHeadingDomElements(root: HTMLElement | null): HTMLElement[] {
   if (!root) return []
   return Array.from(root.querySelectorAll('h1, h2, h3')) as HTMLElement[]
 }
+
+const NO_STRINGS: string[] = []
+const TAG_SUGGESTIONS = 8
 
 const HIDDEN_AUTOCOMPLETE: AutocompleteState = {
   visible: false,
@@ -172,6 +200,10 @@ export function Editor({
   previewMode = false,
   focusMode = false,
   onAskAi,
+  onShowMarkInList,
+  markLabels = NO_STRINGS,
+  tagSuggestions = NO_STRINGS,
+  onOpenTag,
   onEditorReady,
   taskStatuses,
   taskNotebooks = [],
@@ -180,9 +212,14 @@ export function Editor({
   onToggleLinkedTask,
   topSlot,
   tagsRowSlot,
+  revealRequest,
+  onRevealConsumed,
 }: EditorProps) {
   const [adding, setAdding] = useState(false)
   const [draft, setDraft] = useState('')
+  // Sugestão destacada no autocomplete do "+ tag" (-1 = nenhuma: Enter usa o
+  // texto digitado).
+  const [tagActive, setTagActive] = useState(-1)
   const [activeOffset, setActiveOffset] = useState<number | null>(null)
   const [autocomplete, setAutocomplete] = useState<AutocompleteState>(HIDDEN_AUTOCOMPLETE)
   const [searchVisible, setSearchVisible] = useState(false)
@@ -231,6 +268,10 @@ export function Editor({
   previewModeRef.current = previewMode
   const onEditorReadyRef = useRef(onEditorReady)
   onEditorReadyRef.current = onEditorReady
+  const onRevealConsumedRef = useRef(onRevealConsumed)
+  onRevealConsumedRef.current = onRevealConsumed
+  const onShowMarkInListRef = useRef(onShowMarkInList)
+  onShowMarkInListRef.current = onShowMarkInList
 
   const contextValue = useMemo(
     () => ({ responses: responses ?? [] }),
@@ -600,9 +641,71 @@ export function Editor({
     return detach
   }, [editor])
 
+  // Pedido sobre uma marca (R7). Acha o run pelo índice e confere o texto; se
+  // não bater (nota editada desde a lista), o run de mesmo texto mais perto do
+  // índice. Sem texto igual, `reveal` ainda vai ao índice; `resolve` não mexe
+  // em nada (não desmarca a marca errada). Consumido sempre, inclusive sem
+  // match: um pedido pendente nunca deve agir numa navegação futura.
+  const revealNonceRef = useRef<number | null>(null)
+  useEffect(() => {
+    if (!editor || !revealRequest) return
+    if (revealNonceRef.current === revealRequest.nonce) return
+    revealNonceRef.current = revealRequest.nonce
+    const { doc } = editor.state
+    const runs = noteMarkRuns(doc)
+    const key = (s: string) => normalizeName(s.replace(/\s+/g, ' ').trim())
+    const wanted = key(revealRequest.text)
+    const byIndex = runs[revealRequest.index]
+    let run = byIndex && key(noteMarkRunText(doc, byIndex)) === wanted ? byIndex : undefined
+    if (!run) {
+      run = runs
+        .map((r, i) => ({ r, d: Math.abs(i - revealRequest.index) }))
+        .filter(({ r }) => key(noteMarkRunText(doc, r)) === wanted)
+        .sort((a, b) => a.d - b.d)[0]?.r
+    }
+    if (!run && revealRequest.action === 'reveal') run = byIndex
+    if (run) {
+      const el = noteMarkElement(editor.view, run)
+      el?.scrollIntoView({ block: 'center' })
+      if (revealRequest.action === 'resolve') {
+        removeNoteMarkRun(editor as TiptapEditor, run)
+      } else {
+        // Cursor no fim da marca e o menu dela aberto: rótulo, Ask AI e
+        // "Remove mark" à mão.
+        editor.chain().focus().setTextSelection(run.to).setMeta(NOTE_MARK_MENU_OPEN, true).run()
+        if (el) {
+          el.classList.remove('nm-flash')
+          // Força reflow para reiniciar a animação em flashes repetidos.
+          void el.offsetWidth
+          el.classList.add('nm-flash')
+          el.addEventListener('animationend', () => el.classList.remove('nm-flash'), { once: true })
+        }
+      }
+    }
+    onRevealConsumedRef.current?.()
+  }, [editor, revealRequest])
+
   useEffect(() => {
     if (!editor) return
     const dom = editor.view.dom
+    // Ctrl/Cmd+clique numa marca: abre a lista de marcas nela. Tem que ser no
+    // MOUSEDOWN, em captura: Ctrl+clique é o modificador de seleção de nó do
+    // ProseMirror (`selectNodeModifier` → NodeSelection no bloco clicado) —
+    // deixar o mousedown passar selecionaria o parágrafo. preventDefault corta
+    // o caret nativo; stopPropagation corta o MouseDown do PM. Sem ctrl, nada
+    // muda (o clique simples abre o menu da marca).
+    const listHandler = (e: MouseEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return
+      if (!onShowMarkInListRef.current) return
+      const markEl = (e.target as Element).closest('mark[data-mark]')
+      if (!markEl || !dom.contains(markEl)) return
+      const pos = editor.view.posAtCoords({ left: e.clientX, top: e.clientY })
+      const run = pos ? noteMarkRunAt(editor.state, pos.pos) : null
+      if (!run) return
+      e.preventDefault()
+      e.stopPropagation()
+      onShowMarkInListRef.current(Math.max(noteMarkRunIndex(editor.state.doc, run), 0), run.label)
+    }
     const handler = (e: MouseEvent) => {
       const anchor = (e.target as Element).closest('a')
       if (!anchor) return
@@ -614,8 +717,12 @@ export function Editor({
         if (noteId) onNavigateToNoteRef.current?.(noteId)
       }
     }
+    dom.addEventListener('mousedown', listHandler, true)
     dom.addEventListener('click', handler, true)
-    return () => dom.removeEventListener('click', handler, true)
+    return () => {
+      dom.removeEventListener('mousedown', listHandler, true)
+      dom.removeEventListener('click', handler, true)
+    }
   }, [editor])
 
   useEffect(() => {
@@ -823,10 +930,27 @@ export function Editor({
     [headings]
   )
 
-  function commitTag() {
-    const clean = draft.trim().replace(/^#/, '')
-    if (clean && !tags.includes(clean)) {
-      onTagsChange([...tags, clean])
+  // Tags já usadas que casam com o digitado (sem caixa nem acento), fora as da
+  // nota.
+  const tagOptions = useMemo(() => {
+    if (!adding) return NO_STRINGS
+    const q = normalizeName(draft.trim().replace(/^#/, ''))
+    const own = new Set(tags.map(normalizeName))
+    return tagSuggestions
+      .filter((t) => !own.has(normalizeName(t)) && normalizeName(t).includes(q))
+      .slice(0, TAG_SUGGESTIONS)
+  }, [adding, draft, tags, tagSuggestions])
+
+  useEffect(() => setTagActive(-1), [draft])
+
+  // Tag igual a uma já usada (sem caixa nem acento) entra com a grafia dela:
+  // "pesquisa" não vira uma segunda tag ao lado de "Pesquisa". As tags que já
+  // existem não mudam.
+  function commitTag(value: string = draft) {
+    const clean = value.trim().replace(/^#/, '')
+    const key = normalizeName(clean)
+    if (clean && !tags.some((t) => normalizeName(t) === key)) {
+      onTagsChange([...tags, tagSuggestions.find((t) => normalizeName(t) === key) ?? clean])
     }
     setDraft('')
     setAdding(false)
@@ -899,33 +1023,77 @@ export function Editor({
         </button>
         {tags.map((t) => (
           <span key={t} className={styles.tag}>
-            #{t}
+            {onOpenTag ? (
+              <button
+                className={styles.tagOpen}
+                onClick={() => onOpenTag(t)}
+                title={`Notes tagged #${t}, from every notebook`}
+                type="button"
+              >
+                #{t}
+              </button>
+            ) : (
+              `#${t}`
+            )}
             <button
               className={styles.tagRemove}
               onClick={() => removeTag(t)}
               aria-label={`remove tag ${t}`}
+              title="Remove tag"
               type="button"
             >
-              ×
+              <X size={10} weight="bold" aria-hidden />
             </button>
           </span>
         ))}
         {adding && (
-          <input
-            className={styles.tagInput}
-            autoFocus
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={commitTag}
-            onKeyDown={(e: ReactKeyboardEvent<HTMLInputElement>) => {
-              if (e.key === 'Enter') commitTag()
-              if (e.key === 'Escape') {
-                setDraft('')
-                setAdding(false)
-              }
-            }}
-            placeholder="new tag"
-          />
+          <span className={styles.tagInputWrap}>
+            <input
+              className={styles.tagInput}
+              autoFocus
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onBlur={() => commitTag()}
+              onKeyDown={(e: ReactKeyboardEvent<HTMLInputElement>) => {
+                if (e.key === 'ArrowDown' && tagOptions.length > 0) {
+                  e.preventDefault()
+                  setTagActive((i) => Math.min(i + 1, tagOptions.length - 1))
+                } else if (e.key === 'ArrowUp' && tagOptions.length > 0) {
+                  e.preventDefault()
+                  setTagActive((i) => Math.max(i - 1, -1))
+                } else if (e.key === 'Enter') {
+                  commitTag(tagOptions[tagActive] ?? draft)
+                } else if (e.key === 'Escape') {
+                  setDraft('')
+                  setAdding(false)
+                }
+              }}
+              placeholder="new tag"
+              role="combobox"
+              aria-expanded={tagOptions.length > 0}
+              aria-autocomplete="list"
+            />
+            {tagOptions.length > 0 && (
+              <ul className={styles.tagSuggest} role="listbox">
+                {tagOptions.map((t, i) => (
+                  <li
+                    key={t}
+                    role="option"
+                    aria-selected={i === tagActive}
+                    className={i === tagActive ? styles.tagSuggestActive : undefined}
+                    onMouseEnter={() => setTagActive(i)}
+                    // Sem tirar o foco do input (o blur gravaria o digitado).
+                    onMouseDown={(e) => {
+                      e.preventDefault()
+                      commitTag(t)
+                    }}
+                  >
+                    #{t}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </span>
         )}
       </div>
       <div className={styles.bodyWrap}>
@@ -1083,7 +1251,17 @@ export function Editor({
           scrollEl={scrollEl}
           onAskAi={onAskAi}
           onAddToTasks={onCreateTasks ? handleAddToTasks : undefined}
+          markLabels={markLabels}
         />}
+      {editor && (
+        <NoteMarkMenu
+          editor={editor as TiptapEditor}
+          scrollEl={scrollEl}
+          labels={markLabels}
+          onAskAi={onAskAi}
+          onShowInList={onShowMarkInList}
+        />
+      )}
       <CommandAutocomplete
         state={autocomplete}
         onSelect={(s) => acceptSuggestionRef.current(s)}

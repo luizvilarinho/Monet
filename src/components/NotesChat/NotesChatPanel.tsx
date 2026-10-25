@@ -11,6 +11,7 @@ import {
 } from '../../hooks/useChat'
 import { useStickToBottom } from '../../hooks/useStickToBottom'
 import { renderMarkdown } from '../../lib/markdown'
+import { linkNoteMarks } from '../../lib/noteMarks'
 import { notesFolderDocId } from '../../lib/documents'
 import { loadEmbedResponses } from '../../lib/noteFileText'
 import { ocrTextsForContent } from '../../lib/imageOcr'
@@ -70,6 +71,9 @@ interface NotesChatPanelProps {
   onPendingQuoteConsumed: () => void
   canInsert: boolean
   onInsertIntoNote: (content: NoteInsert, where: 'cursor' | 'end') => void
+  // Clique numa NoteMark (`==texto==`) citada na resposta: abre a nota no
+  // ponto marcado (o App decide entre abrir direto e o seletor de notas).
+  onOpenMark?: (text: string) => void
 }
 
 export function NotesChatPanel({
@@ -89,6 +93,7 @@ export function NotesChatPanel({
   onPendingQuoteConsumed,
   canInsert,
   onInsertIntoNote,
+  onOpenMark,
 }: NotesChatPanelProps) {
   const [models, setModels] = useState<AiModel[]>([])
   const [modelsLoading, setModelsLoading] = useState(false)
@@ -586,6 +591,7 @@ export function NotesChatPanel({
                     isStreaming={m.id === streamingMessageId}
                     canInsert={canInsert}
                     onInsert={onInsertIntoNote}
+                    onOpenMark={onOpenMark}
                     trace={ragTraces[m.id]}
                     timings={chatTimings[m.id]}
                   />
@@ -756,11 +762,12 @@ interface NotesChatBubbleProps {
   isStreaming: boolean
   canInsert: boolean
   onInsert: (content: NoteInsert, where: 'cursor' | 'end') => void
+  onOpenMark?: (text: string) => void
   trace?: RagResponse
   timings?: ChatTimings
 }
 
-function NotesChatBubble({ message, isStreaming, canInsert, onInsert, trace, timings }: NotesChatBubbleProps) {
+function NotesChatBubble({ message, isStreaming, canInsert, onInsert, onOpenMark, trace, timings }: NotesChatBubbleProps) {
   const isUser = message.role === 'user'
   const isEmpty = !isUser && message.content.length === 0
   const segments = useMemo(
@@ -799,10 +806,16 @@ function NotesChatBubble({ message, isStreaming, canInsert, onInsert, trace, tim
   return (
     <div className={styles.assistantBlock}>
       <div
-        className={styles.bubbleAssistant}
+        className={`${styles.bubbleAssistant} ${onOpenMark ? styles.markClickable : ''}`}
         data-streaming={isStreaming || undefined}
         data-chat-message
         onClick={(e) => {
+          const nm = (e.target as HTMLElement).closest('mark[data-nm]')
+          if (nm) {
+            const text = nm.getAttribute('data-nm')
+            if (text) onOpenMark?.(text)
+            return
+          }
           const target = (e.target as HTMLElement).closest('a')
           if (!target) return
           const href = target.getAttribute('href')
@@ -877,7 +890,7 @@ function MarkdownHtml({ markdown, className }: { markdown: string; className?: s
   useEffect(() => {
     let cancelled = false
     renderMarkdown(markdown).then((out) => {
-      if (!cancelled) setHtml(out)
+      if (!cancelled) setHtml(linkNoteMarks(out))
     })
     return () => {
       cancelled = true

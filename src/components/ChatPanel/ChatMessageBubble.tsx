@@ -2,6 +2,7 @@ import { openUrl } from '@tauri-apps/plugin-opener'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { ChatMessage } from '../../hooks/useChat'
 import { renderMarkdown } from '../../lib/markdown'
+import { linkNoteMarks } from '../../lib/noteMarks'
 import styles from './ChatMessageBubble.module.css'
 
 interface ChatMessageBubbleProps {
@@ -9,11 +10,14 @@ interface ChatMessageBubbleProps {
   isStreaming: boolean
   // Ausente esconde o botao "Save to note".
   onSaveToNote?: (content: string) => void
+  // Clique numa marca (`==texto==`) citada na resposta: abre a nota nela (o
+  // App decide entre abrir direto e o seletor de notas).
+  onOpenMark?: (text: string) => void
   // Conteudo extra abaixo da resposta do assistant.
   footer?: ReactNode
 }
 
-export function ChatMessageBubble({ message, isStreaming, onSaveToNote, footer }: ChatMessageBubbleProps) {
+export function ChatMessageBubble({ message, isStreaming, onSaveToNote, onOpenMark, footer }: ChatMessageBubbleProps) {
   const isUser = message.role === 'user'
   const [html, setHtml] = useState('')
   const [copied, setCopied] = useState(false)
@@ -41,12 +45,16 @@ export function ChatMessageBubble({ message, isStreaming, onSaveToNote, footer }
     }
     let cancelled = false
     renderMarkdown(message.content).then((out) => {
-      if (!cancelled) setHtml(out)
+      if (!cancelled) setHtml(linkNoteMarks(out))
     })
     return () => {
       cancelled = true
     }
   }, [isUser, message.content, cacheKey])
+
+  // Objeto estável: o React 19 reescreve o innerHTML quando a identidade do
+  // { __html } muda, e isso desfaz a seleção do usuário na resposta.
+  const bodyHtml = useMemo(() => ({ __html: html }), [html])
 
   function handleCopy() {
     if (isUser) return
@@ -98,9 +106,15 @@ export function ChatMessageBubble({ message, isStreaming, onSaveToNote, footer }
             </details>
           )}
           <div
-            className={styles.assistantBody}
-            dangerouslySetInnerHTML={{ __html: html }}
+            className={`${styles.assistantBody} ${onOpenMark ? styles.markClickable : ''}`}
+            dangerouslySetInnerHTML={bodyHtml}
             onClick={(e) => {
+              const nm = (e.target as HTMLElement).closest('mark[data-nm]')
+              if (nm) {
+                const text = nm.getAttribute('data-nm')
+                if (text) onOpenMark?.(text)
+                return
+              }
               const target = (e.target as HTMLElement).closest('a')
               if (!target) return
               const href = target.getAttribute('href')

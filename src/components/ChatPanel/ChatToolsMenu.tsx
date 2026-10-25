@@ -48,7 +48,7 @@ export interface ChatToolsMenuProps {
   tasksTool?: { supported: boolean } | null
   // Tool "Daily notes" (get_day, notes_by_date); `supported` = o modelo aceita tools.
   dailyNotesTool?: { supported: boolean } | null
-  // Tool "Notes" (get_note); `supported` = o modelo aceita tools.
+  // Tool "Notes" (get_note e search_marks); `supported` = o modelo aceita tools.
   notesTool?: { supported: boolean } | null
 }
 
@@ -209,7 +209,7 @@ export function ChatToolsMenu({
                 <div className={styles.toolText}>
                   <span className={styles.toolName}>Notes</span>
                   <span className={styles.toolDescription}>
-                    Lets the AI look up a note by title when you name one: metadata, its tasks if it is a TODOS, and an excerpt.
+                    Lets the AI look up a note by title when you name one (metadata, its tasks if it is a TODOS, and an excerpt) and list your marks when you ask what you marked.
                   </span>
                 </div>
                 <button

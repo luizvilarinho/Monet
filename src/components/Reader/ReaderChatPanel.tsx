@@ -9,6 +9,7 @@ import {
 } from '../../hooks/useChat'
 import { useStickToBottom } from '../../hooks/useStickToBottom'
 import { renderMarkdown } from '../../lib/markdown'
+import { linkNoteMarks } from '../../lib/noteMarks'
 import {
   listOpenRouterModels,
   OPENROUTER_KEY_MISSING,
@@ -569,7 +570,7 @@ function ReaderChatBubble({ message, isStreaming, trace, timings }: ReaderChatBu
     }
     let cancelled = false
     renderMarkdown(message.content).then((out) => {
-      if (!cancelled) setHtml(out)
+      if (!cancelled) setHtml(linkNoteMarks(out))
     })
     return () => {
       cancelled = true

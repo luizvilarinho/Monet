@@ -815,6 +815,14 @@ export class TauriStorage implements StorageAdapter {
       .filter((n) => n.notebookId !== CALENDAR_NOTEBOOK_ID || parseCalendarTitle(n.title) !== null)
   }
 
+  async getMarkedNotes(): Promise<Note[]> {
+    const db = await this.db()
+    const rows = await db.select<NoteRow[]>(
+      "SELECT * FROM notes WHERE instr(content, 'data-mark') > 0 ORDER BY updated_at DESC"
+    )
+    return rows.map(rowToNote)
+  }
+
   async getNoteSummaries(): Promise<NoteSummary[]> {
     const db = await this.db()
     const rows = await db.select<Array<Omit<NoteRow, 'content' | 'tags' | 'subject_id'>>>(

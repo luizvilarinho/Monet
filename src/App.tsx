@@ -28,6 +28,9 @@ import { RelatedContent } from './components/RelatedContent/RelatedContent'
 import { SettingsModal } from './components/Settings/SettingsModal'
 import { UpdaterDialog } from './components/UpdaterDialog/UpdaterDialog'
 import { SearchPalette } from './components/SearchPalette/SearchPalette'
+import { MarkNotePicker } from './components/SearchPalette/MarkNotePicker'
+import { MarksView } from './components/MarksView/MarksView'
+import { TagView } from './components/TagView/TagView'
 import { Sidebar } from './components/Sidebar/Sidebar'
 import { TasksView } from './components/TasksView/TasksView'
 import type { NewTaskDraft } from './components/TasksView/TasksHeader'
@@ -106,6 +109,16 @@ import {
 } from './lib/updater'
 import { getToggleTitle, isPotentialCommandLine } from './components/Editor/commandParser'
 import { cleanNoteContentForAi, loadEmbedResponses } from './lib/noteFileText'
+import {
+  collectNoteMarks,
+  stripMarkCitations,
+  summarizeMarks,
+  type MarkLabelFilter,
+  type NoteMarkEntry,
+  type NoteMarkHit,
+} from './lib/noteMarks'
+import { normalizeSearch } from './lib/noteSearch'
+import { summarizeTags } from './lib/noteTags'
 import { ocrTextsForContent } from './lib/imageOcr'
 import { RemindersProvider } from './components/Editor/RemindersContext'
 import { TasksProvider } from './components/Editor/TasksContext'
@@ -395,7 +408,6 @@ function App() {
   const { subjects: allNotesSubjects } = useSubjects(allNotesNoteNotebookId)
   const effectiveSubjects = activeNotebookId === null ? allNotesSubjects : subjects
   const [search, setSearch] = useState('')
-  const [activeTag, setActiveTag] = useState<string | null>(null)
   const [aiOpen, setAiOpen] = useState(true)
   // Aba da coluna direita (AI = cards dos slash commands; Chat = chat do caderno).
   const [rightTab, setRightTabState] = useState<'ai' | 'chat'>(() => {
@@ -415,6 +427,30 @@ function App() {
   }, [])
   // Trecho do "Ask AI" da toolbar de seleção, consumido pelo NotesChatPanel.
   const [pendingNotesQuote, setPendingNotesQuote] = useState<string | null>(null)
+  // Pedido sobre uma marca da nota (lista Marks, Ctrl+P, `==` do chat):
+  // `reveal` abre a nota na marca (cursor, menu e flash); `resolve` desfaz a
+  // marca pelo Editor, que confere a marca pelo índice e pelo texto.
+  const [pendingNoteReveal, setPendingNoteReveal] = useState<{
+    noteId: string
+    index: number
+    text: string
+    nonce: number
+    action: 'reveal' | 'resolve'
+  } | null>(null)
+  // Clique num `==texto==` do chat com várias notas correspondentes: seletor
+  // de candidatas (R11). Zero correspondências também passa por aqui — o
+  // seletor vira o feedback "essa marca não existe mais".
+  const [markPicker, setMarkPicker] = useState<{ text: string; hits: NoteMarkHit[] } | null>(null)
+  // Sequência dos pedidos (contador incremental: Date.now() colidiria no
+  // mesmo milissegundo e o segundo pedido seria engolido).
+  const revealSeqRef = useRef(0)
+  // Lista transversal na coluna das notas (como a TasksView): as marcas, com
+  // o filtro de rótulo, ou as notas de uma tag. Uma por vez.
+  const [sideView, setSideView] = useState<{ kind: 'marks' } | { kind: 'tag'; tag: string } | null>(null)
+  const marksViewOpen = sideView?.kind === 'marks'
+  const tagViewTag = sideView?.kind === 'tag' ? sideView.tag : null
+  const [marksFilter, setMarksFilter] = useState<MarkLabelFilter>(null)
+  const [selectedMark, setSelectedMark] = useState<{ noteId: string; index: number } | null>(null)
   // Instância do Tiptap da nota aberta (inserir resposta do chat na nota).
   const notesEditorRef = useRef<TiptapEditor | null>(null)
   const [hasEditor, setHasEditor] = useState(false)
@@ -988,6 +1024,23 @@ function App() {
     setTasksViewOpen(false)
   }, [activeId, activeNotebookId])
 
+  // A lista transversal (marcas ou tag) segue a mesma regra: navegação de
+  // fora dela a fecha; a feita por ela (requestMarkAction, handleOpenTaggedNote)
+  // marca keepSideViewRef — só quando a nota ou o caderno mudam, senão o efeito
+  // não roda e a marca vazaria. Abrir a TasksView também fecha a lista.
+  const keepSideViewRef = useRef(false)
+  useEffect(() => {
+    if (keepSideViewRef.current) {
+      keepSideViewRef.current = false
+      return
+    }
+    setSideView(null)
+  }, [activeId, activeNotebookId])
+
+  useEffect(() => {
+    if (tasksViewOpen) setSideView(null)
+  }, [tasksViewOpen])
+
   // Título da task ⇄ texto do item (checklist com o <task-ref>) nas "casas" da
   // task: a nota de ORIGEM (source_note_id) e a TODOS dela (parent_note_id,
   // onde o "Insert into checklist" põe o item). Cópias coladas em outras notas
@@ -1277,13 +1330,18 @@ function App() {
     await saveNotebook({ ...nb, name: name.trim() || nb.name, updatedAt: Date.now() })
   }
 
-  const allTags = useMemo(
-    () =>
-      Array.from(new Set(notes.flatMap((n) => n.tags))).sort((a, b) =>
-        a.localeCompare(b)
-      ),
-    [notes]
-  )
+  // Tags das notas de caderno (variações de caixa/acento juntas, a grafia
+  // mais usada), com a contagem: seção "Tags", lista transversal, autocomplete
+  // do editor e `tag:` do Ctrl+P.
+  const tagSummary = useMemo(() => summarizeTags(notes), [notes])
+  const allTags = useMemo(() => tagSummary.map((t) => t.tag), [tagSummary])
+
+  // Marcas de todas as notas de caderno não arquivadas (extração cacheada por
+  // nota): lista Marks, contagens da coluna de cadernos e rótulos já usados
+  // (os mais usados primeiro), que alimentam o editor e o Ctrl+P.
+  const allMarkHits = useMemo(() => collectNoteMarks(notes), [notes])
+  const markSummary = useMemo(() => summarizeMarks(allMarkHits.map((h) => h.entry)), [allMarkHits])
+  const markLabels = useMemo(() => markSummary.labels.map((l) => l.label), [markSummary])
 
   const notebookNotes = useMemo(
     () => activeNotebookId === null
@@ -1315,7 +1373,6 @@ function App() {
       setActiveNotebookId(notebookId)
       setActiveSubjectId(subjectId ?? null)
       setActiveId(noteId)
-      setActiveTag(null)
       setSearch('')
     },
     []
@@ -1459,7 +1516,6 @@ function App() {
     const q = search.trim().toLowerCase()
     const filtered = subjectFilteredNotes.filter((n) => {
       if (n.archivedAt) return false
-      if (activeTag && !n.tags.includes(activeTag)) return false
       if (activeTypeFilter && n.typeId !== activeTypeFilter) return false
       if (!q) return true
       return (
@@ -1473,7 +1529,7 @@ function App() {
       noteSort,
       noteTypes.types.map((t) => t.id)
     )
-  }, [subjectFilteredNotes, search, activeTag, activeTypeFilter, noteOrder, noteSort, noteTypes.types])
+  }, [subjectFilteredNotes, search, activeTypeFilter, noteOrder, noteSort, noteTypes.types])
 
   // Arquivadas do caderno/subject atual, da mais recente para a mais antiga.
   const archivedNotes = useMemo(
@@ -1629,8 +1685,11 @@ function App() {
 
   // Cards do calendário da keep: abre a nota ou a task clicada. A nota é
   // buscada na lista recém-lida do banco (pode ter sido criada pela keep).
+  // Marca citada no chat da janela assistant: a main aparece e abre a nota na
+  // marca (handleOpenMark, atribuído mais abaixo).
   const openTaskRef = useRef(openTask)
   openTaskRef.current = openTask
+  const openMarkRef = useRef<(text: string) => void>(() => {})
   useEffect(() => {
     let cancelled = false
     const unlisteners: Array<() => void> = []
@@ -1658,6 +1717,14 @@ function App() {
       })
     )
     track(listen<string>('open-task', (event) => openTaskRef.current(event.payload)))
+    track(
+      listen<string>('assistant-open-mark', (event) => {
+        if (typeof event.payload !== 'string') return
+        const main = getCurrentWindow()
+        void main.unminimize().then(() => main.show()).then(() => main.setFocus()).catch(() => {})
+        openMarkRef.current(event.payload)
+      })
+    )
     return () => {
       cancelled = true
       unlisteners.forEach((fn) => fn())
@@ -2601,6 +2668,101 @@ function App() {
 
   const handleNotesQuoteConsumed = useCallback(() => setPendingNotesQuote(null), [])
 
+  // Abre a nota de uma marca e pede ao Editor a ação nela (`reveal` ou
+  // `resolve`). A lista de marcas aberta fica: a navegação é dela.
+  const requestMarkAction = useCallback(
+    (note: Note, entry: NoteMarkEntry, action: 'reveal' | 'resolve') => {
+      if (!note.notebookId) return
+      if (marksViewOpen && (note.id !== activeId || note.notebookId !== activeNotebookId)) {
+        keepSideViewRef.current = true
+      }
+      handleNavigateToNote(note.notebookId, note.id, note.subjectId)
+      setSelectedMark({ noteId: note.id, index: entry.index })
+      setPendingNoteReveal({
+        noteId: note.id,
+        index: entry.index,
+        text: entry.text,
+        nonce: ++revealSeqRef.current,
+        action,
+      })
+    },
+    [handleNavigateToNote, marksViewOpen, activeId, activeNotebookId]
+  )
+
+  const handleSelectMark = useCallback(
+    (note: Note, entry: NoteMarkEntry) => requestMarkAction(note, entry, 'reveal'),
+    [requestMarkAction]
+  )
+
+  const handleResolveMark = useCallback(
+    (hit: NoteMarkHit) => requestMarkAction(hit.note, hit.entry, 'resolve'),
+    [requestMarkAction]
+  )
+
+  const handleNoteRevealConsumed = useCallback(() => setPendingNoteReveal(null), [])
+
+  const openMarksView = useCallback((filter: MarkLabelFilter) => {
+    setTasksViewOpen(false)
+    setMarksFilter(filter)
+    setSideView({ kind: 'marks' })
+  }, [])
+
+  const openTagView = useCallback((tag: string) => {
+    setTasksViewOpen(false)
+    setSideView({ kind: 'tag', tag })
+  }, [])
+
+  const closeSideView = useCallback(() => setSideView(null), [])
+
+  // Nota aberta pela lista de uma tag: a lista fica (a navegação é dela).
+  const handleOpenTaggedNote = useCallback(
+    (note: Note) => {
+      if (!note.notebookId) return
+      if (note.id !== activeId || note.notebookId !== activeNotebookId) keepSideViewRef.current = true
+      handleNavigateToNote(note.notebookId, note.id, note.subjectId)
+    },
+    [handleNavigateToNote, activeId, activeNotebookId]
+  )
+
+  // "List" do menu da marca e Ctrl+clique numa marca: a lista no rótulo dela,
+  // com a marca destacada.
+  const handleShowMarkInList = useCallback(
+    (index: number, label: string | null) => {
+      openMarksView(label ? { label } : null)
+      const note = activeNoteRef.current
+      if (note) setSelectedMark({ noteId: note.id, index })
+    },
+    [openMarksView]
+  )
+
+  // Clique num `==texto==` da resposta do chat (R11): procura a marca nas
+  // notas, arquivadas inclusive (a IA também as vê) — texto igual (sem caixa
+  // nem acento) e, sem isso, uma citação parcial. Uma marca abre a nota nela;
+  // zero ou várias passam pelo seletor (uma linha por nota).
+  const handleOpenMark = useCallback(
+    (text: string) => {
+      const wanted = normalizeSearch(text.replace(/\s+/g, ' ').trim())
+      if (!wanted) return
+      const hits = collectNoteMarks(notesRef.current, { includeArchived: true })
+      let matches = hits.filter((h) => normalizeSearch(h.entry.text) === wanted)
+      if (matches.length === 0 && wanted.length >= 4) {
+        matches = hits.filter((h) => {
+          const t = normalizeSearch(h.entry.text)
+          return t.includes(wanted) || (t.length >= 4 && wanted.includes(t))
+        })
+      }
+      const seen = new Set<string>()
+      matches = matches.filter((h) => !seen.has(h.note.id) && !!seen.add(h.note.id))
+      if (matches.length === 1) {
+        handleSelectMark(matches[0].note, matches[0].entry)
+        return
+      }
+      setMarkPicker({ text, hits: matches })
+    },
+    [handleSelectMark]
+  )
+  openMarkRef.current = handleOpenMark
+
   // Insere conteúdo do chat na nota (o tiptap-markdown converte o markdown
   // no insertContentAt). Linhas que começam com "/" ganham um zero-width space
   // na frente para não virarem slash command (fora de blocos de código).
@@ -2624,7 +2786,8 @@ function App() {
       if ('code' in content) {
         markdown = codeFence(content.code, content.language)
       } else {
-        let source = 'html' in content ? content.text : content.markdown
+        // A citação `==texto==` da IA vira texto simples: a IA não cria marcas.
+        let source = stripMarkCitations('html' in content ? content.text : content.markdown)
         if ('html' in content) {
           try {
             const doc = createNodeFromContent(content.html, editor.schema, { slice: false })
@@ -2941,6 +3104,14 @@ function App() {
       focusMode={focusMode}
       onAskAi={handleAskAi}
       onEditorReady={handleEditorReady}
+      revealRequest={
+        activeNote.id === pendingNoteReveal?.noteId ? pendingNoteReveal : null
+      }
+      onRevealConsumed={handleNoteRevealConsumed}
+      onShowMarkInList={handleShowMarkInList}
+      markLabels={markLabels}
+      tagSuggestions={allTags}
+      onOpenTag={openTagView}
       taskStatuses={taskStatuses}
       taskNotebooks={orderedNotebooks}
       suggestedTaskNotebookId={
@@ -3103,6 +3274,7 @@ function App() {
             todayKey={today}
             taskChecklist={taskChecklist}
             disabledNotebookIds={disabledNotebookIds}
+            onOpenMark={handleOpenMark}
           />
         </div>
       ) : (
@@ -3112,6 +3284,7 @@ function App() {
           activeId={activeNotebookId}
           onSelect={(id) => {
             setTasksViewOpen(false)
+            setSideView(null)
             setActiveSubjectId(null)
             if (id === calendarNotebookId) {
               void handleCalendarDayClick(new Date())
@@ -3134,9 +3307,15 @@ function App() {
           }}
           onOpenKnowledgeBase={() => setKbOpen(true)}
           notebooksWithDocs={notebooksWithDocs}
-          tags={allTags}
-          activeTag={activeTag}
-          onSelectTag={setActiveTag}
+          tags={tagSummary}
+          activeTag={tagViewTag}
+          onOpenTag={openTagView}
+          onCloseTags={closeSideView}
+          markSummary={markSummary}
+          marksActive={marksViewOpen}
+          marksFilter={marksFilter}
+          onOpenMarks={openMarksView}
+          onCloseMarks={closeSideView}
           onOpenSettings={handleOpenSettings}
           calendarNotebookId={calendarNotebookId}
           tasksActive={tasksViewOpen}
@@ -3242,6 +3421,36 @@ function App() {
             onUpdateTasks={(changes) => void updateTasks(changes)}
             onDeleteTasks={(ids) => void deleteProjectTasks(ids)}
             checklist={taskChecklist}
+          />
+        ) : marksViewOpen ? (
+          <MarksView
+            hits={allMarkHits}
+            summary={markSummary}
+            notebooks={orderedNotebooks}
+            filter={marksFilter}
+            onFilterChange={setMarksFilter}
+            selected={selectedMark}
+            onSelect={(hit) => handleSelectMark(hit.note, hit.entry)}
+            onResolve={handleResolveMark}
+            onClose={closeSideView}
+            width={effectiveSidebarWidth}
+            wide={notebookCollapsed}
+            onWidthChange={setColumnWidth}
+          />
+        ) : tagViewTag !== null ? (
+          <TagView
+            notes={notes}
+            notebooks={orderedNotebooks}
+            noteTypes={noteTypes.types}
+            tags={tagSummary}
+            tag={tagViewTag}
+            onSelectTag={openTagView}
+            activeNoteId={activeId}
+            onOpenNote={handleOpenTaggedNote}
+            onClose={closeSideView}
+            width={effectiveSidebarWidth}
+            wide={notebookCollapsed}
+            onWidthChange={setColumnWidth}
           />
         ) : activeNotebookId === calendarNotebookId ? (
           <CalendarView
@@ -3372,6 +3581,7 @@ function App() {
               onPendingQuoteConsumed={handleNotesQuoteConsumed}
               canInsert={canInsertIntoNote}
               onInsertIntoNote={handleInsertIntoNote}
+              onOpenMark={handleOpenMark}
             />
           }
         />
@@ -3423,13 +3633,13 @@ function App() {
           handleNavigateToNote(notebookId, noteId, subjectId)
           setSearchPaletteOpen(false)
         }}
+        onSelectMark={handleSelectMark}
         onSelectNotebook={(notebookId) => {
           setActiveMode('notebook')
           setActiveNotebookId(notebookId)
           setActiveSubjectId(null)
           setActiveId(null)
           setSearch('')
-          setActiveTag(null)
           setSearchPaletteOpen(false)
         }}
         onSelectTask={(taskId) => {
@@ -3439,11 +3649,24 @@ function App() {
         notebooks={notebooks}
         notes={notes}
         noteTypes={noteTypes.types}
+        tags={allTags}
+        markLabels={markLabels}
         tasks={tasks}
         todosById={todosById}
         statuses={statusRegistry}
         hasApiKey={hasApiKey}
         disabledNotebookIds={disabledNotebookIds}
+      />
+      <MarkNotePicker
+        open={markPicker !== null}
+        text={markPicker?.text ?? ''}
+        hits={markPicker?.hits ?? []}
+        notebooks={notebooks}
+        onClose={() => setMarkPicker(null)}
+        onSelect={(hit) => {
+          setMarkPicker(null)
+          handleSelectMark(hit.note, hit.entry)
+        }}
       />
       {tasksBoardOpen && activeTask?.id === taskModalId && noteEditor && (
         <TaskEditorModal onClose={() => setTaskModalId(null)}>{noteEditor}</TaskEditorModal>
@@ -3476,6 +3699,8 @@ function App() {
             taskStatuses={taskStatuses}
             notebooks={orderedNotebooks}
             statuses={statusRegistry}
+            markLabels={markLabels}
+            tagSuggestions={allTags}
             todosOptions={todosOptions}
             metadataDefs={metadata.defs}
             onCreateMetadataDef={metadata.create}

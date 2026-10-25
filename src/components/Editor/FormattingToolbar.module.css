@@ -77,3 +77,39 @@
   color: var(--accent-task);
   white-space: nowrap;
 }
+
+/* "Mark" (marca de atenção): texto na cor da marca; a seta grudada abre os
+   rótulos. */
+.btn.mark {
+  color: var(--nm);
+  padding-right: 4px;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  white-space: nowrap;
+}
+
+.btn.markActive {
+  background: color-mix(in srgb, var(--nm) 16%, transparent);
+}
+
+.btn.markCaret {
+  min-width: 18px;
+  padding: 0 4px;
+  color: var(--nm);
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+/* Rótulo no menu da marca: a pílula do rótulo (ou "+ Label"). */
+.btn.markLabelBtn {
+  gap: 4px;
+  color: var(--nm);
+  white-space: nowrap;
+}
+
+.markLabelText {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
