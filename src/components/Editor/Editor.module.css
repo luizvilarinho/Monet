@@ -7,16 +7,25 @@
   min-width: 0;
   overflow: hidden;
   background: var(--bg-app, #0e0e10);
+  /* Eixo da coluna da nota: ancora em --pad-editor-body e, quando a largura
+     passa da medida, centraliza a coluna no espaço que sobra. 100cqw
+     (container = .editor) resolve igual no cabeçalho e no corpo, sem o desvio
+     da scrollbar do .body; a medida entra em px (--measure-note-col) porque o
+     ch mudaria com a fonte de cada elemento (título 24px, rótulo 12px). */
+  container-type: inline-size;
+  --pad-note-x: max(var(--pad-editor-body), calc((100cqw - var(--measure-note-col)) / 2));
+  --pad-note-x-end: max(var(--pad-content-x), calc((100cqw - var(--measure-note-col)) / 2));
   /* Eixo das barras que vivem dentro do editor (barra de propriedades). */
-  --pad-bar-x: var(--pad-editor-body);
+  --pad-bar-x: var(--pad-note-x);
+  --pad-bar-x-end: var(--pad-note-x-end);
 }
 
 .notebookLabel {
   display: block;
-  /* Eixo único: rótulo, título, tags e corpo começam em --pad-content-x.
+  /* Eixo único: rótulo, título, tags e corpo começam em --pad-note-x.
      --editor-pad-top pode ser sobrescrito por quem embute o Editor
      (ex.: coluna estreita do Reader). */
-  padding: var(--editor-pad-top, var(--space-8)) var(--pad-content-x) 0 var(--pad-editor-body);
+  padding: var(--editor-pad-top, var(--space-8)) var(--pad-content-x) 0 var(--pad-note-x);
   font-size: 12px;
   font-weight: 500;
   color: rgba(124, 106, 245, 0.6);
@@ -35,7 +44,7 @@
   color: var(--text-primary, #e8e8f0);
   border: none;
   outline: none;
-  padding: var(--space-2) var(--pad-content-x) var(--space-3) var(--pad-editor-body);
+  padding: var(--space-2) var(--pad-content-x) var(--space-3) var(--pad-note-x);
   font-size: 24px;
   font-weight: 600;
   letter-spacing: -0.01em;
@@ -74,7 +83,7 @@
   gap: var(--space-1h);
   /* 28px entre as tags e o corpo (12 aqui + 16 no topo do corpo), com a
      borda no meio: fronteira cabeçalho → conteúdo. */
-  padding: 0 var(--pad-content-x) var(--space-3) var(--pad-editor-body);
+  padding: 0 var(--pad-content-x) var(--space-3) var(--pad-note-x);
   border-bottom: 1px solid var(--border, #333340);
 }
 
@@ -257,9 +266,10 @@
 .proseEditor {
   outline: none;
   min-height: 100%;
-  /* Esquerda no eixo do cabeçalho; 72px à direita reservam a faixa do
+  /* Esquerda no eixo do cabeçalho (--pad-note-x, que centraliza a coluna
+     quando sobra largura); à direita, no mínimo 72px reservam a faixa do
      HeadingNavigator; 50vh embaixo deixam rolar a última linha até o meio. */
-  padding: var(--space-4) 72px 50vh var(--pad-editor-body);
+  padding: var(--space-4) max(72px, calc((100cqw - var(--measure-note-col)) / 2)) 50vh var(--pad-note-x);
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   font-size: 14px;
   line-height: var(--lh-body);
@@ -267,11 +277,11 @@
   caret-color: var(--text-primary, #e8e8f0);
 }
 
-/* Medida: blocos de texto com no máximo --measure-note, alinhados à esquerda.
-   O ch é medido na fonte de cada bloco, então os headings dividem pela
-   própria escala para manter a largura do parágrafo. Em coluna mais estreita
-   que a medida (Reader, janela pequena) o texto ocupa até o padding direito,
-   que já reserva a faixa do sumário. */
+/* Medida: blocos de texto com no máximo --measure-note. O ch é medido na
+   fonte de cada bloco, então os headings dividem pela própria escala para
+   manter a largura do parágrafo. Em coluna mais estreita que a medida
+   (Reader, janela pequena) o texto ocupa até o padding direito, que já
+   reserva a faixa do sumário. */
 .proseEditor > :global(*) {
   max-width: var(--measure-note);
 }
@@ -288,8 +298,12 @@
 }
 
 /* Modo focus: a medida de leitura (--measure-note) sai e o corpo usa a
-   largura disponível. Especificidade (0,2,0) vence `.proseEditor > h1`
-   (0,1,1), então os headings também soltam. */
+   largura disponível, sem a centralização de --pad-note-x. Especificidade
+   (0,2,0) vence `.proseEditor > h1` (0,1,1), então os headings também soltam. */
+.editor.focus .notebookLabel,
+.editor.focus .title,
+.editor.focus .tagsRow { padding-left: var(--pad-editor-body); }
+.editor.focus .proseEditor { padding-left: var(--pad-editor-body); padding-right: 72px; }
 .editor.focus .proseEditor > :global(*) { max-width: none; }
 
 .proseEditor :global(p) {

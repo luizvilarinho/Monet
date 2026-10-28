@@ -3,7 +3,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  margin: 0 var(--pad-content-x) var(--space-2) var(--pad-editor-body);
+  margin: 0 var(--pad-note-x-end, var(--pad-content-x)) var(--space-2) var(--pad-note-x, var(--pad-editor-body));
 }
 
 .summary {

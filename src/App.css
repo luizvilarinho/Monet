@@ -59,7 +59,12 @@
   --lh-row: 20px;     /* linhas de lista de 13px */
   --flow-p: 0.75em;   /* parágrafo↔parágrafo */
   --measure: 68ch;    /* largura máxima do corpo */
-  --measure-note: 80ch; /* corpo da nota no Editor (coluna larga, ao lado do sumário) */
+  --measure-note: 100ch; /* corpo da nota no Editor (centraliza quando sobra largura) */
+  /* --measure-note em px: o ch é medido na fonte de cada bloco, então não serve
+     para a geometria de centralização (cabeçalho e corpo teriam eixos diferentes).
+     754px = 100ch do corpo (14px) na fonte de produção (Segoe UI, fallback do
+     Inter no Windows); em outras fontes o desvio da centralização é de poucos px. */
+  --measure-note-col: 754px;
 
   /* Raio (0 continua deliberado nos blocos de status e pills da task) */
   --radius-sm: 4px;   /* inputs, chips, botões pequenos */

@@ -4,9 +4,10 @@
   gap: var(--space-1h);
   /* Barra laranja no eixo do Editor. Embaixo vêm as tags da nota, que já
      fazem a fronteira de 28px até o corpo; aqui só 16px até elas.
-     Dentro do editor o eixo é o do corpo (56px, com handle); fora dele
-     (visão de tasks) continua o eixo do conteúdo (40px). */
-  margin: 0 var(--pad-content-x) var(--space-4) var(--pad-bar-x, var(--pad-content-x));
+     Dentro do editor o eixo é o do corpo (a partir de 56px, com handle, e
+     centralizado quando sobra largura); fora dele (visão de tasks) continua
+     o eixo do conteúdo (40px). */
+  margin: 0 var(--pad-bar-x-end, var(--pad-content-x)) var(--space-4) var(--pad-bar-x, var(--pad-content-x));
   /* 10px vertical e 14px após a barra (14 + 2px da borda = conteúdo a 16px
      do eixo) são valores do estudo de espaçamento. */
   padding: 10px 0 10px 14px;
