@@ -9,6 +9,17 @@ import {
   unlinkBookFromReaderFolder,
 } from '../../hooks/useChat'
 import { unlinkBookFromReaderNote } from '../../lib/readerNoteLink'
+import {
+  clearOpenDoc,
+  clearOpenDocsFolderId,
+  loadDocsFolders,
+  loadOpenDocsFolderId,
+  pickDocsFolder,
+  saveDocsFolders,
+  saveOpenDocsFolderId,
+  type DocsFolder,
+} from '../../lib/docsFolder'
+import { DocsReader } from './DocsReader'
 import { EpubReader } from '../Reader/EpubReader'
 import { Reader } from '../Reader/Reader'
 import styles from './Library.module.css'
@@ -28,6 +39,11 @@ export interface LibraryProps {
     typeId?: string | null,
   ) => Promise<Note>
   onSaveNote: (note: Note) => Promise<void>
+}
+
+// Mesma pasta escolhida duas vezes (Windows: caixa e barra final variam).
+function normalizeRoot(root: string): string {
+  return root.replace(/[\\/]+$/, '').toLowerCase()
 }
 
 function formatDate(ms: number): string {
@@ -55,6 +71,20 @@ export function Library({
   const [editingId, setEditingId] = useState<string | null>(null)
   const [titleDraft, setTitleDraft] = useState('')
   const [authorDraft, setAuthorDraft] = useState('')
+  // Pastas de documentação .md: persistidas em localStorage (id + root +
+  // alias); o DocsReader abre como um modo próprio, como o Reader dos livros,
+  // e é retomado ao voltar ao Library (mesmo regime do OPEN_BOOK_KEY).
+  const [docsFolders, setDocsFolders] = useState<DocsFolder[]>(() =>
+    loadDocsFolders(),
+  )
+  const [openDocsId, setOpenDocsId] = useState<string | null>(() =>
+    loadOpenDocsFolderId(),
+  )
+  // Pasta recém-escolhida aguardando a confirmação do alias (Enter confirma).
+  const [pendingDocsRoot, setPendingDocsRoot] = useState<string | null>(null)
+  const [aliasDraft, setAliasDraft] = useState('')
+  const [renamingDocsId, setRenamingDocsId] = useState<string | null>(null)
+  const [renameDraft, setRenameDraft] = useState('')
   const { confirm, modal: confirmModal } = useConfirm()
 
   useEffect(() => {
@@ -157,6 +187,9 @@ export function Library({
   }
 
   function openReader(book: Book) {
+    // Um leitor por vez: a retomada passa a ser deste livro.
+    clearOpenDocsFolderId()
+    setOpenDocsId(null)
     localStorage.setItem(OPEN_BOOK_KEY, book.id)
     setOpenBook(book)
   }
@@ -164,6 +197,104 @@ export function Library({
   function closeReader() {
     localStorage.removeItem(OPEN_BOOK_KEY)
     setOpenBook(null)
+  }
+
+  // ─── Pastas de documentação .md ─────────────────────────────────────────
+  function updateDocsFolders(next: DocsFolder[]) {
+    saveDocsFolders(next)
+    setDocsFolders(next)
+  }
+
+  async function handlePickDocsFolder() {
+    setErrorMessage(null)
+    try {
+      const root = await pickDocsFolder()
+      if (!root) return
+      const normalized = normalizeRoot(root)
+      const existing = docsFolders.find(
+        (f) => normalizeRoot(f.root) === normalized,
+      )
+      if (existing) {
+        setErrorMessage(`This folder is already in the Library as "${existing.alias}".`)
+        return
+      }
+      // Sugestão de alias: nome da pasta (editável antes de confirmar).
+      setAliasDraft(
+        root.split(/[\\/]/).filter(Boolean).pop() ?? 'Documentation',
+      )
+      setPendingDocsRoot(root)
+      setRenamingDocsId(null)
+    } catch (e) {
+      setErrorMessage(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  function confirmNewDocsFolder() {
+    if (!pendingDocsRoot) return
+    const alias = aliasDraft.trim() || 'Documentation'
+    updateDocsFolders([
+      ...docsFolders,
+      { id: crypto.randomUUID(), root: pendingDocsRoot, alias },
+    ])
+    setPendingDocsRoot(null)
+    setAliasDraft('')
+  }
+
+  function cancelNewDocsFolder() {
+    setPendingDocsRoot(null)
+    setAliasDraft('')
+  }
+
+  function startRenameDocs(folder: DocsFolder) {
+    setRenameDraft(folder.alias)
+    setRenamingDocsId(folder.id)
+  }
+
+  function cancelRenameDocs() {
+    setRenamingDocsId(null)
+    setRenameDraft('')
+  }
+
+  function saveRenameDocs(folder: DocsFolder) {
+    const alias = renameDraft.trim() || folder.alias
+    updateDocsFolders(
+      docsFolders.map((f) => (f.id === folder.id ? { ...f, alias } : f)),
+    )
+    cancelRenameDocs()
+  }
+
+  async function handleRemoveDocs(folder: DocsFolder) {
+    const ok = await confirm(
+      `Remove "${folder.alias}"? The folder on disk is not touched.`,
+      { title: 'Remove documentation' },
+    )
+    if (!ok) return
+    updateDocsFolders(docsFolders.filter((f) => f.id !== folder.id))
+    clearOpenDoc(folder.id)
+    if (renamingDocsId === folder.id) cancelRenameDocs()
+  }
+
+  function openDocsReader(folder: DocsFolder) {
+    localStorage.removeItem(OPEN_BOOK_KEY)
+    saveOpenDocsFolderId(folder.id)
+    setOpenDocsId(folder.id)
+  }
+
+  function closeDocsReader() {
+    clearOpenDocsFolderId()
+    setOpenDocsId(null)
+  }
+
+  // Um modo por vez: a pasta de docs abre no lugar do Library, como o Reader.
+  const openDocsFolder = docsFolders.find((f) => f.id === openDocsId)
+  if (openDocsFolder) {
+    return (
+      <DocsReader
+        key={openDocsFolder.id}
+        folder={openDocsFolder}
+        onBack={closeDocsReader}
+      />
+    )
   }
 
   // Um leitor por formato: a união discriminada garante em tempo de compilação
@@ -207,14 +338,23 @@ export function Library({
       {confirmModal}
       <header className={styles.header}>
         <h2 className={styles.title}>Library</h2>
-        <button
-          type="button"
-          className={styles.primary}
-          onClick={handleImport}
-          disabled={importing}
-        >
-          {importing ? 'Importing…' : '+ Import book'}
-        </button>
+        <div className={styles.headerActions}>
+          <button
+            type="button"
+            className={styles.secondary}
+            onClick={() => void handlePickDocsFolder()}
+          >
+            + Docs folder
+          </button>
+          <button
+            type="button"
+            className={styles.primary}
+            onClick={handleImport}
+            disabled={importing}
+          >
+            {importing ? 'Importing…' : '+ Import book'}
+          </button>
+        </div>
       </header>
 
       {errorMessage && (
@@ -232,6 +372,123 @@ export function Library({
       )}
 
       <div className={styles.body}>
+        {(pendingDocsRoot !== null || docsFolders.length > 0) && (
+          <section className={styles.docsSection} aria-label="Documentation">
+            <h3 className={styles.docsSectionTitle}>Documentation</h3>
+            <ul className={styles.docsList}>
+              {docsFolders.map((folder) =>
+                renamingDocsId === folder.id ? (
+                  <li key={folder.id} className={styles.docsRow}>
+                    <input
+                      className={`${styles.editInput} ${styles.docsEditInput}`}
+                      value={renameDraft}
+                      onChange={(e) => setRenameDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') saveRenameDocs(folder)
+                        if (e.key === 'Escape') cancelRenameDocs()
+                      }}
+                      aria-label="Documentation name"
+                      autoFocus
+                    />
+                    <div className={styles.docsActions}>
+                      <button
+                        type="button"
+                        className={styles.secondary}
+                        onClick={() => saveRenameDocs(folder)}
+                      >
+                        save
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.secondary}
+                        onClick={cancelRenameDocs}
+                      >
+                        cancel
+                      </button>
+                    </div>
+                  </li>
+                ) : (
+                  <li
+                    key={folder.id}
+                    className={`${styles.docsRow} ${styles.docsRowClickable}`}
+                    onClick={() => openDocsReader(folder)}
+                  >
+                    <div className={styles.docsInfo}>
+                      <span className={styles.docsAlias}>{folder.alias}</span>
+                      <span className={styles.docsPath} title={folder.root}>
+                        {folder.root}
+                      </span>
+                    </div>
+                    <div
+                      className={styles.docsActions}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        type="button"
+                        className={styles.primary}
+                        onClick={() => openDocsReader(folder)}
+                      >
+                        Open
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.secondary}
+                        onClick={() => startRenameDocs(folder)}
+                        aria-label={`rename ${folder.alias}`}
+                      >
+                        rename
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.danger}
+                        onClick={() => void handleRemoveDocs(folder)}
+                        aria-label={`remove ${folder.alias}`}
+                      >
+                        remove
+                      </button>
+                    </div>
+                  </li>
+                ),
+              )}
+              {pendingDocsRoot !== null && (
+                <li className={styles.docsRow}>
+                  <div className={styles.docsPending}>
+                    <input
+                      className={`${styles.editInput} ${styles.docsEditInput}`}
+                      value={aliasDraft}
+                      onChange={(e) => setAliasDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') confirmNewDocsFolder()
+                        if (e.key === 'Escape') cancelNewDocsFolder()
+                      }}
+                      aria-label="Documentation name"
+                      autoFocus
+                    />
+                    <span className={styles.docsPath} title={pendingDocsRoot}>
+                      {pendingDocsRoot}
+                    </span>
+                  </div>
+                  <div className={styles.docsActions}>
+                    <button
+                      type="button"
+                      className={styles.secondary}
+                      onClick={confirmNewDocsFolder}
+                    >
+                      save
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.secondary}
+                      onClick={cancelNewDocsFolder}
+                    >
+                      cancel
+                    </button>
+                  </div>
+                </li>
+              )}
+            </ul>
+          </section>
+        )}
         {loading ? (
           <ul className={styles.skeletonList} aria-hidden="true">
             {[0, 1, 2].map((i) => (

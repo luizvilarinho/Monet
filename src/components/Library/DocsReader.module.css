@@ -1,0 +1,448 @@
+/* Leitor da pasta de documentação .md. Espelha os padrões visuais do
+   EpubReader.module.css sem compartilhar arquivo: os leitores são
+   independentes por decisão de arquitetura (duplicação deliberada de
+   toolbar/painel). */
+
+.reader {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: var(--bg-app, #1f1f2f);
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border, #333340);
+  background: var(--bg-panel, #161625);
+  flex-shrink: 0;
+}
+
+.backButton {
+  background: transparent;
+  border: 1px solid var(--border, #333340);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary, #9898a4);
+  padding: var(--space-1h) var(--space-3);
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+}
+
+.backButton:hover {
+  color: var(--text-primary, #ddddf1);
+  border-color: var(--accent, #7b6ed4);
+}
+
+.toolbarTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary, #ddddf1);
+}
+
+.toolbarDoc {
+  font-weight: 400;
+  color: var(--text-muted, #7c7c93);
+}
+
+.fontControls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.navButton {
+  background: transparent;
+  border: 1px solid var(--border, #333340);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary, #9898a4);
+  width: var(--control-md);
+  height: var(--control-md);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.navButton:hover:not(:disabled) {
+  color: var(--text-primary, #ddddf1);
+  border-color: var(--accent, #7b6ed4);
+}
+
+.navButton:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.fontLabel {
+  font-size: 12px;
+  color: var(--text-secondary, #9898a4);
+  min-width: 42px;
+  text-align: center;
+}
+
+.readerBody {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ─── Coluna de navegação (árvore de documentos) ────────────────────────── */
+.sidePanel {
+  flex-shrink: 0;
+  border-right: 1px solid var(--border, #333340);
+  background: var(--bg-panel, #161625);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sidePanelCollapsed {
+  align-items: center;
+}
+
+.sidePanelRail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-3) 0;
+  width: 100%;
+}
+
+.sidePanelRailToggle {
+  width: var(--control-lg);
+  height: var(--control-lg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--text-muted, #7c7c93);
+  cursor: pointer;
+  padding: 0;
+}
+
+.sidePanelRailToggle:hover {
+  color: var(--text-primary, #ddddf1);
+  background: rgba(123, 110, 212, 0.12);
+}
+
+.sidePanelHeader {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border, #333340);
+  flex-shrink: 0;
+}
+
+.sidePanelCollapseBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--border, #333340);
+  color: var(--text-muted, #7c7c93);
+  cursor: pointer;
+  padding: var(--space-2) var(--space-3);
+}
+
+.sidePanelCollapseBtn:hover {
+  color: var(--text-primary, #ddddf1);
+}
+
+.sidePanelTitle {
+  padding: var(--space-2) var(--space-3);
+  line-height: var(--lh-row);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary, #9898a4);
+}
+
+.tocPanel {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-3);
+}
+
+.tocList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0);
+}
+
+.tocList:not([data-depth='0']) {
+  padding-left: var(--space-3);
+  border-left: 1px solid var(--border, #333340);
+  margin-left: var(--space-2);
+}
+
+.tocItem {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--text-primary, #ddddf1);
+  padding: var(--space-1h) var(--space-2);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.tocItem:hover {
+  background: rgba(123, 110, 212, 0.1);
+}
+
+.tocItemActive,
+.tocItemActive:hover {
+  background: rgba(123, 110, 212, 0.18);
+}
+
+.tocItemIcon {
+  flex-shrink: 0;
+  color: var(--text-muted, #7c7c93);
+  display: inline-flex;
+}
+
+.tocItemLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tocEmpty {
+  padding: var(--space-4) var(--space-3);
+  font-size: 12px;
+  color: var(--text-muted, #7c7c93);
+  text-align: center;
+}
+
+/* ─── Área de leitura ───────────────────────────────────────────────────────
+   Folha cinza clara centralizada sobre o fundo escuro do app (branco puro
+   ofuscava ao lado da UI escura); aqui o scroll é do próprio container (não
+   há iframe). A paleta da folha fica em variáveis locais da .viewerSurface. */
+.pageArea {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  justify-content: center;
+  padding: var(--space-6) var(--space-6) 0;
+}
+
+.viewerSurface {
+  --doc-bg: #ebebef;
+  --doc-text: #3d3d48;
+  --doc-heading: #2c2c35;
+  --doc-muted: #6b6b78;
+  --doc-border: #d3d3db;
+  --doc-code-bg: #dfdfe5;
+  --doc-link: #4f46b8;
+
+  flex: 1;
+  min-width: 0;
+  max-width: 860px;
+  display: flex;
+  box-sizing: border-box;
+  background: var(--doc-bg);
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+/* A barra de rolagem é a do próprio container: fica colada na borda direita
+   da folha; o respiro do texto é padding (definido inline com a margem). */
+.docScroll {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: #b4b4bf transparent;
+}
+
+.placeholderText {
+  margin: var(--space-8) 0;
+  color: var(--doc-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+/* Tipografia do documento renderizado: cinza escuro sobre a folha clara
+   (preto puro cansava), medida limitada pela .viewerSurface (860px). */
+.docContent {
+  color: var(--doc-text);
+  line-height: var(--lh-body);
+  padding: var(--space-10) 0 var(--space-12);
+  word-break: break-word;
+}
+
+.docContent h1,
+.docContent h2,
+.docContent h3,
+.docContent h4,
+.docContent h5,
+.docContent h6 {
+  color: var(--doc-heading);
+  font-weight: 700;
+  line-height: var(--lh-tight);
+  margin: 1.6em 0 0.6em;
+  scroll-margin-top: var(--space-4);
+}
+
+.docContent h1 {
+  font-size: 1.85em;
+}
+
+.docContent h2 {
+  font-size: 1.4em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--doc-border);
+}
+
+.docContent h3 {
+  font-size: 1.15em;
+}
+
+.docContent > :first-child {
+  margin-top: 0;
+}
+
+.docContent p {
+  margin: var(--flow-p) 0;
+}
+
+.docContent a {
+  color: var(--doc-link);
+}
+
+.docContent strong {
+  color: var(--doc-heading);
+}
+
+.docContent code {
+  background: var(--doc-code-bg);
+  border-radius: var(--radius-sm);
+  padding: 0.1em 0.35em;
+  font-size: 0.88em;
+}
+
+.docContent pre {
+  background: var(--doc-code-bg);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  overflow-x: auto;
+  line-height: var(--lh-ui);
+}
+
+.docContent pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.docContent blockquote {
+  margin: var(--flow-p) 0;
+  padding-left: var(--space-3);
+  border-left: 3px solid var(--doc-border);
+  color: var(--doc-muted);
+}
+
+/* Tabelas largas rolam na horizontal em vez de estourar a superfície. */
+.docContent table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  margin: var(--flow-p) 0;
+}
+
+.docContent th,
+.docContent td {
+  border: 1px solid var(--doc-border);
+  padding: var(--space-1h) var(--space-2);
+}
+
+.docContent th {
+  background: var(--doc-code-bg);
+  color: var(--doc-heading);
+  font-weight: 600;
+  text-align: left;
+}
+
+.docContent hr {
+  border: none;
+  border-top: 1px solid var(--doc-border);
+  margin: var(--space-6) 0;
+}
+
+.docContent img {
+  max-width: 100%;
+}
+
+.docContent ul,
+.docContent ol {
+  padding-left: var(--space-6);
+}
+
+.docContent li + li {
+  margin-top: var(--space-1);
+}
+
+.errorState {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  padding: var(--space-8);
+  text-align: center;
+}
+
+.errorMessage {
+  margin: 0;
+  color: var(--text-secondary, #9898a4);
+  font-size: 13px;
+  max-width: 420px;
+  line-height: 1.5;
+}
+
+.primary {
+  background: var(--accent-ai, #5dcaa5);
+  color: #0e0e10;
+  border: 1px solid var(--accent-ai, #5dcaa5);
+  border-radius: var(--radius-md);
+  padding: var(--space-1h) var(--space-3);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.primary:hover {
+  filter: brightness(1.05);
+}

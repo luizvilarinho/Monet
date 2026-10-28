@@ -1,4 +1,5 @@
 mod books;
+mod docs_folder;
 mod documents;
 mod ocr;
 pub mod rag;
@@ -1811,7 +1812,11 @@ pub fn run() {
             documents::embed_text,
             books::books_import_file,
             books::books_read_file,
-            books::books_delete_file
+            books::books_delete_file,
+            docs_folder::docs_tree,
+            docs_folder::docs_read_file,
+            docs_folder::docs_watch_start,
+            docs_folder::docs_watch_stop
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
