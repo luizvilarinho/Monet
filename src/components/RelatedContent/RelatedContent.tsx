@@ -23,9 +23,13 @@ export function RelatedContent({ activeNote, notes, notebooks, onSelect }: Props
   // Começa fechado: a lista ocupa muito espaço. O App remonta por nota
   // (key = id), então cada nota aberta volta fechada.
   const [open, setOpen] = useState(false)
+  // Recalcula só quando a nota ativa muda ou entra/sai uma nota, não a cada
+  // tecla: o cálculo tokeniza o conteúdo de todas as notas (base64 de imagens
+  // incluído) e travava a digitação.
+  const notesKey = notes.map((n) => n.id).join('|')
   const related = useMemo(
     () => scoreRelatedNotes(activeNote, notes),
-    [activeNote, notes]
+    [activeNote.id, notesKey]
   )
 
   if (related.length === 0) return null
