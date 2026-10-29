@@ -1,4 +1,4 @@
-import { useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import {
   closestCenter,
@@ -130,6 +130,8 @@ interface NoteTypesModalProps {
   notes: Note[]
   // "Open board" da seção Board (só com o board ligado).
   onOpenBoard?: (typeId: string) => void
+  // Aberto por "Board settings": rola o detalhe até a seção Board.
+  focusBoard?: boolean
 }
 
 function errorText(err: unknown): string {
@@ -154,6 +156,7 @@ export function NoteTypesModal({
   registry,
   notes,
   onOpenBoard,
+  focusBoard = false,
 }: NoteTypesModalProps) {
   const { types, defs } = registry
   const { confirm, modal } = useConfirm()
@@ -168,6 +171,12 @@ export function NoteTypesModal({
   notesRef.current = notes
   const cancelRef = useRef(false)
   const onDraftKeys = draftKeys(cancelRef)
+  const detailRef = useRef<HTMLDivElement>(null)
+
+  // Só na abertura: o usuário rola livremente depois.
+  useEffect(() => {
+    if (focusBoard) detailRef.current?.querySelector('[data-board-section]')?.scrollIntoView({ block: 'start' })
+  }, [])
   // O teclado assume o arrasto (KeyboardSensor do dnd-kit); o ponteiro precisa
   // de 5px de deslocamento para não competir com o clique no input.
   const sensors = useSensors(
@@ -268,6 +277,18 @@ export function NoteTypesModal({
     if (ok) void run(() => registry.removeDef(d.id))
   }
 
+  // A nota com a opção apagada fica sem valor (no board, cai em "No value"):
+  // confirma com a contagem, como a exclusão de propriedade.
+  async function handleRemoveOption(d: MetadataDef, option: SelectOption) {
+    const count = notesRef.current.filter((n) => n.properties?.[d.id] === option.id).length
+    const message =
+      count > 0
+        ? `Delete option "${option.name}"? ${count} note${count === 1 ? ' uses' : 's use'} it; ${count === 1 ? 'it' : 'they'} will have no ${d.name}.`
+        : `Delete option "${option.name}"?`
+    const ok = await confirm(message, { title: 'Delete option', confirmLabel: 'Delete', destructive: true })
+    if (ok) void run(() => saveOptions(d, (d.options ?? []).filter((x) => x.id !== option.id)))
+  }
+
   // Opções do select: nome obrigatório e único na propriedade (a troca de tipo
   // casa as opções pelo nome).
   function saveOptions(d: MetadataDef, options: SelectOption[]) {
@@ -337,7 +358,7 @@ export function NoteTypesModal({
                 <button
                   type="button"
                   className={styles.delete}
-                  onClick={() => void run(() => saveOptions(d, options.filter((x) => x.id !== o.id)))}
+                  onClick={() => void handleRemoveOption(d, o)}
                   aria-label={`delete option ${o.name}`}
                   title="Delete option"
                 >
@@ -369,7 +390,7 @@ export function NoteTypesModal({
   function renderDetail(t: NoteType) {
     const listCount = selectedDefs.filter((d) => d.showInList).length
     return (
-      <div className={own.detail}>
+      <div ref={detailRef} className={own.detail}>
         <div className={own.field}>
           <span className={own.label}>Name</span>
           {t.builtin ? (

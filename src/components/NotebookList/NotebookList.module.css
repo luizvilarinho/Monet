@@ -279,7 +279,8 @@
   background: var(--nm);
 }
 
-/* Seção "Boards": ícone na cor do tipo e a propriedade das colunas em cinza. */
+/* Boards (abaixo de Tasks): ícone na cor do tipo e a propriedade das colunas
+   em cinza; sem boards, "Set up a board…" em cinza. */
 .boardIcon {
   flex-shrink: 0;
   display: inline-flex;
@@ -291,6 +292,11 @@
 
 .boardProp {
   color: var(--text-muted);
+}
+
+.boardSetUp {
+  color: var(--text-muted, #606070) !important;
+  font-style: italic;
 }
 
 .sectionCount {

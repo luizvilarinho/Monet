@@ -184,12 +184,18 @@ export interface BoardNoteColumn {
   sections?: BoardNoteSection[]
 }
 
+// Rótulo da seção (e do chip) sem valor: "No <Seção>", para não repetir o
+// "No value" da coluna.
+export function noSectionLabel(section: MetadataDef): string {
+  return `No ${section.name}`
+}
+
 // Colunas do board. Select: opções na ordem da propriedade + "No value" no
 // fim (oculta com `hideEmpty`, a não ser que tenha nota com opção apagada).
-// Checkbox: Yes e No. Com seção: opções do select de seção + "No value" no
-// fim, todas, inclusive as vazias (a UI só mostra as vazias durante o
-// arrasto, como alvo de drop), e só as escolhidas em `sectionFilter` (quem
-// chama já tirou as notas fora do filtro). Cards por título.
+// Checkbox: Yes e No. Com seção: opções do select de seção + "No <Seção>" no
+// fim, todas, inclusive as vazias (alvo de drop e de "New"), e só as
+// escolhidas em `sectionFilter` (quem chama já tirou as notas fora do
+// filtro). Cards por título.
 export function buildBoardColumns(
   notes: Note[],
   resolved: ResolvedBoard,
@@ -222,13 +228,35 @@ export function buildBoardColumns(
   if (!section) return visible
   const sectionHeads = [
     ...(section.options ?? []).map((o) => ({ key: o.id, label: o.name })),
-    { key: NO_VALUE_KEY, label: 'No value' },
+    { key: NO_VALUE_KEY, label: noSectionLabel(section) },
   ].filter((s) => !sectionFilter || sectionFilter.has(s.key))
   return visible.map((c) => ({
     ...c,
     sections: sectionHeads
       .map((s) => ({ ...s, notes: c.notes.filter((n) => columnKeyOf(n, section).key === s.key) })),
   }))
+}
+
+// Ids dos cards na ordem em que aparecem: coluna a coluna, seção a seção
+// (Prev/Next do modal "Edit note").
+export function boardNoteOrder(columns: BoardNoteColumn[]): string[] {
+  return columns.flatMap((c) => (c.sections ?? [{ notes: c.notes }]).flatMap((s) => s.notes.map((n) => n.id)))
+}
+
+// Propriedades da nota criada pelo "New" de uma coluna (e seção): os mesmos
+// valores que soltar o card ali gravaria e, com filtro, a caixa marcada (senão
+// a nota não entra no board).
+export function newNoteProperties(
+  resolved: ResolvedBoard,
+  columnKey: string,
+  sectionKey?: string
+): Record<string, MetadataValue> {
+  let props = withPropertyValue({}, resolved.column.id, valueForKey(resolved.column, columnKey))
+  if (resolved.section && sectionKey !== undefined) {
+    props = withPropertyValue(props, resolved.section.id, valueForKey(resolved.section, sectionKey))
+  }
+  if (resolved.filter) props = withPropertyValue(props, resolved.filter.id, true)
+  return props
 }
 
 // Campo CSV (RFC 4180): entre aspas se tiver vírgula, aspas, CR ou LF, com a
@@ -253,20 +281,36 @@ function csvValue(note: Note, def: MetadataDef): string {
   return String(value)
 }
 
+const BYOR_COLUMNS = ['name', 'ring', 'quadrant', 'isNew', 'description']
+const DESCRIPTION_PROPERTY = 'description'
+
+function byorKey(name: string): string {
+  return name.trim().toLowerCase()
+}
+
 // CSV no formato do Build your own Radar (name, ring, quadrant, isNew,
 // description) + as demais propriedades do tipo. ring = valor da coluna,
-// quadrant = valor da seção. Linhas = os cards visíveis (`columns`), na
-// ordem coluna → seção → título; CRLF, sem BOM; dados com `csvSafe` (o
-// cabeçalho não, para o BYOR achar as colunas). `rings`/`quadrants` contam os
-// valores distintos não vazios (o BYOR aceita até 4 de cada).
+// quadrant = valor da seção, description = a propriedade "Description" (sem
+// caixa) ou, sem ela ou vazia, `paragraphOf(note)` (1º parágrafo da nota, já
+// limpo por quem chama). Extra com nome de coluna do BYOR ganha o sufixo
+// " (property)". Linhas = os cards visíveis (`columns`), na ordem coluna →
+// seção → título; CRLF, sem BOM; dados com `csvSafe` (o cabeçalho não, para o
+// BYOR achar as colunas). `rings`/`quadrants` contam os valores distintos não
+// vazios (o BYOR aceita até 4 de cada).
 export function boardCsv(
   columns: BoardNoteColumn[],
   resolved: ResolvedBoard,
-  defs: MetadataDef[]
+  defs: MetadataDef[],
+  paragraphOf: (note: Note) => string
 ): { csv: string; rows: number; rings: number; quadrants: number } {
   const { column, section } = resolved
-  const extras = defs.filter((d) => d.id !== column.id && d.id !== section?.id)
-  const lines = [['name', 'ring', 'quadrant', 'isNew', 'description', ...extras.map((d) => d.name)]]
+  const others = defs.filter((d) => d.id !== column.id && d.id !== section?.id)
+  const description = others.find((d) => byorKey(d.name) === DESCRIPTION_PROPERTY) ?? null
+  const extras = others.filter((d) => d !== description)
+  const extraNames = extras.map((d) =>
+    BYOR_COLUMNS.some((c) => byorKey(c) === byorKey(d.name)) ? `${d.name} (property)` : d.name
+  )
+  const lines = [[...BYOR_COLUMNS, ...extraNames]]
   const rings = new Set<string>()
   const quadrants = new Set<string>()
   for (const c of columns) {
@@ -277,8 +321,9 @@ export function boardCsv(
       for (const note of g.notes) {
         if (ring) rings.add(ring)
         if (quadrant) quadrants.add(quadrant)
+        const text = (description && csvValue(note, description)) || paragraphOf(note)
         lines.push(
-          [titleOf(note), ring, quadrant, 'FALSE', '', ...extras.map((d) => csvValue(note, d))].map(csvSafe)
+          [titleOf(note), ring, quadrant, 'FALSE', text, ...extras.map((d) => csvValue(note, d))].map(csvSafe)
         )
       }
     }

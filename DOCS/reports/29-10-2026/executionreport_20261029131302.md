@@ -6,7 +6,8 @@
 - Explorer report: `DOCS/reports/29-10-2026/explorerreport_20261029123512.md` (do estudo; estudo em `DOCS/features/note_board_study.md`)
 - Plan report: `DOCS/reports/29-10-2026/planreport_20261029132316.md`
 - Review report: `DOCS/reports/29-10-2026/reviewreport_20261029142852.md`
-- UX report: não gerado
+- UX report: `DOCS/reports/29-10-2026/uxreport_20261029143802.md`
+- Review report (UX): `DOCS/reports/29-10-2026/reviewreport_20261029151122.md`
 
 ## Sessions
 ### Orchestrator — abertura — 20261029131302
@@ -227,3 +228,159 @@
   - `DOCS/reports/29-10-2026/reviewreport_20261029142852.md`
 - Decision: A entrega principal foi commitada em `feat/board-view`. A segunda fase segue: `uxAgent` sobre o que foi entregue e, em seguida, a análise e a implementação em `feat/melhorias-ux`.
 - Next step: spawn `uxAgent`.
+
+### UxAgent — 20261029143802
+- Summary: Avaliação de UX do board por tipo (commit `50618f9`) no app dev real, via CDP, mais a leitura do diff. Veredito: a feature cumpre o objetivo central (ver e reclassificar as notas de um tipo); o núcleo (drop, Esc, órfãs, filtros lembrados, modal sem vazamento, nomenclatura × TODOS de Tasks) está sólido. Os problemas estão em volta do board.
+- Achados, por prioridade:
+  1. Board espremido com o painel de IA aberto: 2 de 5 colunas a 1280 px, 1 coluna parcial a 1024 px.
+  2. Não dá para criar nota pelo board; Ctrl+N fecha o board (inferido do código).
+  3. Apagar opção não pede confirmação: os cards caem em "No value" sem volta.
+  4. Salto de layout no arrasto com seções (card desce 44 px).
+  5. Config longe do board: sem "Board settings"; a seção Board fica no fim do modal.
+  6. Seção "Boards" abaixo da dobra.
+  7. CSV com `description` vazia.
+  8. Estado vazio de filtro sem "Clear filters".
+  9. Ruído no card.
+  10. Sem Prev/Next no modal "Edit note".
+- Oportunidades: criar pela coluna (O1), "Board settings" (O2), progresso de tasks no card, genérico por `parentNoteId` (O3), `description` vinda da nota (O4), Prev/Next (O5) e chat do painel com o contexto do board, só leitura (O6, depois).
+- Verificações: prints em `<scratch>/ux/` (00–18). Dados do dev: a coluna do Radar foi trocada para Featured e voltou. O snapshot de `note_types`, `metadata_defs` e das notas `radar-n*` ficou idêntico ao inicial (`ux/before.json` × `ux/after.json`), e a chave `monet:note-board:nt_radartest` do localStorage foi removida.
+- Processos: o `monet.exe` de debug e o vite da 1420 foram parados (a 9333 também ficou livre). O `monet.exe` de `target\release` continua rodando.
+- Não verificado: board do TODOS (sem board no dev), volume alto, modo foco, Ctrl+N no board (só pelo código).
+- Output: `DOCS/reports/29-10-2026/uxreport_20261029143802.md`
+- Files changed: nenhum código; só este execution report.
+
+### Orchestrator — decisão (UX) — 20261029180000
+- Summary: O relatório do uxAgent foi analisado: 12 sugestões. O Coordenador deu autonomia para implementar sem autorização, na branch `feat/melhorias-ux`, criada a partir de `feat/board-view` (50618f9).
+- Inputs:
+  - `DOCS/reports/29-10-2026/uxreport_20261029143802.md`
+- Decision:
+  - **Aceitas (1–11):**
+    1. Recolher o painel de IA ao abrir o board de notas e restaurá-lo ao sair. Só no board de notas; os boards de Tasks não mudam.
+    2. "+ New" na coluna/seção, com coluna e seção já preenchidas, abrindo no modal sobre o board.
+    3. Confirmação ao apagar uma opção, com a contagem de notas que a usam.
+    4. Seções vazias com altura fixa durante o arrasto.
+    5. "Board settings" no header, abrindo o modal de tipos já na seção Board, e os estados vazios apontando para lá.
+    6. Seção "Boards" perto de Tasks na coluna de cadernos.
+    7. `description` do CSV a partir da propriedade "Description" ou, na falta dela, do 1º parágrafo da nota. Outras propriedades com nome repetido do BYOR ganham sufixo. Isso fecha o item do backlog.
+    8. Progresso das tasks no card, genérico por `parentNoteId` e só quando houver tasks.
+    9. "Clear filters".
+    10. Prev/Next entre cards no modal "Edit note".
+    11. Limpeza do card.
+  - **Recusada por ora (12):** chat com o contexto do board. É IA nova e o próprio uxAgent a condiciona ao uso real.
+- Next step: spawn `codeAgent` em `feat/melhorias-ux`.
+
+### CodeAgent — implementação inicial (melhorias de UX, itens 1–11) — 20261029190000
+- Summary: Itens 1 a 11 da decisão de UX feitos em `feat/melhorias-ux`, sem commit.
+  1. Painel de IA: abrir o board de notas recolhe o painel (`mainArea.kind === 'noteBoard'`); sair o reabre se estava aberto antes. Reabrir com o board aberto funciona; Tasks não mexe no painel.
+  2. "New" (`Plus` + rótulo) no cabeçalho da coluna e, no hover, em cada seção. Cria a nota pelo mesmo caminho do "New <tipo>" (template do tipo; `createTypedNote`, extraído de `handleCreateNote`), grava coluna/seção só por `setNoteProperties` (`newNoteProperties`) e abre no modal "Edit note" sem sair do board. Caderno: o do filtro; com "All notebooks", o do último "New" deste board (localStorage `lastNotebookId`), senão o caderno com mais notas do tipo, senão o Inbox (`ensureInbox`). O tooltip do botão mostra o caderno.
+  3. Apagar opção de select pede confirmação com a contagem ("N notes use it; they will have no <Prop>"), igual à exclusão de propriedade (sempre confirma).
+  4. Seções com `dropKey` sempre visíveis, com contagem; a vazia é faixa de altura fixa cuja borda tracejada só aparece no arrasto (`.columnsDragging`). Nada se mexe durante o arrasto (medido).
+  5. "Board settings" (`GearSix` + rótulo) no header e nos estados vazios abre o modal de tipos rolado até a seção Board (`focusBoard`, `data-board-section`). Sem boards, a coluna de cadernos mostra "Set up a board…", que abre o mesmo destino.
+  6. As linhas de board saíram da seção "Boards" do fim e foram para logo abaixo de Tasks.
+  7. CSV: `description` = propriedade "Description" (sem caixa, nunca coluna/seção) ou, sem ela ou vazia na nota, o 1º parágrafo de texto (`noteFirstParagraph` em `noteSearch.ts`, limpeza da busca, pula título/lista/tabela/código/divisória, 300 caracteres). Extra com nome de coluna do BYOR ganha " (property)". `csvSafe` e RFC 4180 continuam. Item do backlog removido.
+  8. Card com "done/total tasks" (`ListChecks`) quando a nota tem tasks com `parentNoteId` (reusa `todosProgressByNote`, que já é genérico).
+  9. "Clear filters" no header (com caderno ou chip ativo) e no estado vazio de filtro; limpa caderno, chips e busca. Com zero notas ou tudo escondido, as colunas continuam na tela (para o "New") e o texto vai acima delas.
+  10. Rodapé do modal "Edit note" (`NoteBoardModalNav`, prop `footer` nova no `TaskEditorModal`): Previous/Next com "N of M" e Alt+↑/Alt+↓ (ignorado em `select`, só no modal de cima). A ordem é a dos cards visíveis no clique (`boardNoteOrder`: coluna → seção → título); a nota reclassificada mantém o lugar e a que saiu do board é pulada.
+  11. Card sem o ícone do tipo (fica no header); "Open in notebook" com rótulo no rodapé do modal (o ícone do card continua); seção sem valor rotulada "No <Seção>" em vez de "No value".
+- Desvios e escolhas:
+  - Item 11: em vez de omitir o rótulo da seção que repete o da coluna, a seção sem valor passou a se chamar "No <Seção>" (ex.: "No Category"), também no chip. Omitir deixaria uma faixa vazia sem rótulo como alvo de drop (item 4); o novo rótulo some com a repetição em todas as colunas.
+  - Item 10: a ordem é um retrato do momento em que o card abre, não a ordem viva. Com a ordem viva, reclassificar no modal faria o Next pular ou repetir notas. A nota criada pelo "New" abre sem posição (Previous/Next desabilitados).
+  - Item 7: a propriedade "Description" vazia numa nota cai no 1º parágrafo (por nota). A colisão de nome é sem caixa, então "Ring"/"Quadrant" como extras viram "Ring (property)" etc.
+  - Item 2: o título fica em foco quando o tipo não tem template (comportamento do Editor em nota vazia); com template, não.
+  - Item 3: sempre confirma, mesmo com 0 notas, como a exclusão de propriedade.
+  - Atalho: Alt+↑/↓ e não Alt+←/→, porque Alt+← é "voltar" no WebView2 e a ordem é coluna abaixo.
+- Verificações:
+  - `npx tsc --noEmit -p .`: exit 0.
+  - Lógica (bundle esbuild em `<scratch>/noteBoard.mjs`): `check-noteBoard.mjs` 23, `check-noteBoard-columns.mjs` 12 e `check-noteBoard-phase2.mjs` 12 ok (rótulo "No <Seção>", assinatura nova do `boardCsv` e o sufixo em "Ring"/"Quadrant" atualizados); `check-noteBoard-ux.mjs` (novo) 6 ok: rótulo, `boardNoteOrder`, `newNoteProperties` (seção, No value, checkbox), description pela propriedade (caixa, vazia → parágrafo, `csvSafe`, escape), sufixo e coluna/seção nunca como description.
+  - Harness (Vite :5199 + Edge headless :9334): `t-ux-para.mjs` 10 casos do `noteFirstParagraph` (título, imagem base64 em bloco e inline, lista/checklist/tabela/código/divisória, citação, parágrafo de 2 linhas, `<mark>`, só títulos, vazio, corte com "…"); `t-ux-board.mjs` passou tudo: 25 seções com "0", Kubernetes e altura da coluna iguais parado e no arrasto, "No Category", card sem ícone e com "2/5 tasks", "New" da coluna/seção/No value com os valores e o caderno, Clear filters no header e no estado vazio, Board settings, ordem `[n1,n2,n4,n3,n5,n6]`, board vazio com colunas e "New", rodapé (Alt+↓/↑, select ignorado, extremos desabilitados), boards abaixo de Tasks, "Set up a board…", modal rolado até Board, confirmação de opção (cancelar não grava, confirmar grava sem a opção), seções no formato de Tasks sem contagem. `t-columns.mjs` (BoardColumns genérico) segue passando.
+  - App dev real (CDP 9333, banco dev, `nt_radartest`; `harness/app-ux.mjs`, prints em `harness/shots/ux2app/`): linha do board logo abaixo de Tasks; painel de IA aberto → board fecha o painel (a 1280 px aparecem 3 de 5 colunas) → reabrir e fechar no board funciona; "New" em Hold gravou tipo + `{md_rcls: Hold}` no Inbox (caderno com mais notas Radar) e abriu o modal com o board atrás; "New" na seção Assess · Tools gravou as duas propriedades; Next pelo botão e Alt+↓/↑ seguiram a ordem visível ("1 of 8" → "3 of 8"); "Open in notebook" do rodapé saiu do board e reabriu o painel; Board settings abriu o modal rolado até Board; Tasks a partir do board deixa o painel aberto. `app-tasks-views.mjs`: Projects, TODOS, My Day e Kanban renderizam com as seções como antes (print `shots/ux2tasks/`).
+  - Não rodou: o export CSV no diálogo nativo e a abertura no Excel/Sheets/BYOR (a `description` está coberta pelos checks e pelo harness do parágrafo); a confirmação de opção e o "Set up a board…" só no harness, não no app; o board do TODOS (o dev não tem board nele).
+- Dados do dev: as 3 notas criadas pelos testes foram apagadas pelo próprio app (Sidebar → delete), e o banco voltou ao conjunto inicial (189 notas, mesmos ids; `nt_radartest`, `md_rcls` e `radar-n*` idênticos ao snapshot). Nenhum resto delas no banco ou na pasta do app. A chave `monet:note-board:nt_radartest` foi removida. A visão de Tasks do dev ficou em Kanban (último passo do `app-tasks-views.mjs`).
+- Processos: o `monet.exe` de debug, o vite da 1420, o servidor do harness (5199) e o Edge headless (9334) foram parados. O `monet.exe` de `target\release` (PID 26580) estava rodando quando o dev subiu (o dev acusou os atalhos globais Ctrl+M/Ctrl+K já registrados) e, alguns minutos depois, já não estava. Não fui eu que o parei e não o reabri.
+- Files changed:
+  - src/App.tsx
+  - src/lib/noteBoard.ts
+  - src/lib/noteSearch.ts
+  - src/components/NoteBoard/NoteBoard.tsx
+  - src/components/NoteBoard/NoteBoard.module.css
+  - src/components/NoteBoard/NoteCard.tsx
+  - src/components/NoteBoard/NoteCard.module.css
+  - src/components/NoteTypes/NoteTypesModal.tsx
+  - src/components/NoteTypes/NoteTypeBoardSection.tsx
+  - src/components/NotebookList/NotebookList.tsx
+  - src/components/NotebookList/NotebookList.module.css
+  - src/components/TasksView/BoardColumns.tsx
+  - src/components/TasksView/BoardColumns.module.css
+  - src/components/TasksView/TaskEditorModal.tsx
+  - DOCS/specs/noteboard.md
+  - DOCS/specs/PRD.md
+  - DOCS/docs.menu.md
+  - DOCS/backlog.md
+- Files created:
+  - src/components/NoteBoard/NoteBoardModalNav.tsx
+- Files removed:
+  - nenhum
+- Left behind:
+  - O export CSV com a `description` nova não foi salvo pelo diálogo nativo nem aberto no BYOR.
+  - A seção "Boards" do fim da coluna de cadernos saiu; o `.empty` continua em uso por "no tags"/"no marks". O código morto do board (ícone de tipo no card, `exportBtn`) foi removido ou renomeado (`headerBtn`).
+
+### CodeReviewAgent — 20261029151122
+- Summary: Review das melhorias de UX (itens 1–11) em `feat/melhorias-ux` contra `50618f9`. A restauração do painel de IA não fica presa em nenhuma saída. `createTypedNote` não regride o "New note"/"New <tipo>", e os valores vão só por `setNoteProperties`. O CSV (`noteFirstParagraph`, sufixo, `csvSafe`/RFC 4180), o Prev/Next e o `BoardColumns` não afetam os boards de Tasks, e não há código morto. Crítico: o "New" num board com filtro por checkbox cria uma nota que não aparece no board (`newNoteProperties` não grava a caixa do filtro). Há 6 nits: Prev/Next mortos quando a nota do modal sai do board; Alt+↓ num campo de data; blocos de código e tabelas em HTML no 1º parágrafo; nota nova escondida pela busca ou pelos chips; o painel fecha no modo foco; a falha de `setNoteType` é ignorada. `tsc` exit 0.
+- Verdict: REPROVADO
+- Output: `DOCS/reports/29-10-2026/reviewreport_20261029151122.md`
+
+### CodeAgent — ajuste final (pós-review 20261029151122) — 20261029160000
+- Summary: Os 7 achados da review foram avaliados. Ajustei os 6 primeiros. O 7 (`try/catch`/`setNoteType` no "New" do board) ficou como estava, porque é um padrão anterior à task.
+  1. **[crítico] Filtro por checkbox:** `newNoteProperties` grava também `filter.id: true` quando o board tem filtro, então a nota do "New" entra no board. A spec §7a foi ajustada, e o `check-noteBoard-ux.mjs` ganhou o caso (coluna, seção e "No value" com a caixa marcada, e a nota criada passa pelo `boardNotes`; filtro com propriedade apagada não grava nada a mais).
+  2. **Nota nova escondida pelos filtros da tela (nit 5):** o `handleCreate` do `NoteBoard` limpa a busca e, com chips ativos, liga o chip da seção da nota nova. Na prática isso só acontece no "New" da coluna, que grava em "No <Seção>": o "New" da seção só existe nas seções visíveis. A outra saída da review era esconder o "New" da coluna quando "No <Seção>" está fora dos chips. Preferi ligar o chip, porque o botão não some conforme o filtro e a nota fica visível. O caderno já era o do filtro, e o "New" só existe em colunas visíveis (inclusive com "Hide No value"). A escolha ficou registrada na spec §7a.
+  3. **Alt+↑/↓ (nit 3):** passa a ser ignorado com o foco em qualquer `input` além do `select` (`closest('select, input')`). Isso cobre a data, o texto e o número da barra de propriedades. Também cobre o título e a tag, onde Alt+↑/↓ não faz nada; separar o título da barra exigiria um marcador novo no DOM. No corpo da nota continua funcionando. Spec §5 ajustada.
+  4. **Painel de IA (nit 6):** o efeito passou a depender de `noteBoardOpen` (board de fato na tela, fora do modo foco) e não de `mainArea.kind`. A variável `inNoteBoard` saiu. Spec §7 ajustada.
+  5. **Prev/Next com a nota saindo do board (nit 2):** em `boardModalNav`, a nota do modal fica na lista (`id === noteBoardModalId || onBoard.has(id)`) e os vizinhos continuam vindo de `onBoard`. Desmarcar a caixa do filtro, trocar o tipo ou arquivar no modal não trava mais a revisão. Spec §5 ajustada.
+  6. **`noteFirstParagraph` (nit 4):** antes de dividir em blocos, o bloco de código entre cercas (```/~~~) e a `<table>…</table>` em HTML saem inteiros, mesmo com linha em branco dentro. O corte não parte mais um par substituto: o pedaço solto do emoji sai antes do "…". Spec §10 ajustada.
+- Não ajustado:
+  - Nit 7 (`createTypedNote` ignora a falha de `setNoteType`; `handleCreateBoardNote` sem `try/catch`): o padrão é o de `handleCreateNote`, de antes da task. O erro de gravação já aparece na barra (`saveError`). Tratar só o caminho do board divergiria do "New note" e não é trivial: exige decidir o que fazer com a nota já criada.
+- Verificações:
+  - `npx tsc --noEmit -p .`: exit 0.
+  - Checks de lógica: bundle esbuild regenerado em `<scratch>/noteBoard.mjs`. Resultados: `check-noteBoard.mjs` 23, `check-noteBoard-columns.mjs` 12, `check-noteBoard-phase2.mjs` 12 e `check-noteBoard-ux.mjs` 7 (1 caso novo, do filtro), todos ok.
+  - Harness (Vite :5199 + Edge headless :9334, sem abrir o app):
+    - `t-ux-final.mjs` (novo, cenário `boardFiltered` no `components-main.tsx`):
+      - com filtro por checkbox, o "New" da coluna e da seção grava `md_feat: true` e o card aparece;
+      - com busca ativa, o "New" limpa a busca e o card novo aparece;
+      - com o chip "Techniques" ativo, o "New" da coluna liga "No Category" (o storage fica com `['opt_tech','__none__']`) e o card aparece;
+      - o "New" de uma seção já ativa não mexe nos chips;
+      - no board sem filtro, nenhuma chave a mais é gravada.
+    - `t-ux-para.mjs`: 17 casos, entre eles código com linha em branco (``` e ~~~), tabela HTML (também maiúscula), parágrafo entre dois blocos de código e corte no meio de um emoji.
+    - `t-ux-board.mjs`: rodapé atualizado. Alt+↓ no título e no `input[type=date]` é ignorado, e no corpo (contenteditable) navega. O restante passou como antes.
+    - `t-columns.mjs`: ok.
+  - Não verificado no app (por regra, o dev não subiu): o efeito do painel de IA com `noteBoardOpen` (modo foco) e o `boardModalNav` com a nota que sai do board, ambos no `App.tsx`. Os dois foram cobertos só pelo tsc e pela leitura.
+- Processos: o servidor do harness (5199) e o Edge headless (9334, perfil `edge-profile` do scratchpad) foram parados. Não parei nenhum `monet.exe`, e o dev não subiu.
+- Files changed:
+  - src/lib/noteBoard.ts
+  - src/lib/noteSearch.ts
+  - src/components/NoteBoard/NoteBoard.tsx
+  - src/components/NoteBoard/NoteBoardModalNav.tsx
+  - src/App.tsx
+  - DOCS/specs/noteboard.md
+- Files created:
+  - nenhum (no projeto; `harness/t-ux-final.mjs` só no scratchpad)
+- Files removed:
+  - nenhum
+- Left behind:
+  - Nit 7 (falha de `setNoteType`/`try/catch` no "New" do board), preexistente.
+  - Alt+↑/↓ não navega com o foco no título da nota (efeito colateral de ignorar todo `input`).
+  - O export CSV no diálogo nativo/BYOR continua sem teste manual, como na sessão anterior.
+
+### Orchestrator — encerramento — 20261029190000
+- Summary: Task concluída nas duas branches.
+  - `feat/board-view` (50618f9): board genérico por tipo de nota, fases 1 e 2, e o modal de tipos sem vazamento.
+  - `feat/melhorias-ux`: as 11 sugestões aceitas do uxAgent e a passada final pós-review. O crítico do "New" com filtro por checkbox foi corrigido, junto com 5 dos 6 nits.
+- Inputs:
+  - `DOCS/reports/29-10-2026/uxreport_20261029143802.md`
+  - `DOCS/reports/29-10-2026/reviewreport_20261029142852.md`
+  - `DOCS/reports/29-10-2026/reviewreport_20261029151122.md`
+- Decision: Commit em `feat/melhorias-ux`. Ficaram para trás:
+  - o nit 7 da review UX (falha de `setNoteType` no "New", padrão anterior à task);
+  - o Alt+↑/↓ não navega com o foco no título;
+  - o item 12 do UX (chat com contexto do board);
+  - os testes manuais pendentes: export CSV no Excel/Sheets/BYOR, o board do TODOS, o painel de IA no modo foco e o Prev/Next com a nota que sai do board.
+- Next step: concluído; o Coordenador testa e escolhe a branch.

@@ -80,11 +80,16 @@
   gap: var(--gap-cards);
 }
 
-/* Seção que aceita drop (board de notas): vazia, só aparece no arrasto. */
+/* Seção que aceita drop (board de notas) vazia: faixa de altura fixa (rótulo
+   + 0) cuja borda só aparece no arrasto, sem mudar o layout. */
 .sectionEmpty {
-  min-height: 32px;
-  border: 1px dashed var(--hair);
+  padding-bottom: var(--space-1);
+  border: 1px dashed transparent;
   border-radius: var(--radius-sm);
+}
+
+.columnsDragging .sectionEmpty {
+  border-color: var(--hair);
 }
 
 .sectionOver {
@@ -98,13 +103,40 @@
   border-color: var(--accent-task);
 }
 
-.sectionLabel {
+.sectionHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+  min-width: 0;
   padding: var(--space-1) var(--space-1) 0;
+}
+
+.sectionLabel {
+  min-width: 0;
   font-size: 11px;
   color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sectionCount {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Ação da seção (board de notas): aparece no hover ou com foco. */
+.sectionAction {
+  display: inline-flex;
+  flex-shrink: 0;
+  margin-left: auto;
+  opacity: 0;
+}
+
+.section:hover .sectionAction,
+.sectionAction:focus-within {
+  opacity: 1;
 }
 
 .card {

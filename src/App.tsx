@@ -39,6 +39,7 @@ import { StatusManagerModal } from './components/TasksView/StatusManagerModal'
 import { MetadataManagerModal } from './components/TasksView/MetadataManagerModal'
 import { NoteTypesModal } from './components/NoteTypes/NoteTypesModal'
 import { NoteBoard } from './components/NoteBoard/NoteBoard'
+import { NoteBoardModalNav } from './components/NoteBoard/NoteBoardModalNav'
 import { NoteTypePicker } from './components/NoteTypes/NoteTypePicker'
 import { NotePropertiesBar } from './components/NoteTypes/NotePropertiesBar'
 import { TodosPanel } from './components/NoteTypes/TodosPanel'
@@ -536,8 +537,13 @@ function App() {
   // "Manage properties" aberto (focusId = definição focada ao abrir, pelo lápis da task).
   const [metadataManager, setMetadataManager] = useState<{ focusId: string | null } | null>(null)
   // "Note types" aberto (focusTypeId = tipo selecionado ao abrir; reorder =
-  // aberto por "Reorder types…" da lista de notas).
-  const [noteTypesOpen, setNoteTypesOpen] = useState<{ focusTypeId: string | null; reorder?: boolean } | null>(null)
+  // aberto por "Reorder types…" da lista de notas; board = rolado até a seção
+  // Board, pelo "Board settings").
+  const [noteTypesOpen, setNoteTypesOpen] = useState<{
+    focusTypeId: string | null
+    reorder?: boolean
+    board?: boolean
+  } | null>(null)
   const { confirm, choose, modal: confirmModal } = useConfirm()
   // Group by da lista de tasks.
   const [tasksGroupBy, setTasksGroupByState] = useState<TaskGroupBy>(() => {
@@ -1029,8 +1035,26 @@ function App() {
     if (noteBoardGone) setMainArea(NOTES_AREA)
   }, [noteBoardGone])
 
-  // Nota de um card aberta num modal sobre o board (o editor da nota ativa).
+  // O board de notas na tela (fora do modo foco) recolhe o painel de IA (o
+  // board precisa da largura) e, ao sair, reabre se estava aberto. Reabrir
+  // com o board aberto é permitido.
+  const aiOpenRef = useRef(aiOpen)
+  aiOpenRef.current = aiOpen
+  const aiOpenBeforeBoardRef = useRef(false)
+  useEffect(() => {
+    if (noteBoardOpen) {
+      aiOpenBeforeBoardRef.current = aiOpenRef.current
+      setAiOpen(false)
+    } else if (aiOpenBeforeBoardRef.current) {
+      aiOpenBeforeBoardRef.current = false
+      setAiOpen(true)
+    }
+  }, [noteBoardOpen])
+
+  // Nota de um card aberta num modal sobre o board (o editor da nota ativa) e
+  // a ordem dos cards quando ela abriu (Previous/Next do modal).
   const [noteBoardModalId, setNoteBoardModalId] = useState<string | null>(null)
+  const [noteBoardOrder, setNoteBoardOrder] = useState<string[]>([])
   useEffect(() => {
     if (!noteBoardOpen) setNoteBoardModalId(null)
   }, [noteBoardOpen])
@@ -1430,13 +1454,31 @@ function App() {
   const activeNoteIsTodos = !!activeNote && isTodosNote(activeNote)
 
   // Card do board: a nota vira a ativa e abre no modal; o board fica (a
-  // navegação é dele).
-  function openBoardNote(note: Note) {
+  // navegação é dele). `order`: os cards na ordem visível ao abrir (Previous/
+  // Next); ausente = mantém a ordem atual (navegação dentro do modal).
+  function openBoardNote(note: Note, order?: string[]) {
     if (!note.notebookId) return
     if (note.id !== activeId || note.notebookId !== activeNotebookId) keepMainAreaRef.current = true
     handleNavigateToNote(note.notebookId, note.id, note.subjectId)
     setNoteBoardModalId(note.id)
+    if (order) setNoteBoardOrder(order)
   }
+
+  // Previous/Next do modal na ordem guardada, pulando as notas que saíram do
+  // board (apagadas, arquivadas, de outro tipo). A nota reclassificada no
+  // modal continua no lugar em que estava, mesmo se saiu do board.
+  const boardModalNav = useMemo(() => {
+    if (!activeBoard || noteBoardModalId === null) return null
+    const onBoard = new Map(
+      boardNotes(notes, activeBoard.board, activeBoard.type.id).map((n) => [n.id, n] as const)
+    )
+    const ids = noteBoardOrder.filter((id) => id === noteBoardModalId || onBoard.has(id))
+    const index = ids.indexOf(noteBoardModalId)
+    const at = (i: number) => (index >= 0 ? onBoard.get(ids[i]) : undefined)
+    return { position: index >= 0 ? index : null, total: ids.length, prev: at(index - 1), next: at(index + 1) }
+  }, [activeBoard, noteBoardModalId, noteBoardOrder, notes])
+  const boardPrevNote = boardModalNav?.prev
+  const boardNextNote = boardModalNav?.next
 
   // "Open in notebook" do card: sai do board para a nota no caderno.
   function openBoardNoteInNotebook(note: Note) {
@@ -2122,21 +2164,40 @@ function App() {
     })
   }
 
-  // `typeId`: "New <tipo>" (nota com o template do tipo como conteúdo).
-  async function handleCreateNote(typeId: string | null = null) {
-    if (!activeNotebookId) return
-    const note = await createNote(activeNotebookId, activeSubjectId)
+  // Nota nova no topo do caderno. `typeId`: "New <tipo>" (nota com o template
+  // do tipo como conteúdo).
+  async function createTypedNote(notebookId: string, subjectId: string | null, typeId: string | null) {
+    const note = await createNote(notebookId, subjectId)
     if (typeId) {
       const template = noteTypes.types.find((t) => t.id === typeId)?.template
       if (template) await saveNote({ ...note, content: template, updatedAt: Date.now() })
       await setNoteType(note.id, typeId)
     }
-    setActiveId(note.id)
     setNoteOrder((prev) => {
       const next = [note.id, ...prev]
       saveNoteOrder(next)
       return next
     })
+    return note
+  }
+
+  async function handleCreateNote(typeId: string | null = null) {
+    if (!activeNotebookId) return
+    const note = await createTypedNote(activeNotebookId, activeSubjectId, typeId)
+    setActiveId(note.id)
+  }
+
+  // "New" do board: nota do tipo no caderno escolhido pelo board (null =
+  // Inbox), com os valores da coluna/seção gravados pelo setter das
+  // propriedades, aberta no modal sobre o board.
+  async function handleCreateBoardNote(
+    typeId: string,
+    notebookId: string | null,
+    properties: Record<string, MetadataValue>
+  ) {
+    const note = await createTypedNote(notebookId ?? (await ensureInbox()), null, typeId)
+    if (Object.keys(properties).length > 0) await setNoteProperties(note.id, properties)
+    openBoardNote(note, [])
   }
 
   // Troca o tipo da nota aberta (§4.5): valores migram por nome + tipo de
@@ -3371,6 +3432,7 @@ function App() {
           activeBoardTypeId={noteBoardTypeId}
           onOpenBoard={openNoteBoard}
           onCloseBoard={closeMainArea}
+          onSetUpBoard={() => setNoteTypesOpen({ focusTypeId: null, board: true })}
           onOpenSettings={handleOpenSettings}
           calendarNotebookId={calendarNotebookId}
           tasksActive={tasksViewOpen}
@@ -3401,9 +3463,14 @@ function App() {
             typeDefs={typeDefs(noteTypes.defs, activeBoard.type.id)}
             notes={notes}
             notebooks={orderedNotebooks}
+            taskProgress={todosProgress}
             onSetProperties={setNoteProperties}
+            onCreateNote={(notebookId, properties) =>
+              void handleCreateBoardNote(activeBoard.type.id, notebookId, properties)
+            }
             onOpenNote={openBoardNote}
             onOpenInNotebook={openBoardNoteInNotebook}
+            onOpenSettings={() => setNoteTypesOpen({ focusTypeId: activeBoard.type.id, board: true })}
             onExportCsv={(fileName, content) => invoke<boolean>('export_csv', { defaultName: fileName, content })}
           />
         ) : tasksBoardOpen && tasksMainView === 'review' ? (
@@ -3738,8 +3805,20 @@ function App() {
       {tasksBoardOpen && activeTask?.id === taskModalId && noteEditor && (
         <TaskEditorModal onClose={() => setTaskModalId(null)}>{noteEditor}</TaskEditorModal>
       )}
-      {noteBoardOpen && noteBoardModalId !== null && noteBoardModalId === activeId && noteEditor && (
-        <TaskEditorModal ariaLabel="Edit note" onClose={() => setNoteBoardModalId(null)}>
+      {noteBoardOpen && noteBoardModalId !== null && noteBoardModalId === activeId && noteEditor && activeNote && (
+        <TaskEditorModal
+          ariaLabel="Edit note"
+          onClose={() => setNoteBoardModalId(null)}
+          footer={
+            <NoteBoardModalNav
+              position={boardModalNav?.position ?? null}
+              total={boardModalNav?.total ?? 0}
+              onPrev={boardPrevNote ? () => openBoardNote(boardPrevNote) : undefined}
+              onNext={boardNextNote ? () => openBoardNote(boardNextNote) : undefined}
+              onOpenInNotebook={() => openBoardNoteInNotebook(activeNote)}
+            />
+          }
+        >
           {noteEditor}
         </TaskEditorModal>
       )}
@@ -3828,6 +3907,7 @@ function App() {
           onClose={() => setNoteTypesOpen(null)}
           focusTypeId={noteTypesOpen.focusTypeId}
           reorder={noteTypesOpen.reorder}
+          focusBoard={noteTypesOpen.board}
           registry={noteTypes}
           notes={notes}
           onOpenBoard={(id) => {

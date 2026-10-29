@@ -63,10 +63,15 @@ export function normalizeSearch(s: string): string {
 }
 
 function noteSearchText(content: string): string {
+  return stripSyntax(cleanNoteContentForAi(content, { resolveNoteTitle: () => undefined }))
+}
+
+// Texto do cleanNoteContentForAi sem a sintaxe Markdown/HTML, numa linha só.
+function stripSyntax(text: string): string {
   // Entidades por último: `-&gt;` vira `->` sem que o `<` decodificado conte
   // como tag.
   return decodeEntities(
-    cleanNoteContentForAi(content, { resolveNoteTitle: () => undefined })
+    text
       .replace(MARK_LABEL_RE, '')
       .replace(AI_MARKER_RE, ' ')
       .replace(HTML_TAG_RE, ' ')
@@ -195,6 +200,31 @@ function previewOf(text: string): Snippet | null {
 // do mesmo cache da busca: a prévia das listas fora do Ctrl+P.
 export function notePreview(note: Note): string {
   return previewOf(entryOf(note).text)?.before ?? ''
+}
+
+// Bloco que não é parágrafo de texto: título, item de lista ou checklist,
+// tabela, código ou divisória.
+const NON_PARAGRAPH_RE = /^(?:#{1,6}\s|[-*+]\s|\d+\.\s|\||```|~~~|(?:[-*_]\s*){3,}$)/
+// Blocos que podem ter linha em branco dentro: código entre cercas e tabela
+// em HTML (o tiptap-markdown grava assim a tabela com célula rica). Saem
+// inteiros antes de dividir em blocos.
+const MULTI_BLOCK_RE = /^(```|~~~)[^\n]*\n[\s\S]*?^\1[^\n]*$|<table[\s\S]*?<\/table>/gim
+
+// 1º parágrafo de texto da nota, limpo como a busca (sem sintaxe, imagens nem
+// blocos internos) e cortado em `max` caracteres (export CSV do board).
+export function noteFirstParagraph(note: Note, max: number): string {
+  const blocks = cleanNoteContentForAi(note.content, { resolveNoteTitle: () => undefined })
+    .replace(MULTI_BLOCK_RE, '')
+    .split(/\n\s*\n/)
+  for (const block of blocks) {
+    if (NON_PARAGRAPH_RE.test(block.trim())) continue
+    const text = stripSyntax(block)
+    if (!text) continue
+    if (text.length <= max) return text
+    // O corte não parte um par substituto (emoji).
+    return `${text.slice(0, max - 1).replace(/[\uD800-\uDBFF]$/, '').trimEnd()}…`
+  }
+  return ''
 }
 
 export interface SearchChip {

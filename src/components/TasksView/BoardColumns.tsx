@@ -8,9 +8,11 @@ import styles from './BoardColumns.module.css'
 export interface BoardSection<T> {
   label: string | null
   items: T[]
-  // Com `dropKey` a seção também aceita drop; vazia, só aparece durante um
-  // arrasto.
+  // Com `dropKey` a seção também aceita drop e mostra a contagem; vazia, vira
+  // uma faixa de altura fixa (tracejada durante o arrasto).
   dropKey?: string
+  // Ação ao lado do rótulo, visível no hover da seção (ex.: "New").
+  action?: ReactNode
 }
 
 export interface BoardColumn<T extends { id: string }> {
@@ -61,7 +63,7 @@ export function BoardColumns<T extends { id: string }>({
   }
 
   return (
-    <div className={styles.columns}>
+    <div className={`${styles.columns} ${draggingId ? styles.columnsDragging : ''}`}>
       {columns.map((c) => {
         const overLimit = c.wipLimit != null && c.count > c.wipLimit
         return (
@@ -89,25 +91,27 @@ export function BoardColumns<T extends { id: string }>({
             </div>
             <div className={styles.cards}>
               {c.sections
-                ? c.sections.map((s, i) =>
-                    s.dropKey !== undefined && s.items.length === 0 && !draggingId ? null : (
-                      // Índice na chave: duas TODOS podem ter o mesmo título.
-                      <div
-                        key={`${i}-${s.label ?? ''}`}
-                        data-drop-key={s.dropKey}
-                        className={`${styles.section} ${
-                          s.dropKey !== undefined && s.items.length === 0 ? styles.sectionEmpty : ''
-                        } ${draggingId && s.dropKey !== undefined && overKey === s.dropKey ? styles.sectionOver : ''}`}
-                      >
-                        {s.label !== null && (
+                ? c.sections.map((s, i) => (
+                    // Índice na chave: duas TODOS podem ter o mesmo título.
+                    <div
+                      key={`${i}-${s.label ?? ''}`}
+                      data-drop-key={s.dropKey}
+                      className={`${styles.section} ${
+                        s.dropKey !== undefined && s.items.length === 0 ? styles.sectionEmpty : ''
+                      } ${draggingId && s.dropKey !== undefined && overKey === s.dropKey ? styles.sectionOver : ''}`}
+                    >
+                      {s.label !== null && (
+                        <div className={styles.sectionHead}>
                           <span className={styles.sectionLabel} title={s.label}>
                             {s.label}
                           </span>
-                        )}
-                        {s.items.map((t) => card(t, c))}
-                      </div>
-                    )
-                  )
+                          {s.dropKey !== undefined && <span className={styles.sectionCount}>{s.items.length}</span>}
+                          {s.action && <span className={styles.sectionAction}>{s.action}</span>}
+                        </div>
+                      )}
+                      {s.items.map((t) => card(t, c))}
+                    </div>
+                  ))
                 : c.items.map((t) => card(t, c))}
             </div>
           </div>

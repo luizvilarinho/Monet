@@ -1,24 +1,32 @@
-import { ArrowSquareOut, CheckSquare, Square } from '@phosphor-icons/react'
+import { ArrowSquareOut, CheckSquare, ListChecks, Square } from '@phosphor-icons/react'
 import { formatMetadataValue, hasMetadataValue } from '../../lib/metadata'
-import type { MetadataDef, Note, NoteType } from '../../types'
-import { TypeIcon } from '../NoteTypes/TypeIcon'
+import type { MetadataDef, Note } from '../../types'
 import styles from './NoteCard.module.css'
 
-// Card de nota do board por tipo: tipo (+ caderno quando o board mostra todos),
-// título, até 3 campos com valor e as tags. Clique/Enter abre a nota num modal
-// sobre o board; o botão leva ao caderno.
+// Card de nota do board por tipo: caderno (quando o board mostra todos),
+// título, até 3 campos com valor, o progresso das tasks da nota e as tags.
+// Clique/Enter abre a nota num modal sobre o board; o botão leva ao caderno.
 interface NoteCardProps {
   note: Note
-  type: NoteType
   fields: MetadataDef[]
   showTags: boolean
   // Só com o filtro "All notebooks".
   notebookName?: string
+  // Tasks com `parentNoteId` = a nota (feitas/total); ausente = sem tasks.
+  taskProgress?: { done: number; total: number }
   onOpen: () => void
   onOpenInNotebook: () => void
 }
 
-export function NoteCard({ note, type, fields, showTags, notebookName, onOpen, onOpenInNotebook }: NoteCardProps) {
+export function NoteCard({
+  note,
+  fields,
+  showTags,
+  notebookName,
+  taskProgress,
+  onOpen,
+  onOpenInNotebook,
+}: NoteCardProps) {
   const values = fields.flatMap((def) => {
     const value = note.properties?.[def.id]
     return value === undefined || !hasMetadataValue(value) ? [] : [{ def, value }]
@@ -38,9 +46,6 @@ export function NoteCard({ note, type, fields, showTags, notebookName, onOpen, o
       }}
     >
       <div className={styles.top}>
-        <span className={styles.type} style={{ color: type.color ?? undefined }}>
-          <TypeIcon name={type.icon} size={12} />
-        </span>
         {notebookName !== undefined && (
           <span className={styles.notebook} title={notebookName}>
             {notebookName}
@@ -93,6 +98,12 @@ export function NoteCard({ note, type, fields, showTags, notebookName, onOpen, o
             )
           })}
         </div>
+      )}
+      {taskProgress && taskProgress.total > 0 && (
+        <span className={styles.progress} title="Tasks of this note: done/total">
+          <ListChecks size={12} aria-hidden />
+          {taskProgress.done}/{taskProgress.total} tasks
+        </span>
       )}
       {showTags && note.tags.length > 0 && (
         <div className={styles.tags}>

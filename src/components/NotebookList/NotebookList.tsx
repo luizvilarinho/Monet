@@ -22,6 +22,7 @@ import {
   FileText,
   Folder,
   Gear,
+  Kanban,
   ListChecks,
   Plus,
   PlusCircle,
@@ -322,12 +323,14 @@ export interface NotebookListProps {
   marksFilter: MarkLabelFilter
   onOpenMarks: (filter: MarkLabelFilter) => void
   onCloseMarks: () => void
-  // Seção "Boards": um board por tipo de nota com "Show as board" (nome da
-  // propriedade das colunas e contagem de notas). Clicar no ativo fecha.
+  // Boards logo abaixo de Tasks: um por tipo de nota com "Show as board"
+  // (nome da propriedade das colunas e contagem de notas). Clicar no ativo
+  // fecha. Sem boards, "Set up a board…" abre o modal de tipos na seção Board.
   boards: Array<{ type: NoteType; columnName: string; count: number }>
   activeBoardTypeId: string | null
   onOpenBoard: (typeId: string) => void
   onCloseBoard: () => void
+  onSetUpBoard: () => void
   onOpenSettings: () => void
   calendarNotebookId?: string | null
   // Entrada virtual "Tasks" (não é linha em `notebooks`). Enquanto ativa,
@@ -375,6 +378,7 @@ export function NotebookList({
   activeBoardTypeId,
   onOpenBoard,
   onCloseBoard,
+  onSetUpBoard,
   onOpenSettings,
   calendarNotebookId,
   tasksActive,
@@ -610,6 +614,39 @@ export function NotebookList({
                 <span className={styles.rowLabel}>Tasks</span>
               </li>
 
+              {boards.length === 0 ? (
+                <li
+                  className={`${styles.row} ${styles.boardSetUp}`}
+                  title="Turn on “Show as board” in a note type"
+                  onClick={onSetUpBoard}
+                >
+                  <span className={styles.boardIcon}>
+                    <Kanban size={16} aria-hidden />
+                  </span>
+                  <span className={styles.rowLabel}>Set up a board…</span>
+                </li>
+              ) : (
+                boards.map((b) => {
+                  const active = b.type.id === activeBoardTypeId
+                  return (
+                    <li
+                      key={b.type.id}
+                      className={`${styles.row} ${active ? styles.active : ''}`}
+                      title={`${b.type.name} notes by ${b.columnName}`}
+                      onClick={() => (active ? onCloseBoard() : onOpenBoard(b.type.id))}
+                    >
+                      <span className={styles.boardIcon} style={{ color: b.type.color ?? undefined }}>
+                        <TypeIcon name={b.type.icon} />
+                      </span>
+                      <span className={styles.rowLabel}>
+                        {b.type.name} <span className={styles.boardProp}>· {b.columnName}</span>
+                      </span>
+                      <span className={styles.sectionCount}>{b.count}</span>
+                    </li>
+                  )
+                })
+              )}
+
               {notebooks.filter((n) => n.id !== calendarNotebookId).length === 0 &&
                !calendarNotebookId ? (
                 <li className={styles.empty}>no notebooks</li>
@@ -756,38 +793,6 @@ export function NotebookList({
             </ul>
           </section>
 
-          <hr className={styles.divider} />
-
-          <section className={styles.section}>
-            <div className={styles.header}>Boards</div>
-            <ul className={styles.list}>
-              {boards.length === 0 ? (
-                <li className={styles.empty} title="Turn on “Show as board” in a note type">
-                  no boards
-                </li>
-              ) : (
-                boards.map((b) => {
-                  const active = b.type.id === activeBoardTypeId
-                  return (
-                    <li
-                      key={b.type.id}
-                      className={`${styles.row} ${active ? styles.active : ''}`}
-                      title={`${b.type.name} notes by ${b.columnName}`}
-                      onClick={() => (active ? onCloseBoard() : onOpenBoard(b.type.id))}
-                    >
-                      <span className={styles.boardIcon} style={{ color: b.type.color ?? undefined }}>
-                        <TypeIcon name={b.type.icon} />
-                      </span>
-                      <span className={styles.rowLabel}>
-                        {b.type.name} <span className={styles.boardProp}>· {b.columnName}</span>
-                      </span>
-                      <span className={styles.sectionCount}>{b.count}</span>
-                    </li>
-                  )
-                })
-              )}
-            </ul>
-          </section>
         </div>
       )}
 

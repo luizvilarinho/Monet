@@ -41,7 +41,7 @@ export function NoteTypeBoardSection({ type, defs, onChange, onOpenBoard }: Note
   )
 
   const title = (
-    <p className={`${own.section} ${own.boardTitle}`}>
+    <p className={`${own.section} ${own.boardTitle}`} data-board-section>
       <Kanban size={13} aria-hidden />
       Board
     </p>
