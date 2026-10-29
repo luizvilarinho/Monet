@@ -25,6 +25,7 @@ import type {
 } from '../types'
 import { BUILTIN_STATUS_DEFS, TASK_COLOR_PALETTE } from '../lib/tasks'
 import { TODOS_DEFAULT_TEMPLATE, TODOS_TYPE_ID } from '../lib/noteTypes'
+import { parseBoardConfig } from '../lib/noteBoard'
 import { CALENDAR_NOTEBOOK_ID, parseCalendarTitle } from '../lib/calendar'
 import type { StorageAdapter } from './index'
 
@@ -64,6 +65,7 @@ interface NoteTypeRow {
   sort_order: number
   builtin: number
   created_at: number
+  board?: string | null
 }
 
 interface SubjectRow {
@@ -199,6 +201,7 @@ function rowToNoteType(r: NoteTypeRow): NoteType {
     sortOrder: r.sort_order,
     builtin: r.builtin === 1,
     createdAt: r.created_at,
+    board: parseBoardConfig(r.board ?? null),
   }
 }
 
@@ -567,6 +570,10 @@ const NOTES_EXTRA_COLUMNS = [
   { name: 'properties', ddl: 'properties TEXT' },
   { name: 'archived_at', ddl: 'archived_at INTEGER' },
 ]
+
+// Colunas de note_types posteriores à criação da tabela. `board` = config do
+// board do tipo (JSON); NULL = sem board.
+const NOTE_TYPES_EXTRA_COLUMNS = [{ name: 'board', ddl: 'board TEXT' }]
 
 // Adiciona as colunas que faltam (PRAGMA table_info). Outra janela (main/keep)
 // pode ter adicionado a coluna entre o PRAGMA e o ALTER: "duplicate column
@@ -974,6 +981,7 @@ export class TauriStorage implements StorageAdapter {
             created_at INTEGER NOT NULL
           )`
         )
+        await addMissingColumns(db, 'note_types', NOTE_TYPES_EXTRA_COLUMNS)
         // Tipo embutido TODOS (entregável): id fixo, idempotente.
         await db.execute(
           `INSERT OR IGNORE INTO note_types (id, name, icon, color, template, sort_order, builtin, created_at)
@@ -1206,8 +1214,12 @@ export class TauriStorage implements StorageAdapter {
   async getNoteTypes(): Promise<NoteType[]> {
     const db = await this.db()
     await this.ensureNoteTypesTable(db)
+    // Colunas explícitas, não `*`: na abertura que adiciona `board`, uma conexão
+    // do pool com o schema antigo em cache preparava o `*` com 8 colunas e o
+    // sqlx entrava em pânico ao ler a 9ª (index out of bounds).
     const rows = await db.select<NoteTypeRow[]>(
-      'SELECT * FROM note_types ORDER BY sort_order ASC, id ASC'
+      `SELECT id, name, icon, color, template, sort_order, builtin, created_at, board
+       FROM note_types ORDER BY sort_order ASC, id ASC`
     )
     return rows.map(rowToNoteType)
   }
@@ -1217,15 +1229,26 @@ export class TauriStorage implements StorageAdapter {
     await this.ensureNoteTypesTable(db)
     // `builtin` só no INSERT: um tipo não vira (nem deixa de ser) embutido.
     await db.execute(
-      `INSERT INTO note_types (id, name, icon, color, template, sort_order, builtin, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO note_types (id, name, icon, color, template, sort_order, builtin, created_at, board)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        ON CONFLICT(id) DO UPDATE SET
          name = excluded.name,
          icon = excluded.icon,
          color = excluded.color,
          template = excluded.template,
-         sort_order = excluded.sort_order`,
-      [t.id, t.name, t.icon, t.color, t.template, t.sortOrder, t.builtin ? 1 : 0, t.createdAt]
+         sort_order = excluded.sort_order,
+         board = excluded.board`,
+      [
+        t.id,
+        t.name,
+        t.icon,
+        t.color,
+        t.template,
+        t.sortOrder,
+        t.builtin ? 1 : 0,
+        t.createdAt,
+        t.board ? JSON.stringify(t.board) : null,
+      ]
     )
     this.scheduleCheckpoint()
   }

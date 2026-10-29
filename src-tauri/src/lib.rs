@@ -331,12 +331,17 @@ async fn delete_chat_doc(app: AppHandle, path: String) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
-async fn export_markdown(default_name: String, content: String) -> Result<bool, String> {
+// Diálogo nativo de salvar + escrita do texto. false = cancelado.
+async fn save_text_with_dialog(
+    default_name: String,
+    content: String,
+    filter_label: &'static str,
+    extension: &'static str,
+) -> Result<bool, String> {
     let result = tokio::task::spawn_blocking(move || {
         rfd::FileDialog::new()
             .set_file_name(&default_name)
-            .add_filter("Markdown", &["md"])
+            .add_filter(filter_label, &[extension])
             .save_file()
     })
     .await
@@ -350,6 +355,16 @@ async fn export_markdown(default_name: String, content: String) -> Result<bool, 
             Ok(true)
         }
     }
+}
+
+#[tauri::command]
+async fn export_markdown(default_name: String, content: String) -> Result<bool, String> {
+    save_text_with_dialog(default_name, content, "Markdown", "md").await
+}
+
+#[tauri::command]
+async fn export_csv(default_name: String, content: String) -> Result<bool, String> {
+    save_text_with_dialog(default_name, content, "CSV", "csv").await
 }
 
 fn is_valid_model_id(model: &str) -> bool {
@@ -1768,6 +1783,7 @@ pub fn run() {
             read_chat_doc,
             delete_chat_doc,
             export_markdown,
+            export_csv,
             open_main_window,
             open_note_in_main,
             open_task_in_main,

@@ -279,6 +279,20 @@
   background: var(--nm);
 }
 
+/* Seção "Boards": ícone na cor do tipo e a propriedade das colunas em cinza. */
+.boardIcon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  padding: var(--space-0);
+}
+
+.boardProp {
+  color: var(--text-muted);
+}
+
 .sectionCount {
   flex-shrink: 0;
   margin-left: auto;

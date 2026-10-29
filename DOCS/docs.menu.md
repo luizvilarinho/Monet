@@ -36,6 +36,7 @@ Ponto de entrada para a documentação do projeto. Leia este arquivo primeiro pa
 | `DOCS/specs/PRD.md`                 | PRD: persona, proposta de valor/diferenciação, inventário de funcionalidades atuais, escopo de plataforma e não-metas. Consulte pra entender público-alvo e o que o Monet deliberadamente não faz. |
 | `DOCS/specs/notemark.md`           | Spec das marcas de atenção (v2): trecho marcado com rótulo opcional, persistido como `<mark data-mark>` (botão "Mark" na régua, Ctrl+Shift+M, `==texto==`), menu da marca, lista Marks de revisão com Resolve, seção "Marks" na coluna de cadernos, `has:mark`/`mark:` no Ctrl+P, tool `search_marks`, citação clicável no chat. Consulte ao trabalhar no editor, na busca, na IA ou no chat. |
 | `DOCS/specs/tags.md`               | Spec das tags de nota como tema transversal: autocomplete no "+ tag", tag clicável na nota, seção "Tags" com contagem e lista das notas da tag (todos os cadernos) na coluna das notas, `tag:` no Ctrl+P. Consulte ao mexer em tags, na coluna de cadernos ou na busca. |
+| `DOCS/specs/noteboard.md`         | Spec do board de notas por tipo: qualquer tipo com propriedade Select/Checkbox vira colunas de cards (config "Board" no modal de tipos, `note_types.board`), seções pelo 2º select com drop, filtro por checkbox, card com modal "Edit note", seção "Boards" na coluna de cadernos, `mainArea` único, export CSV no formato do Build your own Radar. Consulte ao mexer em tipos de nota, no board ou nos boards de Tasks (`BoardColumns` é comum). |
 
 ---
 

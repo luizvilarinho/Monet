@@ -39,7 +39,7 @@ export interface BoardViewProps {
   onConvertPipeTitles: (tasks: Task[]) => void
   checklist: Map<string, ChecklistProgress>
   // Monta as colunas a partir das tasks já filtradas (projeto + busca).
-  columnsFor: (projectTasks: Task[]) => BoardColumn[]
+  columnsFor: (projectTasks: Task[]) => BoardColumn<Task>[]
   onDrop: (taskId: string, columnKey: string, tasksById: Map<string, Task>) => void
   // Mostra o chip do projeto nos cards (falso onde a coluna já é o projeto).
   showProject?: boolean
@@ -79,7 +79,7 @@ export function BoardView({
   const columns = useMemo(() => columnsFor(projectTasks), [columnsFor, projectTasks])
 
   const tasksById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks])
-  const orderedIds = useMemo(() => columns.flatMap((c) => c.tasks.map((t) => t.id)), [columns])
+  const orderedIds = useMemo(() => columns.flatMap((c) => c.items.map((t) => t.id)), [columns])
   const kb = useTaskKeyboard({
     orderedIds,
     tasksById,
@@ -110,7 +110,7 @@ export function BoardView({
       <BoardColumns
         columns={columns}
         onDrop={(id, key) => onDrop(id, key, tasksById)}
-        onClearColumn={(c) => void kb.requestDelete(c.tasks.map((t) => t.id), 'Clear done')}
+        onClearColumn={(c) => void kb.requestDelete(c.items.map((t) => t.id), 'Clear done')}
         renderCard={(t) => {
           const nb = notebookById.get(t.notebookId)
           return (

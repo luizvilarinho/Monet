@@ -80,6 +80,24 @@
   gap: var(--gap-cards);
 }
 
+/* Seção que aceita drop (board de notas): vazia, só aparece no arrasto. */
+.sectionEmpty {
+  min-height: 32px;
+  border: 1px dashed var(--hair);
+  border-radius: var(--radius-sm);
+}
+
+.sectionOver {
+  background: var(--surface-2);
+  outline: 1px dashed var(--accent-task);
+  border-radius: var(--radius-sm);
+}
+
+.sectionEmpty.sectionOver {
+  outline: none;
+  border-color: var(--accent-task);
+}
+
 .sectionLabel {
   padding: var(--space-1) var(--space-1) 0;
   font-size: 11px;

@@ -30,6 +30,7 @@ import { MAX_LIST_PROPERTIES, typeDefs } from '../../lib/noteTypes'
 import { normalizeName } from '../../lib/tasks'
 import type { MetadataDef, MetadataType, Note, NoteType, SelectOption } from '../../types'
 import { ColorDots } from '../TasksView/ColorDots'
+import { NoteTypeBoardSection } from './NoteTypeBoardSection'
 import { TYPE_ICON_GROUPS, TypeIcon } from './TypeIcon'
 import styles from '../TasksView/StatusManagerModal.module.css'
 import own from './NoteTypesModal.module.css'
@@ -94,6 +95,25 @@ function SortablePropRow({
   )
 }
 
+// Opção do select: mesma linha de antes (renomear, cor, excluir) com o handle
+// de reordenar; a ordem das opções é a ordem das colunas do board.
+function SortableOptionRow({ id, label, children }: { id: string; label: string; children: ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : undefined,
+  }
+  return (
+    <div ref={setNodeRef} style={style} className={styles.row}>
+      <span className={styles.dragHandle} {...attributes} {...listeners} aria-label={label}>
+        <DotsSixVertical size={12} weight="bold" aria-hidden />
+      </span>
+      {children}
+    </div>
+  )
+}
+
 // "Note types": tipos globais (nome, ícone, cor, ordem, template) e as
 // propriedades de cada um (nome, tipo de dado fixo após criar, "show in list",
 // ordem, opções do select). Sem relação, fórmula, multi-select nem troca de
@@ -108,6 +128,8 @@ interface NoteTypesModalProps {
   registry: NoteTypesRegistry
   // Contagens das confirmações de exclusão.
   notes: Note[]
+  // "Open board" da seção Board (só com o board ligado).
+  onOpenBoard?: (typeId: string) => void
 }
 
 function errorText(err: unknown): string {
@@ -125,7 +147,14 @@ function draftKeys(cancelRef: { current: boolean }) {
   }
 }
 
-export function NoteTypesModal({ onClose, focusTypeId, reorder = false, registry, notes }: NoteTypesModalProps) {
+export function NoteTypesModal({
+  onClose,
+  focusTypeId,
+  reorder = false,
+  registry,
+  notes,
+  onOpenBoard,
+}: NoteTypesModalProps) {
   const { types, defs } = registry
   const { confirm, modal } = useConfirm()
   const [selectedId, setSelectedId] = useState<string | null>(focusTypeId)
@@ -255,45 +284,69 @@ export function NoteTypesModal({ onClose, focusTypeId, reorder = false, registry
     return trimmed
   }
 
+  function handleOptionDragEnd(d: MetadataDef, event: DragEndEvent) {
+    const options = d.options ?? []
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const oldIndex = options.findIndex((o) => o.id === active.id)
+    const newIndex = options.findIndex((o) => o.id === over.id)
+    if (oldIndex < 0 || newIndex < 0) return
+    void run(() => saveOptions(d, arrayMove(options, oldIndex, newIndex)))
+  }
+
   function renderOptions(d: MetadataDef) {
     const options = d.options ?? []
     return (
       <div className={own.options}>
-        {options.map((o) => (
-          <div key={o.id} className={styles.row}>
-            <input
-              className={styles.nameInput}
-              key={o.name}
-              defaultValue={o.name}
-              maxLength={MAX_PROPERTY_NAME}
-              aria-label={`rename option ${o.name}`}
-              onBlur={(e) =>
-                commitText(e.currentTarget, o.name, async (v) => {
-                  const name = validOptionName(d, v, o.id)
-                  await saveOptions(d, options.map((x) => (x.id === o.id ? { ...x, name } : x)))
-                })
-              }
-              onKeyDown={onDraftKeys}
-            />
-            <ColorDots
-              value={o.color}
-              onChange={(color) =>
-                void run(() => saveOptions(d, options.map((x) => (x.id === o.id ? { ...x, color } : x))))
-              }
-              label={`${o.name} color`}
-              allowNone
-            />
-            <button
-              type="button"
-              className={styles.delete}
-              onClick={() => void run(() => saveOptions(d, options.filter((x) => x.id !== o.id)))}
-              aria-label={`delete option ${o.name}`}
-              title="Delete option"
-            >
-              <X size={13} aria-hidden />
-            </button>
-          </div>
-        ))}
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={(event) => handleOptionDragEnd(d, event)}
+          accessibility={{
+            screenReaderInstructions: {
+              draggable:
+                'To pick up an option, press the space bar. While dragging, use the arrow keys to move the option. Press space again to drop it, or escape to cancel.',
+            },
+          }}
+        >
+          <SortableContext items={options.map((o) => o.id)} strategy={verticalListSortingStrategy}>
+            {options.map((o) => (
+              <SortableOptionRow key={o.id} id={o.id} label={`drag ${o.name} to reorder`}>
+                <input
+                  className={styles.nameInput}
+                  key={o.name}
+                  defaultValue={o.name}
+                  maxLength={MAX_PROPERTY_NAME}
+                  aria-label={`rename option ${o.name}`}
+                  onBlur={(e) =>
+                    commitText(e.currentTarget, o.name, async (v) => {
+                      const name = validOptionName(d, v, o.id)
+                      await saveOptions(d, options.map((x) => (x.id === o.id ? { ...x, name } : x)))
+                    })
+                  }
+                  onKeyDown={onDraftKeys}
+                />
+                <ColorDots
+                  value={o.color}
+                  onChange={(color) =>
+                    void run(() => saveOptions(d, options.map((x) => (x.id === o.id ? { ...x, color } : x))))
+                  }
+                  label={`${o.name} color`}
+                  allowNone
+                />
+                <button
+                  type="button"
+                  className={styles.delete}
+                  onClick={() => void run(() => saveOptions(d, options.filter((x) => x.id !== o.id)))}
+                  aria-label={`delete option ${o.name}`}
+                  title="Delete option"
+                >
+                  <X size={13} aria-hidden />
+                </button>
+              </SortableOptionRow>
+            ))}
+          </SortableContext>
+        </DndContext>
         <input
           className={styles.nameInput}
           maxLength={MAX_PROPERTY_NAME}
@@ -476,6 +529,13 @@ export function NoteTypesModal({ onClose, focusTypeId, reorder = false, registry
             </button>
           </div>
         </div>
+
+        <NoteTypeBoardSection
+          type={t}
+          defs={selectedDefs}
+          onChange={(board) => void run(() => registry.updateType(t.id, { board }))}
+          onOpenBoard={onOpenBoard ? () => onOpenBoard(t.id) : undefined}
+        />
 
         <p className={own.section}>Template</p>
         <textarea

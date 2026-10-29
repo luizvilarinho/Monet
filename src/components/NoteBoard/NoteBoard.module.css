@@ -1,0 +1,91 @@
+/* Layout (.board/.top) do WeekBoard e controles do TasksHeader; aqui só o
+   título, a contagem, o filtro, o export, o ponto do chip e o estado vazio. */
+/* Área estreita (painel de IA aberto): os controles descem de linha em vez
+   de espremer o título. */
+.titleRow {
+  flex-wrap: wrap;
+}
+
+.title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1h);
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.typeIcon {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.by {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.count {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.hint {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Mesma caixa do select do header, com ícone + rótulo. */
+.exportBtn {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-1h);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-family: inherit;
+  box-sizing: border-box;
+  min-height: var(--control-md);
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+}
+
+.exportBtn:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--accent-task);
+}
+
+.exportBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.status {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.chipDot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.empty {
+  margin: 0;
+  padding: var(--space-0) var(--space-1);
+  font-size: 12px;
+  color: var(--text-muted);
+}

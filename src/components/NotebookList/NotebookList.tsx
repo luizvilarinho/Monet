@@ -34,8 +34,9 @@ import { useConfirm } from '../../hooks/useConfirm'
 import { INBOX_NOTEBOOK_ID, isTasksSubject, type NotebookTaskProgress } from '../../lib/tasks'
 import { markLabelKey, type MarkLabelFilter, type MarkSummary } from '../../lib/noteMarks'
 import { tagKey, type TagCount } from '../../lib/noteTags'
-import type { Notebook, Subject } from '../../types'
+import type { Notebook, NoteType, Subject } from '../../types'
 import { NotebookPickerModal } from '../NotebookPickerModal/NotebookPickerModal'
+import { TypeIcon } from '../NoteTypes/TypeIcon'
 import styles from './NotebookList.module.css'
 
 const MIN_WIDTH = 140
@@ -321,6 +322,12 @@ export interface NotebookListProps {
   marksFilter: MarkLabelFilter
   onOpenMarks: (filter: MarkLabelFilter) => void
   onCloseMarks: () => void
+  // Seção "Boards": um board por tipo de nota com "Show as board" (nome da
+  // propriedade das colunas e contagem de notas). Clicar no ativo fecha.
+  boards: Array<{ type: NoteType; columnName: string; count: number }>
+  activeBoardTypeId: string | null
+  onOpenBoard: (typeId: string) => void
+  onCloseBoard: () => void
   onOpenSettings: () => void
   calendarNotebookId?: string | null
   // Entrada virtual "Tasks" (não é linha em `notebooks`). Enquanto ativa,
@@ -364,6 +371,10 @@ export function NotebookList({
   marksFilter,
   onOpenMarks,
   onCloseMarks,
+  boards,
+  activeBoardTypeId,
+  onOpenBoard,
+  onCloseBoard,
   onOpenSettings,
   calendarNotebookId,
   tasksActive,
@@ -389,8 +400,8 @@ export function NotebookList({
   const inputRef = useRef<HTMLInputElement>(null)
   const subjectInputRef = useRef<HTMLInputElement>(null)
   const { confirm, modal } = useConfirm()
-  // Tasks, Marks ou uma tag na coluna das notas: nenhum caderno aparece ativo.
-  const viewActive = tasksActive || marksActive || activeTag !== null
+  // Tasks, Marks, uma tag ou um board aberto: nenhum caderno aparece ativo.
+  const viewActive = tasksActive || marksActive || activeTag !== null || activeBoardTypeId !== null
   const activeTagKey = activeTag === null ? null : tagKey(activeTag)
   const allMarksActive = marksActive && marksFilter === null
   const dragging = useRef(false)
@@ -741,6 +752,39 @@ export function NotebookList({
                     )
                   })}
                 </>
+              )}
+            </ul>
+          </section>
+
+          <hr className={styles.divider} />
+
+          <section className={styles.section}>
+            <div className={styles.header}>Boards</div>
+            <ul className={styles.list}>
+              {boards.length === 0 ? (
+                <li className={styles.empty} title="Turn on “Show as board” in a note type">
+                  no boards
+                </li>
+              ) : (
+                boards.map((b) => {
+                  const active = b.type.id === activeBoardTypeId
+                  return (
+                    <li
+                      key={b.type.id}
+                      className={`${styles.row} ${active ? styles.active : ''}`}
+                      title={`${b.type.name} notes by ${b.columnName}`}
+                      onClick={() => (active ? onCloseBoard() : onOpenBoard(b.type.id))}
+                    >
+                      <span className={styles.boardIcon} style={{ color: b.type.color ?? undefined }}>
+                        <TypeIcon name={b.type.icon} />
+                      </span>
+                      <span className={styles.rowLabel}>
+                        {b.type.name} <span className={styles.boardProp}>· {b.columnName}</span>
+                      </span>
+                      <span className={styles.sectionCount}>{b.count}</span>
+                    </li>
+                  )
+                })
               )}
             </ul>
           </section>

@@ -7,7 +7,7 @@ import styles from './NoteTypePicker.module.css'
 // Controle do tipo da nota. Com tipo, é o rótulo da barra de propriedades
 // (ícone + nome + ▾ na cor do tipo); sem tipo, o "+ type" discreto da linha de
 // data/tags. O menu lista os tipos (o atual marcado) e, com tipo, "Remove
-// type" e "Edit type"; sempre "Manage types…" e, na nota de caderno,
+// type", "Edit type" e "Open board" (tipo com board); sempre "Manage types…" e, na nota de caderno,
 // "Archive"/"Unarchive". Fecha com Esc ou clique fora.
 interface NoteTypePickerProps {
   types: NoteType[]
@@ -18,6 +18,8 @@ interface NoteTypePickerProps {
   onManage?: () => void
   // Modal focado no tipo atual (só com tipo).
   onEditType?: () => void
+  // Board do tipo atual (só quando o tipo tem board ligado).
+  onOpenBoard?: () => void
   archived?: boolean
   onSetArchived?: (archived: boolean) => void
 }
@@ -28,6 +30,7 @@ export function NoteTypePicker({
   onChange,
   onManage,
   onEditType,
+  onOpenBoard,
   archived = false,
   onSetArchived,
 }: NoteTypePickerProps) {
@@ -107,6 +110,11 @@ export function NoteTypePicker({
           {type && onEditType && (
             <button type="button" role="menuitem" className={styles.item} onClick={() => run(onEditType)}>
               <span className={styles.itemName}>Edit type…</span>
+            </button>
+          )}
+          {type && onOpenBoard && (
+            <button type="button" role="menuitem" className={styles.item} onClick={() => run(onOpenBoard)}>
+              <span className={styles.itemName}>Open board</span>
             </button>
           )}
           {onManage && (

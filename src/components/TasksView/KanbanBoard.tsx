@@ -24,7 +24,7 @@ export function KanbanBoard(props: KanbanBoardProps) {
   const { todayKey, onUpdateTasks } = props
 
   const columnsFor = useCallback(
-    (projectTasks: Task[]): BoardColumn[] => {
+    (projectTasks: Task[]): BoardColumn<Task>[] => {
       const weekStart = startOfWeekKey(todayKey)
       const weekEnd = endOfWeekKey(todayKey)
       const known = new Set(statuses.map((s) => s.id))
@@ -43,7 +43,7 @@ export function KanbanBoard(props: KanbanBoardProps) {
         ),
       ].map((id) => ({ id, name: id, color: statusColor(id, statuses), wipLimit: null }))
 
-      const columns: BoardColumn[] = [...open, ...orphans].map((s) => {
+      const columns: BoardColumn<Task>[] = [...open, ...orphans].map((s) => {
         const list = projectTasks.filter((t) => t.status === s.id).sort(compareTasks)
         return {
           key: s.id,
@@ -51,7 +51,7 @@ export function KanbanBoard(props: KanbanBoardProps) {
           color: s.color,
           count: list.length,
           wipLimit: s.wipLimit,
-          tasks: list,
+          items: list,
         }
       })
       const done = projectTasks
@@ -68,7 +68,7 @@ export function KanbanBoard(props: KanbanBoardProps) {
         count: done.length,
         faded: true,
         clearable: true,
-        tasks: done,
+        items: done,
       })
       return columns
     },

@@ -38,6 +38,7 @@ import { TasksEnvProvider, type TasksEnv } from './components/TasksView/TasksEnv
 import { StatusManagerModal } from './components/TasksView/StatusManagerModal'
 import { MetadataManagerModal } from './components/TasksView/MetadataManagerModal'
 import { NoteTypesModal } from './components/NoteTypes/NoteTypesModal'
+import { NoteBoard } from './components/NoteBoard/NoteBoard'
 import { NoteTypePicker } from './components/NoteTypes/NoteTypePicker'
 import { NotePropertiesBar } from './components/NoteTypes/NotePropertiesBar'
 import { TodosPanel } from './components/NoteTypes/TodosPanel'
@@ -88,6 +89,7 @@ import {
   TODOS_TYPE_ID,
   typeDefs,
 } from './lib/noteTypes'
+import { boardNotes, resolveBoard, withPropertyValue } from './lib/noteBoard'
 import {
   buildTodosContent,
   missingPillLines,
@@ -243,6 +245,17 @@ Command behavior:
 const SYSTEM_PROMPT = buildSystemPrompt(USER_LANGUAGE)
 
 const COLLAPSED_PANEL_WIDTH = 48
+
+// Área principal, uma por vez: notas (padrão), Tasks, a lista de marcas, a
+// lista de uma tag ou o board de um tipo de nota.
+type MainArea =
+  | { kind: 'notes' }
+  | { kind: 'tasks' }
+  | { kind: 'marks' }
+  | { kind: 'tag'; tag: string }
+  | { kind: 'noteBoard'; typeId: string }
+
+const NOTES_AREA: MainArea = { kind: 'notes' }
 
 function stripCommandLines(content: string): string {
   return content
@@ -444,11 +457,16 @@ function App() {
   // Sequência dos pedidos (contador incremental: Date.now() colidiria no
   // mesmo milissegundo e o segundo pedido seria engolido).
   const revealSeqRef = useRef(0)
+  // Área principal (MainArea). Tasks, marcas e tag ocupam a coluna das notas;
+  // o board de tipo ocupa a área inteira. Uma por vez.
+  const [mainArea, setMainArea] = useState<MainArea>(NOTES_AREA)
+  // Entrada virtual "Tasks" do NotebookList: a TasksView ocupa o slot da
+  // Sidebar; a task selecionada é a que tem a nota-corpo aberta no editor.
+  const tasksViewOpen = mainArea.kind === 'tasks'
   // Lista transversal na coluna das notas (como a TasksView): as marcas, com
-  // o filtro de rótulo, ou as notas de uma tag. Uma por vez.
-  const [sideView, setSideView] = useState<{ kind: 'marks' } | { kind: 'tag'; tag: string } | null>(null)
-  const marksViewOpen = sideView?.kind === 'marks'
-  const tagViewTag = sideView?.kind === 'tag' ? sideView.tag : null
+  // o filtro de rótulo, ou as notas de uma tag.
+  const marksViewOpen = mainArea.kind === 'marks'
+  const tagViewTag = mainArea.kind === 'tag' ? mainArea.tag : null
   const [marksFilter, setMarksFilter] = useState<MarkLabelFilter>(null)
   const [selectedMark, setSelectedMark] = useState<{ noteId: string; index: number } | null>(null)
   // Instância do Tiptap da nota aberta (inserir resposta do chat na nota).
@@ -487,9 +505,6 @@ function App() {
     () => localStorage.getItem('monet:sidebar-collapsed') === '1'
   )
   const [focusMode, setFocusMode] = useState(false)
-  // Entrada virtual "Tasks" do NotebookList: a TasksView ocupa o slot da
-  // Sidebar; a task selecionada é a que tem a nota-corpo aberta no editor.
-  const [tasksViewOpen, setTasksViewOpen] = useState(false)
   // Caderno-projeto filtrado na TasksView (null = todos).
   const [tasksFilter, setTasksFilter] = useState<string | null>(null)
   // Filtro da faixa de resumo da TasksView (null = lista agrupada por data).
@@ -888,14 +903,15 @@ function App() {
     [tasks]
   )
 
-  // Navegação para a nota-corpo de uma task que mantém a TasksView aberta
-  // (o efeito de navegação abaixo a fecharia). Só marca quando a nota muda,
+  // Navegação feita pela própria área principal (nota-corpo da task, nota de
+  // uma marca ou de uma tag, card do board), que não a fecha (o efeito de
+  // navegação abaixo fecharia). Só marca quando a nota ou o caderno mudam,
   // senão o efeito não roda e a marca vazaria para a próxima navegação.
-  const keepTasksViewRef = useRef(false)
+  const keepMainAreaRef = useRef(false)
   const showTaskNote = useCallback(
     (noteId: string | null) => {
       if (noteId === activeId) return
-      keepTasksViewRef.current = true
+      keepMainAreaRef.current = true
       setActiveId(noteId)
     },
     [activeId]
@@ -923,7 +939,7 @@ function App() {
       setTasksFilter(null)
       setTasksSummaryFilter(null)
       setTasksMainView('list')
-      setTasksViewOpen(true)
+      setMainArea({ kind: 'tasks' })
       void selectTask(task)
     },
     [tasksById, selectTask, setTasksMainView]
@@ -991,6 +1007,39 @@ function App() {
     if (!tasksBoardOpen) setTaskModalId(null)
   }, [tasksBoardOpen])
 
+  // Boards de tipo de nota ("Show as board" com coluna válida) e o aberto, que
+  // ocupa a área inteira como os boards de Tasks (fora do modo foco).
+  const boards = useMemo(
+    () =>
+      noteTypes.types.flatMap((type) => {
+        const board = resolveBoard(type, noteTypes.defs)
+        return board ? [{ type, board, count: boardNotes(notes, board, type.id).length }] : []
+      }),
+    [noteTypes.types, noteTypes.defs, notes]
+  )
+  const noteBoardTypeId = mainArea.kind === 'noteBoard' && !focusMode ? mainArea.typeId : null
+  const activeBoard = boards.find((b) => b.type.id === noteBoardTypeId) ?? null
+  const noteBoardOpen = activeBoard !== null
+  const fullAreaOpen = tasksBoardOpen || noteBoardOpen
+
+  // Tipo apagado, board desligado ou coluna apagada (inclusive por outra
+  // janela) com o board aberto: volta para as notas.
+  const noteBoardGone = mainArea.kind === 'noteBoard' && !boards.some((b) => b.type.id === mainArea.typeId)
+  useEffect(() => {
+    if (noteBoardGone) setMainArea(NOTES_AREA)
+  }, [noteBoardGone])
+
+  // Nota de um card aberta num modal sobre o board (o editor da nota ativa).
+  const [noteBoardModalId, setNoteBoardModalId] = useState<string | null>(null)
+  useEffect(() => {
+    if (!noteBoardOpen) setNoteBoardModalId(null)
+  }, [noteBoardOpen])
+
+  const openNoteBoard = useCallback((typeId: string) => {
+    setMainArea({ kind: 'noteBoard', typeId })
+    setNoteBoardModalId(null)
+  }, [])
+
   const taskProgress = useMemo(() => taskProgressByNotebook(tasks, today), [tasks, today])
   // Progresso de cada nota TODOS (lista de notas e faixa da nota).
   const todosProgress = useMemo(() => todosProgressByNote(tasks, today), [tasks, today])
@@ -1014,32 +1063,16 @@ function App() {
     [updateTask]
   )
 
-  // Qualquer navegação para nota/caderno (busca, link, Ctrl+N, Calendar) sai
-  // da TasksView, exceto a seleção de task feita por ela (showTaskNote).
+  // Qualquer navegação para nota/caderno (busca, link, Ctrl+N, Calendar) volta
+  // para as notas, exceto a feita pela própria área (keepMainAreaRef:
+  // showTaskNote, requestMarkAction, handleOpenTaggedNote).
   useEffect(() => {
-    if (keepTasksViewRef.current) {
-      keepTasksViewRef.current = false
+    if (keepMainAreaRef.current) {
+      keepMainAreaRef.current = false
       return
     }
-    setTasksViewOpen(false)
+    setMainArea(NOTES_AREA)
   }, [activeId, activeNotebookId])
-
-  // A lista transversal (marcas ou tag) segue a mesma regra: navegação de
-  // fora dela a fecha; a feita por ela (requestMarkAction, handleOpenTaggedNote)
-  // marca keepSideViewRef — só quando a nota ou o caderno mudam, senão o efeito
-  // não roda e a marca vazaria. Abrir a TasksView também fecha a lista.
-  const keepSideViewRef = useRef(false)
-  useEffect(() => {
-    if (keepSideViewRef.current) {
-      keepSideViewRef.current = false
-      return
-    }
-    setSideView(null)
-  }, [activeId, activeNotebookId])
-
-  useEffect(() => {
-    if (tasksViewOpen) setSideView(null)
-  }, [tasksViewOpen])
 
   // Título da task ⇄ texto do item (checklist com o <task-ref>) nas "casas" da
   // task: a nota de ORIGEM (source_note_id) e a TODOS dela (parent_note_id,
@@ -1396,6 +1429,23 @@ function App() {
   // Booleano (e não a nota): o contexto dos cards não muda a cada tecla.
   const activeNoteIsTodos = !!activeNote && isTodosNote(activeNote)
 
+  // Card do board: a nota vira a ativa e abre no modal; o board fica (a
+  // navegação é dele).
+  function openBoardNote(note: Note) {
+    if (!note.notebookId) return
+    if (note.id !== activeId || note.notebookId !== activeNotebookId) keepMainAreaRef.current = true
+    handleNavigateToNote(note.notebookId, note.id, note.subjectId)
+    setNoteBoardModalId(note.id)
+  }
+
+  // "Open in notebook" do card: sai do board para a nota no caderno.
+  function openBoardNoteInNotebook(note: Note) {
+    if (!note.notebookId) return
+    setNoteBoardModalId(null)
+    setMainArea(NOTES_AREA)
+    handleNavigateToNote(note.notebookId, note.id, note.subjectId)
+  }
+
   // Task e nota-corpo do modal aberto de dentro de uma nota (R4). A nota-corpo
   // apagada por fora vira `undefined`: o modal cai no caso "sem nota-corpo".
   const noteTaskModalTask = noteTaskModalId ? tasksById.get(noteTaskModalId) : undefined
@@ -1471,7 +1521,7 @@ function App() {
       currentNoteIsTodos: activeNoteIsTodos,
       // Shift+click no ↗ da task: modal sem trocar a nota, em qualquer nota.
       // Nas visões em quadro o editor já está num modal: fica o clique simples.
-      onOpenTaskModal: tasksBoardOpen ? undefined : openTaskModalInPlace,
+      onOpenTaskModal: fullAreaOpen ? undefined : openTaskModalInPlace,
     }),
     [
       tasksById,
@@ -1486,7 +1536,7 @@ function App() {
       todosById,
       activeId,
       activeNoteIsTodos,
-      tasksBoardOpen,
+      fullAreaOpen,
       moveProjectTask,
       todosOptions,
       handleNoteLinkNavigation,
@@ -1705,7 +1755,7 @@ function App() {
             const fresh = await refreshNotes()
             const note = fresh.find((n) => n.id === event.payload)
             if (!note) return
-            setTasksViewOpen(false)
+            setMainArea(NOTES_AREA)
             setActiveMode('notebook')
             setActiveSubjectId(null)
             if (note.notebookId) setActiveNotebookId(note.notebookId)
@@ -2130,8 +2180,7 @@ function App() {
   // Valor vazio sai do JSON (checkbox `false` conta como valor).
   function handleNotePropertyChange(defId: string, value: MetadataValue) {
     if (!activeNote) return
-    const { [defId]: _old, ...rest } = activeNote.properties ?? {}
-    void setNoteProperties(activeNote.id, value === null || value === '' ? rest : { ...rest, [defId]: value })
+    void setNoteProperties(activeNote.id, withPropertyValue(activeNote.properties, defId, value))
   }
 
   // "Insert template": acrescenta ao fim, nunca sobrescreve.
@@ -2232,7 +2281,7 @@ function App() {
   function openNotebookTasks(notebookId: string) {
     setTasksFilter(notebookId)
     setTasksSummaryFilter(null)
-    setTasksViewOpen(true)
+    setMainArea({ kind: 'tasks' })
   }
 
   function handleSelectSubject(id: string | null) {
@@ -2317,7 +2366,7 @@ function App() {
       if (activeSubjectId === id) setActiveSubjectId(null)
       return
     }
-    setTasksViewOpen(false)
+    setMainArea(NOTES_AREA)
     setActiveNotebookId(destId)
     setActiveSubjectId(null)
     if (!childNotes.some((n) => n.id === activeId)) {
@@ -2395,7 +2444,7 @@ function App() {
       // A keep recarrega a nota, senão o próximo autosave dela apagaria o review.
       void emit('calendar-note-updated', { noteId: note.id })
       if (askAi) {
-        setTasksViewOpen(false)
+        setMainArea(NOTES_AREA)
         setActiveNotebookId(calendarNotebookId)
         setActiveId(note.id)
       }
@@ -2674,7 +2723,7 @@ function App() {
     (note: Note, entry: NoteMarkEntry, action: 'reveal' | 'resolve') => {
       if (!note.notebookId) return
       if (marksViewOpen && (note.id !== activeId || note.notebookId !== activeNotebookId)) {
-        keepSideViewRef.current = true
+        keepMainAreaRef.current = true
       }
       handleNavigateToNote(note.notebookId, note.id, note.subjectId)
       setSelectedMark({ noteId: note.id, index: entry.index })
@@ -2702,23 +2751,21 @@ function App() {
   const handleNoteRevealConsumed = useCallback(() => setPendingNoteReveal(null), [])
 
   const openMarksView = useCallback((filter: MarkLabelFilter) => {
-    setTasksViewOpen(false)
     setMarksFilter(filter)
-    setSideView({ kind: 'marks' })
+    setMainArea({ kind: 'marks' })
   }, [])
 
   const openTagView = useCallback((tag: string) => {
-    setTasksViewOpen(false)
-    setSideView({ kind: 'tag', tag })
+    setMainArea({ kind: 'tag', tag })
   }, [])
 
-  const closeSideView = useCallback(() => setSideView(null), [])
+  const closeMainArea = useCallback(() => setMainArea(NOTES_AREA), [])
 
   // Nota aberta pela lista de uma tag: a lista fica (a navegação é dela).
   const handleOpenTaggedNote = useCallback(
     (note: Note) => {
       if (!note.notebookId) return
-      if (note.id !== activeId || note.notebookId !== activeNotebookId) keepSideViewRef.current = true
+      if (note.id !== activeId || note.notebookId !== activeNotebookId) keepMainAreaRef.current = true
       handleNavigateToNote(note.notebookId, note.id, note.subjectId)
     },
     [handleNavigateToNote, activeId, activeNotebookId]
@@ -3193,6 +3240,11 @@ function App() {
                 onChange={(typeId) => void handleSetNoteType(typeId)}
                 onManage={() => setNoteTypesOpen({ focusTypeId: null })}
                 onEditType={() => setNoteTypesOpen({ focusTypeId: activeNoteType.id })}
+                onOpenBoard={
+                  boards.some((b) => b.type.id === activeNoteType.id)
+                    ? () => openNoteBoard(activeNoteType.id)
+                    : undefined
+                }
                 archived={activeArchived}
                 onSetArchived={(archived) => void handleSetArchived(activeNote.id, archived)}
               />
@@ -3283,8 +3335,7 @@ function App() {
           notebooks={orderedNotebooks}
           activeId={activeNotebookId}
           onSelect={(id) => {
-            setTasksViewOpen(false)
-            setSideView(null)
+            setMainArea(NOTES_AREA)
             setActiveSubjectId(null)
             if (id === calendarNotebookId) {
               void handleCalendarDayClick(new Date())
@@ -3310,12 +3361,16 @@ function App() {
           tags={tagSummary}
           activeTag={tagViewTag}
           onOpenTag={openTagView}
-          onCloseTags={closeSideView}
+          onCloseTags={closeMainArea}
           markSummary={markSummary}
           marksActive={marksViewOpen}
           marksFilter={marksFilter}
           onOpenMarks={openMarksView}
-          onCloseMarks={closeSideView}
+          onCloseMarks={closeMainArea}
+          boards={boards.map((b) => ({ type: b.type, columnName: b.board.column.name, count: b.count }))}
+          activeBoardTypeId={noteBoardTypeId}
+          onOpenBoard={openNoteBoard}
+          onCloseBoard={closeMainArea}
           onOpenSettings={handleOpenSettings}
           calendarNotebookId={calendarNotebookId}
           tasksActive={tasksViewOpen}
@@ -3323,7 +3378,7 @@ function App() {
           onOpenTasks={() => {
             setTasksFilter(null)
             setTasksSummaryFilter(null)
-            setTasksViewOpen(true)
+            setMainArea({ kind: 'tasks' })
           }}
           width={effectiveNotebookWidth}
           collapsed={notebookCollapsed}
@@ -3339,7 +3394,19 @@ function App() {
           onRenameSubject={handleRenameSubject}
           onReorderSubjects={handleReorderSubjects}
         />}
-        {tasksBoardOpen && tasksMainView === 'review' ? (
+        {noteBoardOpen && activeBoard ? (
+          <NoteBoard
+            type={activeBoard.type}
+            board={activeBoard.board}
+            typeDefs={typeDefs(noteTypes.defs, activeBoard.type.id)}
+            notes={notes}
+            notebooks={orderedNotebooks}
+            onSetProperties={setNoteProperties}
+            onOpenNote={openBoardNote}
+            onOpenInNotebook={openBoardNoteInNotebook}
+            onExportCsv={(fileName, content) => invoke<boolean>('export_csv', { defaultName: fileName, content })}
+          />
+        ) : tasksBoardOpen && tasksMainView === 'review' ? (
           <WeeklyReview
             tasks={tasks}
             notebooks={orderedNotebooks}
@@ -3432,7 +3499,7 @@ function App() {
             selected={selectedMark}
             onSelect={(hit) => handleSelectMark(hit.note, hit.entry)}
             onResolve={handleResolveMark}
-            onClose={closeSideView}
+            onClose={closeMainArea}
             width={effectiveSidebarWidth}
             wide={notebookCollapsed}
             onWidthChange={setColumnWidth}
@@ -3447,7 +3514,7 @@ function App() {
             onSelectTag={openTagView}
             activeNoteId={activeId}
             onOpenNote={handleOpenTaggedNote}
-            onClose={closeSideView}
+            onClose={closeMainArea}
             width={effectiveSidebarWidth}
             wide={notebookCollapsed}
             onWidthChange={setColumnWidth}
@@ -3537,7 +3604,7 @@ function App() {
             ) : undefined}
           />
         ))}
-        {tasksBoardOpen ? null : noteEditor ?? (
+        {fullAreaOpen ? null : noteEditor ?? (
           <EmptyEditor
             hasNotebook={activeNotebookId !== null}
             onCreate={() => void handleCreateNote()}
@@ -3671,6 +3738,11 @@ function App() {
       {tasksBoardOpen && activeTask?.id === taskModalId && noteEditor && (
         <TaskEditorModal onClose={() => setTaskModalId(null)}>{noteEditor}</TaskEditorModal>
       )}
+      {noteBoardOpen && noteBoardModalId !== null && noteBoardModalId === activeId && noteEditor && (
+        <TaskEditorModal ariaLabel="Edit note" onClose={() => setNoteBoardModalId(null)}>
+          {noteEditor}
+        </TaskEditorModal>
+      )}
       {noteTaskModalTask && (
         <TaskEditorModal onClose={() => setNoteTaskModalId(null)}>
           <TaskModalEditor
@@ -3758,6 +3830,10 @@ function App() {
           reorder={noteTypesOpen.reorder}
           registry={noteTypes}
           notes={notes}
+          onOpenBoard={(id) => {
+            setNoteTypesOpen(null)
+            openNoteBoard(id)
+          }}
         />
       )}
       {todosMigration && (
