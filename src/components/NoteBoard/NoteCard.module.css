@@ -1,0 +1,123 @@
+/* Card de nota no visual do card de task (fundo do app, fio, raio pequeno). */
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1h);
+  padding: var(--space-2) var(--pad-card) var(--pad-card);
+  background: var(--bg-app);
+  border: 1px solid var(--hair);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  outline: none;
+}
+
+.card:hover {
+  background: var(--surface-1);
+}
+
+.card:focus-visible {
+  border-color: var(--accent);
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.notebook {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.open {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-left: auto;
+  width: var(--control-sm);
+  height: var(--control-sm);
+  margin-top: calc((var(--control-sm) - 16px) / -2);
+  margin-bottom: calc((var(--control-sm) - 16px) / -2);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.open:hover {
+  color: var(--accent);
+}
+
+.title {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+  min-width: 0;
+}
+
+.dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.fieldName {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.ellipsis {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.progress {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1h);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-0) var(--space-1h);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}

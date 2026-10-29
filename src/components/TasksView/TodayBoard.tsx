@@ -21,7 +21,7 @@ export function TodayBoard(props: TodayBoardProps) {
   const { todayKey, onUpdateTasks } = props
 
   const columnsFor = useCallback(
-    (projectTasks: Task[]): BoardColumn[] => {
+    (projectTasks: Task[]): BoardColumn<Task>[] => {
       const open = projectTasks.filter(isOpen)
       const planned = open.filter((t) => t.plannedDay === todayKey).sort(compareTasks)
       const suggested = open
@@ -35,8 +35,8 @@ export function TodayBoard(props: TodayBoardProps) {
         )
         .sort(compareTasks)
       return [
-        { key: TODAY, title: 'My Day', count: planned.length, tasks: planned },
-        { key: SUGGESTED, title: 'Suggested', count: suggested.length, tasks: suggested },
+        { key: TODAY, title: 'My Day', count: planned.length, items: planned },
+        { key: SUGGESTED, title: 'Suggested', count: suggested.length, items: suggested },
       ]
     },
     [todayKey]

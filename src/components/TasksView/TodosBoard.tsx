@@ -27,7 +27,7 @@ export function TodosBoard(props: TodosBoardProps) {
   )
 
   const columnsFor = useCallback(
-    (projectTasks: Task[]): BoardColumn[] =>
+    (projectTasks: Task[]): BoardColumn<Task>[] =>
       [...byTodosId(projectTasks.filter(isOpen), todosById)].map(([id, list]) => {
         const info = id ? todosById.get(id) : undefined
         const sorted = list.sort(compareTasks)
@@ -35,7 +35,7 @@ export function TodosBoard(props: TodosBoardProps) {
           key: id ?? NO_TODOS_KEY,
           title: id === null ? 'No TODOS' : info?.title.trim() || 'Untitled',
           count: sorted.length,
-          tasks: sorted,
+          items: sorted,
           headerExtra: info ? (
             <>
               {info.notebookId && (
@@ -69,5 +69,5 @@ export function TodosBoard(props: TodosBoardProps) {
     [onUpdateTasks]
   )
 
-  return <BoardView {...props} ariaLabel="TODOS board" columnsFor={columnsFor} onDrop={onDrop} />
+  return <BoardView {...props} ariaLabel="tasks by TODOS board" columnsFor={columnsFor} onDrop={onDrop} />
 }

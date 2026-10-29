@@ -4,12 +4,13 @@ import type { MetadataDef, MetadataType, NoteType, SelectOption } from '../types
 import { storage } from '../storage'
 import { normalizeName } from '../lib/tasks'
 import { MAX_LIST_PROPERTIES } from '../lib/noteTypes'
+import { stripDefFromBoard } from '../lib/noteBoard'
 import { emitTasksChanged, loadAndSyncWithRetry } from '../lib/tasksEvents'
 
 export const MAX_TYPE_NAME = 24
 export const MAX_PROPERTY_NAME = 24
 
-export type NoteTypePatch = Partial<Pick<NoteType, 'name' | 'icon' | 'color' | 'template'>>
+export type NoteTypePatch = Partial<Pick<NoteType, 'name' | 'icon' | 'color' | 'template' | 'board'>>
 export type NoteDefPatch = Partial<Pick<MetadataDef, 'name' | 'showInList' | 'options'>>
 
 function maxOrder(list: Array<{ sortOrder: number }>): number {
@@ -93,6 +94,7 @@ export function useNoteTypes(opts?: { onRemoved?: () => void }) {
         sortOrder: maxOrder(typesRef.current) + 1,
         builtin: false,
         createdAt: Date.now(),
+        board: null,
       }
       setTypes((list) => [...list, type])
       await persist(() => storage.saveNoteType(type), 'create note type')
@@ -202,11 +204,20 @@ export function useNoteTypes(opts?: { onRemoved?: () => void }) {
   )
 
   // Os valores somem das notas (banco: deleteMetadataDef; memória: `onRemoved`).
+  // O board do tipo dono perde a referência (sendo a coluna, o board some).
   const removeDef = useCallback(
     async (id: string) => {
+      const ownerId = defsRef.current.find((d) => d.id === id)?.noteTypeId
       if (!(await persist(() => storage.deleteMetadataDef(id), 'delete property'))) return
       setDefs((list) => list.filter((d) => d.id !== id))
       onRemovedRef.current?.()
+      const owner = typesRef.current.find((t) => t.id === ownerId)
+      if (!owner?.board) return
+      const board = stripDefFromBoard(owner.board, id)
+      if (board === owner.board) return
+      const next = { ...owner, board }
+      setTypes((list) => list.map((t) => (t.id === next.id ? next : t)))
+      await persist(() => storage.saveNoteType(next), 'save note type')
     },
     [persist]
   )

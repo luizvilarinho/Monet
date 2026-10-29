@@ -5,13 +5,17 @@ import styles from './TaskEditorModal.module.css'
 
 // Modal das visões que não são List (Week, Kanban, Projects, TODOS, My Day,
 // Review): mostra o mesmo editor da nota-corpo (com a barra de propriedades)
-// que a List abre ao lado. Fecha com Esc, clique fora ou o botão.
+// que a List abre ao lado. Também abre a nota de um card do board de notas
+// (`ariaLabel` "Edit note", com `footer`). Fecha com Esc, clique fora ou o botão.
 interface TaskEditorModalProps {
   onClose: () => void
   children: ReactNode
+  ariaLabel?: string
+  // Barra abaixo do editor (ex.: Previous/Next do board de notas).
+  footer?: ReactNode
 }
 
-export function TaskEditorModal({ onClose, children }: TaskEditorModalProps) {
+export function TaskEditorModal({ onClose, children, ariaLabel = 'Edit task', footer }: TaskEditorModalProps) {
   const cardRef = useRef<HTMLDivElement>(null)
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
@@ -44,11 +48,12 @@ export function TaskEditorModal({ onClose, children }: TaskEditorModalProps) {
         if (e.target === e.currentTarget) onClose()
       }}
     >
-      <div ref={cardRef} className={styles.card} role="dialog" aria-modal="true" aria-label="Edit task" tabIndex={-1}>
+      <div ref={cardRef} className={styles.card} role="dialog" aria-modal="true" aria-label={ariaLabel} tabIndex={-1}>
         <button type="button" className={styles.close} aria-label="Close" title="Close" onClick={onClose}>
           <X size={16} aria-hidden />
         </button>
         {children}
+        {footer}
       </div>
     </div>,
     document.body

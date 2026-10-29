@@ -15,6 +15,8 @@ Bugs e ideias registrados pelo Coordenador ou deixados para trás nas entregas, 
 
 - **Formatação do item ao renomear a task por fora (2026-10-21):** renomear a task no modal, na lista ou no quick add reescreve o item (origem e TODOS) como texto simples. Negrito/código do item somem e crases do título aparecem literais. O título da task guarda a sintaxe markdown do item (`extractTaskRefTitles` só tira escapes e entidades). Caminho: extrair o texto visível (renderizar o inline) e reescrever preservando as marcas quando possível.
 
+- **`SELECT *` + `addMissingColumns` (2026-10-29):** na primeira abertura depois de uma coluna nova, o sqlx pode entrar em pânico (`index out of bounds`), porque uma conexão do pool prepara o `*` com o schema antigo. O `getNoteTypes` já foi corrigido com colunas explícitas (feat/board-view). Revisar as outras tabelas que usam o mesmo padrão em `src/storage/tauri.ts`.
+
 ---
 
 ## Ideias

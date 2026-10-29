@@ -2,7 +2,7 @@ import { useCallback } from 'react'
 import { byTodosId, compareTasks, isOpen, type TodosInfo } from '../../lib/tasks'
 import type { Notebook, Task } from '../../types'
 import { BoardView, type BoardViewProps } from './BoardView'
-import type { BoardColumn } from './BoardColumns'
+import type { BoardColumn, BoardSection } from './BoardColumns'
 import { ProjectColorButton } from './ProjectColorButton'
 import { useTasksEnv } from './TasksEnv'
 
@@ -20,14 +20,14 @@ type ProjectsBoardProps = Omit<
 function sectionsByTodos(
   tasks: Task[],
   todosById: Map<string, TodosInfo>
-): Array<{ label: string | null; tasks: Task[] }> {
+): BoardSection<Task>[] {
   const groups = byTodosId(tasks, todosById)
   const named = [...groups.entries()]
     .filter(([id]) => id !== null)
-    .map(([id, list]) => ({ label: todosById.get(id!)?.title.trim() || 'Untitled', tasks: list.sort(compareTasks) }))
+    .map(([id, list]) => ({ label: todosById.get(id!)?.title.trim() || 'Untitled', items: list.sort(compareTasks) }))
   const none = groups.get(null)
   if (!none) return named
-  return [...named, { label: named.length > 0 ? 'No TODOS' : null, tasks: none.sort(compareTasks) }]
+  return [...named, { label: named.length > 0 ? 'No TODOS' : null, items: none.sort(compareTasks) }]
 }
 
 export function ProjectsBoard(props: ProjectsBoardProps) {
@@ -35,7 +35,7 @@ export function ProjectsBoard(props: ProjectsBoardProps) {
   const { notebooks } = props
 
   const columnsFor = useCallback(
-    (projectTasks: Task[]): BoardColumn[] => {
+    (projectTasks: Task[]): BoardColumn<Task>[] => {
       const open = projectTasks.filter(isOpen)
       const byNotebook = new Map<string, Task[]>()
       for (const t of open) {
@@ -60,7 +60,7 @@ export function ProjectsBoard(props: ProjectsBoardProps) {
             title: nb.name || 'unnamed',
             color: nb.color ?? null,
             count: list.length,
-            tasks: sections.flatMap((s) => s.tasks),
+            items: sections.flatMap((s) => s.items),
             sections,
             headerExtra: (
               <ProjectColorButton

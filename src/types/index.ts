@@ -153,6 +153,20 @@ export interface NoteType {
   sortOrder: number
   builtin: boolean
   createdAt: number
+  // Board em cards do tipo (`note_types.board`, JSON); null = sem board.
+  board: NoteBoardConfig | null
+}
+
+// Config do board de um tipo: colunas = valores de uma propriedade select ou
+// checkbox; seções = outro select; até 3 campos no card; filtro opcional por
+// checkbox. Ids de MetadataDef do próprio tipo (lidos com resolveBoard).
+export interface NoteBoardConfig {
+  columnDefId: string
+  sectionDefId: string | null
+  cardDefIds: string[]
+  showTags: boolean
+  hideEmpty: boolean
+  filterDefId: string | null
 }
 
 export type DocumentStatus = 'indexing' | 'available' | 'error'

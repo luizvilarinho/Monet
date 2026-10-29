@@ -1,11 +1,21 @@
 import type { ReactNode } from 'react'
-import type { Task } from '../../types'
 import { useCardDrag } from './useCardDrag'
 import styles from './BoardColumns.module.css'
 
-// Colunas de cards arrastáveis, comuns a Kanban (status), Projects e TODOS.
-// O drop (mouse manual, useCardDrag) devolve `(taskId, columnKey)`.
-export interface BoardColumn {
+// Colunas de cards arrastáveis, comuns aos boards de Tasks (Kanban, Projects,
+// TODOS, My Day) e ao board de notas por tipo. O drop (mouse manual,
+// useCardDrag) devolve `(itemId, columnKey)`.
+export interface BoardSection<T> {
+  label: string | null
+  items: T[]
+  // Com `dropKey` a seção também aceita drop e mostra a contagem; vazia, vira
+  // uma faixa de altura fixa (tracejada durante o arrasto).
+  dropKey?: string
+  // Ação ao lado do rótulo, visível no hover da seção (ex.: "New").
+  action?: ReactNode
+}
+
+export interface BoardColumn<T extends { id: string }> {
   key: string
   title: string
   // Cor do marcador do título (status/projeto); ausente = neutro.
@@ -15,25 +25,30 @@ export interface BoardColumn {
   wipLimit?: number | null
   faded?: boolean
   // Cards da coluna; `sections` agrupa os mesmos cards em subseções.
-  tasks: Task[]
-  sections?: Array<{ label: string | null; tasks: Task[] }>
+  items: T[]
+  sections?: BoardSection<T>[]
   // Mostra "Clear done" no cabeçalho (coluna de concluídas).
   clearable?: boolean
   // Controle extra no cabeçalho (ex.: cor do projeto).
   headerExtra?: ReactNode
 }
 
-interface BoardColumnsProps {
-  columns: BoardColumn[]
-  onDrop: (taskId: string, columnKey: string) => void
-  onClearColumn?: (column: BoardColumn) => void
-  renderCard: (task: Task, column: BoardColumn) => ReactNode
+interface BoardColumnsProps<T extends { id: string }> {
+  columns: BoardColumn<T>[]
+  onDrop: (itemId: string, columnKey: string) => void
+  onClearColumn?: (column: BoardColumn<T>) => void
+  renderCard: (item: T, column: BoardColumn<T>) => ReactNode
 }
 
-export function BoardColumns({ columns, onDrop, onClearColumn, renderCard }: BoardColumnsProps) {
+export function BoardColumns<T extends { id: string }>({
+  columns,
+  onDrop,
+  onClearColumn,
+  renderCard,
+}: BoardColumnsProps<T>) {
   const { draggingId, overKey, onCardMouseDown } = useCardDrag(onDrop)
 
-  function card(t: Task, c: BoardColumn) {
+  function card(t: T, c: BoardColumn<T>) {
     return (
       <div
         key={t.id}
@@ -48,7 +63,7 @@ export function BoardColumns({ columns, onDrop, onClearColumn, renderCard }: Boa
   }
 
   return (
-    <div className={styles.columns}>
+    <div className={`${styles.columns} ${draggingId ? styles.columnsDragging : ''}`}>
       {columns.map((c) => {
         const overLimit = c.wipLimit != null && c.count > c.wipLimit
         return (
@@ -68,7 +83,7 @@ export function BoardColumns({ columns, onDrop, onClearColumn, renderCard }: Boa
                 {c.wipLimit != null ? `${c.count}/${c.wipLimit}` : c.count}
               </span>
               {c.headerExtra}
-              {c.clearable && c.tasks.length > 0 && onClearColumn && (
+              {c.clearable && c.items.length > 0 && onClearColumn && (
                 <button type="button" className={styles.headerAction} onClick={() => onClearColumn(c)}>
                   Clear done
                 </button>
@@ -78,16 +93,26 @@ export function BoardColumns({ columns, onDrop, onClearColumn, renderCard }: Boa
               {c.sections
                 ? c.sections.map((s, i) => (
                     // Índice na chave: duas TODOS podem ter o mesmo título.
-                    <div key={`${i}-${s.label ?? ''}`} className={styles.section}>
+                    <div
+                      key={`${i}-${s.label ?? ''}`}
+                      data-drop-key={s.dropKey}
+                      className={`${styles.section} ${
+                        s.dropKey !== undefined && s.items.length === 0 ? styles.sectionEmpty : ''
+                      } ${draggingId && s.dropKey !== undefined && overKey === s.dropKey ? styles.sectionOver : ''}`}
+                    >
                       {s.label !== null && (
-                        <span className={styles.sectionLabel} title={s.label}>
-                          {s.label}
-                        </span>
+                        <div className={styles.sectionHead}>
+                          <span className={styles.sectionLabel} title={s.label}>
+                            {s.label}
+                          </span>
+                          {s.dropKey !== undefined && <span className={styles.sectionCount}>{s.items.length}</span>}
+                          {s.action && <span className={styles.sectionAction}>{s.action}</span>}
+                        </div>
                       )}
-                      {s.tasks.map((t) => card(t, c))}
+                      {s.items.map((t) => card(t, c))}
                     </div>
                   ))
-                : c.tasks.map((t) => card(t, c))}
+                : c.items.map((t) => card(t, c))}
             </div>
           </div>
         )

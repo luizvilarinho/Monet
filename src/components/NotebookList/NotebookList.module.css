@@ -279,6 +279,26 @@
   background: var(--nm);
 }
 
+/* Boards (abaixo de Tasks): ícone na cor do tipo e a propriedade das colunas
+   em cinza; sem boards, "Set up a board…" em cinza. */
+.boardIcon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  padding: var(--space-0);
+}
+
+.boardProp {
+  color: var(--text-muted);
+}
+
+.boardSetUp {
+  color: var(--text-muted, #606070) !important;
+  font-style: italic;
+}
+
 .sectionCount {
   flex-shrink: 0;
   margin-left: auto;

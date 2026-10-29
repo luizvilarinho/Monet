@@ -36,6 +36,7 @@ Ponto de entrada para a documentação do projeto. Leia este arquivo primeiro pa
 | `DOCS/specs/PRD.md`                 | PRD: persona, proposta de valor/diferenciação, inventário de funcionalidades atuais, escopo de plataforma e não-metas. Consulte pra entender público-alvo e o que o Monet deliberadamente não faz. |
 | `DOCS/specs/notemark.md`           | Spec das marcas de atenção (v2): trecho marcado com rótulo opcional, persistido como `<mark data-mark>` (botão "Mark" na régua, Ctrl+Shift+M, `==texto==`), menu da marca, lista Marks de revisão com Resolve, seção "Marks" na coluna de cadernos, `has:mark`/`mark:` no Ctrl+P, tool `search_marks`, citação clicável no chat. Consulte ao trabalhar no editor, na busca, na IA ou no chat. |
 | `DOCS/specs/tags.md`               | Spec das tags de nota como tema transversal: autocomplete no "+ tag", tag clicável na nota, seção "Tags" com contagem e lista das notas da tag (todos os cadernos) na coluna das notas, `tag:` no Ctrl+P. Consulte ao mexer em tags, na coluna de cadernos ou na busca. |
+| `DOCS/specs/noteboard.md`         | Spec do board de notas por tipo: qualquer tipo com propriedade Select/Checkbox vira colunas de cards (config "Board" no modal de tipos, `note_types.board`), seções pelo 2º select com drop, filtro por checkbox, card com modal "Edit note" (Previous/Next) e progresso de tasks, "New" na coluna/seção, boards abaixo de Tasks na coluna de cadernos, painel de IA recolhido no board, `mainArea` único, export CSV no formato do Build your own Radar (description da nota). Consulte ao mexer em tipos de nota, no board ou nos boards de Tasks (`BoardColumns` é comum). |
 
 ---
 
@@ -57,6 +58,7 @@ Ponto de entrada para a documentação do projeto. Leia este arquivo primeiro pa
 | `DOCS/features/tasks_study.md` | Estudo de Tasks v2 (2026-10-12): visão "num olhar", do date × deadline, Week board. |
 | `DOCS/features/tags_study.md` | Estudo de tags (2026-10-15): dar função ou remover. |
 | `DOCS/features/note_types_study.md` | Estudo (2026-10-20) de tipos de nota (globais, opcionais, com propriedades e template), o tipo **TODOS** que substitui o `group` das tasks (migração, chip rico, progresso na lista), diagnóstico e melhoria da busca Ctrl+P (FTS5 verificado) e "+" no handle de bloco do editor. Mercado: só Capacities. Decisões D1–D11. |
+| `DOCS/features/note_board_study.md` | Estudo (2026-10-29) de board em cards por tipo de nota (caso do radar tecnológico): colunas = opções de uma propriedade `select`, 2º eixo como subseções, config no modal de tipos (`note_types.board`), sem flag por nota, radar circular fora (export CSV para o BYOR). Exemplo de produção só com estrutura. Veredito: genérico viável. Decisões D1–D11. |
 | `DOCS/features/mercado_2026-10/` | Pesquisa de mercado bruta (out/2026) que embasa os estudos acima; comece pelo `README.md` da pasta. |
 
 ---

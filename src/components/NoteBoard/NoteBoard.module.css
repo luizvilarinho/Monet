@@ -1,0 +1,142 @@
+/* Layout (.board/.top) do WeekBoard e controles do TasksHeader; aqui só o
+   título, a contagem, o filtro, os botões do header, o "New" da coluna, o
+   ponto do chip, o estado vazio e o rodapé do modal "Edit note". */
+/* Área estreita (painel de IA aberto): os controles descem de linha em vez
+   de espremer o título. */
+.titleRow {
+  flex-wrap: wrap;
+}
+
+.title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1h);
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.typeIcon {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.by {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.count {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.hint {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Mesma caixa do select do header, com ícone + rótulo (Clear filters,
+   Export CSV, Board settings). */
+.headerBtn {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-1h);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-family: inherit;
+  box-sizing: border-box;
+  min-height: var(--control-md);
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+}
+
+.headerBtn:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--accent-task);
+}
+
+.headerBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.status {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.chipDot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.empty {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-0) var(--space-1);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Fim do cabeçalho da coluna: aviso de opção apagada + "New". */
+.columnEnd {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1h);
+  min-width: 0;
+  margin-left: auto;
+}
+
+.newBtn {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-0);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-1);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.newBtn:hover {
+  color: var(--accent-task);
+  background: var(--surface-2);
+}
+
+/* Rodapé do modal "Edit note" (NoteBoardModalNav). */
+.modalNav {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--pad-modal);
+  border-top: 1px solid var(--hair);
+}
+
+.modalNavEnd {
+  margin-left: auto;
+}

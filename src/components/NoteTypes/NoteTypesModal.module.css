@@ -2,13 +2,20 @@
    aqui só o layout em duas colunas do "Note types". */
 .card {
   max-width: 760px;
+  /* Cabe na janela: só as colunas rolam; cabeçalho e erro ficam fixos. */
+  max-height: calc(100vh - 48px);
+  min-height: 0;
+  overflow: hidden;
 }
 
+/* A linha do grid limitada à altura disponível: sem isso ela cresce com o
+   conteúdo e o .detail nunca rola (vazava do card). */
 .columns {
+  flex: 1 1 auto;
   display: grid;
   grid-template-columns: 200px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   gap: var(--space-6);
-  max-height: 65vh;
   min-height: 0;
 }
 
@@ -16,6 +23,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+  min-height: 0;
   overflow-y: auto;
 }
 
@@ -65,38 +73,20 @@
   white-space: nowrap;
 }
 
-/* Setas de reordenar: mesma área do .delete, sem o vermelho no hover. */
-.action {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--control-sm);
-  height: var(--control-sm);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  border: none;
-  padding: 0;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-
-.action:hover:not(:disabled) {
-  color: var(--text-primary);
-}
-
-.action:disabled {
-  opacity: 0.3;
-  cursor: default;
-}
-
 .detail {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
   min-width: 0;
+  min-height: 0;
   overflow-y: auto;
   padding-right: var(--space-1);
+}
+
+/* Com altura limitada, os blocos não encolhem (o ícone sobrepunha o resto):
+   o .detail rola. */
+.detail > * {
+  flex-shrink: 0;
 }
 
 .field {
@@ -113,11 +103,13 @@
 }
 
 /* Seletor de ícone: busca + grade agrupada com rolagem própria. */
-.iconField {
+.iconField,
+.fieldTop {
   align-items: flex-start;
 }
 
-.iconField .label {
+.iconField .label,
+.fieldTop .label {
   line-height: var(--control-md);
 }
 
@@ -259,4 +251,43 @@
   margin: 0;
   font-size: 12px;
   color: var(--text-muted);
+}
+
+/* Seção "Board": rótulos mais largos ("Only notes where") e grupos de
+   checkboxes que quebram. */
+.boardTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.board {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.board .label {
+  flex-basis: 96px;
+}
+
+.boardChecks {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--control-md);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+}
+
+.boardHint {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.boardOpen {
+  gap: var(--space-1);
+  margin-left: auto;
 }
