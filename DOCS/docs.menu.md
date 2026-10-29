@@ -57,6 +57,7 @@ Ponto de entrada para a documentação do projeto. Leia este arquivo primeiro pa
 | `DOCS/features/tasks_study.md` | Estudo de Tasks v2 (2026-10-12): visão "num olhar", do date × deadline, Week board. |
 | `DOCS/features/tags_study.md` | Estudo de tags (2026-10-15): dar função ou remover. |
 | `DOCS/features/note_types_study.md` | Estudo (2026-10-20) de tipos de nota (globais, opcionais, com propriedades e template), o tipo **TODOS** que substitui o `group` das tasks (migração, chip rico, progresso na lista), diagnóstico e melhoria da busca Ctrl+P (FTS5 verificado) e "+" no handle de bloco do editor. Mercado: só Capacities. Decisões D1–D11. |
+| `DOCS/features/note_board_study.md` | Estudo (2026-10-29) de board em cards por tipo de nota (caso do radar tecnológico): colunas = opções de uma propriedade `select`, 2º eixo como subseções, config no modal de tipos (`note_types.board`), sem flag por nota, radar circular fora (export CSV para o BYOR). Exemplo de produção só com estrutura. Veredito: genérico viável. Decisões D1–D11. |
 | `DOCS/features/mercado_2026-10/` | Pesquisa de mercado bruta (out/2026) que embasa os estudos acima; comece pelo `README.md` da pasta. |
 
 ---
