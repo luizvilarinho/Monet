@@ -1,0 +1,119 @@
+.history {
+  width: 260px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-panel, #161625);
+  border-right: 1px solid var(--border, #333340);
+}
+
+.top {
+  padding: var(--pad-panel);
+  padding-bottom: var(--space-2);
+}
+
+.empty {
+  margin: 0;
+  padding: 0 var(--pad-panel);
+  font-size: 12px;
+  color: var(--text-muted, #7c7c93);
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0 var(--space-2) var(--pad-panel);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0);
+}
+
+.row,
+.rowActive {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1h) var(--space-2);
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary, #9898a4);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.row:focus-visible,
+.rowActive:focus-visible {
+  outline: 2px solid var(--accent, #7b6ed4);
+  outline-offset: -2px;
+}
+
+.row:hover {
+  background: var(--surface-1, #1d1d34);
+  color: var(--text-primary, #ddddf1);
+}
+
+.rowActive {
+  background: var(--surface-2, #292959);
+  color: var(--text-primary, #ddddf1);
+}
+
+.kindIcon {
+  flex-shrink: 0;
+  color: var(--text-muted, #7c7c93);
+}
+
+.rowText {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.rowTitle {
+  font-size: 13px;
+  line-height: var(--lh-row);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rowMeta {
+  font-size: 11px;
+  color: var(--text-muted, #7c7c93);
+}
+
+.statusIcon {
+  flex-shrink: 0;
+  color: var(--accent, #7b6ed4);
+}
+
+.statusMuted,
+.statusError,
+.statusNew {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-0);
+  font-size: 11px;
+}
+
+.statusMuted {
+  color: var(--text-secondary, #9898a4);
+}
+
+.statusNew {
+  padding: 0 var(--space-1h);
+  border-radius: var(--radius-sm);
+  background: var(--accent, #7b6ed4);
+  color: #fff;
+  font-weight: 500;
+}
+
+.statusError {
+  color: var(--accent-danger, #e05555);
+}

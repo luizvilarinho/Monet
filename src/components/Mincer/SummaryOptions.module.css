@@ -1,0 +1,133 @@
+.options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1h);
+}
+
+.chip,
+.chipActive {
+  height: var(--control-sm);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border, #333340);
+  background: transparent;
+  color: var(--text-secondary, #9898a4);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chip:hover:not(:disabled) {
+  color: var(--text-primary, #ddddf1);
+  border-color: var(--accent, #7b6ed4);
+}
+
+.chipActive {
+  background: var(--accent, #7b6ed4);
+  border-color: var(--accent, #7b6ed4);
+  color: #fff;
+}
+
+.disclosure {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-secondary, #9898a4);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.disclosure:hover:not(:disabled) {
+  color: var(--text-primary, #ddddf1);
+}
+
+.extra {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.textarea,
+.input,
+.select {
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-primary, #ddddf1);
+  background: var(--surface-1, #1d1d34);
+  border: 1px solid var(--border, #333340);
+  border-radius: var(--radius-sm);
+}
+
+.textarea {
+  resize: vertical;
+  padding: var(--space-2);
+  line-height: var(--lh-ui);
+}
+
+.input,
+.select {
+  height: var(--control-md);
+  padding: 0 var(--space-2);
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+}
+
+.select {
+  min-width: 160px;
+}
+
+.textarea:focus,
+.input:focus,
+.select:focus {
+  outline: none;
+  border-color: var(--accent, #7b6ed4);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--border, #333340);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.segment,
+.segmentActive {
+  height: var(--control-md);
+  padding: 0 var(--space-3);
+  border: none;
+  background: transparent;
+  color: var(--text-secondary, #9898a4);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.segment:hover:not(:disabled) {
+  color: var(--text-primary, #ddddf1);
+}
+
+.segmentActive {
+  background: var(--surface-2, #292959);
+  color: var(--text-primary, #ddddf1);
+}

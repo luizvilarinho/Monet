@@ -1,11 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useChat, type ChatFolder, type TasksSnapshot } from '../../hooks/useChat'
+import {
+  getMincerItemIdForChatFolder,
+  useChat,
+  type ChatFolder,
+  type TasksSnapshot,
+} from '../../hooks/useChat'
 import { useChatPanelState } from '../../hooks/useChatPanelState'
 import { useStickToBottom } from '../../hooks/useStickToBottom'
 import { notesFolderDocId } from '../../lib/documents'
+import { mincerGet } from '../../lib/mincer'
 import type { ChecklistProgress } from '../../lib/tasks'
 import type { AiModel, Note, Notebook, Task } from '../../types'
 import { ModelSelector } from '../AiPanel/ModelSelector'
+import { buildMincerContext, mincerTruncationNotice } from '../Mincer/mincerContext'
 import { useTasksEnv } from '../TasksView/TasksEnv'
 import styles from './ChatPanel.module.css'
 import { ChatComposer } from './ChatComposer'
@@ -183,6 +190,50 @@ export function ChatPanel({
     return folders.find((f) => f.conversationIds.includes(activeId)) ?? null
   }, [folders, activeId])
 
+  const activeFolderId = activeFolder?.id ?? null
+  const mincerItemId = useMemo(
+    () => (activeFolderId ? getMincerItemIdForChatFolder(activeFolderId) : null),
+    [activeFolderId]
+  )
+
+  // Transcrição maior que o orçamento do contexto: o usuário também é avisado.
+  const [mincerNotice, setMincerNotice] = useState<string | null>(null)
+  useEffect(() => {
+    setMincerNotice(null)
+    if (!mincerItemId) return
+    let cancelled = false
+    mincerGet(mincerItemId)
+      .then((item) => {
+        if (!cancelled) setMincerNotice(item ? mincerTruncationNotice(item) : null)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [mincerItemId])
+
+  // Pasta de um item do Mincer: o conteúdo do item vai como contexto efêmero.
+  async function handleSend(
+    text: string,
+    image?: string,
+    docs?: Array<{ name: string; type: string; data: string }>
+  ) {
+    if (!mincerItemId) {
+      await send(text, image, docs)
+      return
+    }
+    const item = await mincerGet(mincerItemId).catch(() => null)
+    const summary = item?.summary?.trim()
+    const summaryInHistory =
+      !!summary && messages.some((m) => m.role === 'assistant' && m.content.trim() === summary)
+    await send(
+      text,
+      image,
+      docs,
+      item ? { ephemeralContext: buildMincerContext(item, summaryInHistory) } : undefined
+    )
+  }
+
   return (
     <section className={styles.panel} aria-label="AI Chat">
       <ChatSidebar
@@ -276,6 +327,12 @@ export function ChatPanel({
 
         {!atBottom && <ScrollToBottomButton className={styles.scrollBtn} onClick={scrollToBottom} />}
 
+        {mincerNotice && (
+          <div className={styles.noticeRow} role="note">
+            {mincerNotice}
+          </div>
+        )}
+
         {error && messages.length > 0 && (
           <div className={styles.errorRow} role="alert">
             {error}
@@ -300,7 +357,7 @@ export function ChatPanel({
           webSourcesToast={webSourcesToast}
           resetKey={activeId}
           rows={3}
-          onSend={(text, image, docs) => void send(text, image, docs)}
+          onSend={(text, image, docs) => void handleSend(text, image, docs)}
           onStop={cancel}
           inputRef={inputRef}
         />

@@ -13,6 +13,8 @@ import { CalendarView } from './components/CalendarView/CalendarView'
 import { ChatPanel } from './components/ChatPanel/ChatPanel'
 import { appendToggleToContent } from './components/ChatPanel/SaveToNoteModal'
 import { Library } from './components/Library/Library'
+import { Mincer } from './components/Mincer/Mincer'
+import { useMincerJob } from './hooks/useMincerJob'
 import { DocumentsModal } from './components/DocumentsModal/DocumentsModal'
 import { KnowledgeBaseModal } from './components/KnowledgeBaseModal/KnowledgeBaseModal'
 import { Editor } from './components/Editor/Editor'
@@ -25,7 +27,7 @@ import { codeFence, type NoteInsert } from './components/NotesChat/noteBlocks'
 import { insertAsListContinuation } from './components/Editor/listContinuation'
 import { Onboarding } from './components/Onboarding/Onboarding'
 import { RelatedContent } from './components/RelatedContent/RelatedContent'
-import { SettingsModal } from './components/Settings/SettingsModal'
+import { SettingsModal, type SettingsSection } from './components/Settings/SettingsModal'
 import { UpdaterDialog } from './components/UpdaterDialog/UpdaterDialog'
 import { SearchPalette } from './components/SearchPalette/SearchPalette'
 import { MarkNotePicker } from './components/SearchPalette/MarkNotePicker'
@@ -401,8 +403,9 @@ function App() {
 
   const [activeMode, setActiveMode] = useState<ActiveMode>(() => {
     const saved = localStorage.getItem('monet:active-mode')
-    return saved === 'chat' || saved === 'library' ? saved : 'notebook'
+    return saved === 'chat' || saved === 'library' || saved === 'mincer' ? saved : 'notebook'
   })
+  const mincerJob = useMincerJob()
   const [activeNotebookId, setActiveNotebookId] = useState<string | null>(null)
   const [activeSubjectId, setActiveSubjectId] = useState<string | null>(null)
   const {
@@ -474,6 +477,8 @@ function App() {
   const notesEditorRef = useRef<TiptapEditor | null>(null)
   const [hasEditor, setHasEditor] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // Seção em que o Settings abre (o Mincer abre direto na dele).
+  const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>(undefined)
   const [documentsModalNotebookId, setDocumentsModalNotebookId] = useState<string | null>(null)
   const [notebooksWithDocs, setNotebooksWithDocs] = useState<Set<string>>(new Set())
   const [kbOpen, setKbOpen] = useState(false)
@@ -2938,6 +2943,13 @@ function App() {
 
   const handleOpenSettings = useCallback(() => {
     if (onboardingActive) return
+    setSettingsSection(undefined)
+    setSettingsOpen(true)
+  }, [onboardingActive])
+
+  const handleOpenMincerSettings = useCallback((section: SettingsSection) => {
+    if (onboardingActive) return
+    setSettingsSection(section)
     setSettingsOpen(true)
   }, [onboardingActive])
 
@@ -3349,13 +3361,33 @@ function App() {
         onToggleFocus={() => setFocusMode((v) => !v)}
         previewMode={previewMode}
         onTogglePreview={() => setPreviewMode((v) => !v)}
+        mincerBusy={mincerJob.activeItemId !== null}
+        mincerRecordingStartedAt={mincerJob.recording ? (mincerJob.recordingStartedAt ?? Date.now()) : null}
+        mincerUnseen={mincerJob.unseenCount > 0}
       />
       {(noteSaveError || notebookSaveError || subjectSaveError || tasksSaveError || statusSaveError || metadata.saveError || noteTypes.saveError || taskCreateError || subjectConvertError) && (
         <div className="saveErrorBanner" role="alert">
           {noteSaveError || notebookSaveError || subjectSaveError || tasksSaveError || statusSaveError || metadata.saveError || noteTypes.saveError || taskCreateError || subjectConvertError}
         </div>
       )}
-      {activeMode === 'library' ? (
+      {activeMode === 'mincer' ? (
+        <div className="workspace">
+          <Mincer
+            job={mincerJob}
+            missingApiKey={apiKeyChecked && !hasApiKey}
+            onOpenSettings={handleOpenMincerSettings}
+            notebooks={orderedNotebooks}
+            notes={notes}
+            onCreateNotebook={handleCreateNotebookFromChat}
+            onCreateNote={handleCreateNoteFromChat}
+            onSaveNote={async (note) => {
+              await saveNote(note)
+            }}
+            onNavigateToNote={handleNavigateToNote}
+            onOpenChat={() => setActiveMode('chat')}
+          />
+        </div>
+      ) : activeMode === 'library' ? (
         <div className="workspace">
           <Library
             notebooks={orderedNotebooks}
@@ -3723,6 +3755,7 @@ function App() {
       )}
       <SettingsModal
         open={settingsOpen && !onboardingActive}
+        initialSection={settingsSection}
         onClose={() => setSettingsOpen(false)}
         onApiKeyChanged={handleApiKeyChanged}
         onUpdateFound={handleUpdateFound}

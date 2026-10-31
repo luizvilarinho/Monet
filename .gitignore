@@ -38,3 +38,6 @@ latest.json
 public/pdfjs
 
 DOCS/prints/
+
+# sidecars do Mincer, copiados por scripts/fetch-sidecars.ps1
+src-tauri/binaries/

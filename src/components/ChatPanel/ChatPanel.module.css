@@ -98,6 +98,15 @@
   flex-shrink: 0;
 }
 
+/* Aviso neutro acima do composer (ex.: transcrição do Mincer cortada). */
+.noticeRow {
+  padding: var(--space-2) var(--space-4);
+  font-size: 12px;
+  color: var(--text-secondary, #a0a0b8);
+  border-top: 1px solid var(--border, #333340);
+  flex-shrink: 0;
+}
+
 /* Posição do ScrollToBottomButton, acima do composer. */
 .scrollBtn {
   bottom: 80px;

@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev --config src-tauri/tauri.conf.dev.json",
+    "sidecars": "powershell -ExecutionPolicy Bypass -File scripts/fetch-sidecars.ps1",
     "tauri:build": "dotenv -e .env -- powershell -Command \"$env:TAURI_SIGNING_PRIVATE_KEY = Get-Content 'C:\\Users\\User\\Documents\\projetos\\Monet\\~\\.tauri\\monet.key' -Raw; $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = \\\"$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD\\\"; npm run tauri build\""
   },
   "dependencies": {

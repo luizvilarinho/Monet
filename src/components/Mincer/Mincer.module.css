@@ -1,0 +1,126 @@
+.mincer {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-app, #1f1f2f);
+}
+
+.main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* ─── Botões comuns das telas do Mincer (importados como `shared`) ───────── */
+.primary,
+.secondary,
+.ghost,
+.danger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1h);
+  height: var(--control-md);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border, #333340);
+  background: transparent;
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.primary {
+  background: var(--accent, #7b6ed4);
+  border-color: var(--accent, #7b6ed4);
+  color: #fff;
+  font-weight: 500;
+}
+
+.primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.secondary {
+  color: var(--text-secondary, #9898a4);
+}
+
+.secondary:hover:not(:disabled) {
+  color: var(--text-primary, #ddddf1);
+  border-color: var(--accent, #7b6ed4);
+}
+
+.ghost {
+  border-color: transparent;
+  color: var(--text-secondary, #9898a4);
+  padding: 0 var(--space-2);
+}
+
+.ghost:hover:not(:disabled) {
+  color: var(--text-primary, #ddddf1);
+  background: var(--surface-1, #1d1d34);
+}
+
+.danger {
+  color: var(--text-muted, #7c7c93);
+}
+
+.danger:hover:not(:disabled) {
+  color: var(--accent-danger, #e05555);
+  border-color: var(--accent-danger, #e05555);
+}
+
+.primary:focus-visible,
+.secondary:focus-visible,
+.ghost:focus-visible,
+.danger:focus-visible,
+.linkButton:focus-visible {
+  outline: 2px solid var(--accent, #7b6ed4);
+  outline-offset: 2px;
+}
+
+.primary:disabled,
+.secondary:disabled,
+.ghost:disabled,
+.danger:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.linkButton {
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--accent, #7b6ed4);
+  cursor: pointer;
+}
+
+.linkButton:hover {
+  text-decoration: underline;
+}
+
+.error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--accent-danger, #e05555);
+}
+
+.muted {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted, #7c7c93);
+}
+
+.spin {
+  animation: mincerSpin 1s linear infinite;
+}
+
+@keyframes mincerSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}

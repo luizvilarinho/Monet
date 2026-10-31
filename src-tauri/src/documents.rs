@@ -288,6 +288,57 @@ fn open_doc_db(app: &AppHandle) -> Result<Connection, String> {
     )
     .map_err(|e| format!("failed to create OCR cache table: {}", e))?;
 
+    // Histórico do Mincer (mincer/), escrito só pelo Rust.
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS mincer_items (
+            id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            title TEXT NOT NULL DEFAULT '',
+            source TEXT,
+            status TEXT NOT NULL,
+            stage TEXT,
+            progress_current INTEGER NOT NULL DEFAULT 0,
+            progress_total INTEGER NOT NULL DEFAULT 0,
+            error TEXT,
+            preset TEXT,
+            summary_prompt TEXT,
+            transcription_model TEXT,
+            summary_model TEXT,
+            transcript TEXT,
+            summary TEXT,
+            queued_at INTEGER,
+            force_summary INTEGER NOT NULL DEFAULT 0,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_mincer_items_created ON mincer_items(created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_mincer_items_queue ON mincer_items(status, queued_at);",
+    )
+    .map_err(|e| format!("failed to create mincer table: {}", e))?;
+
+    // Marcas por item do Mincer (novo até abrir, enviado a um caderno). ALTER
+    // guardado: só adiciona as colunas que faltam.
+    let mincer_cols: Vec<String> = {
+        let mut stmt = conn
+            .prepare("PRAGMA table_info(mincer_items)")
+            .map_err(|e| format!("failed to inspect mincer table: {}", e))?;
+        let cols = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|e| format!("failed to read mincer columns: {}", e))?
+            .filter_map(|r| r.ok())
+            .collect();
+        cols
+    };
+    for (col, ddl) in [
+        ("unseen", "INTEGER NOT NULL DEFAULT 0"),
+        ("sent_to_notebook_at", "INTEGER"),
+    ] {
+        if !mincer_cols.iter().any(|c| c == col) {
+            conn.execute_batch(&format!("ALTER TABLE mincer_items ADD COLUMN {} {};", col, ddl))
+                .map_err(|e| format!("failed to add mincer column {}: {}", col, e))?;
+        }
+    }
+
     // Reconcilia o estado de migrations do tauri-plugin-sql quando um build
     // antigo aplicou uma v11 diferente (notes_rag_doc_ids) no DB de produção.
     // O sqlx aborta o migrate por checksum mismatch na 1ª carga e o retry do

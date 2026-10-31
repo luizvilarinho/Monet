@@ -19,30 +19,44 @@ import {
   type UpdatePreference,
 } from '../../lib/updater'
 import { RAG_REWRITE_MODEL_KEY } from '../../lib/rag'
+import {
+  DEFAULT_MAX_RECORD_HOURS,
+  DEFAULT_SILENCE_STOP_MINUTES,
+  MINCER_MAX_RECORD_KEY,
+  MINCER_SILENCE_STOP_KEY,
+  MINCER_SUMMARY_MODEL_KEY,
+  MINCER_TRANSCRIPTION_MODEL_KEY,
+  mincerListTranscriptionModels,
+  type MincerModel,
+} from '../../lib/mincer'
 import styles from './SettingsModal.module.css'
+
+export type SettingsSection = 'openrouter' | 'search' | 'mincer' | 'about'
 
 export interface SettingsModalProps {
   open: boolean
+  /** Section shown when the modal opens (default: OpenRouter). */
+  initialSection?: SettingsSection
   onClose: () => void
   onApiKeyChanged: (hasKey: boolean) => void
   onUpdateFound: (update: Update, mandatory: boolean) => void
 }
 
-type Section = 'openrouter' | 'search' | 'about'
-
-const SECTIONS: Array<{ id: Section; label: string }> = [
+const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: 'openrouter', label: 'OpenRouter Integration' },
   { id: 'search', label: 'Web Search' },
+  { id: 'mincer', label: 'Mincer' },
   { id: 'about', label: 'About & Updates' },
 ]
 
 export function SettingsModal({
   open,
+  initialSection,
   onClose,
   onApiKeyChanged,
   onUpdateFound,
 }: SettingsModalProps) {
-  const [section, setSection] = useState<Section>('openrouter')
+  const [section, setSection] = useState<SettingsSection>('openrouter')
 
   // OpenRouter state
   const [keyValue, setKeyValue] = useState('')
@@ -54,6 +68,15 @@ export function SettingsModal({
   }>({ kind: 'idle', message: '' })
   // Modelo da reescrita da consulta do RAG (vazio = padrão do backend)
   const [rewriteModel, setRewriteModel] = useState('')
+
+  // Mincer state
+  const [transcriptionModel, setTranscriptionModel] = useState('')
+  const [summaryModel, setSummaryModel] = useState('')
+  const [silenceStop, setSilenceStop] = useState(String(DEFAULT_SILENCE_STOP_MINUTES))
+  const [maxRecordHours, setMaxRecordHours] = useState(String(DEFAULT_MAX_RECORD_HOURS))
+  const [transcriptionModels, setTranscriptionModels] = useState<MincerModel[]>([])
+  const [modelsStatus, setModelsStatus] = useState<'idle' | 'loading' | 'error'>('idle')
+  const [modelsError, setModelsError] = useState('')
 
   // Tavily state
   const [tavilyValue, setTavilyValue] = useState('')
@@ -74,6 +97,11 @@ export function SettingsModal({
   }>({ kind: 'idle', message: '' })
 
   useEffect(() => {
+    if (!open || !initialSection) return
+    setSection(initialSection)
+  }, [open, initialSection])
+
+  useEffect(() => {
     if (!open) return
     setStatus({ kind: 'idle', message: '' })
     setKeyValue('')
@@ -81,6 +109,10 @@ export function SettingsModal({
       .then(setHasKey)
       .catch(() => setHasKey(false))
     setRewriteModel(localStorage.getItem(RAG_REWRITE_MODEL_KEY) ?? '')
+    setTranscriptionModel(localStorage.getItem(MINCER_TRANSCRIPTION_MODEL_KEY) ?? '')
+    setSummaryModel(localStorage.getItem(MINCER_SUMMARY_MODEL_KEY) ?? '')
+    setSilenceStop(localStorage.getItem(MINCER_SILENCE_STOP_KEY) ?? String(DEFAULT_SILENCE_STOP_MINUTES))
+    setMaxRecordHours(localStorage.getItem(MINCER_MAX_RECORD_KEY) ?? String(DEFAULT_MAX_RECORD_HOURS))
     setTavilyValue('')
     setTavStatus({ kind: 'idle', message: '' })
     hasTavilyKey()
@@ -92,6 +124,26 @@ export function SettingsModal({
       .then(setAppVersion)
       .catch(() => setAppVersion(null))
   }, [open])
+
+  useEffect(() => {
+    if (!open || section !== 'mincer' || !hasKey) return
+    let cancelled = false
+    setModelsStatus('loading')
+    mincerListTranscriptionModels()
+      .then((models) => {
+        if (cancelled) return
+        setTranscriptionModels(models)
+        setModelsStatus('idle')
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setModelsError(err instanceof Error ? err.message : String(err))
+        setModelsStatus('error')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, section, hasKey])
 
   useEffect(() => {
     if (!open) return
@@ -156,6 +208,13 @@ export function SettingsModal({
     const trimmed = value.trim()
     if (trimmed) localStorage.setItem(RAG_REWRITE_MODEL_KEY, trimmed)
     else localStorage.removeItem(RAG_REWRITE_MODEL_KEY)
+  }
+
+  function handleMincerSettingChange(key: string, value: string, set: (v: string) => void) {
+    set(value)
+    const trimmed = value.trim()
+    if (trimmed) localStorage.setItem(key, trimmed)
+    else localStorage.removeItem(key)
   }
 
   async function handleTavilySave() {
@@ -393,6 +452,108 @@ export function SettingsModal({
                   {hasTavily
                     ? 'Web search active. /search and /profile commands query the internet.'
                     : 'Without the key, /search and /profile use only the model\'s knowledge.'}
+                </p>
+              </div>
+            )}
+
+            {section === 'mincer' && (
+              <div className={styles.form}>
+                <h3 className={styles.formTitle}>Mincer</h3>
+                <p className={styles.formHelp}>
+                  Models used by Mincer to transcribe audio and summarize content. Uses your OpenRouter key.
+                </p>
+                <label className={styles.label} htmlFor="mincer-transcription-model">
+                  Transcription model
+                </label>
+                <select
+                  id="mincer-transcription-model"
+                  className={styles.select}
+                  value={transcriptionModel}
+                  disabled={!hasKey || modelsStatus === 'loading'}
+                  onChange={(e) =>
+                    handleMincerSettingChange(
+                      MINCER_TRANSCRIPTION_MODEL_KEY,
+                      e.target.value,
+                      setTranscriptionModel,
+                    )
+                  }
+                >
+                  <option value="">
+                    {!hasKey
+                      ? 'Add your OpenRouter key first.'
+                      : modelsStatus === 'loading'
+                        ? 'loading models…'
+                        : '— choose a model —'}
+                  </option>
+                  {transcriptionModel &&
+                    !transcriptionModels.some((m) => m.id === transcriptionModel) && (
+                      <option value={transcriptionModel}>{transcriptionModel}</option>
+                    )}
+                  {transcriptionModels.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+                </select>
+                {modelsStatus === 'error' && <p className={styles.statusError}>{modelsError}</p>}
+                <p className={styles.footNote}>
+                  Needed for audio, video, recordings and YouTube.
+                </p>
+                <label className={styles.label} htmlFor="mincer-summary-model">
+                  Summary model
+                </label>
+                <input
+                  id="mincer-summary-model"
+                  className={styles.input}
+                  type="text"
+                  value={summaryModel}
+                  placeholder="same as Chat model"
+                  onChange={(e) =>
+                    handleMincerSettingChange(MINCER_SUMMARY_MODEL_KEY, e.target.value, setSummaryModel)
+                  }
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <p className={styles.footNote}>
+                  OpenRouter model id that writes the summaries. Leave empty to use the Chat model.
+                </p>
+                <label className={styles.label} htmlFor="mincer-silence-stop">
+                  Stop recording after silence
+                </label>
+                <select
+                  id="mincer-silence-stop"
+                  className={styles.select}
+                  value={silenceStop}
+                  onChange={(e) => handleMincerSettingChange(MINCER_SILENCE_STOP_KEY, e.target.value, setSilenceStop)}
+                >
+                  <option value="0">Off</option>
+                  {[5, 10, 15, 20, 30].map((m) => (
+                    <option key={m} value={String(m)}>
+                      {m} min
+                    </option>
+                  ))}
+                </select>
+                <p className={styles.footNote}>
+                  When neither the system audio nor the microphone has sound for this long, the recording
+                  stops and is processed without the silent end. You get a Windows notice before it stops.
+                </p>
+                <label className={styles.label} htmlFor="mincer-max-record">
+                  Maximum recording length
+                </label>
+                <select
+                  id="mincer-max-record"
+                  className={styles.select}
+                  value={maxRecordHours}
+                  onChange={(e) => handleMincerSettingChange(MINCER_MAX_RECORD_KEY, e.target.value, setMaxRecordHours)}
+                >
+                  {[1, 2, 3, 4, 6, 8].map((h) => (
+                    <option key={h} value={String(h)}>
+                      {h} h
+                    </option>
+                  ))}
+                </select>
+                <p className={styles.footNote}>
+                  A safety limit: the recording stops and is processed when it reaches this length.
                 </p>
               </div>
             )}

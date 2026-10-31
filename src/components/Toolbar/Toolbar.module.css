@@ -47,6 +47,55 @@
   border-bottom-color: var(--accent, #7c6af5);
 }
 
+.modeSpinner {
+  margin-left: var(--space-1);
+  vertical-align: -1px;
+  animation: modeSpin 1s linear infinite;
+}
+
+@keyframes modeSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.modeRecording {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: var(--space-1h);
+  color: var(--accent-danger, #e05555);
+  font-variant-numeric: tabular-nums;
+}
+
+.modeRecordDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-danger, #e05555);
+  animation: modePulse 1.4s ease-in-out infinite;
+}
+
+@keyframes modePulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.modeClock {
+  font-size: 12px;
+}
+
+.modeNewDot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: var(--space-1);
+  border-radius: 50%;
+  background: var(--accent, #7c6af5);
+  vertical-align: 2px;
+}
+
 .noteBar {
   display: flex;
   gap: 8px;

@@ -1,0 +1,358 @@
+# Execution Report
+
+## Documents
+- Task report: DOCS/reports/31-10-2026/taskreport_20261031005051.md
+- Execution report: DOCS/reports/31-10-2026/executionreport_20261031005051.md
+- Explorer report: DOCS/reports/31-10-2026/explorerreport_20261031005653.md
+- Plan report: DOCS/reports/31-10-2026/planreport_20261031010550.md
+- Review report: DOCS/reports/31-10-2026/reviewreport_20261031014830.md
+- UX report: não gerado
+- Review report (pós-UX): DOCS/reports/31-10-2026/reviewreport_20261031022834.md
+
+## Sessions
+### Orchestrator — abertura — 20261031005051
+- Summary: Coordenador pediu o Mincer (VOLP dentro do Monet) e pré-autorizou o pipeline completo sem aprovações intermediárias: explorer → planner → code → review → ajustes → uxAgent → ajustes julgados pelo Orquestrador → review final. Branch `feat/mincer` criada a partir de `develop`.
+- Inputs:
+  - DOCS/reports/31-10-2026/taskreport_20261031005051.md
+- Decision: Task Report considerado aprovado pela instrução do Coordenador. Explorer e planner são necessários (escopo grande, dois codebases, sidecars).
+- Next step: explorerAgent
+
+### ExplorerAgent — 20261031005653
+- Summary: Viável, dificuldade Alta. O VOLP não tem progresso, cancelamento, persistência nem job fora da tela; recomendado módulo Rust `mincer/` dono do job (eventos `mincer://*` e status no SQLite `mincer_items` via `open_doc_db`), chunks em appData para retomar após reinício, transcrição em coluna TEXT. A chave vem de `read_key`, `rfd` no lugar de plugin-dialog/fs, CSS Modules no lugar de Tailwind. Enviar para caderno reusa `SaveToNoteModal`/`handleCreateNoteFromChat` (`Note.content` já é Markdown). Enviar para Chat: pasta por item no grupo "Mincer" (link `monet:mincer-item-folder-link`, `folderId` atômico) + `ephemeralContext` no ChatPanel com orçamento. Riscos: bug no resolvedor de sidecar do VOLP (só funciona na máquina de dev), ffmpeg 101 MB GPLv3, yt-dlp desatualizado, YouTube e microfone no MSIX (`build-msix.ps1` não encontrado), WAV de gravação com ~2 GB/h.
+- Output: DOCS/reports/31-10-2026/explorerreport_20261031005653.md
+
+### PlannerAgent — 20261031010550
+- Summary: Plano em 21 etapas sequenciais para um único codeAgent:
+  - sidecars fora do git (`scripts/fetch-sidecars.ps1` + `npm run sidecars` + `externalBin`);
+  - módulo Rust `mincer/` com resolvedor de sidecar por `current_exe().parent()`, sem `language` e com processos cancelados por `kill_on_drop` e `taskkill` no Quit;
+  - fila FIFO persistida em `mincer_items` (`queued_at`) com um worker; toast nativo ao terminar, sem toast ao cancelar e sem navegação no clique (limitação do plugin no Windows);
+  - front com `lib/mincer.ts`, `useMincerJob` e Settings › Mincer (modelos);
+  - UI em CSS Modules e Toolbar/App;
+  - integrações: `SaveToNoteModal` com `plain` e `defaultNoteTitle`; `createMincerChatConversation`, grupo Mincer na sidebar e `ephemeralContext` com orçamento de 12k/60k no ChatPanel;
+  - docs: spec `mincer.md`, menu e backlog (MSIX, licença, clique no toast, fase 2).
+
+  Incorpora os requisitos novos do Coordenador: não bloquear o Monet, fila e notificação.
+- Output: DOCS/reports/31-10-2026/planreport_20261031010550.md
+
+### Orchestrator — decisão — 20261031011900
+- Summary: Coordenador acrescentou dois requisitos durante o planejamento: o Mincer não pode interromper o trabalho no Monet (fila em background) e deve disparar notificação nativa do Windows ao terminar. Ambos repassados ao plannerAgent e incorporados ao plano.
+- Inputs:
+  - DOCS/reports/31-10-2026/planreport_20261031010550.md
+- Decision: Aceitas as decisões do planner (modelo de transcrição como select do OpenRouter no Settings — mesmo padrão do VOLP; schema enxuto; sem edição de transcrição; até 60k caracteres de transcrição como ephemeralContext; Assistant sem contexto do Mincer; clique no toast fora do MVP por limitação do plugin 2.3.3).
+- Next step: codeAgent (etapa 1 — desenvolvimento)
+
+### CodeAgent — implementação inicial — 20261031013850
+- Summary: As 21 etapas do plano foram executadas em ordem.
+  - **Sidecars**: `scripts/fetch-sidecars.ps1` e `npm run sidecars`, executado localmente (ffmpeg 96,8 MB e yt-dlp 17,6 MB em `src-tauri/binaries/`, fora do git); `externalBin` declarado.
+  - **Rust**: módulo `src-tauri/src/mincer/` com fila FIFO em `mincer_items` e um worker (`jobs.rs`), processos canceláveis com prioridade abaixo do normal (`sidecar.rs`), transcrição em pedaços com cache e retomada, resumo, página web, YouTube com progresso do download e gravação WASAPI em PCM 16-bit. Toast nativo disparado pelo Rust no sucesso e no erro, nunca no cancelamento. `on_startup` marca `interrupted`, recupera gravação e limpa pastas órfãs; `shutdown` no `RunEvent::Exit` devolve o item ativo à frente da fila e mata os filhos com `taskkill /T`. Os 15 comandos estão registrados.
+  - **Front**: `lib/mincer.ts`, `useMincerJob` no App (spinner na Toolbar), Settings › Mincer e a UI em CSS Modules com ícones Phosphor (histórico, New com 5 abas, item com progresso, Cancel/Resume/Remove from queue, Save .md, Regenerate, Delete).
+  - **Integrações**: Send to notebook (`SaveToNoteModal` com `plain`/`defaultNoteTitle`), Send to Chat (pasta por item no grupo "Mincer" e `ephemeralContext` 12k/60k no `ChatPanel`).
+  - **Docs**: spec `DOCS/specs/mincer.md`, linha no menu e 4 itens no backlog.
+- Desvios do plano (ajustes de bom senso):
+  - **Corridas fechadas na fila**:
+    - `jobs.rs` tem as flags `READY` e `SHUTTING_DOWN`. O `start_next` não roda antes do `on_startup`, senão um item iniciado pelo front antes do boot terminar seria marcado `interrupted`. Também não roda depois do Quit, senão o `run_and_finish` do item devolvido à fila o iniciaria de novo.
+    - O `cancel` de item enfileirado e o novo `jobs::delete` seguram o lock de `MincerJobs` durante a checagem, para o worker não pegar o item no meio.
+  - **Retomada mais robusta**: sem `audio.mp3` e com pedaços no disco, o app fechou entre o split e o `chunks.done`, e o marcador é recriado. No kind `record`, a mixagem também é pulada quando já existe `chunk_000.mp3`. O split refeito apaga também os `chunk_*.txt` velhos.
+  - **Helpers pequenos** que o plano não listava: `record::has_pending_recording` (boot), `isTranscriptKind` em `lib/mincer.ts` (rótulo Transcript/Text, usado pelo contexto e pela tela) e `JobError::context` (prefixo nas mensagens do ffmpeg/yt-dlp).
+  - **Settings › Mincer**: o select usa `styles.select`, que já existe no módulo, em vez de `styles.input`.
+  - **"Include transcript"** fica ao lado do botão "Send to notebook", e não dentro do modal: o `SaveToNoteModal` é um portal sobreposto e um checkbox atrás dele não seria clicável.
+  - **CSS compartilhado**: os botões comuns ficam em `Mincer.module.css`, importado como `shared` pelos filhos, em vez de repetir as classes em cada módulo.
+  - Os links no resumo renderizado são interceptados (`openUrl`), como no `ChatMessageBubble`, para não navegar o webview.
+  - A mixagem usa `-b:a 64k` (plano) em vez do `-q:a 4` do VOLP. `validate_video_id` usa `is_ascii_alphanumeric`.
+  - As etapas 15 e 19 em `App.tsx` foram feitas numa passada só (o ramo do Mincer já nasce com todas as props).
+  - O rótulo de integridade de `src-tauri/binaries/` foi elevado para Médio (`icacls /setintegritylevel`). A cópia foi feita no sandbox, que deixa os arquivos em Baixo (ver a memória `project-sandbox-low-integrity-exe`). As cópias em `target/debug` já estavam em Médio.
+- Verificações:
+  - `cargo check` em `src-tauri`: OK, sem nenhum warning.
+  - `npx tsc --noEmit`: OK.
+  - `npm run build`: OK (só o aviso de chunk grande, que já existia).
+  - `grep '"language"' src-tauri/src/mincer`: vazio.
+  - Nada do VOLP sem uso foi trazido: settings/store, `fetch_models`, `TranscribeState`, `has_resume_state`/`clear_resume_state`, `open_folder`, fallbacks CapCut/meetily/PATH, plugins dialog/fs e Tailwind ficaram de fora.
+  - Não rodei `npm run tauri:dev` nem `cargo build`, por instrução.
+- Files changed:
+  - .gitignore
+  - package.json
+  - src-tauri/Cargo.toml
+  - src-tauri/Cargo.lock
+  - src-tauri/tauri.conf.json
+  - src-tauri/src/documents.rs
+  - src-tauri/src/lib.rs
+  - src/App.tsx
+  - src/components/Toolbar/Toolbar.tsx
+  - src/components/Toolbar/Toolbar.module.css
+  - src/components/Settings/SettingsModal.tsx
+  - src/components/ChatPanel/SaveToNoteModal.tsx
+  - src/components/ChatPanel/ChatSidebar.tsx
+  - src/components/ChatPanel/ChatPanel.tsx
+  - src/hooks/useChat.ts
+  - DOCS/docs.menu.md
+  - DOCS/backlog.md
+- Files created:
+  - scripts/fetch-sidecars.ps1
+  - src-tauri/src/mincer/mod.rs, db.rs, jobs.rs, sidecar.rs, transcribe.rs, summarize.rs, webpage.rs, youtube.rs, record.rs
+  - src/lib/mincer.ts
+  - src/hooks/useMincerJob.ts
+  - src/components/Mincer/Mincer.tsx, Mincer.module.css, MincerHistory.tsx, MincerHistory.module.css, MincerNew.tsx, MincerNew.module.css, MincerItemView.tsx, MincerItemView.module.css, SummaryOptions.tsx, SummaryOptions.module.css, presets.ts, mincerContext.ts
+  - DOCS/specs/mincer.md
+  - src-tauri/binaries/ (local, fora do git)
+- Files removed: nenhum
+- Left behind:
+  - O smoke test da etapa 21 fica para o Coordenador, rodando `npm run tauri:dev`:
+    - botão Mincer;
+    - Paste → Summarize;
+    - Web › Capture text;
+    - trocar de modo com um job rodando;
+    - 2 itens na fila;
+    - Remove from queue;
+    - toast com a janela na bandeja e ausência de toast no Cancel;
+    - Cancel → Resume;
+    - Send to Chat no grupo Mincer;
+    - Send to notebook sem "Chat Response".
+  - Toda máquina ou build novo precisa rodar `npm run sidecars` antes do `tauri build`/`tauri dev`: sem os binários, o `tauri-build` falha.
+  - Continuam no backlog: MSIX, licença GPLv3/tamanho, clique no toast e fase 2.
+
+### CodeReviewAgent — 20261031014830
+- Summary: Review completo. As verificações `cargo check`, `tsc` e `build` passam. A fila, os locks (nenhum Mutex atravessa um await e a ordem MincerJobs→DocDb é fixa), o toast (nunca no cancelamento), a retomada, o resolvedor de sidecar, a sanitização do resumo e as integrações com o Chat e o SaveToNoteModal estão corretos e sem regressão.
+  - 1 crítico: o cancelamento mata só o bootloader do yt-dlp. Ele é PyInstaller onefile, e o filho continua baixando. No Quit, o `cancel` sai antes do `taskkill /T`. Correção: Job Object com KILL_ON_JOB_CLOSE, ou `taskkill /T` antes de derrubar o Child.
+  - 4 importantes:
+    - injeção de argumento no yt-dlp (URL sem prefixo obrigatório e sem `--`);
+    - Resume após Regenerate falho termina `done` com o resumo antigo (`force_summary` zerado);
+    - a saída pelo updater (`process::exit`) não passa pelo `shutdown`, deixando órfãos e o NSIS sem sobrescrever `ffmpeg.exe`;
+    - `SaveToNoteModal` `plain` sem `stripMarkCitations` (a IA cria marcas, viola R10).
+  - 9 nits.
+- Verdict: REPROVADO
+- Output: DOCS/reports/31-10-2026/reviewreport_20261031014830.md
+
+### CodeAgent — ajuste final — 20261031015801
+- Summary: Passei pelo review e corrigi o crítico, os 4 importantes e a maior parte dos nits.
+  - **Crítico (1) e importante (4)**: cada ffmpeg/yt-dlp entra num Job Object próprio com `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` (`ProcessJob` em `sidecar.rs`).
+    - O slot `child_pid` virou `child_job`. Quando o processo termina ou é cancelado, o job é derrubado (`TerminateJobObject` + `CloseHandle`) e leva a árvore inteira, inclusive o filho Python do yt-dlp onefile.
+    - No Quit, o `shutdown` derruba o job **antes** do `cancel.send`. O `kill_tree`/`taskkill` foi removido (código morto).
+    - Num crash ou na saída pelo updater (`process::exit`), o Windows fecha o handle e mata os filhos. Isso também libera o `ffmpeg.exe` para o NSIS.
+    - Uma falha que chega durante o `SHUTTING_DOWN` (processo morto no Quit) é ignorada: o item já voltou para a fila, sem `error` e sem toast.
+    - Testei a semântica num binário de teste no scratchpad: com o job, `cmd → ping` morre tanto no drop quanto no `process::exit`; sem o job, o `ping` neto sobrevive (controle).
+    - A crate é a `windows` 0.61, que já é dependência direta. Só ganhou 3 features (`Win32_Security`, `Win32_System_JobObjects`, `Win32_System_Threading`), sem mudança no Cargo.lock.
+  - **Importante (2)**: `validate_youtube_url` agora faz parse com `reqwest::Url`. Exige `http`/`https`, host `youtu.be` ou `youtube.com` (`www.`, `m.`, `music.`) e id de 11 caracteres (`/shorts/<id>` ou `?v=`). As duas chamadas do yt-dlp levam `--` antes da URL.
+  - **Importante (3)**: `set_finished` só zera `force_summary` no `done`. O `enqueue` usa `MAX(force_summary, ?3)`, então o Resume de um Regenerate que falhou ou foi cancelado refaz o resumo.
+  - **Importante (5)**: no modo `plain` do `SaveToNoteModal`, o conteúdo passa por `stripMarkCitations`.
+  - **Nits aplicados**:
+    - (6) `mincer_resume` recebe `options`; o front manda os modelos atuais do Settings, e `db::set_models` usa `COALESCE`, então um valor vazio mantém o do item.
+    - (12) Removidos `hasSummary` (TS, struct e coluna calculada no `list_items`) e `micAvailable` (TS, `MincerRecordStatus` e campo do `RecordingHandle`).
+    - (13) O progresso saiu do `useMincerJob`. O novo `useMincerProgress(itemId)` é assinado só pelo `MincerItemView`, e o `App` só re-renderiza quando o item ativo troca.
+    - (14) A leitura da página web exige `content-type` HTML/texto/XML e tem teto de 10 MB (pelo `content-length` e por stream).
+    - (14) O resumo não é repetido no `ephemeralContext` quando já está numa mensagem do assistant da conversa; o contexto aponta para a 1ª mensagem.
+    - (9) O COM e a checagem do microfone rodam na thread própria da gravação, não numa worker do tokio.
+    - (14) `getMincerChatFolderId` só devolve o vínculo se a pasta ainda existe, então "Open in Chat" não aparece para pasta apagada.
+    - (7) A pasta de trabalho é apagada assim que a transcrição/o texto é salvo no banco: um erro no resumo não deixa GBs de áudio. A limpeza no Delete já existia (conferido) e está mantida.
+    - (11) O Delete logo após o Cancel só é recusado se o status no banco ainda for `running`.
+    - (10) O boot não recupera `recording/` se já houver gravação ativa.
+  - Atualizei `DOCS/specs/mincer.md` com Job Object, Resume (modelos e Regenerate pendente), limpeza da pasta, validação do YouTube, teto da página, `useMincerProgress`, `stripMarkCitations` e o resumo no contexto.
+  - Verificações: `cargo check` sem warnings, `npx tsc --noEmit` OK e `npm run build` OK (só o aviso de chunk grande, que já existia).
+- Files changed:
+  - src-tauri/Cargo.toml
+  - src-tauri/src/mincer/sidecar.rs
+  - src-tauri/src/mincer/jobs.rs
+  - src-tauri/src/mincer/mod.rs
+  - src-tauri/src/mincer/db.rs
+  - src-tauri/src/mincer/youtube.rs
+  - src-tauri/src/mincer/webpage.rs
+  - src-tauri/src/mincer/record.rs
+  - src/components/ChatPanel/SaveToNoteModal.tsx
+  - src/components/ChatPanel/ChatPanel.tsx
+  - src/components/Mincer/MincerItemView.tsx
+  - src/components/Mincer/mincerContext.ts
+  - src/hooks/useMincerJob.ts
+  - src/hooks/useChat.ts
+  - src/lib/mincer.ts
+  - DOCS/specs/mincer.md
+- Files created:
+  - nenhum
+- Files removed:
+  - nenhum
+- Left behind:
+  - (8) Silêncio do loopback WASAPI e dessincronia no `amix`: comportamento portado do VOLP. A correção (preencher silêncio por QPC ou manter um stream de render aberto) muda a captura e merece task própria.
+  - (4, parcial) Na saída pelo updater, a gravação em curso não passa por `finalize` do WAV. Os processos já morrem pelo Job Object. Para finalizar o WAV seria preciso um gancho antes do `downloadAndInstall`, fora do escopo mínimo. O boot recupera os WAVs como antes.
+  - (14) `scripts/fetch-sidecars.ps1` com `-Source` padrão apontando para o projeto Minuta e sem SHA-256: é script de dev, e mudar a origem dos binários é decisão do Coordenador.
+  - (14) Fidelidade do Markdown (`html: true`) para texto capturado e transcrição na nota: só afeta fidelidade, não segurança, e mexer no parse do editor sai do escopo.
+  - Corrida residual pequena: um processo pode criar filhos entre o `spawn` e o `AssignProcessToJobObject`. No yt-dlp onefile, o bootloader extrai os arquivos antes de criar o filho, então a janela é desprezível. Fechar essa janela exigiria `CREATE_SUSPENDED` com retomada manual da thread.
+
+### UxAgent — 20261031020217
+- Summary: Análise de UX do Mincer feita pelo código (app não rodou). Veredito: boa para o objetivo, sem problema crítico. Fila em background, progresso, cancel/resume e as três saídas (caderno, Chat, .md) funcionam e respeitam "o Mincer nunca interrompe o Monet". Pontos de maior atenção:
+  - Gravação sinalizada fora do Mincer só por spinner genérico, sem tempo, Stop nem Discard, e sem retorno de nível de áudio (P1, P8, Alta/Média).
+  - Chat corta a transcrição em 60k caracteres (~1 h de fala, inferido) e só o modelo é avisado (P2, Alta).
+  - Fim do job depende só do toast sem clique, sem marca de "novo" no app (P3).
+  - Nota enviada ao caderno sem origem nem rótulo de IA, ao contrário do "Anotar" do Chat (P4).
+  - Erros de API crus (P5), primeiro uso barrado pelo modelo de transcrição vazio (P6), estado vazio sem explicação (P7), rascunho perdido ao trocar de modo (P9).
+  - Oportunidades: marcas de estado no histórico, gravação segura, origem/IA na nota (Agora); Action Items como checklist para "Add to Tasks", aviso/RAG de trechos no Chat, arrastar e múltiplos arquivos, duração/custo prévio (Próximo).
+  - O PRD (§4 e §9) precisa registrar o Mincer e a justificativa de volume frente à não-meta de resumo automático.
+- Output: DOCS/reports/31-10-2026/uxreport_20261031020217.md
+
+### Orchestrator — decisão (triagem UX) — 20261031021500
+- Summary: Triagem do uxreport pelo Orquestrador, por autorização do Coordenador, com o critério da filosofia do Monet: lapidar sem inflar, IA como meio, origem visível, nada criado pela IA sem clique.
+- Inputs:
+  - DOCS/reports/31-10-2026/uxreport_20261031020217.md
+- Decision — implementar:
+  - P1/P8/B: indicador de gravação distinto no botão Mincer da Toolbar (ponto vermelho + mm:ss, clique leva ao Mincer), botão Discard ao lado de "Stop and process", indicador de nível por faixa (sistema/mic) com eventos limitados (~4/s).
+  - P2/E (parte barata): aviso visível ao usuário no Chat quando a transcrição foi cortada pelo orçamento.
+  - P3/A: marca de "novo" no item do histórico e no botão Mincer até o item ser aberto; marca "Sent to notebook" no item depois do envio (evita nota duplicada).
+  - P4/C + P11: linha de origem e rótulo de IA no topo da nota enviada (`Source · Mincer summary (preset, model) · data`); textos do SaveToNoteModal no modo plain sem "response".
+  - P5: erros de API legíveis (401/402/429/contexto longo/modelo inválido) com detalhe técnico recolhido; também no toast.
+  - P6 (parte): "Open Settings" abre direto na seção Mincer. Sem modelo pré-selecionado (não há id seguro).
+  - P7: linha explicativa no estado vazio; título "New item".
+  - P9: rascunho da tela New preservado ao trocar de modo.
+  - P10 (rótulo "Include transcript in note"), P12 (Regenerate abre no preset do item e mostra o atual), P15 (pasta do Chat só com o título), P16 (focus-visible, aria na barra/estágio, banner neutro para Cancelled).
+  - D: Action Items do preset Meeting como checklist Markdown (`- [ ]`), conferindo que viram taskItem na nota (o usuário decide o "Add to Tasks").
+  - F: seleção múltipla de arquivos enfileirando um item por arquivo; arrastar e soltar se a API de drag-drop do Tauri permitir sem complicação.
+  - PRD: registrar o Mincer no inventário (§4) e a exceção de volume na não-meta de resumo automático (§9).
+- Decision — não implementar agora: P13 (busca na transcrição), P14 (Assistant, limitação já aceita), G (duração/custo estimado), RAG de transcrições (fase 2). Registrar no backlog o que ainda não estiver lá.
+- Next step: codeAgent (ajustes de UX)
+
+### CodeAgent — ajustes de UX — 20261031022016
+- Summary: Implementei só os itens marcados "implementar" na triagem.
+  - **P1/P8/B, gravação segura**:
+    - Botão Mincer na Toolbar: ponto vermelho pulsante + `mm:ss` enquanto grava. O relógio é um componente próprio (`RecordingClock`), então o tique de 1 s re-renderiza só ele.
+    - Processando, o botão mostra o spinner. O clique abre o Mincer na tela New, aba Record (o `selectedId` inicial é `null` quando há gravação).
+    - "Discard", com confirmação, fica ao lado de "Stop and process". O comando `mincer_record_discard` para a gravação e apaga os WAVs e o `options.json`.
+    - Nível por faixa: cada thread de captura faz `fetch_max` do pico num `AtomicU32` (bits de f32). A thread da gravação lê, zera e emite `mincer://level {system, mic}` a cada 250 ms (~4/s), sem banco. Só a tela New assina, com dois medidores de -60 a 0 dB, e o App não re-renderiza.
+  - **P2/E, aviso de corte**: `mincerTruncationNotice` mostra uma faixa neutra acima do composer numa pasta do Mincer cuja transcrição passa de 60k ("…the AI only sees its first N% (60,000 of X characters)…"). O `mincerItemId` da pasta virou `useMemo`, reaproveitado pelo `handleSend`.
+  - **P3/A, marcas persistentes**:
+    - Novas colunas `unseen` e `sent_to_notebook_at` em `mincer_items`, por `ALTER TABLE ADD COLUMN` guardado por `PRAGMA table_info` em `open_doc_db` (mesmo padrão do `vec_db.rs`).
+    - `set_finished` liga `unseen` no `done`/`error`.
+    - Novos comandos `mincer_mark_seen` e `mincer_mark_sent_to_notebook`.
+    - Histórico: badge "New" e "· Sent to notebook". Toolbar: ponto de destaque enquanto `unseenCount > 0`. O `useMincerJob` relê a contagem no done/error e expõe `refreshUnseen`.
+    - Abrir o item (também quando ele termina já aberto) marca como visto, em `Mincer.tsx`.
+    - O item mostra "Sent to notebook" (ícone Check) ao lado do botão. A marca é gravada envolvendo `onCreateNote`/`onSaveNote` passados ao modal, só depois do sucesso.
+  - **P4/C + P11, origem na nota**:
+    - A nota enviada começa com a linha `*Source: <url|arquivo> · Mincer summary (<preset ou + instructions>, <modelo>) · <data>*`. Sem resumo, a linha diz "Captured by Mincer" ou "Transcript/Text from Mincer".
+    - A transcrição incluída vai em `## Transcript` com "*Transcribed by Mincer (<modelo>)*", ou em `## Original text` nos kinds de texto.
+    - No modo `plain`, o `SaveToNoteModal` diz "Saved", "Save to a note", "this content" e "Failed to save content…".
+  - **P5, erros legíveis**:
+    - `api_error`/`network_error` em `mincer/mod.rs`, usados por `summarize.rs` e `transcribe.rs`. Cobrem 401, 402, 429, contexto longo, modelo inválido, 5xx e rede, sempre com "…then Resume".
+    - O detalhe técnico vem depois de `\n\n`: o banner mostra a frase e recolhe o detalhe em "Technical details" (`splitMincerError`). O toast mostra só a frase.
+    - O retry final da transcrição ficou "<frase> (after 3 attempts)".
+  - **P6 (parte)**: `SettingsModal` ganhou `initialSection`. O Mincer usa `handleOpenMincerSettings`, então "Open Settings" e "Change in Settings" abrem na seção Mincer. Sem modelo pré-selecionado.
+  - **P7**: título "New item" e uma linha explicativa quando o histórico está vazio.
+  - **P9**: o rascunho da tela New (aba, arquivos, texto, URLs, Summarize/Capture) fica num objeto do módulo e sobrevive à troca de modo.
+  - **P10**: "Include transcript in note" ("text" nos kinds de texto), agrupado com o botão por um separador.
+  - **P12**: o Regenerate abre com as opções que geraram o resumo, via `summarySettingsFromItem`, que reconstrói preset + instruções/modo a partir do `summary_prompt`. Mostra "Current summary: …" e avisa que o novo substitui o atual quando ficar pronto.
+  - **P15**: a pasta do Chat tem só o título do item.
+  - **P16**:
+    - `:focus-visible` nos botões compartilhados, nas abas, nos segmentos e nas linhas do histórico.
+    - `aria-label` na barra de progresso, `aria-live="polite"` no estágio e `role="meter"` nos medidores.
+    - Spinner da Toolbar `aria-hidden`, com o estado no `aria-label` do botão.
+    - Status do histórico em `--text-secondary`, e banner neutro para Cancelled.
+  - **D**: o preset Meeting pede "Action Items / Next Steps" como checklist `- [ ] item`. Conferido: `handleCreateNoteFromChat` grava o Markdown como está, o modo `plain` só faz `stripMarkCitations` + `trim`, e o editor (`tiptap-markdown` com `TaskList`/`LinkedTaskItem`, nome `taskItem`) usa o `markdown-it-task-lists`. Cada linha vira `taskItem`, o mesmo caminho do template TODOS (`- [ ] `). Não precisou de ajuste.
+  - **F**:
+    - `mincer_pick_file` foi trocado por `mincer_pick_files` (multi-seleção, filtro único com mídia + txt/md). O antigo foi removido.
+    - O Start enfileira um item por arquivo, na ordem. Os que falham continuam selecionados, com o erro por arquivo, e a tela vai para o primeiro item criado.
+    - Arrastar e soltar usa `getCurrentWebview().onDragDropEvent` com a tela New montada: destaca a área e seleciona os arquivos sem iniciar. O `dragDropEnabled` já era o padrão (true) e não há outro listener no app.
+  - **Docs**:
+    - `DOCS/specs/mincer.md` (§2–§8 e §10) e linha do menu.
+    - `DOCS/specs/PRD.md`: §4 com o 4º modo e o bloco Mincer; §9 com a exceção de volume na não-meta de resumo automático e as condições dela.
+    - `DOCS/backlog.md`: P13, P14 e G como itens novos; o RAG por trechos como sub-item do "Mincer — fase 2", que já existia.
+- Desvios e decisões:
+  - **Estados persistentes**: no SQLite, como pedido. O vínculo de chat continua no localStorage, sem mudança.
+  - **"Novo" também no `error`**: o toast também dispara no erro e o item exige ação. Cancelled, Interrupted e o item devolvido no Quit não marcam.
+  - **Marca "Sent to notebook" sem tocar no modal compartilhado**: envolvi os callbacks em vez de criar uma prop `onSaved`.
+  - **Rascunho num objeto do módulo**, e não no `sessionStorage`: texto colado grande não esbarra na cota, e o requisito é só a troca de modo.
+  - **`formatElapsed` foi para `lib/mincer.ts`**, usado pela Toolbar e pela tela New, sem duplicar.
+  - **Arquivos soltos não são filtrados por extensão no front**: o Rust já valida por arquivo ("This file type is not supported."), e o erro aparece por arquivo.
+  - **Arquivos editados com CRLF**, como o resto do working copy (autocrlf).
+- Verificações:
+  - `cargo check` em `src-tauri`: OK, sem warnings.
+  - `npx tsc --noEmit`: OK.
+  - `npm run build`: OK (só o aviso de chunk grande, que já existia).
+  - Não rodei `tauri dev`.
+- Files changed:
+  - src-tauri/src/documents.rs
+  - src-tauri/src/lib.rs
+  - src-tauri/src/mincer/mod.rs, db.rs, record.rs, jobs.rs, summarize.rs, transcribe.rs
+  - src/App.tsx
+  - src/components/Toolbar/Toolbar.tsx, Toolbar.module.css
+  - src/components/Settings/SettingsModal.tsx
+  - src/components/ChatPanel/ChatPanel.tsx, ChatPanel.module.css, SaveToNoteModal.tsx
+  - src/hooks/useChat.ts
+  - src/hooks/useMincerJob.ts
+  - src/lib/mincer.ts
+  - src/components/Mincer/Mincer.tsx, Mincer.module.css, MincerHistory.tsx, MincerHistory.module.css, MincerNew.tsx, MincerNew.module.css, MincerItemView.tsx, MincerItemView.module.css, mincerContext.ts, presets.ts
+  - DOCS/specs/mincer.md, DOCS/specs/PRD.md, DOCS/backlog.md, DOCS/docs.menu.md
+- Files created: nenhum
+- Files removed: nenhum (só o comando `mincer_pick_file`/`mincerPickFile`, substituído)
+- Left behind:
+  - Fora por decisão da triagem: P13, P14, G e o RAG de transcrições, todos no backlog.
+  - Do P6, o modelo pré-selecionado ou "Recommended" e o preço por minuto ficaram de fora: não há id seguro.
+  - Chave ausente continua sem botão "Open Settings" na tela New (cenário de borda do uxreport, fora da triagem).
+  - Pendente o smoke test pelo Coordenador:
+    - gravar e ver o nível das duas faixas e o relógio na Toolbar;
+    - Discard;
+    - soltar vários arquivos;
+    - "New" e o ponto na Toolbar após o toast;
+    - "Sent to notebook" após o reinício;
+    - checklist da Meeting virando taskItem;
+    - aviso de corte no Chat;
+    - erro 402/401 legível.
+
+### CodeReviewAgent — 20261031022834
+- Summary: Review final pós-UX. `cargo check`, `tsc` e `build` passam.
+  - As correções do review anterior continuam válidas: Job Object, URL do YouTube com `--`, `force_summary` e `stripMarkCitations`.
+  - As melhorias de UX estão corretas e sem regressão em Chat, Notebook, Library, Reader, Settings e SaveToNoteModal:
+    - migração `unseen`/`sent_to_notebook_at` idempotente;
+    - nível de áudio a 4/s sem re-render do `App` e sem listener vazando;
+    - relógio da Toolbar isolado;
+    - Discard sem corrida;
+    - drag-drop que não afeta outros drops (nenhum `dragDropEnabled`, nenhum outro drop de arquivo do SO);
+    - linha de origem e checklist corretos;
+    - toast nunca no cancelamento;
+    - nenhum comando na thread principal.
+  - 1 importante: erros do ffmpeg/yt-dlp chegam crus ao banner e ao toast. O `JobError::context` junta prefixo + stderr sem `\n\n`, o que anula a P5 no YouTube.
+  - 5 nits:
+    - drop durante a gravação tira a tela da aba Record;
+    - falha parcial no Start de vários arquivos não recarrega o histórico;
+    - "(after 3 attempts)" cai no detalhe;
+    - rótulo do resumo errado após Regenerate falho;
+    - pasta solta dá "file not found".
+- Verdict: APROVADO COM RESSALVAS
+- Output: DOCS/reports/31-10-2026/reviewreport_20261031022834.md
+
+### CodeAgent — ajuste final (pós-review 20261031022834) — 20261031030000
+- Summary:
+  - Importante 1: `JobError::context` agora grava `frase` + linha em branco + stderr. Quando o stderr tem uma linha `ERROR:` (yt-dlp), o motivo entra na frase, sem o `[extractor] <id>:` (ex.: "Could not download the YouTube audio: Video unavailable"); sem ela, a frase é "<etapa>.". `stderr_tail` começa numa linha inteira. Banner e toast mostram só a frase.
+  - Nit 2: o drop com gravação em curso só troca a seleção de arquivos, sem sair da aba Record.
+  - Nit 3: com falha parcial no Start de vários arquivos, o histórico recarrega (`onQueued`) e o erro continua visível.
+  - Nit 4: "(after 3 attempts)" vai na frase, antes do `\n\n`.
+  - Nit 5: o Regenerate grava as opções em `appData/mincer/<id>/regenerate.json` (pendentes, sem mudar o schema). O job usa essas opções e as grava no item junto com o resumo (`set_summary_with_options`). A pasta some no `done`. O Resume de um Regenerate pendente troca o modelo nas opções pendentes, não no item. `db::set_options` foi removido (sem uso).
+  - Nit 6: uma pasta dá "Folders aren't supported — drop files.".
+  - Pedido do Orquestrador: sem a chave do OpenRouter, a tela New bloqueia o Start (exceto Capture text) e mostra "Add your OpenRouter key in Settings." com "Open Settings", que abre na seção OpenRouter Integration. Para isso, `onOpenSettings` do Mincer passou a receber a seção, e o App passa `missingApiKey = apiKeyChecked && !hasApiKey`.
+  - Spec `DOCS/specs/mincer.md` atualizada (File, erros, Regenerate, chave).
+  - `cargo check` sem warnings, `npx tsc --noEmit` OK e `npm run build` OK (só o aviso de chunk que já existia).
+- Files changed:
+  - src-tauri/src/mincer/sidecar.rs
+  - src-tauri/src/mincer/transcribe.rs
+  - src-tauri/src/mincer/mod.rs
+  - src-tauri/src/mincer/db.rs
+  - src-tauri/src/mincer/jobs.rs
+  - src/components/Mincer/MincerNew.tsx
+  - src/components/Mincer/Mincer.tsx
+  - src/App.tsx
+  - DOCS/specs/mincer.md
+- Files created:
+  - nenhum
+- Files removed:
+  - nenhum
+- Left behind:
+  - Nada do review ficou de fora.
+  - Não testado no app (sem `tauri dev`). Falta conferir à mão:
+    - YouTube bloqueado/indisponível (frase com o motivo no toast);
+    - Regenerate falhando com 402 (rótulo continua o antigo);
+    - tela New sem chave.
+
+### Orchestrator — encerramento — 20261031024500
+- Summary: Pipeline completo concluído na branch `feat/mincer` (não commitado): explorer → planner → code → review (reprovado: 1 crítico, 4 importantes) → ajustes → uxAgent → triagem e implementação das melhorias de UX → review final (aprovado com ressalvas: 1 importante, 5 nits) → ajustes finais. `npx tsc --noEmit` e `cargo check` conferidos pelo Orquestrador após a última passada; sidecars presentes em `src-tauri/binaries/`.
+- Inputs:
+  - DOCS/reports/31-10-2026/reviewreport_20261031022834.md
+- Decision: Entregar ao Coordenador para o smoke test no app (`npm run tauri:dev`). Ficou para trás (backlog): RAG de transcrições longas, busca na transcrição, Assistant sem contexto do Mincer, estimativa de duração/custo, clique no toast, MSIX (microfone + sidecars), licença/tamanho do ffmpeg, silêncio do loopback WASAPI / dessincronia na mixagem, origem e hash dos sidecars no script de cópia.
+- Next step: aguardando Coordenador (teste)
+
+### Orchestrator — encerramento (pós-entrega) — 20261031040000
+- Summary: Depois do encerramento, a pedido do Coordenador: PDF em "Choose files" (texto extraído no worker com `pdf_text_from_mem`); parada automática da gravação por silêncio (padrão 10 min, aviso aos 5) e teto (Settings, padrão 3 h, aviso 5 min antes) com "+30 min" na tela de gravação; "Stop recording and process" no tray e Ctrl+Alt+R (registrado só durante a gravação); `fetch-sidecars.ps1` sem dependência do projeto Minuta (confere SHA-256; `-Source` copia); regra "nunca `git clean -x`" em `DOCS/docs.menu.md`. Essas mudanças passaram por `cargo check`, `tsc` e `build`, sem code review de outro agente.
+- Decision: A branch `feat/mincer` fica apartada: sem merge em `develop` e fora das releases até nova decisão. O Coordenador usará um build local com dados de produção por alguns dias para avaliar funcionalidades extras. Pendências no backlog (sidecars das fontes oficiais, MSIX, RAG de transcrições, gravação pelo uso do microfone, guardar áudio, entre outras).
+- Next step: concluído (aguardando avaliação de uso do Coordenador)

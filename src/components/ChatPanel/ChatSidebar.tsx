@@ -115,22 +115,26 @@ const RemoveFromFolderIcon = () => (
 
 type ActiveDragKind = 'folder' | 'conv' | null
 
-// Grupos visuais das pastas automáticas (Library / Notebook): estado recolhido
+// Grupos visuais das pastas automáticas (Library / Notebook / Mincer): estado recolhido
 // persistido; começam recolhidos sem preferência salva.
 const GROUP_COLLAPSED_KEY = 'monet:chat-group-collapsed'
-type GroupCollapsed = { library: boolean; notebook: boolean }
+type GroupCollapsed = { library: boolean; notebook: boolean; mincer: boolean }
 
 function loadGroupCollapsed(): GroupCollapsed {
   try {
     const raw = localStorage.getItem(GROUP_COLLAPSED_KEY)
     if (raw) {
       const parsed = JSON.parse(raw)
-      return { library: parsed?.library !== false, notebook: parsed?.notebook !== false }
+      return {
+        library: parsed?.library !== false,
+        notebook: parsed?.notebook !== false,
+        mincer: parsed?.mincer !== false,
+      }
     }
   } catch {
     /* ignore */
   }
-  return { library: true, notebook: true }
+  return { library: true, notebook: true, mincer: true }
 }
 
 export function ChatSidebar({
@@ -227,16 +231,23 @@ export function ChatSidebar({
 
   // Criar uma pasta automática sempre altera `folders`, então recalcula aqui.
   const autoGroups = useMemo(() => getAutoFolderGroups(), [folders])
-  const { manualFolders, libraryFolders, notebookFolders } = useMemo(() => {
+  const { manualFolders, libraryFolders, notebookFolders, mincerFolders } = useMemo(() => {
     const manual: ChatFolder[] = []
     const library: ChatFolder[] = []
     const notebook: ChatFolder[] = []
+    const mincer: ChatFolder[] = []
     for (const f of folders) {
       if (autoGroups.library.has(f.id)) library.push(f)
       else if (autoGroups.notebook.has(f.id)) notebook.push(f)
+      else if (autoGroups.mincer.has(f.id)) mincer.push(f)
       else manual.push(f)
     }
-    return { manualFolders: manual, libraryFolders: library, notebookFolders: notebook }
+    return {
+      manualFolders: manual,
+      libraryFolders: library,
+      notebookFolders: notebook,
+      mincerFolders: mincer,
+    }
   }, [folders, autoGroups])
 
   const [groupCollapsed, setGroupCollapsedState] = useState<GroupCollapsed>(loadGroupCollapsed)
@@ -261,7 +272,9 @@ export function ChatSidebar({
       ? 'library'
       : autoGroups.notebook.has(activeFolderId)
         ? 'notebook'
-        : null
+        : autoGroups.mincer.has(activeFolderId)
+          ? 'mincer'
+          : null
     if (group && groupCollapsed[group]) setGroupCollapsed({ ...groupCollapsed, [group]: false })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeFolderId])
@@ -396,9 +409,9 @@ export function ChatSidebar({
     const overId = String(over.id)
     if (activeId === overId) return
 
-    // Folder reorder (só dentro do mesmo grupo: manual / Library / Notebook)
+    // Folder reorder (só dentro do mesmo grupo: manual / Library / Notebook / Mincer)
     if (activeId.startsWith('folder:') && overId.startsWith('folder:')) {
-      const folderGroups = [manualFolders, libraryFolders, notebookFolders].map((g) =>
+      const folderGroups = [manualFolders, libraryFolders, notebookFolders, mincerFolders].map((g) =>
         g.map((f) => `folder:${f.id}`)
       )
       const group = folderGroups.find((g) => g.includes(activeId))
@@ -541,7 +554,11 @@ export function ChatSidebar({
     )
   }
 
-  function renderFolderGroup(group: 'library' | 'notebook', label: string, list: ChatFolder[]) {
+  function renderFolderGroup(
+    group: 'library' | 'notebook' | 'mincer',
+    label: string,
+    list: ChatFolder[]
+  ) {
     if (list.length === 0) return null
     const isCollapsed = groupCollapsed[group]
     return (
@@ -631,6 +648,7 @@ export function ChatSidebar({
           </SortableContext>
           {renderFolderGroup('library', 'Library', libraryFolders)}
           {renderFolderGroup('notebook', 'Notebook', notebookFolders)}
+          {renderFolderGroup('mincer', 'Mincer', mincerFolders)}
 
           {/* Loose conversations */}
           {(looseConversationIds.length > 0 || folders.length > 0) && (

@@ -210,6 +210,11 @@ page text and work with the book info and highlights instead.
 Use concise Markdown. No greetings or filler.
 Always respond in the user's language: ${language}.`
 }
+
+// System prompt da pasta de chat de um item do Mincer, gravado na criação.
+function buildMincerSystemPrompt(language: string): string {
+  return `You are helping the user work with content processed by Monet's Mincer (a meeting, recording, video, article or pasted text). Each user message comes with a system message holding the item's summary and its transcript or text, possibly truncated. Ground your answers in that content and point to the relevant passage when useful. Say clearly when something is not in the content, and when the transcript is marked as truncated, say the answer may be in the missing part. Use concise Markdown. No greetings or filler. Always respond in the user's language: ${language}.`
+}
 // ─────────────────────────────────────────────────────────────────────────────
 
 const CONVERSATIONS_KEY = 'monet:chat-conversations'
@@ -222,6 +227,7 @@ const LEGACY_HISTORY_KEY = 'monet:chat-history'
 const RESPONSE_LINK_KEY = 'monet:ai-response-chat-link'
 const READER_BOOK_FOLDER_LINK_KEY = 'monet:reader-book-folder-link'
 const NOTEBOOK_CHAT_FOLDER_LINK_KEY = 'monet:notes-notebook-folder-link'
+const MINCER_ITEM_FOLDER_LINK_KEY = 'monet:mincer-item-folder-link'
 const NOTEBOOK_MEMORY_MIGRATION_KEY = 'monet:notebook-memory-default-migrated'
 
 // Texto do assistant quando o turno termina sem resposta.
@@ -754,12 +760,63 @@ export function getNotebookIdForChatFolder(folderId: string): string | null {
   return null
 }
 
-// Pastas automáticas (vinculadas a livro do Reader ou a caderno), por id —
-// o nome é cosmético. Usado só para agrupar visualmente na sidebar do chat.
-export function getAutoFolderGroups(): { library: Set<string>; notebook: Set<string> } {
+// ─── Vínculo item do Mincer ↔ pasta de chat ──────────────────────────────────
+// Record itemId → folderId em localStorage, no mesmo padrão do vínculo do
+// Reader: uma pasta por item do Mincer.
+type MincerItemFolderLinks = Record<string, string>
+
+function loadMincerItemFolderLinks(): MincerItemFolderLinks {
+  try {
+    const raw = localStorage.getItem(MINCER_ITEM_FOLDER_LINK_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const out: MincerItemFolderLinks = {}
+      for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+        if (typeof v === 'string') out[k] = v
+      }
+      return out
+    }
+  } catch {
+    /* ignore */
+  }
+  return {}
+}
+
+function saveMincerItemFolderLinks(links: MincerItemFolderLinks): void {
+  try {
+    localStorage.setItem(MINCER_ITEM_FOLDER_LINK_KEY, JSON.stringify(links))
+  } catch (err) {
+    console.error('failed to persist mincer item-folder links', err)
+  }
+}
+
+// Só devolve o vínculo se a pasta ainda existe (pode ter sido apagada na sidebar).
+export function getMincerChatFolderId(itemId: string): string | null {
+  const folderId = loadMincerItemFolderLinks()[itemId]
+  return folderId && loadFolders().some((f) => f.id === folderId) ? folderId : null
+}
+
+// Busca reversa (pasta → item). Lê o localStorage a cada chamada.
+export function getMincerItemIdForChatFolder(folderId: string): string | null {
+  for (const [itemId, linkedFolderId] of Object.entries(loadMincerItemFolderLinks())) {
+    if (linkedFolderId === folderId) return itemId
+  }
+  return null
+}
+
+// Pastas automáticas (vinculadas a livro do Reader, a caderno ou a item do
+// Mincer), por id — o nome é cosmético. Usado só para agrupar visualmente na
+// sidebar do chat.
+export function getAutoFolderGroups(): {
+  library: Set<string>
+  notebook: Set<string>
+  mincer: Set<string>
+} {
   return {
     library: new Set(Object.values(loadReaderBookFolderLinks())),
     notebook: new Set(Object.values(loadNotebookChatFolderLinks())),
+    mincer: new Set(Object.values(loadMincerItemFolderLinks())),
   }
 }
 
@@ -1008,6 +1065,79 @@ export function createPreloadedChatConversation(params: {
     console.error('failed to persist active chat id', err)
   }
   return id
+}
+
+// Abre (ou cria) a conversa do item do Mincer na pasta dele e a deixa ativa.
+// Como deleteChatFolderById, só é chamada com nenhum `useChat` montado nesta
+// janela (a tela do Mincer); a janela assistant recebe pelo evento `storage`.
+export function createMincerChatConversation(params: {
+  itemId: string
+  title: string
+  firstMessage: string
+}): string {
+  const folders = loadFolders()
+  const conversations = loadConversations()
+  const linkedId = getMincerChatFolderId(params.itemId)
+  const linked = linkedId ? folders.find((f) => f.id === linkedId) : undefined
+
+  if (linked) {
+    const ids = new Set(folderConversationIds(linked, conversations, folders))
+    const latest = conversations
+      .filter((c) => ids.has(c.id))
+      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))[0]
+    if (latest) {
+      activateChatConversation(latest.id)
+      return latest.id
+    }
+  }
+
+  let folder: ChatFolder
+  if (linked) {
+    folder = linked
+  } else {
+    // Só o título: a pasta já fica no grupo "Mincer" da sidebar.
+    folder = makeNewFolder(params.title.trim().slice(0, 90) || 'Untitled')
+    folder.systemPrompt = buildMincerSystemPrompt(
+      localStorage.getItem('monet:user-language') ?? navigator.language
+    )
+    folder.systemPromptMode = 'append'
+  }
+
+  const now = new Date().toISOString()
+  const conv: ChatConversation = {
+    id: nanoid(),
+    title: params.title,
+    messages: [{ id: nanoid(), role: 'assistant', content: params.firstMessage, timestamp: now }],
+    createdAt: now,
+    updatedAt: now,
+    folderId: folder.id,
+  }
+  const updatedFolder: ChatFolder = {
+    ...folder,
+    conversationIds: [conv.id, ...folder.conversationIds],
+    expanded: true,
+  }
+  // Pastas antes das conversas: mesma regra de deleteChatFolderById.
+  saveFolders(
+    linked
+      ? folders.map((f) => (f.id === folder.id ? updatedFolder : f))
+      : [updatedFolder, ...folders]
+  )
+  saveConversations([conv, ...conversations])
+  const links = loadMincerItemFolderLinks()
+  links[params.itemId] = folder.id
+  saveMincerItemFolderLinks(links)
+  activateChatConversation(conv.id)
+  return conv.id
+}
+
+export function deleteMincerChatFolder(itemId: string): void {
+  const links = loadMincerItemFolderLinks()
+  const folderId = links[itemId]
+  if (!folderId) return
+  deleteChatFolderById(folderId)
+  delete links[itemId]
+  saveMincerItemFolderLinks(links)
 }
 
 // Nome da pasta de chat usada pelas conversas iniciadas na janela assistant.

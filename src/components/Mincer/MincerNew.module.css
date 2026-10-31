@@ -1,0 +1,230 @@
+.new {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-primary, #ddddf1);
+}
+
+.intro {
+  margin: 0;
+  font-size: 13px;
+  line-height: var(--lh-ui);
+  color: var(--text-secondary, #9898a4);
+}
+
+.tabs {
+  display: flex;
+  gap: var(--space-1);
+  border-bottom: 1px solid var(--border, #333340);
+}
+
+.tab,
+.tabActive {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: var(--space-1h) var(--space-3);
+  margin-bottom: -1px;
+  color: var(--text-secondary, #9898a4);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--text-primary, #ddddf1);
+}
+
+.tabActive {
+  color: var(--accent, #7b6ed4);
+  border-bottom-color: var(--accent, #7b6ed4);
+}
+
+.tab:focus-visible,
+.tabActive:focus-visible,
+.segment:focus-visible,
+.segmentActive:focus-visible {
+  outline: 2px solid var(--accent, #7b6ed4);
+  outline-offset: -2px;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.fileRow,
+.fileRowDragging {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-2);
+  border: 1px dashed transparent;
+  border-radius: var(--radius-md);
+}
+
+.fileRowDragging {
+  border-color: var(--accent, #7b6ed4);
+  background: var(--surface-1, #1d1d34);
+}
+
+.fileName {
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-secondary, #9898a4);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.textarea,
+.input {
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text-primary, #ddddf1);
+  background: var(--surface-1, #1d1d34);
+  border: 1px solid var(--border, #333340);
+  border-radius: var(--radius-sm);
+}
+
+.textarea {
+  resize: vertical;
+  padding: var(--space-3);
+  line-height: var(--lh-ui);
+}
+
+.input {
+  height: var(--control-lg);
+  padding: 0 var(--space-3);
+}
+
+.textarea:focus,
+.input:focus {
+  outline: none;
+  border-color: var(--accent, #7b6ed4);
+}
+
+.segmented {
+  align-self: flex-start;
+  display: inline-flex;
+  border: 1px solid var(--border, #333340);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.segment,
+.segmentActive {
+  height: var(--control-md);
+  padding: 0 var(--space-3);
+  border: none;
+  background: transparent;
+  color: var(--text-secondary, #9898a4);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.segment:hover {
+  color: var(--text-primary, #ddddf1);
+}
+
+.segmentActive {
+  background: var(--surface-2, #292959);
+  color: var(--text-primary, #ddddf1);
+}
+
+.recording {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.recordDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-danger, #e05555);
+  animation: recordPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes recordPulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.recordTime {
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary, #ddddf1);
+}
+
+.levels {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1h);
+}
+
+.level {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.levelLabel {
+  width: 48px;
+  font-size: 12px;
+  color: var(--text-secondary, #9898a4);
+}
+
+.levelTrack {
+  width: 200px;
+  height: 6px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2, #292959);
+  overflow: hidden;
+}
+
+.levelFill {
+  height: 100%;
+  background: var(--accent-ai, #5dcaa5);
+  transition: width 0.2s linear;
+}
+
+.errorText {
+  white-space: pre-line;
+}
+
+.warnings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.models {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted, #7c7c93);
+}
+
+.blocked {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-2);
+}

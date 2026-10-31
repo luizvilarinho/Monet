@@ -1,7 +1,10 @@
+import { useEffect, useState } from 'react'
+import { CircleNotch } from '@phosphor-icons/react'
 import logoUrl from '../../assets/logo_monet_vector.svg'
+import { formatElapsed } from '../../lib/mincer'
 import styles from './Toolbar.module.css'
 
-export type ActiveMode = 'notebook' | 'chat' | 'library'
+export type ActiveMode = 'notebook' | 'chat' | 'library' | 'mincer'
 
 export interface ToolbarProps {
   activeMode: ActiveMode
@@ -17,6 +20,20 @@ export interface ToolbarProps {
   onToggleFocus?: () => void
   previewMode?: boolean
   onTogglePreview?: () => void
+  mincerBusy?: boolean
+  // Gravação em curso no Mincer (início em ms), ou null.
+  mincerRecordingStartedAt?: number | null
+  mincerUnseen?: boolean
+}
+
+// O relógio re-renderiza só este pedaço, não a Toolbar nem o App.
+function RecordingClock({ startedAt }: { startedAt: number }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [])
+  return <span className={styles.modeClock}>{formatElapsed(now - startedAt)}</span>
 }
 
 export function Toolbar({
@@ -33,7 +50,18 @@ export function Toolbar({
   onToggleFocus,
   previewMode = false,
   onTogglePreview,
+  mincerBusy = false,
+  mincerRecordingStartedAt = null,
+  mincerUnseen = false,
 }: ToolbarProps) {
+  const mincerRecording = mincerRecordingStartedAt !== null
+  const mincerTitle = mincerRecording
+    ? 'Mincer is recording'
+    : mincerBusy
+      ? 'Mincer is working'
+      : mincerUnseen
+        ? 'Mincer has new results'
+        : undefined
   return (
     <header className={styles.toolbar}>
       <img src={logoUrl} alt="Monet" className={styles.brand} onClick={() => onSetMode('notebook')} />
@@ -131,6 +159,26 @@ export function Toolbar({
           aria-pressed={activeMode === 'library'}
         >
           Library
+        </button>
+
+        <button
+          type="button"
+          className={activeMode === 'mincer' ? styles.modeButtonActive : styles.modeButton}
+          onClick={() => onSetMode('mincer')}
+          aria-pressed={activeMode === 'mincer'}
+          title={mincerTitle}
+          aria-label={mincerTitle}
+        >
+          Mincer
+          {mincerRecording ? (
+            <span className={styles.modeRecording} aria-hidden="true">
+              <span className={styles.modeRecordDot} />
+              <RecordingClock startedAt={mincerRecordingStartedAt} />
+            </span>
+          ) : (
+            mincerBusy && <CircleNotch size={12} className={styles.modeSpinner} aria-hidden="true" />
+          )}
+          {mincerUnseen && !mincerRecording && <span className={styles.modeNewDot} aria-hidden="true" />}
         </button>
       </nav>
     </header>

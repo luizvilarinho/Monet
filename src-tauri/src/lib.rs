@@ -1,6 +1,7 @@
 mod books;
 mod docs_folder;
 mod documents;
+mod mincer;
 mod ocr;
 pub mod rag;
 mod screenshot;
@@ -252,6 +253,12 @@ fn get_tavily_key(app: AppHandle) -> Result<Option<String>, String> {
 
 #[tauri::command]
 async fn extract_pdf_text(bytes: Vec<u8>) -> Result<String, String> {
+    pdf_text_from_mem(bytes).await
+}
+
+// Compartilhado com o Mincer. Roda fora da thread async; panic do pdf_extract
+// (PDF corrompido) vira erro em vez de derrubar o app.
+pub(crate) async fn pdf_text_from_mem(bytes: Vec<u8>) -> Result<String, String> {
     let join = tokio::task::spawn_blocking(move || pdf_extract::extract_text_from_mem(&bytes)).await;
     let text = match join {
         Err(e) if e.is_panic() => {
@@ -1652,6 +1659,8 @@ pub fn run() {
             show_and_focus_window(app, "main");
         }))
         .manage(RequestRegistry(Mutex::new(HashMap::new())))
+        .manage(mincer::MincerJobs::default())
+        .manage(mincer::MincerRecording::default())
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
                 if let Some(icon) = app.default_window_icon() {
@@ -1661,14 +1670,23 @@ pub fn run() {
 
             // ─── System tray ───────────────────────────────────────────────
             let open_item = MenuItemBuilder::with_id("open", "Open").build(app)?;
+            let mincer_stop_item = MenuItemBuilder::with_id(mincer::TRAY_STOP_ID, "Stop recording and process")
+                .enabled(false)
+                .build(app)?;
             let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
-            let tray_menu = MenuBuilder::new(app).items(&[&open_item, &quit_item]).build()?;
-            let mut tray_builder = TrayIconBuilder::new()
+            let tray_menu = MenuBuilder::new(app)
+                .items(&[&open_item, &mincer_stop_item])
+                .separator()
+                .items(&[&quit_item])
+                .build()?;
+            app.manage(mincer::MincerTrayStop(mincer_stop_item));
+            let mut tray_builder = TrayIconBuilder::with_id(mincer::TRAY_ID)
                 .tooltip("Monet")
                 .menu(&tray_menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "open" => show_and_focus_window(app, "main"),
+                    mincer::TRAY_STOP_ID => mincer::stop_recording_from_outside(app),
                     "quit" => app.exit(0),
                     _ => {}
                 })
@@ -1708,6 +1726,7 @@ pub fn run() {
             let startup_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 documents::cleanup_stuck_indexing(startup_handle.clone()).await;
+                mincer::on_startup(startup_handle.clone()).await;
                 documents::scan_all_watched_folders_on_startup(startup_handle).await;
             });
 
@@ -1746,6 +1765,9 @@ pub fn run() {
                     }
                     if shortcut == &ctrl_k && event.state() == ShortcutState::Pressed {
                         toggle_keep_window(app);
+                    }
+                    if shortcut == &mincer::stop_shortcut() && event.state() == ShortcutState::Pressed {
+                        mincer::stop_recording_from_outside(app);
                     }
                 })
                 .build(),
@@ -1832,8 +1854,32 @@ pub fn run() {
             docs_folder::docs_tree,
             docs_folder::docs_read_file,
             docs_folder::docs_watch_start,
-            docs_folder::docs_watch_stop
+            docs_folder::docs_watch_stop,
+            mincer::mincer_list,
+            mincer::mincer_get,
+            mincer::mincer_start,
+            mincer::mincer_resume,
+            mincer::mincer_cancel,
+            mincer::mincer_regenerate_summary,
+            mincer::mincer_rename,
+            mincer::mincer_delete,
+            mincer::mincer_active_job,
+            mincer::mincer_list_transcription_models,
+            mincer::mincer_mark_seen,
+            mincer::mincer_mark_sent_to_notebook,
+            mincer::mincer_pick_files,
+            mincer::mincer_save_files,
+            mincer::mincer_record_start,
+            mincer::mincer_record_stop,
+            mincer::mincer_record_extend,
+            mincer::mincer_record_discard,
+            mincer::mincer_record_status
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                mincer::shutdown(app_handle);
+            }
+        });
 }

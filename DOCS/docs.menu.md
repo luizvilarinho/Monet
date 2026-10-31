@@ -4,6 +4,12 @@ Ponto de entrada para a documentação do projeto. Leia este arquivo primeiro pa
 
 ---
 
+## Regras para todos os agentes
+
+- **Nunca rode `git clean -x`** (nem `-X`, `-fdx` ou variações que apaguem arquivos ignorados). Há arquivos necessários fora do git, como os sidecars do Mincer em `src-tauri/binaries/` (ffmpeg e yt-dlp, ver `DOCS/specs/mincer.md`), que seriam perdidos.
+
+---
+
 ## Papéis
 
 | Papel            | Tipo   | Responsabilidade                                                                                                           |
@@ -37,6 +43,7 @@ Ponto de entrada para a documentação do projeto. Leia este arquivo primeiro pa
 | `DOCS/specs/notemark.md`           | Spec das marcas de atenção (v2): trecho marcado com rótulo opcional, persistido como `<mark data-mark>` (botão "Mark" na régua, Ctrl+Shift+M, `==texto==`), menu da marca, lista Marks de revisão com Resolve, seção "Marks" na coluna de cadernos, `has:mark`/`mark:` no Ctrl+P, tool `search_marks`, citação clicável no chat. Consulte ao trabalhar no editor, na busca, na IA ou no chat. |
 | `DOCS/specs/tags.md`               | Spec das tags de nota como tema transversal: autocomplete no "+ tag", tag clicável na nota, seção "Tags" com contagem e lista das notas da tag (todos os cadernos) na coluna das notas, `tag:` no Ctrl+P. Consulte ao mexer em tags, na coluna de cadernos ou na busca. |
 | `DOCS/specs/noteboard.md`         | Spec do board de notas por tipo: qualquer tipo com propriedade Select/Checkbox vira colunas de cards (config "Board" no modal de tipos, `note_types.board`), seções pelo 2º select com drop, filtro por checkbox, card com modal "Edit note" (Previous/Next) e progresso de tasks, "New" na coluna/seção, boards abaixo de Tasks na coluna de cadernos, painel de IA recolhido no board, `mainArea` único, export CSV no formato do Build your own Radar (description da nota). Consulte ao mexer em tipos de nota, no board ou nos boards de Tasks (`BoardColumns` é comum). |
+| `DOCS/specs/mincer.md`             | Spec do Mincer (4º modo do menu): processador de grandes volumes (arquivo, texto colado, gravação sistema+microfone, YouTube, página web com resumo ou só captura), fila FIFO em background no Rust (`mincer_items` no SQLite, um worker, cancelamento, retomada por pedaços em `appData/mincer/<id>/`, toast nativo ao terminar, erros da API legíveis), marcas "New"/"Sent to notebook" por item, gravação com indicador na Toolbar, nível por faixa e Discard, presets de resumo, Settings › Mincer (modelos), saídas Save .md com front-matter, Send to notebook e Send to Chat (grupo Mincer, contexto efêmero 12k/60k), sidecars ffmpeg/yt-dlp fora do git (`npm run sidecars`). Consulte ao mexer no Mincer, nos sidecars, no grupo Mincer do Chat ou no Settings › Mincer. |
 
 ---
 

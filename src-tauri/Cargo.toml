@@ -24,7 +24,7 @@ tauri-plugin-sql = { version = "2", features = ["sqlite"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
-tokio = { version = "1", features = ["sync", "macros", "time"] }
+tokio = { version = "1", features = ["sync", "macros", "time", "process", "io-util"] }
 futures-util = "0.3"
 rfd = { version = "0.15", default-features = false, features = ["tokio"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
@@ -38,5 +38,10 @@ tauri-plugin-process = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-notification = "2"
-windows = { version = "0.61", features = ["Media_Ocr", "Graphics_Imaging", "Storage_Streams", "Security_Cryptography", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "System_Profile"] }
+windows = { version = "0.61", features = ["Media_Ocr", "Graphics_Imaging", "Storage_Streams", "Security_Cryptography", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "System_Profile", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
+wasapi = "0.15"
+hound = "3.5"
+dom_smoothie = "0.17"
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 

@@ -65,7 +65,7 @@ A IA nunca escreve diretamente na área permanente. Ela só chega lá por uma de
 
 ## 4. Inventário de funcionalidades atuais
 
-O Monet tem três módulos centrais — **Anotações**, **Chat** e **Library** — que compartilham uma base de conhecimento comum e se conectam entre si por pontes explícitas (nunca automáticas).
+O Monet tem três módulos centrais — **Anotações**, **Chat** e **Library** — que compartilham uma base de conhecimento comum e se conectam entre si por pontes explícitas (nunca automáticas). Um quarto modo, o **Mincer**, é a porta de entrada para grandes volumes e só alimenta os outros por clique.
 
 **Anotações**
 
@@ -102,6 +102,15 @@ Onde o usuário lê PDFs, livros e artigos.
 - Cada destaque pode virar uma citação enviada direto pra Anotações — útil pra quem está fazendo um fichamento.
 - Os chats de cada livro **não ficam isolados** na Library: aparecem também na área de Chat geral, como qualquer outra pasta.
 
+**Mincer**
+
+Processa o que o usuário não consegue ler ou ouvir inteiro: arquivo de áudio/vídeo/texto (vários de uma vez, ou soltos na janela), texto colado, gravação do áudio do sistema e do microfone, vídeo do YouTube e página web (resumo ou só captura do texto). Ver `DOCS/specs/mincer.md`.
+
+- Fila em background no Rust: o usuário enfileira e continua trabalhando no Monet; progresso, Cancel, Resume (retoma sem repetir o trabalho já pago) e toast nativo do Windows ao terminar. Itens terminados ficam marcados como novos (no histórico e no botão Mincer) até serem abertos.
+- Gravação com indicador fora da tela (ponto vermelho e tempo no botão Mincer), nível de áudio por faixa e Discard.
+- Transcrição e resumo com presets (Meeting, Class, News, Scientific) e instruções próprias; a transcrição/o texto bruto fica sempre acessível ao lado do resumo. No preset Meeting, as ações saem como checklist, que o usuário pode transformar em tasks com o "Add to Tasks".
+- Saídas só por clique: **Send to notebook** (nota com linha de origem e rótulo de IA no topo; o item fica marcado como enviado), **Send to Chat** (pasta do item no grupo Mincer, com o conteúdo como contexto efêmero e aviso visível quando a transcrição passa do orçamento) e **Save .md**.
+
 ---
 
 ## 6. Escopo de plataforma
@@ -129,6 +138,7 @@ Decisões deliberadas sobre o que o Monet não tenta ser — importantes pra bar
 
 - **Não é um chatbot de propósito geral.** A IA no Monet só existe ancorada no material do usuário (notas, KB, o livro aberto); não é um substituto para ChatGPT/Claude como destino de conversa livre e desconectada de um tema em estudo.
 - **Não faz o trabalho de elaboração pelo usuário.** Recursos que "resumem tudo automaticamente" ou "geram anotações sozinhas" sem curadoria explícita do usuário contrariam o mecanismo perene vs. descartável (item 3) — a IA nunca escreve direto na área permanente.
+  - *Exceção de volume (Mincer):* para reuniões, aulas e vídeos de horas, elaborar sem um intermediário é inviável, então o Mincer resume automaticamente. A exceção vale só dentro dessas condições: o resumo fica no histórico do Mincer e só entra num caderno ou no Chat por clique; a nota enviada leva a origem e o rótulo de IA no topo; a transcrição/o texto bruto (e o "Capture text", sem IA) continuam de primeira classe para o usuário trabalhar sobre o original.
 - **Não é uma ferramenta de anotação rápida/efêmera** (tipo Apple Notes ou Google Keep) para quem só quer anotar sem intenção de aprofundamento contínuo — isso está fora da persona-alvo (item 2).
 - **Não é um gerenciador de projetos/produtividade geral.** Calendar e Tasks existem pra sustentar o estudo ao longo do tempo e rastrear o que ficou pendente nas anotações — sem pretensão de competir com ferramentas de PM (Todoist, Notion como tracker de projetos). Tasks é um gerenciador pessoal de entregas, integrado às notas e ao Calendar; sem colaboração, sem subtarefas como entidade e sem criação automática por IA (a tool "Tasks" do Chat só consulta). Prioridade leve (uma flag) e recorrência simples são permitidas.
 - **Não é colaborativo.** Sem compartilhamento em tempo real, múltiplos usuários num mesmo caderno, ou qualquer forma de trabalho em equipe — é uma ferramenta de estudo individual.

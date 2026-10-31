@@ -26,6 +26,10 @@ export interface SaveToNoteModalProps {
   onAppendToNote?: (note: Note, block: string, requestId: string) => Promise<void>
   onNavigateToNote: (notebookId: string, noteId: string) => void
   onClose: () => void
+  /** Saves `content` as is, without the "Chat Response" header (Mincer). */
+  plain?: boolean
+  /** Title suggested for a new note. */
+  defaultNoteTitle?: string
 }
 
 type Stage =
@@ -88,6 +92,8 @@ export function SaveToNoteModal({
   onAppendToNote,
   onNavigateToNote,
   onClose,
+  plain = false,
+  defaultNoteTitle,
 }: SaveToNoteModalProps) {
   const [stage, setStage] = useState<Stage>(() => initialStage(notebooks.length))
   const [newNotebookName, setNewNotebookName] = useState('')
@@ -111,11 +117,11 @@ export function SaveToNoteModal({
     if (!open) return
     setStage(initialStage(notebooks.length))
     setNewNotebookName('')
-    setNewNoteTitle('')
+    setNewNoteTitle(defaultNoteTitle ?? '')
     setTitleError(null)
     setRecentlyPickedNotebookId(null)
     failedNotebookRef.current = null
-  }, [open, notebooks.length])
+  }, [open, notebooks.length, defaultNoteTitle])
 
   // Auto-foco em campos de input quando aplicável
   useEffect(() => {
@@ -189,11 +195,13 @@ export function SaveToNoteModal({
     }
   }
 
+  const blockFor = () => (plain ? stripMarkCitations(content).trim() : buildToggleBlock(content))
+
   // O "Try again" reenvia o mesmo bloco com o mesmo requestId.
   async function appendToExistingNote(
     notebookId: string,
     note: Note,
-    block = buildToggleBlock(content),
+    block = blockFor(),
     requestId = nanoid()
   ) {
     setStage({ kind: 'saving', notebookId })
@@ -218,7 +226,7 @@ export function SaveToNoteModal({
       })
     } catch (err) {
       const message =
-        err instanceof Error ? err.message : 'Failed to save response to note.'
+        err instanceof Error ? err.message : `Failed to save ${plain ? 'content' : 'response'} to note.`
       setStage({
         kind: 'error',
         message,
@@ -230,7 +238,7 @@ export function SaveToNoteModal({
   async function createAndSaveNewNote(
     notebookId: string,
     title: string,
-    block = buildToggleBlock(content),
+    block = blockFor(),
     requestId = nanoid()
   ) {
     setStage({ kind: 'saving', notebookId })
@@ -272,7 +280,7 @@ export function SaveToNoteModal({
         <div className={styles.body}>
           <p className={styles.emptyTitle}>You have no notebooks yet</p>
           <p className={styles.emptyHelp}>
-            Create a notebook to save this response as a note.
+            Create a notebook to save this {plain ? 'content' : 'response'} as a note.
           </p>
           <input
             ref={newNotebookInputRef}
@@ -477,7 +485,7 @@ export function SaveToNoteModal({
     if (stage.kind === 'success') {
       return (
         <div className={styles.body}>
-          <p className={styles.successTitle}>Response saved</p>
+          <p className={styles.successTitle}>{plain ? 'Saved' : 'Response saved'}</p>
           <p className={styles.successHelp}>
             Added to{' '}
             <span className={styles.targetNotebook}>{stage.notebookName}</span>
@@ -540,7 +548,7 @@ export function SaveToNoteModal({
       className={styles.overlay}
       role="dialog"
       aria-modal="true"
-      aria-label="Save response to a note"
+      aria-label={plain ? 'Save to a note' : 'Save response to a note'}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose()
       }}
