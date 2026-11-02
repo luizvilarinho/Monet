@@ -2,6 +2,7 @@ import { BubbleMenu } from '@tiptap/react/menus'
 import { useEditorState } from '@tiptap/react'
 import { findParentNodeClosestToPos, type Editor } from '@tiptap/core'
 import { useEffect, useRef, useState } from 'react'
+import { Graph } from '@phosphor-icons/react'
 import styles from './FormattingToolbar.module.css'
 import {
   FORMATTING_GROUPS,
@@ -14,6 +15,7 @@ import { findEligibleTaskItems } from './TaskStatus'
 import { HighlightPicker } from './HighlightPicker'
 import { MarkButton } from './MarkButton'
 import { isSelectionMarked } from './NoteMark'
+import { isSelectionRelated, toggleRelatedTerm } from './RelatedTerm'
 
 interface Props {
   editor: Editor
@@ -25,6 +27,11 @@ interface Props {
   onAddToTasks?: () => void
   // Rótulos de marca já usados (seta do "Mark").
   markLabels?: string[]
+  // Botão "Related" (termo do Related content).
+  showRelated?: boolean
+  // Busca na nota (Ctrl+F) aberta: a barra fica escondida para não cobrir a
+  // ocorrência e volta quando a busca fecha.
+  searchOpen?: boolean
 }
 
 const PLUGIN_KEY = 'monetFormattingMenu'
@@ -84,15 +91,22 @@ function renderGroups(
 
 const NO_LABELS: string[] = []
 
-export function FormattingToolbar({ editor, scrollEl, onAskAi, onAddToTasks, markLabels = NO_LABELS }: Props) {
+export function FormattingToolbar({ editor, scrollEl, onAskAi, onAddToTasks, markLabels = NO_LABELS, showRelated = true, searchOpen = false }: Props) {
   const [hiddenByEscape, setHiddenByEscape] = useState(false)
   const hiddenByEscapeRef = useRef(hiddenByEscape)
   hiddenByEscapeRef.current = hiddenByEscape
+  // Lido no shouldShow pelo ref: ao fechar a busca, o foco volta ao editor e
+  // o plugin reavalia sem depender de o BubbleMenu já ter o shouldShow novo.
+  const searchOpenRef = useRef(searchOpen)
+  searchOpenRef.current = searchOpen
 
   // Em captura: com a barra visível, o Esc é dela e chega já tratado
   // (defaultPrevented) a quem escuta no document, como o modal da task.
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
+      // O Esc da busca na nota (Ctrl+F) fecha a busca e devolve o foco com a
+      // ocorrência selecionada: a barra deve aparecer, não sumir.
+      if ((e.target as Element | null)?.closest?.('[data-search-in-note]')) return
       if (e.key === 'Escape') {
         const { from, to } = editor.state.selection
         const visible =
@@ -117,7 +131,7 @@ export function FormattingToolbar({ editor, scrollEl, onAskAi, onAddToTasks, mar
     }
   }, [editor, hiddenByEscape])
 
-  const { inTable, hasSelection, eligibleCount, marked } = useEditorState({
+  const { inTable, hasSelection, eligibleCount, marked, related } = useEditorState({
     editor,
     selector: ({ editor: ed }) => {
       const { from, to } = ed.state.selection
@@ -126,6 +140,7 @@ export function FormattingToolbar({ editor, scrollEl, onAskAi, onAddToTasks, mar
         hasSelection: from !== to,
         eligibleCount: from !== to ? findEligibleTaskItems(ed.state).length : 0,
         marked: from !== to && isSelectionMarked(ed.state),
+        related: from !== to && isSelectionRelated(ed.state),
       }
     },
   })
@@ -149,7 +164,7 @@ export function FormattingToolbar({ editor, scrollEl, onAskAi, onAddToTasks, mar
       editor={editor}
       pluginKey={PLUGIN_KEY}
       shouldShow={({ editor: ed, from: f, to: t }) => {
-        if (hiddenByEscape) return false
+        if (hiddenByEscape || searchOpenRef.current) return false
         if (ed.isActive('linkedNoteBlock')) return false
         const sel = f !== t
         const tbl = ed.isActive('table')
@@ -162,15 +177,24 @@ export function FormattingToolbar({ editor, scrollEl, onAskAi, onAddToTasks, mar
               placement: 'top-start',
               offset: 6,
               flip: false,
-              shift: { crossAxis: true, padding: 4 },
+              shift: { crossAxis: true, padding: 4, boundary: scrollEl ?? undefined },
               // Esconde a barra quando a tabela sai inteira da área visível
               // (o shift crossAxis a prenderia sobre outro conteúdo).
               hide: true,
               scrollTarget: scrollEl ?? undefined,
             }
           : // flip/shift/hide explícitos: o plugin mescla as options, então os
-            // valores do modo tabela persistiriam ao sair dela.
-            { placement: 'top', offset: 8, flip: {}, shift: {}, hide: false, scrollTarget: scrollEl ?? undefined }
+            // valores do modo tabela persistiriam ao sair dela. O shift fica
+            // dentro da área da nota: com a janela como limite, a régua passava
+            // da coluna (overflow: hidden do .editor) e sumia sob a coluna da IA.
+            {
+              placement: 'top',
+              offset: 8,
+              flip: {},
+              shift: { padding: 8, boundary: scrollEl ?? undefined },
+              hide: false,
+              scrollTarget: scrollEl ?? undefined,
+            }
       }
     >
       <div
@@ -189,6 +213,20 @@ export function FormattingToolbar({ editor, scrollEl, onAskAi, onAddToTasks, mar
               activeClassName={styles.active}
             />
             <MarkButton editor={editor} active={marked} labels={markLabels} />
+            {showRelated && (
+              <button
+                className={`${styles.btn} ${styles.related} ${related ? styles.relatedActive : ''}`}
+                title={related ? 'Remove from Related content' : 'Link notes that mention this text (Related content)'}
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  toggleRelatedTerm(editor)
+                }}
+                type="button"
+              >
+                <Graph size={12} aria-hidden />
+                Related
+              </button>
+            )}
             {(onAskAi || showAddToTasks) && <div className={styles.sep} />}
             {showAddToTasks && (
               <button

@@ -316,6 +316,7 @@ export function ReaderNotesPanel({
                 onChange={(content) => handleUpdateActive({ content })}
                 disableSlashCommands
                 disableBlockHandles
+                disableRelatedTerms
                 markLabels={markLabels}
                 tagSuggestions={tagSuggestions}
               />

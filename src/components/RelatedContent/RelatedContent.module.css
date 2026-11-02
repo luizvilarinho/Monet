@@ -58,20 +58,34 @@
   font-weight: 600;
 }
 
+/* Cards em grade: até 3 por linha (a coluna mínima é 1/3 da largura), e
+   menos quando a coluna fica abaixo de 220px. Rótulos de grupo e o "Show N
+   more" ocupam a linha inteira. */
 .list {
+  --related-gap: var(--space-2);
   list-style: none;
   margin: 0;
   padding: 0 16px 12px 28px;
   overflow-y: auto;
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(max(220px, calc((100% - 2 * var(--related-gap)) / 3)), 1fr));
+  gap: var(--related-gap);
 }
 
-.item + .item {
-  margin-top: 4px;
+.section,
+.termChips,
+.moreRow {
+  grid-column: 1 / -1;
+}
+
+.item {
+  min-width: 0;
 }
 
 .itemButton {
   width: 100%;
+  height: 100%;
   text-align: left;
   background: var(--surface-1, #1e1e22);
   border: 1px solid var(--border, #333340);
@@ -89,10 +103,115 @@
   background: var(--surface-2, #26262c);
 }
 
+/* Tipo e caderno da nota, lado a lado. */
+.itemMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  margin-bottom: var(--space-0);
+}
+
 .itemNotebook {
   font-size: 11px;
   color: var(--text-muted, #606070);
-  margin-bottom: 2px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Por que a nota veio no grupo dos termos. O acento puro fica abaixo de 4,5:1
+   sobre o card; clareado, dá 5,7:1 (4,7:1 no hover). */
+.itemReason {
+  font-size: 12px;
+  line-height: var(--lh-ui);
+  color: color-mix(in srgb, var(--accent) 70%, var(--text-primary));
+  margin-bottom: var(--space-0);
+}
+
+/* Rótulo de grupo ("Linked by terms", "Suggested"), no tom do contador. */
+/* O gap da grade já separa o rótulo dos cards; aqui só o respiro acima. */
+.section {
+  padding: var(--space-1) 0 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted, #606070);
+}
+
+.section:first-child {
+  padding-top: 0;
+}
+
+/* Chips dos termos da nota com a contagem (padrão dos chips da lista Marks).
+   O clique filtra o grupo pelo termo; termo sem notas fica esmaecido. */
+.termChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.termChip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 100%;
+  min-height: var(--control-sm);
+  padding: 0 var(--space-2);
+  border-radius: 999px;
+  border: 1px solid var(--border, #333340);
+  background: transparent;
+  color: var(--text-secondary, #a0a0b8);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.termChip:hover {
+  color: var(--text-primary, #e8e8f0);
+}
+
+.termChipActive,
+.termChipActive:hover {
+  color: var(--text-primary, #e8e8f0);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.termChip[aria-disabled='true'] {
+  color: var(--text-muted, #606070);
+  opacity: 0.6;
+  cursor: default;
+}
+
+.termChipText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.termChipCount {
+  font-size: 11px;
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+
+.more {
+  margin-top: var(--space-1);
+  padding: var(--space-1) 0;
+  background: transparent;
+  border: none;
+  color: var(--accent, #7c6af5);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.more:hover {
+  text-decoration: underline;
 }
 
 .itemTitle {

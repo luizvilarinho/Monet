@@ -19,6 +19,7 @@ import { RAG_REWRITE_MODEL_KEY, ragRetrieve } from '../../lib/rag'
 import { isOpen, isTaskBodyNote, statusColor, statusName, todosTitleOf, type TodosInfo } from '../../lib/tasks'
 import type { Note, Notebook, NoteType, Task, TaskStatusDef } from '../../types'
 import { TypeIcon } from '../NoteTypes/TypeIcon'
+import { TypeEyebrow } from '../NoteTypes/TypeEyebrow'
 import styles from './SearchPalette.module.css'
 
 interface SearchPaletteProps {
@@ -121,6 +122,12 @@ export function SearchPalette({
   const notebookMap = new Map(notebooks.map((nb) => [nb.id, nb.name]))
   // Nota sem caderno (Reader) não abre pela palette.
   const searchable = useMemo(() => notes.filter((n) => n.notebookId), [notes])
+  const typeById = useMemo(() => new Map(noteTypes.map((t) => [t.id, t])), [noteTypes])
+  // O nome do tipo conta como texto da busca.
+  const typeNames = useMemo(
+    () => new Map(noteTypes.map((t) => [t.id, normalizeSearch(t.name).replace(/\s+/g, ' ').trim()])),
+    [noteTypes]
+  )
 
   useEffect(() => {
     if (!open) {
@@ -182,6 +189,7 @@ export function SearchPalette({
       typeId: parsed.typeId,
       archived: parsed.archived,
       tag: parsed.tag,
+      typeNames,
     })
       .filter((r) => !(isTaskBodyNote(r.note) && taskNoteIds.has(r.note.id)))
       .map((r) => ({ kind: 'note', ...r }))
@@ -190,7 +198,7 @@ export function SearchPalette({
       ...foundNotes,
       ...foundTasks.map((task): SearchResult => ({ kind: 'task', task })),
     ]
-  }, [open, searchable, notebooks, tasks, todosById, text, hasFilters, parsed.notebookId, parsed.typeId, parsed.archived, parsed.marked, parsed.markLabel, parsed.tag])
+  }, [open, searchable, notebooks, tasks, todosById, text, hasFilters, parsed.notebookId, parsed.typeId, parsed.archived, parsed.marked, parsed.markLabel, parsed.tag, typeNames])
 
   // Escopo semântico: pastas de notas dos cadernos com IA ligada (só a do
   // `#Caderno`, se houver).
@@ -565,11 +573,17 @@ export function SearchPalette({
             } else if (result.kind === 'mark') {
               const { note, entry } = result
               const label = noteLabel(note)
+              const type = note.typeId ? typeById.get(note.typeId) : undefined
               key = `mark-${note.id}-${entry.index}`
               body = (
                 <div {...itemProps}>
-                  {note.notebookId && notebookMap.has(note.notebookId) && (
-                    <div className={styles.itemNotebook}>{notebookMap.get(note.notebookId)}</div>
+                  {((note.notebookId && notebookMap.has(note.notebookId)) || type) && (
+                    <div className={styles.itemMeta}>
+                      {type && <TypeEyebrow type={type} />}
+                      {note.notebookId && notebookMap.has(note.notebookId) && (
+                        <span className={styles.itemNotebook}>{notebookMap.get(note.notebookId)}</span>
+                      )}
+                    </div>
                   )}
                   <div className={styles.itemTitleRow}>
                     <div className={styles.itemTitle}>{note.title || 'Untitled'}</div>
@@ -586,11 +600,17 @@ export function SearchPalette({
             } else {
               const note = result.note
               const label = noteLabel(note)
+              const type = note.typeId ? typeById.get(note.typeId) : undefined
               key = `${result.kind}-${note.id}`
               body = (
                 <div {...itemProps}>
-                  {note.notebookId && notebookMap.has(note.notebookId) && (
-                    <div className={styles.itemNotebook}>{notebookMap.get(note.notebookId)}</div>
+                  {((note.notebookId && notebookMap.has(note.notebookId)) || type) && (
+                    <div className={styles.itemMeta}>
+                      {type && <TypeEyebrow type={type} />}
+                      {note.notebookId && notebookMap.has(note.notebookId) && (
+                        <span className={styles.itemNotebook}>{notebookMap.get(note.notebookId)}</span>
+                      )}
+                    </div>
                   )}
                   <div className={styles.itemTitleRow}>
                     <div className={styles.itemTitle}>{note.title || 'Untitled'}</div>

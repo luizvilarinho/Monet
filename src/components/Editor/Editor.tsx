@@ -45,6 +45,7 @@ import {
   type TaskStatusStorage,
 } from './TaskStatus'
 import { SearchInNote } from './SearchInNote'
+import { SearchHighlight } from './SearchHighlight'
 import { NoteMarkMenu, NOTE_MARK_MENU_OPEN } from './NoteMarkMenu'
 import {
   noteMarkElement,
@@ -91,9 +92,10 @@ export interface EditorProps {
   disableSlashCommands?: boolean
   // Sem o handle genérico de bloco (⋮⋮) nas linhas do editor.
   disableBlockHandles?: boolean
+  // Sem a opção "Related" na régua (Reader: nota sem caderno fica fora do
+  // Related content).
+  disableRelatedTerms?: boolean
   previewMode?: boolean
-  // Modo focus: o corpo usa a largura disponível.
-  focusMode?: boolean
   // "Ask AI" na toolbar de seleção (chat do caderno).
   onAskAi?: (text: string) => void
   // "List" do menu da marca e Ctrl+clique numa marca: abre a lista de marcas
@@ -197,8 +199,8 @@ export function Editor({
   isCalendarNote = false,
   disableSlashCommands,
   disableBlockHandles = false,
+  disableRelatedTerms = false,
   previewMode = false,
-  focusMode = false,
   onAskAi,
   onShowMarkInList,
   markLabels = NO_STRINGS,
@@ -283,6 +285,7 @@ export function Editor({
     extensions: [
       ...buildBaseExtensions('Capture your thoughts...'),
       PreviewMode,
+      SearchHighlight,
       ...(disableSlashCommands
         ? []
         : [
@@ -966,7 +969,7 @@ export function Editor({
   const weekdayLabel = calendarDate ? getWeekdayName(calendarDate) : null
 
   return (
-    <div className={`${styles.editor} ${focusMode ? styles.focus : ''}`}>
+    <div className={styles.editor}>
       {notebookName && (
         <span className={styles.notebookLabel}>
           {notebookName}{subjectName ? ` | ${subjectName}` : ''}
@@ -1252,6 +1255,8 @@ export function Editor({
           onAskAi={onAskAi}
           onAddToTasks={onCreateTasks ? handleAddToTasks : undefined}
           markLabels={markLabels}
+          showRelated={!disableRelatedTerms}
+          searchOpen={searchVisible}
         />}
       {editor && (
         <NoteMarkMenu

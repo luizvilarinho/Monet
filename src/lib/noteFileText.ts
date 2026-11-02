@@ -33,6 +33,8 @@ const DIV_TAG_RE = /<div\b|<\/div>/g
 const EMBED_ID_RE = /<embed-block\b[^>]*\bdata-cmd="([^"]*)"/g
 const LINKED_NOTE_ID_RE = /<linked-note\b[^>]*\bdata-note-id="([^"]*)"/g
 const BR_RE = /<br\s*\/?>/gi
+const SPAN_TAG_RE = /<span\b[^>]*>|<\/span>/g
+const RELATED_ATTR_RE = /\bdata-related\b/
 const LINKED_NOTE_BUDGET = 2000
 const IMAGE_TEXT_BUDGET = 2000
 // Marcador do texto de OCR, trocado só no fim: o texto pode conter "<div" e
@@ -84,8 +86,23 @@ function replaceToggleBlocks(text: string, render: (el: Element) => string): str
   return out + text.slice(pos)
 }
 
-// Variante de cleanContent (scoreNotes.ts) que preserva as quebras de linha,
-// porque o chunking do backend divide por parágrafos ("\n\n"). Remove base64 e
+// Tira a marcação do termo do Related content (`<span data-related>`) e deixa
+// o texto. O fechamento é achado contando a profundidade de <span>, porque o
+// termo pode ter um `<span data-bg>` dentro. Sem espaço no lugar: o termo no
+// meio de uma palavra não a parte.
+export function stripRelatedTermTags(content: string): string {
+  if (!content.includes('data-related')) return content
+  const stack: boolean[] = []
+  return content.replace(SPAN_TAG_RE, (tag) => {
+    if (tag === '</span>') return stack.pop() ? '' : tag
+    const related = RELATED_ATTR_RE.test(tag)
+    stack.push(related)
+    return related ? '' : tag
+  })
+}
+
+// Texto limpo da nota que preserva as quebras de linha, porque o chunking do
+// backend divide por parágrafos ("\n\n"). Remove base64 e
 // converte os blocos customizados do editor em texto legível para a IA:
 // respostas da IA embutidas, conteúdo dos toggles, notas linkadas e marcas
 // (`==texto== [mark: Rótulo]`, também dentro dos toggles).
@@ -148,7 +165,7 @@ export function cleanNoteContentForAi(content: string, opts: NoteAiTextOptions):
   const toggleText = (el: Element) => nodeToAiText(el).replace(/\n{2,}/g, '\n').trim()
 
   return replaceToggleBlocks(
-    markTagsToAiText(content)
+    markTagsToAiText(stripRelatedTermTags(content))
       .replace(EMBED_BLOCK_RE, '')
       .replace(MARKER_RE, '')
       .replace(MD_DATA_IMAGE_RE, (_, url: string) => imageText(url))

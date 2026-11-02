@@ -113,7 +113,7 @@ import {
   setSkippedVersion,
 } from './lib/updater'
 import { getToggleTitle, isPotentialCommandLine } from './components/Editor/commandParser'
-import { cleanNoteContentForAi, loadEmbedResponses } from './lib/noteFileText'
+import { cleanNoteContentForAi, loadEmbedResponses, stripRelatedTermTags } from './lib/noteFileText'
 import {
   collectNoteMarks,
   stripMarkCitations,
@@ -1872,7 +1872,7 @@ function App() {
   const handleExport = useCallback(async () => {
     if (!activeNote) return
     const expanded = expandEmbedBlocks(activeNote.content, responses)
-    const content = stripCommandLines(expanded)
+    const content = stripRelatedTermTags(stripCommandLines(expanded))
     const defaultName = activeNote.title.trim()
       ? `${activeNote.title.trim()}.md`
       : 'untitled-note.md'
@@ -3215,13 +3215,23 @@ function App() {
       }
       onNavigateToNote={handleNoteLinkNavigation}
       relatedContent={
-        activeNote.notebookId !== calendarNotebookId
-          ? <RelatedContent key={activeNote.id} activeNote={activeNote} notes={notes} notebooks={notebooks} onSelect={setActiveId} />
-          : undefined
+        <RelatedContent
+          key={activeNote.id}
+          activeNote={activeNote}
+          notes={notes}
+          notebooks={notebooks}
+          noteTypes={noteTypes.types}
+          termsOnly={activeNote.notebookId === calendarNotebookId}
+          // Como no Ctrl+P: troca caderno e assunto, não só a nota ativa (a
+          // coluna de notas ficava no caderno anterior).
+          onSelect={(id) => {
+            const note = notes.find((n) => n.id === id)
+            if (note?.notebookId) handleNavigateToNote(note.notebookId, id, note.subjectId)
+          }}
+        />
       }
       isCalendarNote={activeNote.notebookId === calendarNotebookId}
       previewMode={previewMode}
-      focusMode={focusMode}
       onAskAi={handleAskAi}
       onEditorReady={handleEditorReady}
       revealRequest={
@@ -3593,6 +3603,7 @@ function App() {
             hits={allMarkHits}
             summary={markSummary}
             notebooks={orderedNotebooks}
+            noteTypes={noteTypes.types}
             filter={marksFilter}
             onFilterChange={setMarksFilter}
             selected={selectedMark}

@@ -1,5 +1,10 @@
+/* Em coluna mais estreita que a régua (coluna da IA aberta), os grupos
+   quebram em mais linhas em vez de a régua passar da borda do editor
+   (100cqw = largura do .editor, que é o container). */
 .toolbar {
   display: flex;
+  flex-wrap: wrap;
+  max-width: calc(100cqw - 16px);
   align-items: center;
   background: var(--surface-1, #1e1e22);
   border: 1px solid var(--border, #333340);
@@ -98,6 +103,17 @@
   color: var(--nm);
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
+}
+
+/* "Related" (termo do Related content): ícone + texto no roxo do termo. */
+.btn.related {
+  color: var(--accent);
+  gap: var(--space-1);
+  white-space: nowrap;
+}
+
+.btn.relatedActive {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
 /* Rótulo no menu da marca: a pílula do rótulo (ou "+ Label"). */

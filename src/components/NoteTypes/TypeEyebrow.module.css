@@ -1,0 +1,29 @@
+/* Mesmo visual do eyebrow da lista de notas (Sidebar .rowEyebrow), sem o
+   layout de lá. Não encolhe: numa linha apertada, o título ou o caderno ao
+   lado cortam antes, e o nome do tipo fica visível. O max-width só corta
+   (com reticências) nome de tipo longo demais para a linha. */
+.eyebrow {
+  display: inline-flex;
+  flex-shrink: 0;
+  max-width: 60%;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: var(--lh-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.eyebrow svg {
+  flex-shrink: 0;
+}
+
+.name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

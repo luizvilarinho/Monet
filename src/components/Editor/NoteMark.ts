@@ -95,7 +95,7 @@ function markTypeOf(doc: ProseMirrorNode): MarkType | undefined {
   return doc.type.schema.marks.noteMark
 }
 
-function collectRuns(block: ProseMirrorNode, start: number, type: MarkType, out: NoteMarkRun[]) {
+export function collectRuns(block: ProseMirrorNode, start: number, type: MarkType, out: NoteMarkRun[]) {
   let current = null as { run: NoteMarkRun; mark: ProseMirrorMark } | null
   block.forEach((child, offset) => {
     const mark = type.isInSet(child.marks)
@@ -165,7 +165,7 @@ export function noteMarkElement(view: EditorView, run: NoteMarkRun): HTMLElement
 
 // Seleção sem espaço (nem fronteira de bloco) nas bordas: a marca cobre só o
 // texto — o clique duplo do Windows inclui o espaço depois da palavra.
-function trimmedRange(doc: ProseMirrorNode, from: number, to: number): { from: number; to: number } {
+export function trimmedRange(doc: ProseMirrorNode, from: number, to: number): { from: number; to: number } {
   const at = (a: number, b: number) => doc.textBetween(a, b, '\n', '\n')
   while (from < to && /^\s?$/.test(at(from, from + 1))) from++
   while (to > from && /^\s?$/.test(at(to - 1, to))) to--
@@ -173,8 +173,12 @@ function trimmedRange(doc: ProseMirrorNode, from: number, to: number): { from: n
 }
 
 // Todo o texto (sem contar espaço) do intervalo já tem a marca.
-function isRangeMarked(doc: ProseMirrorNode, from: number, to: number): boolean {
-  const type = markTypeOf(doc)
+export function isRangeMarked(
+  doc: ProseMirrorNode,
+  from: number,
+  to: number,
+  type: MarkType | undefined = markTypeOf(doc)
+): boolean {
   if (!type) return false
   let any = false
   let all = true

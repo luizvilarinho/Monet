@@ -26,7 +26,7 @@ const CONTEXT_CHARS = 90
 const LABEL_MAX = 40
 // Blocos de texto do markdown renderizado: o contexto da marca é o do bloco
 // mais próximo (listas aninhadas ficam de fora).
-const BLOCK_SELECTOR = 'p, li, h1, h2, h3, h4, h5, h6, td, th, blockquote, dt, dd'
+export const BLOCK_SELECTOR = 'p, li, h1, h2, h3, h4, h5, h6, td, th, blockquote, dt, dd'
 
 // Mesmo parser (markdown-it com HTML) e opções do tiptap-markdown: o que vira
 // marca aqui é o que o editor mostra como marca, inclusive dentro de toggles

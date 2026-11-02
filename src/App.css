@@ -59,12 +59,13 @@
   --lh-row: 20px;     /* linhas de lista de 13px */
   --flow-p: 0.75em;   /* parágrafo↔parágrafo */
   --measure: 68ch;    /* largura máxima do corpo */
-  --measure-note: 100ch; /* corpo da nota no Editor (centraliza quando sobra largura) */
+  --measure-note: 115ch; /* corpo da nota no Editor (centraliza quando sobra largura) */
   /* --measure-note em px: o ch é medido na fonte de cada bloco, então não serve
      para a geometria de centralização (cabeçalho e corpo teriam eixos diferentes).
-     754px = 100ch do corpo (14px) na fonte de produção (Segoe UI, fallback do
-     Inter no Windows); em outras fontes o desvio da centralização é de poucos px. */
-  --measure-note-col: 754px;
+     867px = 115ch do corpo (14px) na fonte de produção (Segoe UI, fallback do
+     Inter no Windows; 7,54px por ch); em outras fontes o desvio da centralização
+     é de poucos px. As duas mudam juntas. */
+  --measure-note-col: 867px;
 
   /* Raio (0 continua deliberado nos blocos de status e pills da task) */
   --radius-sm: 4px;   /* inputs, chips, botões pequenos */
@@ -162,6 +163,18 @@ body { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif; }
   60% {
     background-color: color-mix(in srgb, var(--nm) 45%, transparent);
   }
+}
+
+/* Termo do Related content (mark `relatedTerm`, src/components/Editor/
+   RelatedTerm.ts): borda roxa sólida abaixo do texto. Fica abaixo do
+   sublinhado âmbar da marca de atenção, não se confunde com o pontilhado do
+   link nem com o ondulado do corretor, e o fundo do highlight não a cobre.
+   Global para valer em todo editor Tiptap. */
+.ProseMirror span[data-related] {
+  border-bottom: 2px solid color-mix(in srgb, var(--accent) 80%, transparent);
+  padding-bottom: var(--space-0);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
 }
 
 .app {

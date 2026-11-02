@@ -297,14 +297,8 @@
   max-width: none;
 }
 
-/* Modo focus: a medida de leitura (--measure-note) sai e o corpo usa a
-   largura disponível, sem a centralização de --pad-note-x. Especificidade
-   (0,2,0) vence `.proseEditor > h1` (0,1,1), então os headings também soltam. */
-.editor.focus .notebookLabel,
-.editor.focus .title,
-.editor.focus .tagsRow { padding-left: var(--pad-editor-body); }
-.editor.focus .proseEditor { padding-left: var(--pad-editor-body); padding-right: 72px; }
-.editor.focus .proseEditor > :global(*) { max-width: none; }
+/* Modo focus: sem regra própria. A coluna mantém a medida e o eixo
+   (--pad-note-x), então fica centralizada na tela inteira que o focus libera. */
 
 .proseEditor :global(p) {
   margin: var(--flow-p) 0;
