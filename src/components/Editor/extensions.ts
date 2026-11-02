@@ -22,6 +22,7 @@ import { MonetClipboard } from './MonetClipboard'
 import { isBlankParagraph } from './blankParagraph'
 import { HighlightMark } from './HighlightMark'
 import { NoteMark } from './NoteMark'
+import { RelatedTerm } from './RelatedTerm'
 
 // Custom inline-code mark — força serialização com um único backtick
 // (defaultMarkdownSerializer.marks.code usa `backticksFor` que adiciona mais
@@ -112,6 +113,9 @@ export function buildBaseExtensions(placeholder: string): AnyExtension[] {
     // motivo: um editor sem o mark o descartaria no parse e o autosave
     // apagaria a marca.
     NoteMark,
+    // Termo do Related content (`<span data-related>`) — no conjunto base
+    // para a janela keep e o Reader não descartarem o termo no autosave.
+    RelatedTerm,
     ParagraphWithBlankLines,
     TaskList,
     LinkedTaskItem.configure({ nested: true }),

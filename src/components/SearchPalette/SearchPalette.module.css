@@ -111,6 +111,19 @@
   margin-bottom: var(--space-0);
 }
 
+/* Tipo e caderno da nota, lado a lado. */
+.itemMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  margin-bottom: var(--space-0);
+}
+
+.itemMeta .itemNotebook {
+  margin-bottom: 0;
+}
+
 .itemTitleRow {
   display: flex;
   align-items: center;

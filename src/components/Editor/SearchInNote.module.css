@@ -1,8 +1,8 @@
+/* Presa no topo da área de rolagem: não cobre a 1ª linha nem sai de vista
+   ao rolar até uma ocorrência. */
 .bar {
-  position: absolute;
+  position: sticky;
   top: 0;
-  left: 0;
-  right: 0;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -52,6 +52,18 @@
   font-size: 12px;
   line-height: 1.5;
   font-family: inherit;
+}
+
+/* Ocorrências no corpo da nota (decoração do editor): todas em tom leve e a
+   atual no tom da seleção, que fica visível com o foco no campo de busca. */
+.match {
+  background: rgba(123, 110, 212, 0.18);
+  border-radius: 2px;
+}
+
+.matchCurrent {
+  background: rgba(123, 110, 212, 0.5);
+  border-radius: 2px;
 }
 
 .btn:hover {

@@ -8,7 +8,7 @@ import { compareTasks, findProjectByTag, isOpen, normalizeName, todosTitleOf, ty
 // internas e sintaxe Markdown), normalizado sem acentos, tokens com AND e
 // ranking por título. Filtros `#Caderno`, `type:Nome`, `tag:Nome`,
 // `is:archived`, `has:mark` e `mark:Rótulo`; arquivadas depois das ativas.
-// Tasks por título ou TODOS.
+// O nome do tipo da nota conta como texto. Tasks por título ou TODOS.
 
 export interface Snippet {
   before: string
@@ -135,7 +135,7 @@ function startsAtWord(haystack: string, token: string): boolean {
 }
 
 // Distância de edição ≤ 1 (inserção, remoção ou troca), em uma passada.
-function withinOneEdit(a: string, b: string): boolean {
+export function withinOneEdit(a: string, b: string): boolean {
   if (Math.abs(a.length - b.length) > 1) return false
   let i = 0
   let j = 0
@@ -194,6 +194,18 @@ function previewOf(text: string): Snippet | null {
   if (!text) return null
   const cut = text.length > PREVIEW_CHARS
   return { before: text.slice(0, PREVIEW_CHARS) + (cut ? '…' : ''), match: '', after: '' }
+}
+
+// Título e texto limpos da nota, normalizados (sem acentos, minúsculos), do
+// cache da busca: a identidade só muda quando a nota muda, então quem usa
+// pode guardar derivados num WeakMap por este objeto (Related content).
+export interface NoteNormText {
+  readonly normTitle: string
+  readonly normText: string
+}
+
+export function noteNormText(note: Note): NoteNormText {
+  return entryOf(note)
 }
 
 // Começo do texto limpo da nota (sem sintaxe, imagens nem blocos internos),
@@ -347,6 +359,8 @@ export interface SearchScope {
   typeId?: string | null
   archived?: boolean
   tag?: string | null
+  // typeId → nome do tipo normalizado: o nome do tipo conta como texto.
+  typeNames?: Map<string, string>
 }
 
 function inScope(n: Note, scope: SearchScope | undefined): boolean {
@@ -375,7 +389,8 @@ export function searchNotes(notes: Note[], query: string, opts?: SearchScope): N
   if (tokens.length === 0) {
     // Só filtros: as notas do filtro por recência.
     if (!filtered) return []
-    return recentNotes(scoped, opts?.limit ?? DEFAULT_LIMIT).map((r) => ({
+    // Com o filtro de tipo, todas as notas do tipo.
+    return recentNotes(scoped, opts?.limit ?? (opts?.typeId ? scoped.length : DEFAULT_LIMIT)).map((r) => ({
       ...r,
       tag: matchedTag(r.note, entryOf(r.note), [], filterTag),
     }))
@@ -384,13 +399,25 @@ export function searchNotes(notes: Note[], query: string, opts?: SearchScope): N
   const results: NoteSearchResult[] = []
   for (const note of scoped) {
     const entry = entryOf(note)
+    const typeName = (note.typeId && opts?.typeNames?.get(note.typeId)) || ''
+    const typeWords = typeName.split(WORD_SPLIT_RE).filter(Boolean)
+    // Token coberto pelo tipo: prefixo de uma palavra do nome ("sum" casa
+    // Summary; "ot" não casa Note).
     const missing = tokens.filter(
-      (t) => !entry.normTitle.includes(t) && !entry.normText.includes(t) && !entry.normTags.includes(t),
+      (t) =>
+        !entry.normTitle.includes(t) &&
+        !entry.normText.includes(t) &&
+        !entry.normTags.includes(t) &&
+        !typeWords.some((w) => w.startsWith(t)),
     )
     if (missing.length === 0) {
+      let score = titleScore(entry, tokens, normQuery)
+      // A consulta é o nome do tipo: depois do título com todas as palavras e
+      // antes do título com só parte delas.
+      if (typeName.startsWith(normQuery)) score = Math.max(score, 450)
       results.push({
         note,
-        score: titleScore(entry, tokens, normQuery),
+        score,
         snippet: snippetOf(entry, tokens),
         tag: matchedTag(note, entry, tokens, filterTag),
       })

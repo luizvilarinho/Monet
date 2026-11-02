@@ -4,6 +4,7 @@ import { Fragment, Slice, type Node as ProseMirrorNode, type Schema } from '@tip
 import { CellSelection } from '@tiptap/pm/tables'
 import { isBlankParagraph } from './blankParagraph'
 import type { TasksQueryBlockStorage } from './TasksQueryBlock'
+import { stripRelatedTermTags } from '../../lib/noteFileText'
 
 // Texto copiado (text/plain) do editor. Substitui o serializer do
 // tiptap-markdown, que vazava `<br>` no texto: marcador de linha em branco do
@@ -80,8 +81,8 @@ function serializeBlocks(editor: Editor, fragment: Fragment): string {
   const { serializer } = (editor.storage as unknown as MarkdownStorage).markdown
   const tasksQuery = (editor.storage as unknown as Record<string, TasksQueryBlockStorage | undefined>)
     .tasksQueryBlock
-  return serializer
-    .serialize(replaceHardBreaks(fragment, editor.schema))
+  // Termo do Related content sai como texto puro (o paste interno usa o HTML).
+  return stripRelatedTermTags(serializer.serialize(replaceHardBreaks(fragment, editor.schema)))
     // Bloco `/tasks` sai como a lista legível (não como o filtro).
     .replace(TASKS_QUERY_RE, (match, filter: string) =>
       tasksQuery?.resolveText ? tasksQuery.resolveText(decodeAttr(filter)) : match

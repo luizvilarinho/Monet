@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { Check, MagnifyingGlass, X } from '@phosphor-icons/react'
-import type { Notebook } from '../../types'
+import type { Notebook, NoteType } from '../../types'
 import {
   clipContextStart,
   markLabelKey,
@@ -11,6 +11,7 @@ import {
 } from '../../lib/noteMarks'
 import { normalizeSearch } from '../../lib/noteSearch'
 import { useSidebarResize } from '../../hooks/useSidebarResize'
+import { TypeEyebrow } from '../NoteTypes/TypeEyebrow'
 import styles from './MarksView.module.css'
 
 interface MarksViewProps {
@@ -19,6 +20,7 @@ interface MarksViewProps {
   hits: NoteMarkHit[]
   summary: MarkSummary
   notebooks: Notebook[]
+  noteTypes: NoteType[]
   filter: MarkLabelFilter
   onFilterChange: (filter: MarkLabelFilter) => void
   // Marca aberta no editor (linha ativa).
@@ -39,6 +41,7 @@ export function MarksView({
   hits,
   summary,
   notebooks,
+  noteTypes,
   filter,
   onFilterChange,
   selected,
@@ -58,6 +61,7 @@ export function MarksView({
     listRef.current?.querySelector('[data-selected="true"]')?.scrollIntoView({ block: 'nearest' })
   }, [selected?.noteId, selected?.index, filter])
   const notebookName = useMemo(() => new Map(notebooks.map((nb) => [nb.id, nb.name])), [notebooks])
+  const typeById = useMemo(() => new Map(noteTypes.map((t) => [t.id, t])), [noteTypes])
 
   const visible = useMemo(() => {
     const tokens = normalizeSearch(query).split(/\s+/).filter(Boolean)
@@ -142,10 +146,12 @@ export function MarksView({
             const { note, entry } = hit
             const newNote = visible[i - 1]?.note.id !== note.id
             const isSelected = selected?.noteId === note.id && selected.index === entry.index
+            const type = newNote && note.typeId ? typeById.get(note.typeId) : undefined
             return (
               <Fragment key={`${note.id}-${entry.index}`}>
                 {newNote && (
                   <div className={styles.group} title={note.title || 'Untitled'}>
+                    {type && <TypeEyebrow type={type} />}
                     <span className={styles.groupTitle}>{note.title || 'Untitled'}</span>
                     {note.notebookId && notebookName.has(note.notebookId) && (
                       <span className={styles.groupNotebook}>{notebookName.get(note.notebookId)}</span>
