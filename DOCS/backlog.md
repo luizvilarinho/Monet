@@ -8,7 +8,6 @@ Bugs e ideias registrados pelo Coordenador ou deixados para trás nas entregas, 
 
 - **Esc no "New TODOS…" do popover do card (2026-10-21):** no popover de campos do card (nota TODOS), Esc dentro do input do rascunho fecha o popover inteiro em vez de só cancelar o rascunho. O listener de Esc do `CardFieldsPopover` (`TaskRefView.tsx`) é de captura e roda antes do `onKeyDown` do `TodosControl`.
 - **Tempos ausentes em resposta de erro no Chat/Assistant (2026-10-21):** o `ChatMessageBubble` não renderiza o rodapé em mensagem de erro, então a linha de tempos "interrupted" (com "Retrieval details" ligado) só aparece no NotesChat e no Reader.
-- **Trecho marcado que atravessa Shift+Enter se parte no reload (2026-11-02):** marca de atenção, highlight ou termo do Related content sobre um trecho com quebra de linha (Shift+Enter) volta, ao reabrir a nota, com o parágrafo partido em dois e a 2ª linha sem a marcação. Já existia antes do termo do Related content (achado pelo codeAgent da task feat/related-terms). Causa provável no `updateDOM` do `ParagraphWithBlankLines` (`src/components/Editor/extensions.ts`), caminho `br.closest('p')`.
 
 ---
 

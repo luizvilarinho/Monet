@@ -14,7 +14,8 @@ export const COMMANDS: CommandDef[] = [
   { name: '/ask', description: 'Ask a free-form question to the AI model', example: '/ask what is the difference between HTTP/1.1 and HTTP/2?', takesQuery: true, usesSearch: true },
   { name: '/docs', description: 'Answer using only the notebook documents', example: '/docs which companies did the person work for?', takesQuery: true },
   { name: '/action', description: 'Perform an action on the current note text (edit, rewrite, organize, transform)', example: '/action rewrite this section more concisely', takesQuery: true },
-  { name: '/week', description: 'Answers free-form questions using the last 7 days of calendar notes', example: '/week what were my activities this week?', takesQuery: true, calendarOnly: true },
+  { name: '/week', description: 'Done in the last 7 days, to do in the next 7', example: '/week', takesQuery: true, optionalQuery: true, calendarOnly: true },
+  { name: '/planner', description: 'Plans your tasks until the deadlines (e.g. 4h per day)', example: '/planner focus on the migration, 4h per day', takesQuery: true, optionalQuery: true },
   { name: '/tasks', description: 'Live list of tasks (this week, today, overdue, all, #project)', example: '/tasks this week #PORTO', takesQuery: false, local: true },
 ]
 

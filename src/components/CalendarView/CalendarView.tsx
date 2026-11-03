@@ -1,6 +1,6 @@
 import { CaretLeft, CaretRight, SidebarSimple, Target } from '@phosphor-icons/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Note, Notebook, Task } from '../../types'
+import type { Note, Notebook, NoteType, Task } from '../../types'
 import { CALENDAR_NOTEBOOK_ID, dateKeyFromMs, toDateKey } from '../../lib/calendar'
 import {
   formatDueShort,
@@ -13,6 +13,7 @@ import {
   type ProjectChoice,
 } from '../../lib/tasks'
 import { ProjectPicker } from '../TasksView/ProjectPicker'
+import { TypeIcon } from '../NoteTypes/TypeIcon'
 import { useSidebarResize } from '../../hooks/useSidebarResize'
 import styles from './CalendarView.module.css'
 
@@ -43,6 +44,8 @@ interface CalendarViewProps {
   notes: Note[]
   datedNotes: Note[]
   notebooks: Notebook[]
+  /** Tipos de nota: ícone e nome do tipo nos cards de notas do dia. */
+  noteTypes?: NoteType[]
   /** Todas as notas — usadas para destacar no dia selecionado as que foram
    *  criadas ou editadas nesse dia. */
   recentlyActiveNotes?: Note[]
@@ -69,6 +72,7 @@ export function CalendarView({
   notes,
   datedNotes,
   notebooks,
+  noteTypes = [],
   recentlyActiveNotes = [],
   onDayClick,
   onNoteClick,
@@ -128,6 +132,11 @@ export function CalendarView({
   const notebookNameById = useMemo(
     () => new Map(notebooks.map((nb) => [nb.id, nb.name])),
     [notebooks]
+  )
+
+  const typeById = useMemo(
+    () => new Map(noteTypes.map((t) => [t.id, t])),
+    [noteTypes]
   )
 
   // Cards abaixo do calendário:
@@ -476,6 +485,7 @@ export function CalendarView({
                 const nbName = note.notebookId
                   ? notebookNameById.get(note.notebookId)
                   : undefined
+                const type = note.typeId ? typeById.get(note.typeId) : undefined
                 return (
                   <div
                     key={note.id}
@@ -485,7 +495,18 @@ export function CalendarView({
                     tabIndex={0}
                     onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onNoteClick(note.id) }}
                   >
-                    {nbName && <span className={styles.noteCardNotebook}>{nbName}</span>}
+                    {(type || nbName) && (
+                      <span className={styles.noteCardMeta}>
+                        {type && (
+                          <span className={styles.noteCardType} style={{ color: type.color ?? undefined }} title={type.name}>
+                            <TypeIcon name={type.icon} size={11} />
+                            <span className={styles.noteCardTypeName}>{type.name}</span>
+                          </span>
+                        )}
+                        {type && nbName && <span className={styles.noteCardSep} aria-hidden>·</span>}
+                        {nbName && <span className={styles.noteCardNotebook}>{nbName}</span>}
+                      </span>
+                    )}
                     <span className={styles.noteCardTitle}>{note.title || 'untitled'}</span>
                   </div>
                 )

@@ -83,6 +83,8 @@ export function NotePicker({ notes, onSelect, onClose, position }: NotePickerPro
       <div
         data-note-picker
         className={styles.panel}
+        role="dialog"
+        aria-modal="true"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <input

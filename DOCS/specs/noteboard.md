@@ -67,7 +67,7 @@ Qualquer **tipo de nota** com uma propriedade `select` ou `checkbox` pode ser vi
 
 - **"New"** (`Plus` + rótulo) no cabeçalho de cada coluna e, no hover, em cada seção. Cria a nota do tipo (com o template do tipo, pelo mesmo caminho do "New <tipo>" da lista) e grava os valores da coluna e da seção pelo `setNoteProperties` (os mesmos que soltar o card ali gravaria; "No value" não grava nada, checkbox No grava `false`) e, com **filtro por checkbox**, a caixa do filtro **marcada** (senão a nota não entraria no board). A nota abre no modal "Edit note" sobre o board, com o título em foco quando o tipo não tem template.
 - **A nota nova não some pelos filtros da tela:** o "New" limpa a busca e, com chips ativos, liga o chip da seção da nota (no "New" da coluna, "No <Seção>"). O caderno já é o do filtro, e o "New" só existe nas colunas e seções visíveis.
-- **Caderno:** o do filtro do header. Com "All notebooks": o caderno do último "New" deste board (se ainda existe), senão o caderno com mais notas do tipo, senão o **Inbox**. O tooltip do botão diz qual será.
+- **Caderno:** o do filtro do header. Com "All notebooks": o caderno do último "New" deste board (se ainda existe), senão o caderno com mais notas do tipo, senão o **Quick Notes**. O tooltip do botão diz qual será.
 - Se o tipo some, o board é desligado ou a coluna é apagada (até por outra janela), o board fecha e volta para as notas.
 
 ## 8. Drop

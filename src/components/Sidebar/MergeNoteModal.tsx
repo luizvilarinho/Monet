@@ -27,7 +27,7 @@ export function MergeNoteModal({ sourceNote, notes, onMerge, onClose }: MergeNot
 
   return (
     <div className={styles.overlay} onClick={onClose}>
-      <div className={styles.panel} onClick={(e) => e.stopPropagation()}>
+      <div className={styles.panel} role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
         <div className={styles.title}>
           Merge &ldquo;{sourceNote.title || 'untitled'}&rdquo; into:
         </div>

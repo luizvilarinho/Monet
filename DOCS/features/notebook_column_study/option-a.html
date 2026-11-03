@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Opção A: seções</title>
+<style>
+/* ===== Tokens copiados de src/App.css (tema escuro do app) ===== */
+:root {
+  --bg-app: #1f1f2f;
+  --bg-panel: #161625;
+  --surface-1: #1d1d34;
+  --surface-2: #292959;
+  --text-primary: #ddddf1;
+  --text-secondary: #9898a4;
+  --text-muted: #7c7c93;
+  --accent: #7b6ed4;
+  --accent-ai: #5dcaa5;
+  --accent-task: #ef9f27;
+  --accent-danger: #e05555;
+  --accent-late: #e6c449;
+  --border: #2e2f2cb3;
+  --hair: #34344f;
+  --nm: #eeb54a;
+  --space-0: 2px; --space-1: 4px; --space-1h: 6px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+  --radius-sm: 4px; --radius-md: 6px; --radius-lg: 8px;
+  --lh-row: 20px;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: #121220;
+  color: var(--text-primary);
+  font: 14px/1.45 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent); }
+.i { width: 16px; height: 16px; fill: currentColor; flex-shrink: 0; display: block; }
+.i.s11 { width: 11px; height: 11px; }
+.i.s12 { width: 12px; height: 12px; }
+.i.s13 { width: 13px; height: 13px; }
+.i.s14 { width: 14px; height: 14px; }
+
+/* ===== Página do estudo (fora do mockup) ===== */
+.page { max-width: 1240px; margin: 0 auto; padding: 24px 16px 64px; }
+.page h1 { font-size: 20px; margin: 0 0 6px; }
+.page h2 { font-size: 15px; margin: 32px 0 8px; }
+.lede, .page p, .page li { color: var(--text-secondary); max-width: 80ch; }
+.nav { font-size: 12px; margin-bottom: 16px; display: flex; gap: 12px; flex-wrap: wrap; }
+.stage { display: flex; gap: 28px; align-items: flex-start; flex-wrap: wrap; margin: 20px 0 8px; }
+.frame { margin: 0; }
+.frame figcaption { font-size: 12px; color: var(--text-muted); margin-top: 8px; max-width: 360px; }
+.tag-new { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 4px; background: rgba(123,110,212,.18); color: #b9b0f5; margin-left: 4px; vertical-align: 1px; }
+.tag-against { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 4px; background: rgba(224,85,85,.18); color: #f19a9a; margin-left: 4px; vertical-align: 1px; }
+
+/* ===== "App": coluna de cadernos + esboço da coluna Notes ===== */
+.app { display: flex; height: 780px; border: 1px solid var(--hair); border-radius: 8px; overflow: hidden; background: var(--bg-app); }
+.ghost { width: 150px; background: var(--bg-app); padding: 16px 12px; display: flex; flex-direction: column; gap: 10px; }
+.ghost .gh { display: flex; align-items: center; gap: 4px; white-space: nowrap; font-size: 12px; font-weight: 500; color: var(--text-muted); }
+.ghost .gl { height: 10px; border-radius: 3px; background: #26263a; }
+.ghost .gl.w2 { width: 70%; } .ghost .gl.w3 { width: 85%; }
+
+/* ===== Coluna (espelha src/components/NotebookList/NotebookList.module.css) ===== */
+.col { width: 220px; flex-shrink: 0; background: var(--bg-panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; position: relative; }
+.scroll { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4); }
+.section { display: flex; flex-direction: column; gap: var(--space-2); }
+.header { font-size: 12px; font-weight: 500; color: var(--text-muted); padding: 0 var(--space-1); display: flex; align-items: center; justify-content: space-between; min-height: 24px; }
+.hactions { display: flex; align-items: center; gap: var(--space-1); }
+.hbtn { background: transparent; border: none; color: var(--text-muted); padding: var(--space-1); border-radius: var(--radius-sm); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.hbtn:hover { color: var(--accent); background: var(--surface-1); }
+.divider { border: none; border-top: 1px solid var(--border); margin: 0; }
+.list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-0); }
+
+/* Linha de 34px: 20px de line-height + 7px de padding */
+.row { display: flex; align-items: center; gap: var(--space-1h); padding: 7px var(--space-3); border-radius: var(--radius-md); color: var(--text-secondary); cursor: pointer; font-size: 13px; line-height: var(--lh-row); white-space: nowrap; }
+.row:hover { background: var(--surface-1); color: var(--text-primary); }
+.row.active { background: var(--surface-2); color: var(--text-primary); }
+.label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.count { flex-shrink: 0; margin-left: auto; padding-left: var(--space-2); font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.prog { flex-shrink: 0; font-size: 11px; color: var(--text-muted); }
+.prog.late { color: var(--accent-danger); }
+.muted-italic { color: var(--text-muted); font-style: italic; }
+.row.active .muted-italic { color: var(--text-primary); font-style: normal; }
+.boardprop { color: var(--text-muted); }
+
+/* Ícones das linhas (cores do app) */
+.ico { flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; padding: var(--space-0); color: var(--text-muted); }
+.ico.cal { color: var(--accent); }
+.ico.task { color: var(--accent-task); }
+.ico.quick { color: var(--accent-late); }
+.ico.radar { color: #5b9cf0; }
+.ico.plan { color: #5cc185; }
+.markdot { flex-shrink: 0; width: 6px; height: 6px; margin: 0 var(--space-0); border-radius: 50%; background: var(--nm); }
+
+/* Ações que aparecem no hover (docs, mover, excluir) */
+.act { flex-shrink: 0; width: 18px; height: 18px; display: none; align-items: center; justify-content: center; border-radius: var(--radius-sm); color: var(--text-muted); opacity: 0; }
+/* Proposta: as ações só ocupam espaço no hover (hoje ocupam sempre, com opacity 0) */
+.row:hover .act { opacity: 1; display: inline-flex; }
+.act:hover { color: var(--accent); background: rgba(123,110,212,.12); }
+.act.docs-on { opacity: 1; display: inline-flex; color: var(--accent-ai); }
+.drag { flex-shrink: 0; color: var(--text-muted); opacity: 0; display: inline-flex; }
+.row:hover .drag { opacity: 1; }
+.kbd { font-size: 10px; color: var(--text-muted); border: 1px solid var(--hair); border-radius: 3px; padding: 0 4px; line-height: 16px; opacity: 0; }
+.row:hover .kbd { opacity: 1; }
+.stale { flex-shrink: 0; font-size: 10px; line-height: 16px; padding: 0 5px; border-radius: 8px; color: var(--accent-late); background: rgba(230,196,73,.12); }
+
+/* Rodapé */
+.footer { border-top: 1px solid var(--border); padding: var(--space-2) var(--space-3); display: flex; justify-content: space-between; align-items: center; }
+.version { font-size: 11px; color: var(--text-muted); margin-left: var(--space-1); letter-spacing: .02em; }
+.fbtns { display: flex; }
+.fbtn { background: transparent; border: none; color: var(--text-muted); padding: var(--space-1h); border-radius: var(--radius-md); display: inline-flex; cursor: pointer; }
+.fbtn:hover { color: var(--accent); background: var(--surface-1); }
+
+/* ===== Coluna recolhida (48px) ===== */
+.rail { width: 48px; flex-shrink: 0; background: var(--bg-panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; align-items: center; min-height: 0; }
+.rail .rtop { flex: 1; display: flex; flex-direction: column; align-items: center; gap: var(--space-0); padding: var(--space-3) 0; overflow-y: auto; width: 100%; }
+.rbtn { width: 32px; height: 32px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-md); color: var(--text-muted); cursor: pointer; position: relative; }
+.rbtn:hover { background: var(--surface-1); color: var(--text-primary); }
+.rbtn.active { background: var(--surface-2); color: var(--text-primary); }
+.rbtn .badge { position: absolute; top: 2px; right: 2px; min-width: 14px; height: 14px; border-radius: 7px; background: var(--surface-2); color: var(--text-primary); font-size: 9px; line-height: 14px; text-align: center; padding: 0 3px; }
+.rsep { width: 24px; border-top: 1px solid var(--border); margin: var(--space-1) 0; }
+.initial { width: 26px; height: 26px; border-radius: var(--radius-md); display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; letter-spacing: .02em; color: var(--text-secondary); background: #222238; }
+.rbtn.active .initial { color: var(--text-primary); background: transparent; }
+.rfoot { border-top: 1px solid var(--border); padding: var(--space-2) 0; display: flex; flex-direction: column; align-items: center; gap: var(--space-1); width: 100%; }
+
+/* Tooltip/flyout estático do mockup recolhido */
+.flyout { position: absolute; left: 52px; background: #1b1b30; border: 1px solid var(--hair); border-radius: var(--radius-lg); padding: 6px; width: 200px; box-shadow: 0 8px 24px rgba(0,0,0,.45); z-index: 2; }
+.flyout .row { padding: 5px 8px; }
+.flyout .fhead { font-size: 11px; color: var(--text-muted); padding: 2px 8px 6px; }
+
+/* ===== Notas do estudo abaixo dos mockups ===== */
+.notes-box { background: #18182a; border: 1px solid var(--hair); border-radius: 8px; padding: 12px 16px; margin-top: 12px; }
+.notes-box h3 { font-size: 13px; margin: 0 0 6px; color: var(--text-primary); }
+.notes-box ul { margin: 0; padding-left: 18px; }
+.notes-box li { font-size: 13px; margin: 2px 0; }
+.pc { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 760px) { .pc { grid-template-columns: 1fr; } }
+
+
+/* ===== Só nesta opção ===== */
+/* Caderno: ícone Notebook + texto 500. Caderno com subject selecionado fica
+   "pai": texto claro, sem fundo (o fundo é só do item selecionado). */
+.nbrow .label { font-weight: 500; }
+.nbrow.parent { color: var(--text-primary); }
+.nbrow.parent .ico { color: var(--accent); }
+/* Subjects: um nível abaixo, sem rótulo "Subjects"; linha-guia visível
+   (--hair) alinhada ao ícone do caderno; 12px, peso 400, cor muted. */
+.subs { list-style: none; margin: var(--space-0) 0 var(--space-1) 21px; padding: 0 0 0 9px; border-left: 1px solid var(--hair); display: flex; flex-direction: column; gap: var(--space-0); }
+.sub { font-size: 12px; padding: var(--space-1) var(--space-2); color: var(--text-muted); }
+.sub .ico { padding: 0; }
+.sub.active { background: var(--surface-2); color: var(--text-primary); }
+.sub.active .ico { color: var(--accent); }
+.sub.add { font-style: italic; }
+/* Tags e Marks recolhíveis com <details> (sem JS) */
+details.section > summary { list-style: none; cursor: pointer; }
+details.section > summary::-webkit-details-marker { display: none; }
+details.section > summary .caret { display: inline-flex; transition: transform .15s; }
+details.section[open] > summary .caret { transform: rotate(90deg); }
+details.section > summary .header:hover { color: var(--text-primary); }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="nav"><a href="index.html">Índice</a> <a href="current.html">Hoje</a> <a href="option-a.html">A</a> <a href="option-b.html">B</a> <a href="option-c.html">C</a> <a href="option-d.html">D</a></div>
+  <h1>Opção A: seções separadas (menor mudança)</h1>
+  <p class="lede">A mesma coluna de hoje, cortada em seções com papéis claros: <b>Views</b> (lugares fixos, que não se arrastam nem se renomeiam) e <b>Notebooks</b> (só os cadernos do usuário). Subjects continuam só no caderno ativo, mas com cara de nível abaixo. Tags e Marks viram seções recolhíveis.</p>
+
+  <div class="stage">
+    <figure class="frame">
+      <div class="app">
+        <aside class="col">
+          <div class="scroll">
+            <section class="section">
+              <div class="header"><span>Views</span>
+                <div class="hactions"><button class="hbtn" title="collapse notebooks"><svg class="i"><use href="#i-sidebar"/></svg></button></div>
+              </div>
+              <ul class="list">
+                <li class="row" title="Notes and tasks without a notebook yet"><span class="ico quick"><svg class="i"><use href="#i-lightning"/></svg></span><span class="label">Quick Notes</span><span class="stale" title="Oldest note: 12 days">12d</span><span class="count">6</span><span class="act" title="New quick note (Ctrl+N)"><svg class="i s13"><use href="#i-plus"/></svg></span></li>
+                <li class="row"><span class="ico cal"><svg class="i"><use href="#i-calendar"/></svg></span><span class="label">Calendar</span><span class="act"><svg class="i s13"><use href="#i-file-text"/></svg></span></li>
+                <li class="row"><span class="ico task"><svg class="i"><use href="#i-tasks"/></svg></span><span class="label">Tasks</span></li>
+                <li class="row" title="Radar notes by Category"><span class="ico radar"><svg class="i"><use href="#i-target"/></svg></span><span class="label">Radar <span class="boardprop">· Category</span></span><span class="count">23</span></li>
+                <li class="row" title="Plan notes by Status"><span class="ico plan"><svg class="i"><use href="#i-flag"/></svg></span><span class="label">Plan <span class="boardprop">· Status</span></span><span class="count">4</span></li>
+              </ul>
+            </section>
+            <hr class="divider">
+            <section class="section">
+              <div class="header"><span>Notebooks</span>
+                <div class="hactions"><button class="hbtn" title="new notebook"><svg class="i"><use href="#i-plus-circle"/></svg></button></div>
+              </div>
+              <ul class="list">
+                <li class="row"><span class="label muted-italic">All notes</span></li>
+                <li class="row nbrow"><span class="ico"><svg class="i s14"><use href="#i-notebook"/></svg></span><span class="label">Monet</span><span class="prog">4/9</span><span class="act"><svg class="i s13"><use href="#i-file-text"/></svg></span><span class="act"><svg class="i s13"><use href="#i-arrow-right"/></svg></span><span class="act"><svg class="i s12"><use href="#i-x"/></svg></span></li>
+                <li class="row nbrow parent"><span class="ico"><svg class="i s14"><use href="#i-notebook"/></svg></span><span class="label">MBA - FullCycle</span><span class="prog late">2/5</span><span class="act docs-on"><svg class="i s13"><use href="#i-file-text"/></svg></span><span class="act"><svg class="i s13"><use href="#i-arrow-right"/></svg></span><span class="act"><svg class="i s12"><use href="#i-x"/></svg></span></li>
+                <li style="list-style:none">
+                  <ul class="subs">
+                    <li class="row sub active"><span class="ico"><svg class="i s12"><use href="#i-folder-simple"/></svg></span><span class="label">aula ao vivo</span><span class="act"><svg class="i s11"><use href="#i-arrow-out"/></svg></span><span class="act"><svg class="i s11"><use href="#i-x"/></svg></span></li>
+                    <li class="row sub"><span class="ico"><svg class="i s12"><use href="#i-folder-simple"/></svg></span><span class="label">SDD</span><span class="act"><svg class="i s11"><use href="#i-arrow-out"/></svg></span><span class="act"><svg class="i s11"><use href="#i-x"/></svg></span></li>
+                    <li class="row sub"><span class="ico"><svg class="i s12"><use href="#i-folder-simple"/></svg></span><span class="label">Julho</span><span class="act"><svg class="i s11"><use href="#i-arrow-out"/></svg></span><span class="act"><svg class="i s11"><use href="#i-x"/></svg></span></li>
+                    <li class="row sub add"><span class="ico"><svg class="i s12"><use href="#i-plus"/></svg></span><span class="label">New subject</span></li>
+                  </ul>
+                </li>
+                <li class="row nbrow"><span class="ico"><svg class="i s14"><use href="#i-notebook"/></svg></span><span class="label">KEEP</span><span class="act"><svg class="i s13"><use href="#i-file-text"/></svg></span><span class="act"><svg class="i s13"><use href="#i-arrow-right"/></svg></span><span class="act"><svg class="i s12"><use href="#i-x"/></svg></span></li>
+                <li class="row nbrow"><span class="ico"><svg class="i s14"><use href="#i-notebook"/></svg></span><span class="label">Livros</span><span class="act"><svg class="i s13"><use href="#i-file-text"/></svg></span><span class="act"><svg class="i s13"><use href="#i-arrow-right"/></svg></span><span class="act"><svg class="i s12"><use href="#i-x"/></svg></span></li>
+                <li class="row nbrow"><span class="ico"><svg class="i s14"><use href="#i-notebook"/></svg></span><span class="label">Migração</span><span class="prog">1/3</span><span class="act"><svg class="i s13"><use href="#i-file-text"/></svg></span><span class="act"><svg class="i s13"><use href="#i-arrow-right"/></svg></span><span class="act"><svg class="i s12"><use href="#i-x"/></svg></span></li>
+                <li class="row nbrow"><span class="ico"><svg class="i s14"><use href="#i-notebook"/></svg></span><span class="label">APUC</span><span class="act"><svg class="i s13"><use href="#i-file-text"/></svg></span><span class="act"><svg class="i s13"><use href="#i-arrow-right"/></svg></span><span class="act"><svg class="i s12"><use href="#i-x"/></svg></span></li>
+                <li class="row nbrow"><span class="ico"><svg class="i s14"><use href="#i-notebook"/></svg></span><span class="label">Porto</span><span class="act"><svg class="i s13"><use href="#i-file-text"/></svg></span><span class="act"><svg class="i s13"><use href="#i-arrow-right"/></svg></span><span class="act"><svg class="i s12"><use href="#i-x"/></svg></span></li>
+                <li class="row nbrow"><span class="ico"><svg class="i s14"><use href="#i-notebook"/></svg></span><span class="label">Arquitetura de Software</span><span class="act"><svg class="i s13"><use href="#i-file-text"/></svg></span><span class="act"><svg class="i s13"><use href="#i-arrow-right"/></svg></span><span class="act"><svg class="i s12"><use href="#i-x"/></svg></span></li>
+                <li class="row nbrow"><span class="ico"><svg class="i s14"><use href="#i-notebook"/></svg></span><span class="label">saúde</span><span class="act"><svg class="i s13"><use href="#i-file-text"/></svg></span><span class="act"><svg class="i s13"><use href="#i-arrow-right"/></svg></span><span class="act"><svg class="i s12"><use href="#i-x"/></svg></span></li>
+              </ul>
+            </section>
+            <hr class="divider">
+            <details class="section" open>
+              <summary><div class="header"><span style="display:flex;align-items:center;gap:4px"><span class="caret"><svg class="i s11"><use href="#i-caret-right"/></svg></span>Tags</span><span class="count">6</span></div></summary>
+              <ul class="list">
+                <li class="row"><span class="label">#estudo</span><span class="count">18</span></li>
+                <li class="row"><span class="label">#arquitetura</span><span class="count">11</span></li>
+                <li class="row"><span class="label">#leitura</span><span class="count">9</span></li>
+                <li class="row"><span class="label">#ddd</span><span class="count">6</span></li>
+                <li class="row"><span class="label">#ia</span><span class="count">5</span></li>
+                <li class="row"><span class="label">#saude</span><span class="count">3</span></li>
+              </ul>
+            </details>
+            <hr class="divider">
+            <details class="section">
+              <summary><div class="header"><span style="display:flex;align-items:center;gap:4px"><span class="caret"><svg class="i s11"><use href="#i-caret-right"/></svg></span>Marks</span><span class="count">14</span></div></summary>
+              <ul class="list">
+                <li class="row"><span class="label muted-italic">All marks</span><span class="count">14</span></li>
+                <li class="row"><span class="markdot"></span><span class="label">revisar</span><span class="count">6</span></li>
+                <li class="row"><span class="markdot"></span><span class="label">dúvida</span><span class="count">4</span></li>
+                <li class="row"><span class="markdot"></span><span class="label">citar</span><span class="count">2</span></li>
+              </ul>
+            </details>
+          </div>
+          <div class="footer"><span class="version">v1.5.0</span><div class="fbtns"><button class="fbtn" title="Knowledge Base"><svg class="i"><use href="#i-books"/></svg></button><button class="fbtn" title="Settings"><svg class="i"><use href="#i-gear"/></svg></button></div></div>
+        </aside>
+        <div class="ghost"><div class="gh">Notes</div><div class="gl"></div><div class="gl w2"></div><div class="gl w3"></div><div class="gl w2"></div></div>
+      </div>
+      <figcaption>Clique em "Tags" e "Marks" para recolher/abrir (no app, o estado fica salvo). Passe o mouse nas linhas para ver as ações.</figcaption>
+    </figure>
+
+    <figure class="frame">
+      <div class="app" style="position:relative">
+        <aside class="rail">
+          <div class="rtop">
+            <span class="rbtn" title="expand notebooks"><svg class="i"><use href="#i-sidebar"/></svg></span>
+            <span class="rsep"></span>
+            <span class="rbtn" title="Quick Notes (6)"><span class="ico quick" style="padding:0"><svg class="i"><use href="#i-lightning"/></svg></span><span class="badge">6</span></span>
+            <span class="rbtn" title="Calendar"><span class="ico cal" style="padding:0"><svg class="i"><use href="#i-calendar"/></svg></span></span>
+            <span class="rbtn" title="Tasks"><span class="ico task" style="padding:0"><svg class="i"><use href="#i-tasks"/></svg></span></span>
+            <span class="rbtn" title="Radar · Category"><span class="ico radar" style="padding:0"><svg class="i"><use href="#i-target"/></svg></span></span>
+            <span class="rbtn" title="Plan · Status"><span class="ico plan" style="padding:0"><svg class="i"><use href="#i-flag"/></svg></span></span>
+            <span class="rsep"></span>
+            <span class="rbtn active" title="Notebooks: MBA - FullCycle"><svg class="i"><use href="#i-notebook"/></svg></span>
+            <span class="rbtn" title="Tags"><svg class="i"><use href="#i-hash"/></svg></span>
+            <span class="rbtn" title="Marks"><svg class="i"><use href="#i-highlighter"/></svg></span>
+          </div>
+          <div class="rfoot"><span class="rbtn" title="Knowledge Base"><svg class="i"><use href="#i-books"/></svg></span><span class="rbtn" title="Settings"><svg class="i"><use href="#i-gear"/></svg></span></div>
+        </aside>
+        <div class="flyout" style="top:420px">
+          <div class="fhead">Notebooks</div>
+          <div class="row"><span class="label muted-italic">All notes</span></div>
+          <div class="row"><span class="label">Monet</span><span class="prog">4/9</span></div>
+          <div class="row active"><span class="label">MBA - FullCycle</span><span class="prog late">2/5</span></div>
+          <div class="row"><span class="label">KEEP</span></div>
+          <div class="row"><span class="label">Livros</span></div>
+          <div class="row"><span class="label">Migração</span><span class="prog">1/3</span></div>
+          <div class="row"><span class="label">APUC</span></div>
+          <div class="row"><span class="label">Porto</span></div>
+          <div class="row"><span class="label">Arquitetura de Software</span></div>
+          <div class="row"><span class="label">saúde</span></div>
+        </div>
+        <div class="ghost" style="width:230px"><div class="gh">MBA - FullCycle <svg class="i s11"><use href="#i-caret-right"/></svg> aula ao vivo</div><div class="gl"></div><div class="gl w2"></div><div class="gl w3"></div></div>
+      </div>
+      <figcaption>Recolhida: as views viram ícones (com tooltip) e um botão "Notebooks" abre um menu flutuante com os cadernos (desenhado aberto aqui). Tags e Marks abrem as listas que já têm chips para trocar de tag/rótulo.</figcaption>
+    </figure>
+  </div>
+
+  <div class="notes-box">
+    <h3>Como resolve cada ponto</h3>
+    <ul>
+      <li><b>Visões fixas × cadernos:</b> seção "Views" no topo (Quick Notes, Calendar, Tasks, boards) sem arrastar; "Notebooks" só com cadernos do usuário. "All notes" fica no topo de Notebooks, porque é a soma deles.</li>
+      <li><b>Caderno × subject:</b> caderno com ícone <i>Notebook</i> e texto 500; subject sem o rótulo "Subjects", 12px, peso 400, cor <code>--text-muted</code>, ícone <i>FolderSimple</i> de 12px, sob uma linha-guia <code>--hair</code> alinhada ao ícone do caderno. Só o item selecionado tem fundo; o caderno pai fica com texto claro e ícone roxo.</li>
+      <li><b>Subjects só no ativo:</b> sim, como hoje. "New subject" vira a última linha da lista, no lugar do "+" do cabeçalho.</li>
+      <li><b>Tags e Marks:</b> continuam na coluna, recolhíveis, com o total no cabeçalho (lembrar o estado em <code>localStorage</code>).</li>
+      <li><b>Quick Notes:</b> primeira linha de Views, ícone <i>Lightning</i>, contagem de notas, selo de idade quando a nota mais antiga passa de 7 dias e "+" no hover (Ctrl+N).</li>
+      <li><b>Subject "Tasks":</b> fora da lista (filtro <code>!isTasksSubject</code> no <code>subjects</code> recebido). As tasks do caderno seguem embaixo da coluna Notes.</li>
+      <li><b>Recolhida:</b> trilho de ícones das views + menu "Notebooks" + Tags/Marks.</li>
+    </ul>
+  </div>
+  <div class="notes-box pc">
+    <div><h3>Prós</h3><ul><li>Menor mudança: mesmo componente, reordenar JSX e CSS.</li><li>Nada muda de lugar para quem já usa, exceto o topo.</li><li>Resolve as duas reclamações principais (mistura de tipos e peso parecido).</li></ul></div>
+    <div><h3>Contras</h3><ul><li>Subjects de outro caderno continuam invisíveis até abrir o caderno.</li><li>Três ações no hover de cada caderno (docs, mover, excluir) seguem apertadas em 180px.</li><li>Com muitas tags a coluna ainda fica longa quando a seção está aberta.</li></ul></div>
+  </div>
+</div>
+<!-- Ícones Phosphor (regular) como símbolos SVG: use <svg class="i"><use href="#i-nome"/></svg> -->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <symbol id="i-calendar" viewBox="0 0 256 256"><path d="M208,32H184V24a8,8,0,0,0-16,0v8H88V24a8,8,0,0,0-16,0v8H48A16,16,0,0,0,32,48V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V48A16,16,0,0,0,208,32ZM72,48v8a8,8,0,0,0,16,0V48h80v8a8,8,0,0,0,16,0V48h24V80H48V48ZM208,208H48V96H208V208Z"/></symbol>
+  <symbol id="i-tasks" viewBox="0 0 256 256"><path d="M224,128a8,8,0,0,1-8,8H128a8,8,0,0,1,0-16h88A8,8,0,0,1,224,128ZM128,72h88a8,8,0,0,0,0-16H128a8,8,0,0,0,0,16Zm88,112H128a8,8,0,0,0,0,16h88a8,8,0,0,0,0-16ZM82.34,42.34,56,68.69,45.66,58.34A8,8,0,0,0,34.34,69.66l16,16a8,8,0,0,0,11.32,0l32-32A8,8,0,0,0,82.34,42.34Zm0,64L56,132.69,45.66,122.34a8,8,0,0,0-11.32,11.32l16,16a8,8,0,0,0,11.32,0l32-32a8,8,0,0,0-11.32-11.32Zm0,64L56,196.69,45.66,186.34a8,8,0,0,0-11.32,11.32l16,16a8,8,0,0,0,11.32,0l32-32a8,8,0,0,0-11.32-11.32Z"/></symbol>
+  <symbol id="i-kanban" viewBox="0 0 256 256"><path d="M216,48H40a8,8,0,0,0-8,8V208a16,16,0,0,0,16,16H88a16,16,0,0,0,16-16V160h48v16a16,16,0,0,0,16,16h40a16,16,0,0,0,16-16V56A8,8,0,0,0,216,48ZM88,208H48V128H88Zm0-96H48V64H88Zm64,32H104V64h48Zm56,32H168V128h40Zm0-64H168V64h40Z"/></symbol>
+  <symbol id="i-lightning" viewBox="0 0 256 256"><path d="M215.79,118.17a8,8,0,0,0-5-5.66L153.18,90.9l14.66-73.33a8,8,0,0,0-13.69-7l-112,120a8,8,0,0,0,3,13l57.63,21.61L88.16,238.43a8,8,0,0,0,13.69,7l112-120A8,8,0,0,0,215.79,118.17ZM109.37,214l10.47-52.38a8,8,0,0,0-5-9.06L62,132.71l84.62-90.66L136.16,94.43a8,8,0,0,0,5,9.06l52.8,19.8Z"/></symbol>
+  <symbol id="i-note-pencil" viewBox="0 0 256 256"><path d="M229.66,58.34l-32-32a8,8,0,0,0-11.32,0l-96,96A8,8,0,0,0,88,128v32a8,8,0,0,0,8,8h32a8,8,0,0,0,5.66-2.34l96-96A8,8,0,0,0,229.66,58.34ZM124.69,152H104V131.31l64-64L188.69,88ZM200,76.69,179.31,56,192,43.31,212.69,64ZM224,128v80a16,16,0,0,1-16,16H48a16,16,0,0,1-16-16V48A16,16,0,0,1,48,32h80a8,8,0,0,1,0,16H48V208H208V128a8,8,0,0,1,16,0Z"/></symbol>
+  <symbol id="i-notebook" viewBox="0 0 256 256"><path d="M184,112a8,8,0,0,1-8,8H112a8,8,0,0,1,0-16h64A8,8,0,0,1,184,112Zm-8,24H112a8,8,0,0,0,0,16h64a8,8,0,0,0,0-16Zm48-88V208a16,16,0,0,1-16,16H48a16,16,0,0,1-16-16V48A16,16,0,0,1,48,32H208A16,16,0,0,1,224,48ZM48,208H72V48H48Zm160,0V48H88V208H208Z"/></symbol>
+  <symbol id="i-book-open" viewBox="0 0 256 256"><path d="M232,48H160a40,40,0,0,0-32,16A40,40,0,0,0,96,48H24a8,8,0,0,0-8,8V200a8,8,0,0,0,8,8H96a24,24,0,0,1,24,24,8,8,0,0,0,16,0,24,24,0,0,1,24-24h72a8,8,0,0,0,8-8V56A8,8,0,0,0,232,48ZM96,192H32V64H96a24,24,0,0,1,24,24V200A39.81,39.81,0,0,0,96,192Zm128,0H160a39.81,39.81,0,0,0-24,8V88a24,24,0,0,1,24-24h64Z"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 256 256"><path d="M216,72H131.31L104,44.69A15.86,15.86,0,0,0,92.69,40H40A16,16,0,0,0,24,56V200.62A15.4,15.4,0,0,0,39.38,216H216.89A15.13,15.13,0,0,0,232,200.89V88A16,16,0,0,0,216,72ZM40,56H92.69l16,16H40ZM216,200H40V88H216Z"/></symbol>
+  <symbol id="i-folder-simple" viewBox="0 0 256 256"><path d="M216,72H130.67L102.93,51.2a16.12,16.12,0,0,0-9.6-3.2H40A16,16,0,0,0,24,64V200a16,16,0,0,0,16,16H216.89A15.13,15.13,0,0,0,232,200.89V88A16,16,0,0,0,216,72Zm0,128H40V64H93.33L123.2,86.4A8,8,0,0,0,128,88h88Z"/></symbol>
+  <symbol id="i-folder-open" viewBox="0 0 256 256"><path d="M245,110.64A16,16,0,0,0,232,104H216V88a16,16,0,0,0-16-16H130.67L102.94,51.2a16.14,16.14,0,0,0-9.6-3.2H40A16,16,0,0,0,24,64V208h0a8,8,0,0,0,8,8H211.1a8,8,0,0,0,7.59-5.47l28.49-85.47A16.05,16.05,0,0,0,245,110.64ZM93.34,64,123.2,86.4A8,8,0,0,0,128,88h72v16H69.77a16,16,0,0,0-15.18,10.94L40,158.7V64Zm112,136H43.1l26.67-80H232Z"/></symbol>
+  <symbol id="i-hash" viewBox="0 0 256 256"><path d="M224,88H175.4l8.47-46.57a8,8,0,0,0-15.74-2.86l-9,49.43H111.4l8.47-46.57a8,8,0,0,0-15.74-2.86L95.14,88H48a8,8,0,0,0,0,16H92.23L83.5,152H32a8,8,0,0,0,0,16H80.6l-8.47,46.57a8,8,0,0,0,6.44,9.3A7.79,7.79,0,0,0,80,224a8,8,0,0,0,7.86-6.57l9-49.43H144.6l-8.47,46.57a8,8,0,0,0,6.44,9.3A7.79,7.79,0,0,0,144,224a8,8,0,0,0,7.86-6.57l9-49.43H208a8,8,0,0,0,0-16H163.77l8.73-48H224a8,8,0,0,0,0-16Zm-76.5,64H99.77l8.73-48h47.73Z"/></symbol>
+  <symbol id="i-tag" viewBox="0 0 256 256"><path d="M243.31,136,144,36.69A15.86,15.86,0,0,0,132.69,32H40a8,8,0,0,0-8,8v92.69A15.86,15.86,0,0,0,36.69,144L136,243.31a16,16,0,0,0,22.63,0l84.68-84.68a16,16,0,0,0,0-22.63Zm-96,96L48,132.69V48h84.69L232,147.31ZM96,84A12,12,0,1,1,84,72,12,12,0,0,1,96,84Z"/></symbol>
+  <symbol id="i-highlighter" viewBox="0 0 256 256"><path d="M253.66,106.34a8,8,0,0,0-11.32,0L192,156.69,107.31,72l50.35-50.34a8,8,0,1,0-11.32-11.32L96,60.69A16,16,0,0,0,93.18,79.5L72,100.69a16,16,0,0,0,0,22.62L76.69,128,18.34,186.34a8,8,0,0,0,3.13,13.25l72,24A7.88,7.88,0,0,0,96,224a8,8,0,0,0,5.66-2.34L136,187.31l4.69,4.69a16,16,0,0,0,22.62,0l21.19-21.18A16,16,0,0,0,203.31,168l50.35-50.34A8,8,0,0,0,253.66,106.34ZM93.84,206.85l-55-18.35L88,139.31,124.69,176ZM152,180.69,83.31,112,104,91.31,172.69,160Z"/></symbol>
+  <symbol id="i-bookmark" viewBox="0 0 256 256"><path d="M184,32H72A16,16,0,0,0,56,48V224a8,8,0,0,0,12.24,6.78L128,193.43l59.77,37.35A8,8,0,0,0,200,224V48A16,16,0,0,0,184,32Zm0,177.57-51.77-32.35a8,8,0,0,0-8.48,0L72,209.57V48H184Z"/></symbol>
+  <symbol id="i-files" viewBox="0 0 256 256"><path d="M213.66,66.34l-40-40A8,8,0,0,0,168,24H88A16,16,0,0,0,72,40V56H56A16,16,0,0,0,40,72V216a16,16,0,0,0,16,16H168a16,16,0,0,0,16-16V200h16a16,16,0,0,0,16-16V72A8,8,0,0,0,213.66,66.34ZM168,216H56V72h76.69L168,107.31v84.53c0,.06,0,.11,0,.16s0,.1,0,.16V216Zm32-32H184V104a8,8,0,0,0-2.34-5.66l-40-40A8,8,0,0,0,136,56H88V40h76.69L200,75.31Zm-56-32a8,8,0,0,1-8,8H88a8,8,0,0,1,0-16h48A8,8,0,0,1,144,152Zm0,32a8,8,0,0,1-8,8H88a8,8,0,0,1,0-16h48A8,8,0,0,1,144,184Z"/></symbol>
+  <symbol id="i-stack" viewBox="0 0 256 256"><path d="M230.91,172A8,8,0,0,1,228,182.91l-96,56a8,8,0,0,1-8.06,0l-96-56A8,8,0,0,1,36,169.09l92,53.65,92-53.65A8,8,0,0,1,230.91,172ZM220,121.09l-92,53.65L36,121.09A8,8,0,0,0,28,134.91l96,56a8,8,0,0,0,8.06,0l96-56A8,8,0,1,0,220,121.09ZM24,80a8,8,0,0,1,4-6.91l96-56a8,8,0,0,1,8.06,0l96,56a8,8,0,0,1,0,13.82l-96,56a8,8,0,0,1-8.06,0l-96-56A8,8,0,0,1,24,80Zm23.88,0L128,126.74,208.12,80,128,33.26Z"/></symbol>
+  <symbol id="i-caret-right" viewBox="0 0 256 256"><path d="M181.66,133.66l-80,80a8,8,0,0,1-11.32-11.32L164.69,128,90.34,53.66a8,8,0,0,1,11.32-11.32l80,80A8,8,0,0,1,181.66,133.66Z"/></symbol>
+  <symbol id="i-caret-down" viewBox="0 0 256 256"><path d="M213.66,101.66l-80,80a8,8,0,0,1-11.32,0l-80-80A8,8,0,0,1,53.66,90.34L128,164.69l74.34-74.35a8,8,0,0,1,11.32,11.32Z"/></symbol>
+  <symbol id="i-caret-left" viewBox="0 0 256 256"><path d="M165.66,202.34a8,8,0,0,1-11.32,11.32l-80-80a8,8,0,0,1,0-11.32l80-80a8,8,0,0,1,11.32,11.32L91.31,128Z"/></symbol>
+  <symbol id="i-sidebar" viewBox="0 0 256 256"><path d="M216,40H40A16,16,0,0,0,24,56V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A16,16,0,0,0,216,40ZM40,56H80V200H40ZM216,200H96V56H216V200Z"/></symbol>
+  <symbol id="i-plus-circle" viewBox="0 0 256 256"><path d="M128,24A104,104,0,1,0,232,128,104.13,104.13,0,0,0,128,24Zm40,112H136v32a8,8,0,0,1-16,0V136H88a8,8,0,0,1,0-16h32V88a8,8,0,0,1,16,0v32h32a8,8,0,0,1,0,16Z"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 256 256"><path d="M224,128a8,8,0,0,1-8,8H136v80a8,8,0,0,1-16,0V136H40a8,8,0,0,1,0-16h80V40a8,8,0,0,1,16,0v80h80A8,8,0,0,1,224,128Z"/></symbol>
+  <symbol id="i-books" viewBox="0 0 256 256"><path d="M231.65,194.55,198.46,36.75a16,16,0,0,0-19-12.39L132.65,34.42a16.08,16.08,0,0,0-12.3,19l33.19,157.8A16,16,0,0,0,169.16,224a16.25,16.25,0,0,0,3.38-.36l46.81-10.06A16.09,16.09,0,0,0,231.65,194.55ZM136,50.15c0-.06,0-.09,0-.09l46.8-10,3.33,15.87L139.33,66Zm6.62,31.47,46.82-10.05,3.34,15.9L146,97.53Zm6.64,31.57,46.82-10.06,13.3,63.24-46.82,10.06ZM216,197.94l-46.8,10-3.33-15.87L212.67,182,216,197.85C216,197.91,216,197.94,216,197.94ZM104,32H56A16,16,0,0,0,40,48V208a16,16,0,0,0,16,16h48a16,16,0,0,0,16-16V48A16,16,0,0,0,104,32ZM56,48h48V64H56Zm0,32h48v96H56Zm48,128H56V192h48v16Z"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 256 256"><path d="M128,80a48,48,0,1,0,48,48A48.05,48.05,0,0,0,128,80Zm0,80a32,32,0,1,1,32-32A32,32,0,0,1,128,160Zm88-29.84q.06-2.16,0-4.32l14.92-18.64a8,8,0,0,0,1.48-7.06,107.21,107.21,0,0,0-10.88-26.25,8,8,0,0,0-6-3.93l-23.72-2.64q-1.48-1.56-3-3L186,40.54a8,8,0,0,0-3.94-6,107.71,107.71,0,0,0-26.25-10.87,8,8,0,0,0-7.06,1.49L130.16,40Q128,40,125.84,40L107.2,25.11a8,8,0,0,0-7.06-1.48A107.6,107.6,0,0,0,73.89,34.51a8,8,0,0,0-3.93,6L67.32,64.27q-1.56,1.49-3,3L40.54,70a8,8,0,0,0-6,3.94,107.71,107.71,0,0,0-10.87,26.25,8,8,0,0,0,1.49,7.06L40,125.84Q40,128,40,130.16L25.11,148.8a8,8,0,0,0-1.48,7.06,107.21,107.21,0,0,0,10.88,26.25,8,8,0,0,0,6,3.93l23.72,2.64q1.49,1.56,3,3L70,215.46a8,8,0,0,0,3.94,6,107.71,107.71,0,0,0,26.25,10.87,8,8,0,0,0,7.06-1.49L125.84,216q2.16.06,4.32,0l18.64,14.92a8,8,0,0,0,7.06,1.48,107.21,107.21,0,0,0,26.25-10.88,8,8,0,0,0,3.93-6l2.64-23.72q1.56-1.48,3-3L215.46,186a8,8,0,0,0,6-3.94,107.71,107.71,0,0,0,10.87-26.25,8,8,0,0,0-1.49-7.06Zm-16.1-6.5a73.93,73.93,0,0,1,0,8.68,8,8,0,0,0,1.74,5.48l14.19,17.73a91.57,91.57,0,0,1-6.23,15L187,173.11a8,8,0,0,0-5.1,2.64,74.11,74.11,0,0,1-6.14,6.14,8,8,0,0,0-2.64,5.1l-2.51,22.58a91.32,91.32,0,0,1-15,6.23l-17.74-14.19a8,8,0,0,0-5-1.75h-.48a73.93,73.93,0,0,1-8.68,0,8,8,0,0,0-5.48,1.74L100.45,215.8a91.57,91.57,0,0,1-15-6.23L82.89,187a8,8,0,0,0-2.64-5.1,74.11,74.11,0,0,1-6.14-6.14,8,8,0,0,0-5.1-2.64L46.43,170.6a91.32,91.32,0,0,1-6.23-15l14.19-17.74a8,8,0,0,0,1.74-5.48,73.93,73.93,0,0,1,0-8.68,8,8,0,0,0-1.74-5.48L40.2,100.45a91.57,91.57,0,0,1,6.23-15L69,82.89a8,8,0,0,0,5.1-2.64,74.11,74.11,0,0,1,6.14-6.14A8,8,0,0,0,82.89,69L85.4,46.43a91.32,91.32,0,0,1,15-6.23l17.74,14.19a8,8,0,0,0,5.48,1.74,73.93,73.93,0,0,1,8.68,0,8,8,0,0,0,5.48-1.74L155.55,40.2a91.57,91.57,0,0,1,15,6.23L173.11,69a8,8,0,0,0,2.64,5.1,74.11,74.11,0,0,1,6.14,6.14,8,8,0,0,0,5.1,2.64l22.58,2.51a91.32,91.32,0,0,1,6.23,15l-14.19,17.74A8,8,0,0,0,199.87,123.66Z"/></symbol>
+  <symbol id="i-file-text" viewBox="0 0 256 256"><path d="M213.66,82.34l-56-56A8,8,0,0,0,152,24H56A16,16,0,0,0,40,40V216a16,16,0,0,0,16,16H200a16,16,0,0,0,16-16V88A8,8,0,0,0,213.66,82.34ZM160,51.31,188.69,80H160ZM200,216H56V40h88V88a8,8,0,0,0,8,8h48V216Zm-32-80a8,8,0,0,1-8,8H96a8,8,0,0,1,0-16h64A8,8,0,0,1,168,136Zm0,32a8,8,0,0,1-8,8H96a8,8,0,0,1,0-16h64A8,8,0,0,1,168,168Z"/></symbol>
+  <symbol id="i-drag" viewBox="0 0 256 256"><path d="M104,60A12,12,0,1,1,92,48,12,12,0,0,1,104,60Zm60,12a12,12,0,1,0-12-12A12,12,0,0,0,164,72ZM92,116a12,12,0,1,0,12,12A12,12,0,0,0,92,116Zm72,0a12,12,0,1,0,12,12A12,12,0,0,0,164,116ZM92,184a12,12,0,1,0,12,12A12,12,0,0,0,92,184Zm72,0a12,12,0,1,0,12,12A12,12,0,0,0,164,184Z"/></symbol>
+  <symbol id="i-x" viewBox="0 0 256 256"><path d="M205.66,194.34a8,8,0,0,1-11.32,11.32L128,139.31,61.66,205.66a8,8,0,0,1-11.32-11.32L116.69,128,50.34,61.66A8,8,0,0,1,61.66,50.34L128,116.69l66.34-66.35a8,8,0,0,1,11.32,11.32L139.31,128Z"/></symbol>
+  <symbol id="i-arrow-right" viewBox="0 0 256 256"><path d="M221.66,133.66l-72,72a8,8,0,0,1-11.32-11.32L196.69,136H40a8,8,0,0,1,0-16H196.69L138.34,61.66a8,8,0,0,1,11.32-11.32l72,72A8,8,0,0,1,221.66,133.66Z"/></symbol>
+  <symbol id="i-arrow-left" viewBox="0 0 256 256"><path d="M224,128a8,8,0,0,1-8,8H59.31l58.35,58.34a8,8,0,0,1-11.32,11.32l-72-72a8,8,0,0,1,0-11.32l72-72a8,8,0,0,1,11.32,11.32L59.31,120H216A8,8,0,0,1,224,128Z"/></symbol>
+  <symbol id="i-arrow-out" viewBox="0 0 256 256"><path d="M224,104a8,8,0,0,1-16,0V59.32l-66.33,66.34a8,8,0,0,1-11.32-11.32L196.68,48H152a8,8,0,0,1,0-16h64a8,8,0,0,1,8,8Zm-40,24a8,8,0,0,0-8,8v72H48V80h72a8,8,0,0,0,0-16H48A16,16,0,0,0,32,80V208a16,16,0,0,0,16,16H176a16,16,0,0,0,16-16V136A8,8,0,0,0,184,128Z"/></symbol>
+  <symbol id="i-search" viewBox="0 0 256 256"><path d="M229.66,218.34l-50.07-50.06a88.11,88.11,0,1,0-11.31,11.31l50.06,50.07a8,8,0,0,0,11.32-11.32ZM40,112a72,72,0,1,1,72,72A72.08,72.08,0,0,1,40,112Z"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 256 256"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm64-88a8,8,0,0,1-8,8H128a8,8,0,0,1-8-8V72a8,8,0,0,1,16,0v48h48A8,8,0,0,1,192,128Z"/></symbol>
+  <symbol id="i-tray" viewBox="0 0 256 256"><path d="M208,32H48A16,16,0,0,0,32,48V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V48A16,16,0,0,0,208,32Zm0,16V152h-28.7A15.86,15.86,0,0,0,168,156.69L148.69,176H107.31L88,156.69A15.86,15.86,0,0,0,76.69,152H48V48Zm0,160H48V168H76.69L96,187.31A15.86,15.86,0,0,0,107.31,192h41.38A15.86,15.86,0,0,0,160,187.31L179.31,168H208v40Z"/></symbol>
+  <symbol id="i-squares" viewBox="0 0 256 256"><path d="M104,40H56A16,16,0,0,0,40,56v48a16,16,0,0,0,16,16h48a16,16,0,0,0,16-16V56A16,16,0,0,0,104,40Zm0,64H56V56h48v48Zm96-64H152a16,16,0,0,0-16,16v48a16,16,0,0,0,16,16h48a16,16,0,0,0,16-16V56A16,16,0,0,0,200,40Zm0,64H152V56h48v48Zm-96,32H56a16,16,0,0,0-16,16v48a16,16,0,0,0,16,16h48a16,16,0,0,0,16-16V152A16,16,0,0,0,104,136Zm0,64H56V152h48v48Zm96-64H152a16,16,0,0,0-16,16v48a16,16,0,0,0,16,16h48a16,16,0,0,0,16-16V152A16,16,0,0,0,200,136Zm0,64H152V152h48v48Z"/></symbol>
+  <symbol id="i-target" viewBox="0 0 256 256"><path d="M221.87,83.16A104.1,104.1,0,1,1,195.67,49l22.67-22.68a8,8,0,0,1,11.32,11.32l-96,96a8,8,0,0,1-11.32-11.32l27.72-27.72a40,40,0,1,0,17.87,31.09,8,8,0,1,1,16-.9,56,56,0,1,1-22.38-41.65L184.3,60.39a87.88,87.88,0,1,0,23.13,29.67,8,8,0,0,1,14.44-6.9Z"/></symbol>
+  <symbol id="i-archive" viewBox="0 0 256 256"><path d="M224,48H32A16,16,0,0,0,16,64V88a16,16,0,0,0,16,16v88a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V104a16,16,0,0,0,16-16V64A16,16,0,0,0,224,48ZM208,192H48V104H208ZM224,88H32V64H224V88ZM96,136a8,8,0,0,1,8-8h48a8,8,0,0,1,0,16H104A8,8,0,0,1,96,136Z"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 256 256"><path d="M216,48H176V40a24,24,0,0,0-24-24H104A24,24,0,0,0,80,40v8H40a8,8,0,0,0,0,16h8V208a16,16,0,0,0,16,16H192a16,16,0,0,0,16-16V64h8a8,8,0,0,0,0-16ZM96,40a8,8,0,0,1,8-8h48a8,8,0,0,1,8,8v8H96Zm96,168H64V64H192ZM112,104v64a8,8,0,0,1-16,0V104a8,8,0,0,1,16,0Zm48,0v64a8,8,0,0,1-16,0V104a8,8,0,0,1,16,0Z"/></symbol>
+  <symbol id="i-flag" viewBox="0 0 256 256"><path d="M42.76,50A8,8,0,0,0,40,56V224a8,8,0,0,0,16,0V179.77c26.79-21.16,49.87-9.75,76.45,3.41,16.4,8.11,34.06,16.85,53,16.85,13.93,0,28.54-4.75,43.82-18a8,8,0,0,0,2.76-6V56A8,8,0,0,0,218.76,50c-28,24.23-51.72,12.49-79.21-1.12C111.07,34.76,78.78,18.79,42.76,50ZM216,172.25c-26.79,21.16-49.87,9.74-76.45-3.41-25-12.35-52.81-26.13-83.55-8.4V59.79c26.79-21.16,49.87-9.75,76.45,3.4,25,12.35,52.82,26.13,83.55,8.4Z"/></symbol>
+  <symbol id="i-check-square" viewBox="0 0 256 256"><path d="M173.66,98.34a8,8,0,0,1,0,11.32l-56,56a8,8,0,0,1-11.32,0l-24-24a8,8,0,0,1,11.32-11.32L112,148.69l50.34-50.35A8,8,0,0,1,173.66,98.34ZM224,48V208a16,16,0,0,1-16,16H48a16,16,0,0,1-16-16V48A16,16,0,0,1,48,32H208A16,16,0,0,1,224,48ZM208,208V48H48V208H208Z"/></symbol>
+  <symbol id="i-dots" viewBox="0 0 256 256"><path d="M140,128a12,12,0,1,1-12-12A12,12,0,0,1,140,128Zm56-12a12,12,0,1,0,12,12A12,12,0,0,0,196,116ZM60,116a12,12,0,1,0,12,12A12,12,0,0,0,60,116Z"/></symbol>
+  <symbol id="i-note" viewBox="0 0 256 256"><path d="M88,96a8,8,0,0,1,8-8h64a8,8,0,0,1,0,16H96A8,8,0,0,1,88,96Zm8,40h64a8,8,0,0,0,0-16H96a8,8,0,0,0,0,16Zm32,16H96a8,8,0,0,0,0,16h32a8,8,0,0,0,0-16ZM224,48V156.69A15.86,15.86,0,0,1,219.31,168L168,219.31A15.86,15.86,0,0,1,156.69,224H48a16,16,0,0,1-16-16V48A16,16,0,0,1,48,32H208A16,16,0,0,1,224,48ZM48,208H152V160a8,8,0,0,1,8-8h48V48H48Zm120-40v28.7L196.69,168Z"/></symbol>
+</svg>
+</body>
+</html>

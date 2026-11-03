@@ -87,7 +87,9 @@ export function useSubjects(notebookId: string | null) {
         if (existing) acc.push({ ...existing, sortOrder: index, updatedAt: now })
         return acc
       }, [])
-      setSubjects(updated)
+      // Subjects fora de `newIds` (ex.: o "Tasks", oculto na coluna) ficam no
+      // state, sem regravar.
+      setSubjects([...updated, ...subjects.filter((s) => !newIds.includes(s.id))])
       try {
         await Promise.all(updated.map((s) => storage.saveSubject(s)))
         setSaveError(null)

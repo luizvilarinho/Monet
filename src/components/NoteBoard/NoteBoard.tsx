@@ -15,6 +15,7 @@ import {
   type ResolvedBoard,
 } from '../../lib/noteBoard'
 import { normalizeSearch, noteFirstParagraph } from '../../lib/noteSearch'
+import { QUICK_NOTES_NAME } from '../../lib/tasks'
 import type { MetadataDef, MetadataValue, Note, Notebook, NoteType } from '../../types'
 import { BoardColumns, type BoardColumn } from '../TasksView/BoardColumns'
 import { TypeIcon } from '../NoteTypes/TypeIcon'
@@ -42,7 +43,7 @@ interface NoteBoardProps {
   // Tasks de cada nota (`parentNoteId`), para o progresso no card.
   taskProgress: Map<string, { done: number; total: number }>
   onSetProperties: (noteId: string, properties: Record<string, MetadataValue>) => void
-  // Nota nova do tipo no caderno (null = Inbox), já com as propriedades.
+  // Nota nova do tipo no caderno (null = Quick Notes), já com as propriedades.
   onCreateNote: (notebookId: string | null, properties: Record<string, MetadataValue>) => void
   // `order`: ids dos cards na ordem visível (Prev/Next do modal).
   onOpenNote: (note: Note, order: string[]) => void
@@ -134,7 +135,7 @@ export function NoteBoard({
   // Caderno ou chip que não existe mais é ignorado (sem reescrever o storage).
   const notebookId = notebookOptions.some((nb) => nb.id === saved.notebookId) ? saved.notebookId : null
   // Caderno do "New": o do filtro; com "All notebooks", o do último "New"
-  // deste board, senão o que tem mais notas do tipo, senão o Inbox (null).
+  // deste board, senão o que tem mais notas do tipo, senão o Quick Notes (null).
   const mostUsedNotebookId = useMemo(() => {
     const counts = new Map<string, number>()
     for (const n of typeNotes) if (n.notebookId) counts.set(n.notebookId, (counts.get(n.notebookId) ?? 0) + 1)
@@ -145,7 +146,7 @@ export function NoteBoard({
   const newNotebookId =
     notebookId ??
     (saved.lastNotebookId && notebookNameById.has(saved.lastNotebookId) ? saved.lastNotebookId : mostUsedNotebookId)
-  const newNotebookName = newNotebookId ? notebookNameById.get(newNotebookId) ?? 'unnamed' : 'Inbox'
+  const newNotebookName = newNotebookId ? notebookNameById.get(newNotebookId) ?? 'unnamed' : QUICK_NOTES_NAME
   const sectionChips = section
     ? [
         ...(section.options ?? []).map((o) => ({ key: o.id, label: o.name, color: o.color })),

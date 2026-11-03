@@ -259,6 +259,12 @@
   color: var(--text-primary);
 }
 
+.typeFilter optgroup {
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-style: normal;
+}
+
 .rowMerge {
   position: relative;
   flex-shrink: 0;

@@ -3,9 +3,11 @@ import { CALENDAR_NOTEBOOK_ID, dateKeyFromMs, toDateKey } from './calendar'
 
 export const TASK_REF_TAG = 'task-ref'
 
-// Projeto de uma task = caderno. O "Inbox" é um caderno singleton de id fixo
-// (mesmo princípio do Calendar) que recebe as tasks sem projeto.
+// Projeto de uma task = caderno. O "Quick Notes" é um caderno singleton de id
+// fixo (mesmo princípio do Calendar) que recebe as notas e tasks sem caderno.
+// O id `inbox` vem do nome antigo e foi mantido.
 export const INBOX_NOTEBOOK_ID = 'inbox'
+export const QUICK_NOTES_NAME = 'Quick Notes'
 
 // Subject "Tasks" de um caderno-projeto: id derivado do caderno, então criar
 // é idempotente (UPSERT por id) e identificá-lo não depende do nome.

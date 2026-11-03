@@ -806,15 +806,31 @@ export class TauriStorage implements StorageAdapter {
 
   async getNotesByDateRange(from: string, to: string): Promise<Note[]> {
     const db = await this.db()
-    // Título do Calendar `dd/mm/yyyy` → `yyyy-mm-dd` para comparar no SQL; o
-    // parseCalendarTitle descarta datas inválidas (ex.: 31/02).
+    // Banco novo pode não ter ainda `notes.properties`/`type_id` nem
+    // `metadata_defs.scope`/`note_type_id`.
+    await this.ensureNotesColumns(db)
+    await this.ensureTasksTables(db)
+    // Pré-filtro (superconjunto); a regra fica no matchNoteDates (lib/agenda):
+    // `date` no período, nota do Calendar pelo título (`dd/mm/yyyy` →
+    // `yyyy-mm-dd`; o parseCalendarTitle descarta datas inválidas como 31/02),
+    // propriedade de data do tipo atual no período, ou "em andamento" (2+
+    // propriedades de data, a menor antes e a maior depois do período).
     const rows = await db.select<NoteRow[]>(
       `SELECT * FROM notes
         WHERE (notebook_id IS NOT $3 AND date >= $1 AND date <= $2)
            OR (notebook_id = $3
                AND TRIM(title) GLOB '[0-9][0-9]/[0-9][0-9]/[0-9][0-9][0-9][0-9]'
                AND substr(TRIM(title), 7, 4) || '-' || substr(TRIM(title), 4, 2) || '-' || substr(TRIM(title), 1, 2)
-                   BETWEEN $1 AND $2)`,
+                   BETWEEN $1 AND $2)
+           OR (notebook_id IS NOT $3 AND type_id IS NOT NULL AND EXISTS (
+                 SELECT 1 FROM json_each(CASE WHEN json_valid(notes.properties) THEN notes.properties ELSE '{}' END) j
+                   JOIN metadata_defs md ON md.id = j.key AND md.type = 'date' AND md.scope = 'note' AND md.note_type_id = notes.type_id
+                  WHERE j.type = 'text' AND j.value BETWEEN $1 AND $2))
+           OR (notebook_id IS NOT $3 AND type_id IS NOT NULL AND archived_at IS NULL AND (
+                 SELECT COUNT(*) >= 2 AND MIN(j.value) < $1 AND MAX(j.value) > $2
+                   FROM json_each(CASE WHEN json_valid(notes.properties) THEN notes.properties ELSE '{}' END) j
+                   JOIN metadata_defs md ON md.id = j.key AND md.type = 'date' AND md.scope = 'note' AND md.note_type_id = notes.type_id
+                  WHERE j.type = 'text'))`,
       [from, to, CALENDAR_NOTEBOOK_ID]
     )
     return rows

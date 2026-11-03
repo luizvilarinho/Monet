@@ -18,12 +18,17 @@ import {
   ArrowSquareOut,
   Books,
   CalendarBlank,
+  CaretRight,
   DotsSixVertical,
   FileText,
-  Folder,
+  FolderSimple,
   Gear,
+  Hash,
+  Highlighter,
   Kanban,
+  Lightning,
   ListChecks,
+  Notebook as NotebookIcon,
   Plus,
   PlusCircle,
   SidebarSimple,
@@ -32,7 +37,7 @@ import {
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { countNotebookChatConversations } from '../../hooks/useChat'
 import { useConfirm } from '../../hooks/useConfirm'
-import { INBOX_NOTEBOOK_ID, isTasksSubject, type NotebookTaskProgress } from '../../lib/tasks'
+import { INBOX_NOTEBOOK_ID, QUICK_NOTES_NAME, type NotebookTaskProgress } from '../../lib/tasks'
 import { markLabelKey, type MarkLabelFilter, type MarkSummary } from '../../lib/noteMarks'
 import { tagKey, type TagCount } from '../../lib/noteTags'
 import type { Notebook, NoteType, Subject } from '../../types'
@@ -42,10 +47,46 @@ import styles from './NotebookList.module.css'
 
 const MIN_WIDTH = 140
 const MAX_WIDTH = 320
+// Selo de idade do Quick Notes: aparece quando a nota mais antiga passa disso.
+const QUICK_NOTES_STALE_DAYS = 7
+const DAY_MS = 24 * 60 * 60 * 1000
+const TAGS_COLLAPSED_KEY = 'monet:notebook-tags-collapsed'
+const MARKS_COLLAPSED_KEY = 'monet:notebook-marks-collapsed'
+
+function readCollapsed(key: string): boolean {
+  try {
+    return localStorage.getItem(key) === '1'
+  } catch {
+    return false
+  }
+}
+
+function writeCollapsed(key: string, value: boolean) {
+  try {
+    localStorage.setItem(key, value ? '1' : '0')
+  } catch {
+    // sem storage: o estado vale só até recarregar
+  }
+}
+
+function TaskProgressBadge({ progress }: { progress: NotebookTaskProgress }) {
+  return (
+    <span
+      className={`${styles.taskProgress} ${progress.overdue > 0 ? styles.taskProgressOverdue : ''}`}
+      title={`${progress.done} of ${progress.total} tasks done · ${progress.open} open${
+        progress.overdue > 0 ? ` · ${progress.overdue} overdue` : ''
+      }`}
+    >
+      {progress.done}/{progress.total}
+    </span>
+  )
+}
 
 interface SortableNotebookItemProps {
   nb: Notebook
   isActive: boolean
+  // Caderno do subject aberto: texto claro, sem fundo (o fundo é do subject).
+  isParent: boolean
   hasVisibleDocs: boolean
   taskProgress?: NotebookTaskProgress
   editing: { id: string; value: string } | null
@@ -63,6 +104,7 @@ interface SortableNotebookItemProps {
 function SortableNotebookItem({
   nb,
   isActive,
+  isParent,
   hasVisibleDocs,
   taskProgress,
   editing,
@@ -86,15 +128,11 @@ function SortableNotebookItem({
     opacity: isDragging ? 0.4 : undefined,
   }
 
-  // Inbox recebe as tasks sem projeto (e as de cadernos excluídos): não pode
-  // ser excluído nem movido para dentro de outro caderno.
-  const isInbox = nb.id === INBOX_NOTEBOOK_ID
-
   return (
     <li
       ref={setNodeRef}
       style={style}
-      className={`${styles.row} ${isActive ? styles.active : ''}`}
+      className={`${styles.row} ${styles.notebookRow} ${isActive ? styles.active : ''} ${isParent ? styles.parent : ''}`}
       onClick={() => {
         if (editing?.id === nb.id) return
         onSelect(nb.id)
@@ -104,15 +142,25 @@ function SortableNotebookItem({
         onStartEdit(nb.id, nb.name)
       }}
     >
-      {editing?.id !== nb.id && (
+      {editing?.id === nb.id ? (
+        <span className={styles.notebookIcon}>
+          <NotebookIcon size={14} aria-hidden />
+        </span>
+      ) : (
+        // Ícone do caderno; no hover vira a alça de arraste. Clique sem arraste
+        // (o PointerSensor só arrasta depois de 5px) seleciona a linha.
         <span
-          className={styles.dragHandle}
+          className={`${styles.notebookIcon} ${styles.dragSlot}`}
           {...attributes}
           {...listeners}
-          onClick={(e) => e.stopPropagation()}
           aria-label="drag to reorder"
         >
-          <DotsSixVertical size={12} weight="bold" aria-hidden />
+          <span className={styles.slotIcon}>
+            <NotebookIcon size={14} aria-hidden />
+          </span>
+          <span className={styles.slotGrip}>
+            <DotsSixVertical size={12} weight="bold" aria-hidden />
+          </span>
         </span>
       )}
       {editing?.id === nb.id ? (
@@ -133,18 +181,9 @@ function SortableNotebookItem({
       ) : (
         <span className={styles.rowLabel}>{nb.name || 'unnamed'}</span>
       )}
-      {editing?.id !== nb.id && taskProgress && (
-        <span
-          className={`${styles.taskProgress} ${taskProgress.overdue > 0 ? styles.taskProgressOverdue : ''}`}
-          title={`${taskProgress.done} of ${taskProgress.total} tasks done · ${taskProgress.open} open${
-            taskProgress.overdue > 0 ? ` · ${taskProgress.overdue} overdue` : ''
-          }`}
-        >
-          {taskProgress.done}/{taskProgress.total}
-        </span>
-      )}
+      {editing?.id !== nb.id && taskProgress && <TaskProgressBadge progress={taskProgress} />}
       {editing?.id !== nb.id && (
-        <>
+        <span className={styles.rowActions}>
           <button
             className={`${styles.rowDocs} ${hasVisibleDocs ? styles.rowDocsActive : ''}`}
             onClick={(e) => { e.stopPropagation(); onSelect(nb.id); onOpenDocuments(nb.id) }}
@@ -155,30 +194,26 @@ function SortableNotebookItem({
           >
             <FileText size={13} aria-hidden />
           </button>
-          {!isInbox && (
-            <>
-              <button
-                className={styles.rowMove}
-                onClick={(e) => { e.stopPropagation(); onMoveNotebook(nb.id) }}
-                onDoubleClick={(e) => e.stopPropagation()}
-                aria-label={`move notebook ${nb.name || 'unnamed'} to another notebook`}
-                title="move to another notebook"
-                type="button"
-              >
-                <ArrowRight size={13} aria-hidden />
-              </button>
-              <button
-                className={styles.rowDelete}
-                onClick={(e) => { e.stopPropagation(); onDelete(nb.id) }}
-                onDoubleClick={(e) => e.stopPropagation()}
-                aria-label={`delete notebook ${nb.name}`}
-                type="button"
-              >
-                <X size={12} weight="bold" aria-hidden />
-              </button>
-            </>
-          )}
-        </>
+          <button
+            className={styles.rowMove}
+            onClick={(e) => { e.stopPropagation(); onMoveNotebook(nb.id) }}
+            onDoubleClick={(e) => e.stopPropagation()}
+            aria-label={`move notebook ${nb.name || 'unnamed'} to another notebook`}
+            title="move to another notebook"
+            type="button"
+          >
+            <ArrowRight size={13} aria-hidden />
+          </button>
+          <button
+            className={styles.rowDelete}
+            onClick={(e) => { e.stopPropagation(); onDelete(nb.id) }}
+            onDoubleClick={(e) => e.stopPropagation()}
+            aria-label={`delete notebook ${nb.name}`}
+            type="button"
+          >
+            <X size={12} weight="bold" aria-hidden />
+          </button>
+        </span>
       )}
     </li>
   )
@@ -221,11 +256,6 @@ function SortableSubjectItem({
     opacity: isDragging ? 0.4 : undefined,
   }
 
-  // Subject "Tasks" (notas-corpo das tasks do caderno): abre a TasksView
-  // filtrada; sem rename/delete, porque é recriado pelo id e apagá-lo
-  // apagaria as notas-corpo.
-  const isTasks = isTasksSubject(subject)
-
   return (
     <li
       ref={setNodeRef}
@@ -236,24 +266,30 @@ function SortableSubjectItem({
         onSelect(subject.id)
       }}
       onDoubleClick={(e) => {
-        if (isTasks || (e.target as HTMLElement).closest('button')) return
+        if ((e.target as HTMLElement).closest('button')) return
         onStartEdit(subject.id, subject.name)
       }}
     >
-      {editing?.id !== subject.id && (
+      {editing?.id === subject.id ? (
+        <span className={styles.subjectIcon}>
+          <FolderSimple size={12} aria-hidden />
+        </span>
+      ) : (
+        // Ícone do subject; no hover vira a alça de arraste (clique seleciona).
         <span
-          className={styles.subjectDragHandle}
+          className={`${styles.subjectIcon} ${styles.dragSlot}`}
           {...attributes}
           {...listeners}
-          onClick={(e) => e.stopPropagation()}
           aria-label="drag to reorder"
         >
-          <DotsSixVertical size={10} weight="bold" aria-hidden />
+          <span className={styles.slotIcon}>
+            <FolderSimple size={12} aria-hidden />
+          </span>
+          <span className={styles.slotGrip}>
+            <DotsSixVertical size={10} weight="bold" aria-hidden />
+          </span>
         </span>
       )}
-      <span className={isTasks ? styles.tasksIcon : styles.subjectIcon}>
-        {isTasks ? <ListChecks size={13} aria-hidden /> : <Folder size={13} aria-hidden />}
-      </span>
       {editing?.id === subject.id ? (
         <input
           autoFocus
@@ -272,28 +308,28 @@ function SortableSubjectItem({
       ) : (
         <span className={styles.subjectLabel}>{subject.name || 'unnamed'}</span>
       )}
-      {!isTasks && editing?.id !== subject.id && (
-        <button
-          className={styles.subjectMove}
-          onClick={(e) => { e.stopPropagation(); onTurnIntoNotebook(subject.id) }}
-          onDoubleClick={(e) => e.stopPropagation()}
-          aria-label={`turn subject ${subject.name || 'unnamed'} into a notebook`}
-          title="Turn into notebook"
-          type="button"
-        >
-          <ArrowSquareOut size={11} aria-hidden />
-        </button>
-      )}
-      {!isTasks && editing?.id !== subject.id && (
-        <button
-          className={styles.subjectDelete}
-          onClick={(e) => { e.stopPropagation(); onDelete(subject.id) }}
-          onDoubleClick={(e) => e.stopPropagation()}
-          aria-label={`delete subject ${subject.name}`}
-          type="button"
-        >
-          <X size={11} weight="bold" aria-hidden />
-        </button>
+      {editing?.id !== subject.id && (
+        <span className={styles.rowActions}>
+          <button
+            className={styles.subjectMove}
+            onClick={(e) => { e.stopPropagation(); onTurnIntoNotebook(subject.id) }}
+            onDoubleClick={(e) => e.stopPropagation()}
+            aria-label={`turn subject ${subject.name || 'unnamed'} into a notebook`}
+            title="Turn into notebook"
+            type="button"
+          >
+            <ArrowSquareOut size={11} aria-hidden />
+          </button>
+          <button
+            className={styles.subjectDelete}
+            onClick={(e) => { e.stopPropagation(); onDelete(subject.id) }}
+            onDoubleClick={(e) => e.stopPropagation()}
+            aria-label={`delete subject ${subject.name}`}
+            type="button"
+          >
+            <X size={11} weight="bold" aria-hidden />
+          </button>
+        </span>
       )}
     </li>
   )
@@ -310,6 +346,12 @@ export interface NotebookListProps {
   onOpenDocuments: (id: string) => void
   onOpenKnowledgeBase: () => void
   notebooksWithDocs: Set<string>
+  // Quick Notes (caderno fixo `inbox`): notas sem as notas-corpo de task e sem
+  // as arquivadas, a criação da mais antiga (selo de idade) e a nota nova
+  // (mesmo handler do Ctrl+N).
+  quickNotesCount: number
+  quickNotesOldestAt: number | null
+  onNewQuickNote: () => void
   // Seção "Tags": tags das notas (todos os cadernos) com a contagem. O clique
   // abre a lista das notas com a tag; clicar na tag ativa fecha a lista.
   tags: TagCount[]
@@ -365,6 +407,9 @@ export function NotebookList({
   onOpenDocuments,
   onOpenKnowledgeBase,
   notebooksWithDocs,
+  quickNotesCount,
+  quickNotesOldestAt,
+  onNewQuickNote,
   tags,
   activeTag,
   onOpenTag,
@@ -401,6 +446,13 @@ export function NotebookList({
   const [editing, setEditing] = useState<{ id: string; value: string } | null>(null)
   const [subjectEditing, setSubjectEditing] = useState<{ id: string; value: string } | null>(null)
   const [moveNotebookId, setMoveNotebookId] = useState<string | null>(null)
+  const [tagsCollapsed, setTagsCollapsed] = useState(() => readCollapsed(TAGS_COLLAPSED_KEY))
+  const [marksCollapsed, setMarksCollapsed] = useState(() => readCollapsed(MARKS_COLLAPSED_KEY))
+  // Menu "Notebooks" da coluna recolhida: posição fixa ao lado do botão (a
+  // coluna recolhida corta o que passa da largura).
+  const [notebookMenu, setNotebookMenu] = useState<{ top: number; left: number } | null>(null)
+  const notebookMenuRef = useRef<HTMLDivElement>(null)
+  const notebookMenuButtonRef = useRef<HTMLButtonElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const subjectInputRef = useRef<HTMLInputElement>(null)
   const { confirm, modal } = useConfirm()
@@ -416,6 +468,29 @@ export function NotebookList({
   useEffect(() => {
     currentWidthRef.current = width
   }, [width])
+
+  useEffect(() => {
+    if (!collapsed) setNotebookMenu(null)
+  }, [collapsed])
+
+  useEffect(() => {
+    if (!notebookMenu) return
+    function onDoc(e: MouseEvent) {
+      const target = e.target as Node
+      if (notebookMenuRef.current?.contains(target)) return
+      if (notebookMenuButtonRef.current?.contains(target)) return
+      setNotebookMenu(null)
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setNotebookMenu(null)
+    }
+    document.addEventListener('mousedown', onDoc)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDoc)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [notebookMenu])
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
@@ -516,6 +591,240 @@ export function NotebookList({
     onReorderSubjects(reordered.map((s) => s.id))
   }
 
+  function toggleTags() {
+    setTagsCollapsed((v) => {
+      writeCollapsed(TAGS_COLLAPSED_KEY, !v)
+      return !v
+    })
+  }
+
+  function toggleMarks() {
+    setMarksCollapsed((v) => {
+      writeCollapsed(MARKS_COLLAPSED_KEY, !v)
+      return !v
+    })
+  }
+
+  function toggleNotebookMenu() {
+    if (notebookMenu) {
+      setNotebookMenu(null)
+      return
+    }
+    const rect = notebookMenuButtonRef.current?.getBoundingClientRect()
+    if (!rect) return
+    setNotebookMenu({ top: rect.top, left: rect.right + 4 })
+  }
+
+  // Cadernos do usuário (lista ordenável): Calendar e Quick Notes são views fixas.
+  const userNotebooks = notebooks.filter((n) => n.id !== calendarNotebookId && n.id !== INBOX_NOTEBOOK_ID)
+  const quickNotesNb = notebooks.find((n) => n.id === INBOX_NOTEBOOK_ID)
+  const calendarNb = calendarNotebookId ? notebooks.find((n) => n.id === calendarNotebookId) : undefined
+  const quickNotesProgress = taskProgress.get(INBOX_NOTEBOOK_ID)
+  const quickNotesAgeDays =
+    quickNotesOldestAt === null ? 0 : Math.floor((Date.now() - quickNotesOldestAt) / DAY_MS)
+  const quickNotesStale = quickNotesCount > 0 && quickNotesAgeDays > QUICK_NOTES_STALE_DAYS
+  // Um fundo de seleção só: com um subject aberto, o caderno fica como "pai".
+  const notebookSelected = (id: string) => !viewActive && id === activeId && activeSubjectId === null
+  const notebookParent = (id: string) => !viewActive && id === activeId && activeSubjectId !== null
+  const activeUserNotebook = viewActive ? undefined : userNotebooks.find((n) => n.id === activeId)
+  const userNotebooksActive = !viewActive && (activeId === null || activeUserNotebook !== undefined)
+
+  // Subjects do caderno ativo, logo abaixo da linha do caderno; a última
+  // linha cria um subject.
+  function renderSubjects(nbId: string) {
+    return (
+      <li className={`${styles.subjectContainer} ${nbId === activeId ? styles.open : ''}`}>
+        {nbId === activeId && (
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleSubjectDragEnd}>
+            <SortableContext
+              items={subjects.map((s) => s.id)}
+              strategy={verticalListSortingStrategy}
+            >
+              <ul className={styles.subjectList}>
+                {subjects.map((subject) => (
+                  <SortableSubjectItem
+                    key={subject.id}
+                    subject={subject}
+                    isActive={subject.id === activeSubjectId}
+                    editing={subjectEditing}
+                    onSelect={onSelectSubject}
+                    onDelete={(id) => handleDeleteSubject(id, subject.name)}
+                    onTurnIntoNotebook={(id) => handleTurnSubjectIntoNotebook(id, subject.name)}
+                    onStartEdit={(id, value) => setSubjectEditing({ id, value })}
+                    onCommitEdit={commitSubjectEdit}
+                    onCancelEdit={() => setSubjectEditing(null)}
+                    onEditChange={(id, value) => setSubjectEditing({ id, value })}
+                    subjectInputRef={subjectInputRef}
+                  />
+                ))}
+                <li className={`${styles.subjectRow} ${styles.subjectAddRow}`} onClick={onCreateSubject}>
+                  <span className={styles.subjectIcon}>
+                    <Plus size={12} aria-hidden />
+                  </span>
+                  <span className={styles.subjectLabel}>New subject</span>
+                </li>
+              </ul>
+            </SortableContext>
+          </DndContext>
+        )}
+      </li>
+    )
+  }
+
+  function renderRail() {
+    return (
+      <div className={styles.rail}>
+        <button
+          className={styles.railButton}
+          onClick={onToggleCollapsed}
+          aria-label="expand notebooks"
+          title="expand notebooks"
+          type="button"
+        >
+          <SidebarSimple size={16} aria-hidden />
+        </button>
+        <span className={styles.railSeparator} aria-hidden />
+        {calendarNb && (
+          <button
+            className={`${styles.railButton} ${!viewActive && calendarNb.id === activeId ? styles.railActive : ''}`}
+            onClick={() => onSelect(calendarNb.id)}
+            aria-label={calendarNb.name}
+            title={calendarNb.name}
+            type="button"
+          >
+            <span className={styles.calendarIcon}>
+              <CalendarBlank size={16} aria-hidden />
+            </span>
+          </button>
+        )}
+        {quickNotesNb && (
+          <button
+            className={`${styles.railButton} ${notebookSelected(INBOX_NOTEBOOK_ID) || notebookParent(INBOX_NOTEBOOK_ID) ? styles.railActive : ''}`}
+            onClick={() => onSelect(INBOX_NOTEBOOK_ID)}
+            aria-label={QUICK_NOTES_NAME}
+            title={quickNotesCount > 0 ? `${QUICK_NOTES_NAME} (${quickNotesCount})` : QUICK_NOTES_NAME}
+            type="button"
+          >
+            <span className={styles.quickNotesIcon}>
+              <Lightning size={16} aria-hidden />
+            </span>
+            {quickNotesCount > 0 && (
+              <span className={styles.railBadge}>{quickNotesCount > 99 ? '99+' : quickNotesCount}</span>
+            )}
+          </button>
+        )}
+        <button
+          className={`${styles.railButton} ${tasksActive ? styles.railActive : ''}`}
+          onClick={onOpenTasks}
+          aria-label="Tasks"
+          title="Tasks"
+          type="button"
+        >
+          <span className={styles.tasksIcon}>
+            <ListChecks size={16} aria-hidden />
+          </span>
+        </button>
+        {boards.length === 0 ? (
+          <button
+            className={styles.railButton}
+            onClick={onSetUpBoard}
+            aria-label="Set up a board"
+            title="Set up a board…"
+            type="button"
+          >
+            <span className={styles.boardIcon}>
+              <Kanban size={16} aria-hidden />
+            </span>
+          </button>
+        ) : (
+          boards.map((b) => {
+            const active = b.type.id === activeBoardTypeId
+            return (
+              <button
+                key={b.type.id}
+                className={`${styles.railButton} ${active ? styles.railActive : ''}`}
+                onClick={() => (active ? onCloseBoard() : onOpenBoard(b.type.id))}
+                aria-label={`${b.type.name} board`}
+                title={`${b.type.name} · ${b.columnName}`}
+                type="button"
+              >
+                <span className={styles.boardIcon} style={{ color: b.type.color ?? undefined }}>
+                  <TypeIcon name={b.type.icon} />
+                </span>
+              </button>
+            )
+          })
+        )}
+        <span className={styles.railSeparator} aria-hidden />
+        <button
+          ref={notebookMenuButtonRef}
+          className={`${styles.railButton} ${userNotebooksActive || notebookMenu ? styles.railActive : ''}`}
+          onClick={toggleNotebookMenu}
+          aria-label="Notebooks"
+          aria-haspopup="menu"
+          aria-expanded={notebookMenu !== null}
+          title={activeUserNotebook ? `Notebooks: ${activeUserNotebook.name || 'unnamed'}` : 'Notebooks'}
+          type="button"
+        >
+          <NotebookIcon size={16} aria-hidden />
+        </button>
+        <button
+          className={`${styles.railButton} ${activeTag !== null ? styles.railActive : ''}`}
+          onClick={() => (activeTag !== null ? onCloseTags() : tags[0] && onOpenTag(tags[0].tag))}
+          disabled={tags.length === 0 && activeTag === null}
+          aria-label="Tags"
+          title={tags.length === 0 ? 'Tags (no tags)' : 'Tags'}
+          type="button"
+        >
+          <Hash size={16} aria-hidden />
+        </button>
+        <button
+          className={`${styles.railButton} ${marksActive ? styles.railActive : ''}`}
+          onClick={() => (marksActive ? onCloseMarks() : onOpenMarks(null))}
+          disabled={markSummary.total === 0 && !marksActive}
+          aria-label="Marks"
+          title={markSummary.total === 0 ? 'Marks (no marks)' : `Marks (${markSummary.total})`}
+          type="button"
+        >
+          <Highlighter size={16} aria-hidden />
+        </button>
+        {notebookMenu && (
+          <div
+            ref={notebookMenuRef}
+            className={styles.notebookMenu}
+            style={{ top: notebookMenu.top, left: notebookMenu.left }}
+            role="menu"
+          >
+            <div className={styles.notebookMenuHeader}>Notebooks</div>
+            <button
+              className={`${styles.notebookMenuItem} ${!viewActive && activeId === null ? styles.active : ''}`}
+              onClick={() => { onSelect(null); setNotebookMenu(null) }}
+              role="menuitem"
+              type="button"
+            >
+              <span className={`${styles.rowLabel} ${styles.allNotes}`}>All notes</span>
+            </button>
+            {userNotebooks.map((nb) => {
+              const progress = taskProgress.get(nb.id)
+              return (
+                <button
+                  key={nb.id}
+                  className={`${styles.notebookMenuItem} ${!viewActive && nb.id === activeId ? styles.active : ''}`}
+                  onClick={() => { onSelect(nb.id); setNotebookMenu(null) }}
+                  role="menuitem"
+                  type="button"
+                >
+                  <span className={styles.rowLabel}>{nb.name || 'unnamed'}</span>
+                  {progress && <TaskProgressBadge progress={progress} />}
+                </button>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <aside className={`${styles.notebooks} ${collapsed ? styles.collapsed : ''}`} style={{ width }}>
       {modal}
@@ -524,7 +833,7 @@ export function NotebookList({
         if (!moveNotebook) return null
         return (
           <NotebookPickerModal
-            title={`Move \u201C${moveNotebook.name || 'unnamed'}\u201D to:`}
+            title={`Move “${moveNotebook.name || 'unnamed'}” to:`}
             confirmLabel="Move"
             notebooks={notebooks.filter(
               (n) => n.id !== moveNotebookId && n.id !== calendarNotebookId
@@ -539,22 +848,12 @@ export function NotebookList({
       })()}
       {!collapsed && <div className={styles.resizeHandle} onMouseDown={onMouseDown} />}
       {collapsed ? (
-        <div className={styles.collapsedTop}>
-          <button
-            className={styles.headerToggle}
-            onClick={onToggleCollapsed}
-            aria-label="expand notebooks"
-            title="expand notebooks"
-            type="button"
-          >
-            <SidebarSimple size={16} aria-hidden />
-          </button>
-        </div>
+        renderRail()
       ) : (
         <div className={styles.scrollArea}>
           <section className={styles.section}>
             <div className={styles.header}>
-              <span>Notebooks</span>
+              <span>Views</span>
               <div className={styles.headerActions}>
                 <button
                   className={styles.headerToggle}
@@ -565,44 +864,85 @@ export function NotebookList({
                 >
                   <SidebarSimple size={16} aria-hidden />
                 </button>
-                <button className={styles.headerAdd} onClick={onCreate} aria-label="new notebook" type="button">
-                  <PlusCircle size={16} weight="fill" aria-hidden />
-                </button>
               </div>
             </div>
             <ul className={styles.list}>
-              <li
-                className={`${styles.row} ${!viewActive && activeId === null ? styles.active : ''}`}
-                onClick={() => onSelect(null)}
-              >
-                <span className={`${styles.rowLabel} ${styles.allNotes}`}>all notes</span>
-              </li>
-
-              {calendarNotebookId && (() => {
-                const calNb = notebooks.find((n) => n.id === calendarNotebookId)
-                if (!calNb) return null
-                return (
-                  <li
-                    className={`${styles.row} ${!viewActive && calNb.id === activeId ? styles.active : ''}`}
-                    onClick={() => onSelect(calNb.id)}
-                  >
-                    <span className={styles.calendarIcon}>
-                      <CalendarBlank size={16} aria-hidden />
-                    </span>
-                    <span className={styles.rowLabel}>{calNb.name}</span>
+              {calendarNb && (
+                <li
+                  className={`${styles.row} ${!viewActive && calendarNb.id === activeId ? styles.active : ''}`}
+                  onClick={() => onSelect(calendarNb.id)}
+                >
+                  <span className={styles.calendarIcon}>
+                    <CalendarBlank size={16} aria-hidden />
+                  </span>
+                  <span className={styles.rowLabel}>{calendarNb.name}</span>
+                  <span className={styles.rowActions}>
                     <button
-                      className={`${styles.rowDocs} ${notebooksWithDocs.has(calNb.id) ? styles.rowDocsActive : ''}`}
-                      onClick={(e) => { e.stopPropagation(); onSelect(calNb.id); onOpenDocuments(calNb.id) }}
+                      className={`${styles.rowDocs} ${notebooksWithDocs.has(calendarNb.id) ? styles.rowDocsActive : ''}`}
+                      onClick={(e) => { e.stopPropagation(); onSelect(calendarNb.id); onOpenDocuments(calendarNb.id) }}
                       onDoubleClick={(e) => e.stopPropagation()}
-                      aria-label={`documents for notebook ${calNb.name}`}
-                      title={notebooksWithDocs.has(calNb.id) ? 'notebook documents (active)' : 'notebook documents'}
+                      aria-label={`documents for notebook ${calendarNb.name}`}
+                      title={notebooksWithDocs.has(calendarNb.id) ? 'notebook documents (active)' : 'notebook documents'}
                       type="button"
                     >
                       <FileText size={13} aria-hidden />
                     </button>
+                  </span>
+                </li>
+              )}
+
+              {quickNotesNb && (
+                <>
+                  <li
+                    className={`${styles.row} ${notebookSelected(INBOX_NOTEBOOK_ID) ? styles.active : ''} ${notebookParent(INBOX_NOTEBOOK_ID) ? styles.parent : ''}`}
+                    onClick={() => onSelect(INBOX_NOTEBOOK_ID)}
+                    title="Notes and tasks without a notebook yet"
+                  >
+                    <span className={styles.quickNotesIcon}>
+                      <Lightning size={16} aria-hidden />
+                    </span>
+                    <span className={styles.rowLabel}>{QUICK_NOTES_NAME}</span>
+                    {quickNotesStale && (
+                      <span
+                        className={styles.staleBadge}
+                        title={`Oldest note: ${quickNotesAgeDays} days`}
+                      >
+                        {quickNotesAgeDays}d
+                      </span>
+                    )}
+                    {quickNotesProgress && <TaskProgressBadge progress={quickNotesProgress} />}
+                    {quickNotesCount > 0 && (
+                      <span
+                        className={styles.sectionCount}
+                        title={`${quickNotesCount} note${quickNotesCount === 1 ? '' : 's'}`}
+                      >
+                        {quickNotesCount}
+                      </span>
+                    )}
+                    <span className={styles.rowActions}>
+                      <button
+                        className={`${styles.rowDocs} ${notebooksWithDocs.has(INBOX_NOTEBOOK_ID) ? styles.rowDocsActive : ''}`}
+                        onClick={(e) => { e.stopPropagation(); onSelect(INBOX_NOTEBOOK_ID); onOpenDocuments(INBOX_NOTEBOOK_ID) }}
+                        aria-label={`documents for notebook ${QUICK_NOTES_NAME}`}
+                        title={notebooksWithDocs.has(INBOX_NOTEBOOK_ID) ? 'notebook documents (active)' : 'notebook documents'}
+                        type="button"
+                      >
+                        <FileText size={13} aria-hidden />
+                      </button>
+                      <button
+                        className={styles.rowAdd}
+                        onClick={(e) => { e.stopPropagation(); onNewQuickNote() }}
+                        aria-label="new quick note"
+                        title="New quick note (Ctrl+N)"
+                        type="button"
+                      >
+                        <Plus size={13} aria-hidden />
+                      </button>
+                    </span>
                   </li>
-                )
-              })()}
+                  {renderSubjects(INBOX_NOTEBOOK_ID)}
+                </>
+              )}
 
               <li
                 className={`${styles.row} ${tasksActive ? styles.active : ''}`}
@@ -646,21 +986,42 @@ export function NotebookList({
                   )
                 })
               )}
+            </ul>
+          </section>
 
-              {notebooks.filter((n) => n.id !== calendarNotebookId).length === 0 &&
-               !calendarNotebookId ? (
+          <hr className={styles.divider} />
+
+          <section className={styles.section}>
+            <div className={styles.header}>
+              <span>Notebooks</span>
+              <div className={styles.headerActions}>
+                <button className={styles.headerAdd} onClick={onCreate} aria-label="new notebook" title="New notebook" type="button">
+                  <PlusCircle size={16} weight="fill" aria-hidden />
+                </button>
+              </div>
+            </div>
+            <ul className={styles.list}>
+              <li
+                className={`${styles.row} ${!viewActive && activeId === null ? styles.active : ''}`}
+                onClick={() => onSelect(null)}
+              >
+                <span className={`${styles.rowLabel} ${styles.allNotes}`}>All notes</span>
+              </li>
+
+              {userNotebooks.length === 0 ? (
                 <li className={styles.empty}>no notebooks</li>
-              ) : notebooks.filter((n) => n.id !== calendarNotebookId).length === 0 ? null : (
+              ) : (
                 <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
                   <SortableContext
-                    items={notebooks.filter((n) => n.id !== calendarNotebookId).map((n) => n.id)}
+                    items={userNotebooks.map((n) => n.id)}
                     strategy={verticalListSortingStrategy}
                   >
-                    {notebooks.filter((n) => n.id !== calendarNotebookId).map((nb) => (
+                    {userNotebooks.map((nb) => (
                       <Fragment key={nb.id}>
                         <SortableNotebookItem
                           nb={nb}
-                          isActive={!viewActive && nb.id === activeId}
+                          isActive={notebookSelected(nb.id)}
+                          isParent={notebookParent(nb.id)}
                           hasVisibleDocs={notebooksWithDocs.has(nb.id)}
                           taskProgress={taskProgress.get(nb.id)}
                           editing={editing}
@@ -674,51 +1035,7 @@ export function NotebookList({
                           onEditChange={(id, value) => setEditing({ id, value })}
                           inputRef={inputRef}
                         />
-                        <li className={`${styles.subjectContainer} ${nb.id === activeId ? styles.open : ''}`}>
-                          {nb.id === activeId && (
-                            <>
-                              <div className={styles.subjectHeader}>
-                                <span className={styles.subjectHeaderLabel}>Subjects</span>
-                                <button
-                                  className={styles.subjectAdd}
-                                  onClick={onCreateSubject}
-                                  aria-label="new subject"
-                                  type="button"
-                                  title="New subject"
-                                >
-                                  <Plus size={12} weight="bold" aria-hidden />
-                                </button>
-                              </div>
-                              {subjects.length > 0 && (
-                                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleSubjectDragEnd}>
-                                  <SortableContext
-                                    items={subjects.map((s) => s.id)}
-                                    strategy={verticalListSortingStrategy}
-                                  >
-                                    <ul className={styles.subjectList}>
-                                      {subjects.map((subject) => (
-                                        <SortableSubjectItem
-                                          key={subject.id}
-                                          subject={subject}
-                                          isActive={subject.id === activeSubjectId}
-                                          editing={subjectEditing}
-                                          onSelect={onSelectSubject}
-                                          onDelete={(id) => handleDeleteSubject(id, subject.name)}
-                                          onTurnIntoNotebook={(id) => handleTurnSubjectIntoNotebook(id, subject.name)}
-                                          onStartEdit={(id, value) => setSubjectEditing({ id, value })}
-                                          onCommitEdit={commitSubjectEdit}
-                                          onCancelEdit={() => setSubjectEditing(null)}
-                                          onEditChange={(id, value) => setSubjectEditing({ id, value })}
-                                          subjectInputRef={subjectInputRef}
-                                        />
-                                      ))}
-                                    </ul>
-                                  </SortableContext>
-                                </DndContext>
-                              )}
-                            </>
-                          )}
-                        </li>
+                        {renderSubjects(nb.id)}
                       </Fragment>
                     ))}
                   </SortableContext>
@@ -730,67 +1047,97 @@ export function NotebookList({
           <hr className={styles.divider} />
 
           <section className={styles.section}>
-            <div className={styles.header}>Tags</div>
-            <ul className={styles.list}>
-              {tags.length === 0 ? (
-                <li className={styles.empty}>no tags</li>
-              ) : (
-                tags.map((t) => {
-                  const active = tagKey(t.tag) === activeTagKey
-                  return (
-                    <li
-                      key={tagKey(t.tag)}
-                      className={`${styles.row} ${active ? styles.active : ''}`}
-                      title={`Notes tagged #${t.tag}, from every notebook`}
-                      onClick={() => (active ? onCloseTags() : onOpenTag(t.tag))}
-                    >
-                      <span className={styles.rowLabel}>#{t.tag}</span>
-                      <span className={styles.sectionCount}>{t.count}</span>
-                    </li>
-                  )
-                })
-              )}
-            </ul>
+            <button
+              className={styles.sectionToggle}
+              onClick={toggleTags}
+              aria-expanded={!tagsCollapsed}
+              type="button"
+            >
+              <span className={styles.sectionToggleLabel}>
+                <span className={`${styles.caret} ${tagsCollapsed ? '' : styles.caretOpen}`}>
+                  <CaretRight size={11} aria-hidden />
+                </span>
+                Tags
+              </span>
+              {tags.length > 0 && <span className={styles.sectionCount}>{tags.length}</span>}
+            </button>
+            {!tagsCollapsed && (
+              <ul className={styles.list}>
+                {tags.length === 0 ? (
+                  <li className={styles.empty}>no tags</li>
+                ) : (
+                  tags.map((t) => {
+                    const active = tagKey(t.tag) === activeTagKey
+                    return (
+                      <li
+                        key={tagKey(t.tag)}
+                        className={`${styles.row} ${active ? styles.active : ''}`}
+                        title={`Notes tagged #${t.tag}, from every notebook`}
+                        onClick={() => (active ? onCloseTags() : onOpenTag(t.tag))}
+                      >
+                        <span className={styles.rowLabel}>#{t.tag}</span>
+                        <span className={styles.sectionCount}>{t.count}</span>
+                      </li>
+                    )
+                  })
+                )}
+              </ul>
+            )}
           </section>
 
           <hr className={styles.divider} />
 
           <section className={styles.section}>
-            <div className={styles.header}>Marks</div>
-            <ul className={styles.list}>
-              {markSummary.total === 0 ? (
-                <li className={styles.empty}>no marks</li>
-              ) : (
-                <>
-                  <li
-                    className={`${styles.row} ${allMarksActive ? styles.active : ''}`}
-                    onClick={() => (allMarksActive ? onCloseMarks() : onOpenMarks(null))}
-                  >
-                    <span className={`${styles.rowLabel} ${styles.allNotes}`}>all marks</span>
-                    <span className={styles.sectionCount}>{markSummary.total}</span>
-                  </li>
-                  {markSummary.labels.map((l) => {
-                    const active =
-                      marksActive &&
-                      marksFilter !== null &&
-                      marksFilter.label !== null &&
-                      markLabelKey(marksFilter.label) === markLabelKey(l.label)
-                    return (
-                      <li
-                        key={markLabelKey(l.label)}
-                        className={`${styles.row} ${active ? styles.active : ''}`}
-                        title={l.label}
-                        onClick={() => (active ? onCloseMarks() : onOpenMarks({ label: l.label }))}
-                      >
-                        <span className={styles.markDot} aria-hidden />
-                        <span className={styles.rowLabel}>{l.label}</span>
-                        <span className={styles.sectionCount}>{l.count}</span>
-                      </li>
-                    )
-                  })}
-                </>
-              )}
-            </ul>
+            <button
+              className={styles.sectionToggle}
+              onClick={toggleMarks}
+              aria-expanded={!marksCollapsed}
+              type="button"
+            >
+              <span className={styles.sectionToggleLabel}>
+                <span className={`${styles.caret} ${marksCollapsed ? '' : styles.caretOpen}`}>
+                  <CaretRight size={11} aria-hidden />
+                </span>
+                Marks
+              </span>
+              {markSummary.total > 0 && <span className={styles.sectionCount}>{markSummary.total}</span>}
+            </button>
+            {!marksCollapsed && (
+              <ul className={styles.list}>
+                {markSummary.total === 0 ? (
+                  <li className={styles.empty}>no marks</li>
+                ) : (
+                  <>
+                    <li
+                      className={`${styles.row} ${allMarksActive ? styles.active : ''}`}
+                      onClick={() => (allMarksActive ? onCloseMarks() : onOpenMarks(null))}
+                    >
+                      <span className={`${styles.rowLabel} ${styles.allNotes}`}>All marks</span>
+                      <span className={styles.sectionCount}>{markSummary.total}</span>
+                    </li>
+                    {markSummary.labels.map((l) => {
+                      const active =
+                        marksActive &&
+                        marksFilter !== null &&
+                        marksFilter.label !== null &&
+                        markLabelKey(marksFilter.label) === markLabelKey(l.label)
+                      return (
+                        <li
+                          key={markLabelKey(l.label)}
+                          className={`${styles.row} ${active ? styles.active : ''}`}
+                          title={l.label}
+                          onClick={() => (active ? onCloseMarks() : onOpenMarks({ label: l.label }))}
+                        >
+                          <span className={styles.markDot} aria-hidden />
+                          <span className={styles.rowLabel}>{l.label}</span>
+                          <span className={styles.sectionCount}>{l.count}</span>
+                        </li>
+                      )
+                    })}
+                  </>
+                )}
+              </ul>
+            )}
           </section>
 
         </div>

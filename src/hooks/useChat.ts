@@ -54,6 +54,7 @@ import {
 } from '../lib/rag'
 import { CALENDAR_NOTEBOOK_ID, dateKeyFromMs, getWeekdayName } from '../lib/calendar'
 import { cleanNoteContentForAi, loadEmbedResponses, noteDate } from '../lib/noteFileText'
+import { formatNoteDateMatch, matchNoteDates, type NoteDateMatch } from '../lib/agenda'
 import { extractNoteMarks, markLabelKey, summarizeMarks, type NoteMarkEntry } from '../lib/noteMarks'
 import { isTodosNote } from '../lib/noteTypes'
 import { ocrTextsForContent } from '../lib/imageOcr'
@@ -229,6 +230,7 @@ const READER_BOOK_FOLDER_LINK_KEY = 'monet:reader-book-folder-link'
 const NOTEBOOK_CHAT_FOLDER_LINK_KEY = 'monet:notes-notebook-folder-link'
 const MINCER_ITEM_FOLDER_LINK_KEY = 'monet:mincer-item-folder-link'
 const NOTEBOOK_MEMORY_MIGRATION_KEY = 'monet:notebook-memory-default-migrated'
+const DAILY_NOTES_DEFAULT_MIGRATION_KEY = 'monet:chat-tools-daily-notes-default-migrated'
 
 // Texto do assistant quando o turno termina sem resposta.
 export const NO_RESPONSE_MESSAGE = "The model didn't return a response. Please try again."
@@ -309,7 +311,8 @@ export interface ChatTools {
   // Tool "Tasks" (consulta à tabela de tasks); nos chats que fornecem o snapshot.
   tasks: boolean
   // Tools "Daily notes" (get_day, notes_by_date): leem notas datadas de
-  // qualquer caderno, fora do escopo da pasta. Opt-in.
+  // qualquer caderno, fora do escopo da pasta. Ligadas por padrão (cadernos
+  // com a IA desligada ficam de fora).
   dailyNotes: boolean
   // Tool "Notes" (get_note): consulta uma nota por título, escolhida pelo
   // modelo. Ligada por padrão (cadernos com a IA desligada ficam de fora).
@@ -340,25 +343,34 @@ const DEFAULT_TOOLS: ChatTools = {
   webSearch: false,
   deepResearch: false,
   tasks: false,
-  dailyNotes: false,
+  dailyNotes: true,
   notes: true,
 }
 
 function loadTools(): ChatTools {
   try {
+    // Migração única: "Daily notes" passou a nascer ligada; liga também para
+    // quem já tinha o valor antigo (false) gravado. Depois, vale a escolha.
+    const migrateDailyNotes = localStorage.getItem(DAILY_NOTES_DEFAULT_MIGRATION_KEY) === null
+    if (migrateDailyNotes) localStorage.setItem(DAILY_NOTES_DEFAULT_MIGRATION_KEY, '1')
     const raw = localStorage.getItem(TOOLS_KEY)
     if (raw) {
       const parsed = JSON.parse(raw)
       if (parsed && typeof parsed === 'object') {
         const p = parsed as Record<string, unknown>
-        return {
+        const tools: ChatTools = {
           webSearch: !!p.webSearch,
           deepResearch: !!p.deepResearch,
           tasks: !!p.tasks,
-          dailyNotes: !!p.dailyNotes,
-          // Ligada por padrão: só desliga com escolha explícita.
+          // Ligadas por padrão: só desligam com escolha explícita.
+          dailyNotes: p.dailyNotes !== false,
           notes: p.notes !== false,
         }
+        if (migrateDailyNotes && !tools.dailyNotes) {
+          tools.dailyNotes = true
+          saveTools(tools)
+        }
+        return tools
       }
     }
   } catch {
@@ -1440,9 +1452,10 @@ function foldText(s: string): string {
   return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim()
 }
 
-// Notas do período (nota diária do Calendar + notas datadas, de qualquer
-// caderno com indexação de IA ligada), como texto para a IA. Cada nota vira
-// uma fonte [n] em `sources` (numeração contínua da resposta).
+// Notas do período (nota diária do Calendar + notas com data ou propriedade
+// de data no período, e as "em andamento", de qualquer caderno com indexação
+// de IA ligada), como texto para a IA, com o campo que casou no cabeçalho.
+// Cada nota vira uma fonte [n] em `sources` (numeração contínua da resposta).
 async function notesByDateText(
   from: string,
   to: string,
@@ -1451,11 +1464,12 @@ async function notesByDateText(
 ): Promise<string> {
   if (!ISO_DATE_RE.test(from) || !ISO_DATE_RE.test(to)) return 'Invalid date: use YYYY-MM-DD.'
   if (from > to) [from, to] = [to, from]
-  const [notes, notebooks, summaries, disabledIds] = await Promise.all([
+  const [notes, notebooks, summaries, disabledIds, defs] = await Promise.all([
     storage.getNotesByDateRange(from, to),
     storage.getNotebooks(),
     storage.getNoteSummaries(),
     notesIndexGetDisabledNotebooks(),
+    storage.getMetadataDefs(),
   ])
   const disabled = new Set(disabledIds)
   const notebookName = new Map(notebooks.map((nb) => [nb.id, nb.name]))
@@ -1469,11 +1483,14 @@ async function notesByDateText(
   const picked = notes
     .filter((n) => n.notebookId === null || !disabled.has(n.notebookId))
     .filter((n) => !wanted || foldText(notebookName.get(n.notebookId ?? '') ?? '').includes(wanted))
-    .map((n) => ({ note: n, date: noteDate(n) ?? '' }))
-    // Por data; no mesmo dia, a nota diária primeiro.
+    .map((n) => ({ note: n, match: matchNoteDates(n, defs, from, to) }))
+    .filter((p): p is { note: Note; match: NoteDateMatch } => p.match !== null)
+    // Pela 1ª data que casou (no mesmo dia, a nota diária primeiro); as "em
+    // andamento" por último.
     .sort(
       (a, b) =>
-        a.date.localeCompare(b.date) ||
+        Number(a.match.ongoing) - Number(b.match.ongoing) ||
+        (a.match.matched[0]?.date ?? '').localeCompare(b.match.matched[0]?.date ?? '') ||
         Number(b.note.notebookId === CALENDAR_NOTEBOOK_ID) - Number(a.note.notebookId === CALENDAR_NOTEBOOK_ID)
     )
   if (picked.length === 0) return 'No notes found for this period.'
@@ -1487,7 +1504,7 @@ async function notesByDateText(
   const blocks: string[] = []
   let used = 0
   let omitted = 0
-  for (const { note, date } of picked) {
+  for (const { note, match } of picked) {
     if (used >= NOTES_TOOL_BUDGET) {
       omitted++
       continue
@@ -1506,12 +1523,12 @@ async function notesByDateText(
       documentId: `note:${note.id}`,
       title,
       kind: 'note',
-      date: date.slice(0, 10) || undefined,
+      date: match.matched[0]?.date,
       folder,
       rowids: [],
     })
     const archived = note.archivedAt ? `archived ${dateKeyFromMs(note.archivedAt)}` : undefined
-    const header = [title, 'note', date, archived, folder].filter(Boolean).join(' · ')
+    const header = [title, 'note', formatNoteDateMatch(match), archived, folder].filter(Boolean).join(' · ')
     blocks.push(`[${n}] [${header}]\n${body || '(empty note)'}`)
   }
   if (omitted > 0) blocks.push(`(${omitted} more note(s) omitted: content budget reached; ask for a shorter period.)`)
@@ -3408,7 +3425,11 @@ export function useChat(
           type: 'function',
           function: {
             name: 'query_tasks',
-            description: "Query the user's tasks (personal task list of Monet notes — not an external tracker such as Jira). Use it when the user asks about their tasks, deadlines, what is due, overdue or done. Dates are YYYY-MM-DD; 'do' is when the user plans to do it, 'deadline' is the delivery date. Weeks start on Monday.",
+            description:
+              "Query the user's tasks (personal task list of Monet notes — not an external tracker such as Jira). Use it when the user asks about their tasks, deadlines, what is due, overdue or done. Dates are YYYY-MM-DD; 'do' is when the user plans to do it, 'deadline' is the delivery date. Weeks start on Monday." +
+              (toolsRef.current.dailyNotes
+                ? ' For "what do I have to do this week?" also call notes_by_date for the same period: it returns the dated notes, deliverables (TODOS) and plans.'
+                : ''),
             parameters: {
               type: 'object',
               properties: {
@@ -3444,7 +3465,7 @@ export function useChat(
           type: 'function',
           function: {
             name: 'get_day',
-            description: "Read the user's notes for one day, from any notebook: the daily note of the Calendar notebook for that date and the notes tagged with that date. Use it when the user asks about a specific day (\"what do I have today?\", \"what did I write yesterday?\", \"my notes from 14/10\"). Resolve relative dates from the current date in the system prompt, which is the user's local date.",
+            description: "Read the user's notes for one day, from any notebook: the Calendar daily note for that date and every note with a date on that day — the note's own date or a date property of its note type (e.g. a TODOS deadline, a plan's start or end). Notes whose date properties start before the day and end after it come marked as ongoing. Each note's header names the field that matched (e.g. \"Deadline: 2026-11-06\"), so tell deadlines apart from start dates. Use it when the user asks about a specific day (\"what do I have today?\", \"what did I write yesterday?\", \"my notes from 14/10\"); when the question is about what to do, also use query_tasks if available. Resolve relative dates from the current date in the system prompt, which is the user's local date.",
             parameters: {
               type: 'object',
               properties: {
@@ -3458,7 +3479,7 @@ export function useChat(
           type: 'function',
           function: {
             name: 'notes_by_date',
-            description: "Read the user's notes dated within a period (inclusive), from any notebook: Calendar daily notes and notes tagged with a date in the range. Use it for periods (\"notes from last week\", \"what did I write in August\"); for a single day prefer get_day. Resolve relative dates from the current date in the system prompt (the user's local date); weeks start on Monday. Long periods return only part of each note.",
+            description: "Read the user's notes dated within a period (inclusive), from any notebook: Calendar daily notes and every note with a date in the range — the note's own date or a date property of its note type (e.g. a TODOS deadline, a plan's start or end). Notes whose date properties start before the period and end after it come marked as ongoing (work in progress during the period). Each note's header names the field that matched (e.g. \"Deadline: 2026-11-06\" or \"ongoing: Start 2026-10-25 → End 2026-11-17\"), so tell deadlines apart from start dates. Use it for periods (\"notes from last week\", \"what did I write in August\") and, together with query_tasks, for \"what do I have to do this week?\": query_tasks returns the tasks, this tool the dated notes, deliverables and plans. For a single day prefer get_day. Resolve relative dates from the current date in the system prompt (the user's local date); weeks start on Monday. Long periods return only part of each note.",
             parameters: {
               type: 'object',
               properties: {

@@ -69,7 +69,7 @@ export function MarkNotePicker({
         if (e.target === e.currentTarget) onClose()
       }}
     >
-      <div className={styles.panel} onMouseDown={(e) => e.stopPropagation()}>
+      <div className={styles.panel} role="dialog" aria-modal="true" onMouseDown={(e) => e.stopPropagation()}>
         <div className={styles.chips}>
           <mark className={styles.markText}>{text}</mark>
         </div>

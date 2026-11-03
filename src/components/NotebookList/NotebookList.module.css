@@ -51,6 +51,45 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  min-height: var(--control-sm);
+}
+
+/* Cabeçalho recolhível (Tags, Marks): seta + rótulo, total à direita. */
+.sectionToggle {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted, #606070);
+  padding: 0 var(--space-1);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: var(--control-sm);
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+}
+
+.sectionToggle:hover {
+  color: var(--text-primary, #e8e8f0);
+}
+
+.sectionToggleLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.caret {
+  display: inline-flex;
+  transition: transform 150ms ease-out;
+}
+
+.caretOpen {
+  transform: rotate(90deg);
 }
 
 .headerActions {
@@ -80,10 +119,116 @@
   background: var(--surface-1, #1e1e22);
 }
 
-.collapsedTop {
-  padding: var(--space-3) 0 0;
+/* Coluna recolhida: trilho de ícones (views, menu de cadernos, Tags, Marks). */
+.rail {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-0);
+  padding: var(--space-3) 0;
+}
+
+.railButton {
+  position: relative;
+  flex-shrink: 0;
+  width: var(--control-lg);
+  height: var(--control-lg);
+  display: flex;
+  align-items: center;
   justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--text-muted, #606070);
+  cursor: pointer;
+  padding: 0;
+}
+
+.railButton:hover:not(:disabled) {
+  background: var(--surface-1, #1e1e22);
+  color: var(--text-primary, #e8e8f0);
+}
+
+.railButton:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.railActive {
+  background: var(--surface-2, #26262c);
+  color: var(--text-primary, #e8e8f0);
+}
+
+.railBadge {
+  position: absolute;
+  top: var(--space-0);
+  right: var(--space-0);
+  min-width: 14px;
+  height: 14px;
+  padding: 0 var(--space-0);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2, #26262c);
+  color: var(--text-primary, #e8e8f0);
+  font-size: 10px;
+  line-height: 14px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.railSeparator {
+  flex-shrink: 0;
+  width: var(--space-6);
+  border-top: 1px solid var(--border, #333340);
+  margin: var(--space-1) 0;
+}
+
+/* Menu "Notebooks" do trilho: fixo ao lado do botão, acima dos painéis. */
+.notebookMenu {
+  position: fixed;
+  z-index: 1100;
+  width: 200px;
+  max-height: calc(100vh - var(--space-4));
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0);
+  padding: var(--space-1h);
+  background: var(--bg-panel, #161618);
+  border: 1px solid var(--hair);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.notebookMenuHeader {
+  font-size: 11px;
+  color: var(--text-muted, #606070);
+  padding: var(--space-0) var(--space-2) var(--space-1h);
+}
+
+.notebookMenuItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--text-secondary, #a0a0b8);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: var(--lh-row);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.notebookMenuItem:hover {
+  background: var(--surface-1, #1e1e22);
+  color: var(--text-primary, #e8e8f0);
 }
 
 .divider {
@@ -120,29 +265,66 @@
 }
 
 .row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--space-1h);
 }
 
-.dragHandle {
+/* Ícone do caderno/subject que vira a alça de arraste no hover. */
+.dragSlot {
+  cursor: grab;
+}
+
+.dragSlot:active {
+  cursor: grabbing;
+}
+
+.slotIcon,
+.slotGrip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.slotGrip {
+  display: none;
+  color: var(--text-muted, #606070);
+}
+
+.row:hover .slotIcon,
+.subjectRow:hover .slotIcon {
+  display: none;
+}
+
+.row:hover .slotGrip,
+.subjectRow:hover .slotGrip {
+  display: inline-flex;
+}
+
+/* Caderno do usuário: ícone Notebook e nome em 500. O caderno do subject
+   aberto fica como "pai": texto claro e ícone roxo, sem fundo. */
+.notebookIcon {
   flex-shrink: 0;
+  width: 18px;
+  height: 18px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   color: var(--text-muted, #606070);
-  cursor: grab;
-  opacity: 0;
-  padding: var(--space-0);
-  border-radius: var(--radius-sm);
 }
 
-.dragHandle:active {
-  cursor: grabbing;
+.notebookRow .rowLabel {
+  font-weight: 500;
 }
 
-.row:hover .dragHandle {
-  opacity: 1;
+.list .parent {
+  color: var(--text-primary, #e8e8f0);
+}
+
+.active .notebookIcon,
+.parent .notebookIcon {
+  color: var(--accent, #7c6af5);
 }
 
 .rowLabel {
@@ -163,8 +345,12 @@
   color: var(--accent-danger);
 }
 
+/* Ações de hover (documentos, mover, excluir, nova nota), dentro de
+   .rowActions (regras abaixo). */
 .rowDelete,
-.rowDocs {
+.rowDocs,
+.rowMove,
+.rowAdd {
   position: relative;
   flex-shrink: 0;
   width: 18px;
@@ -179,7 +365,6 @@
   cursor: pointer;
   font-size: 14px;
   line-height: 1;
-  opacity: 0;
   padding: 0;
 }
 
@@ -187,21 +372,63 @@
    e o pseudo-elemento estende 3px para cada lado (cabe no gap de 6px). */
 .rowDelete::after,
 .rowDocs::after,
-.rowMove::after {
+.rowMove::after,
+.rowAdd::after {
   content: '';
   position: absolute;
   inset: -3px;
 }
 
-.row:hover .rowDelete,
-.row:hover .rowDocs,
-.rowDelete:focus-visible,
-.rowDocs:focus-visible {
-  opacity: 1;
+/* Em repouso as ações ficam fora do fluxo e invisíveis (mas alcançáveis pelo
+   Tab); só o ícone de documentos aceso ocupa lugar na linha. No hover ou com
+   o foco de teclado na linha (:focus-visible, não o foco do clique),
+   aparecem por cima do fim da linha, com o fundo da própria linha, sem
+   encolher o nome. */
+.rowActions {
+  display: contents;
 }
 
-.active .rowDocs {
+.rowActions > button:not(.rowDocsActive) {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+  clip-path: inset(50%);
+}
+
+.row:hover .rowActions,
+.row:has(:focus-visible) .rowActions,
+.subjectRow:hover .rowActions,
+.subjectRow:has(:focus-visible) .rowActions {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: var(--space-3);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1h);
+  padding-left: var(--space-1h);
+  background: inherit;
+}
+
+.subjectRow:hover .rowActions,
+.subjectRow:has(:focus-visible) .rowActions {
+  right: var(--space-2);
+}
+
+.row:hover .rowActions > button,
+.row:has(:focus-visible) .rowActions > button,
+.subjectRow:hover .rowActions > button,
+.subjectRow:has(:focus-visible) .rowActions > button {
+  position: relative;
   opacity: 1;
+  pointer-events: auto;
+  clip-path: none;
+}
+
+.list .row:has(:focus-visible),
+.subjectList .subjectRow:has(:focus-visible) {
+  background: var(--surface-1, #1e1e22);
+  color: var(--text-primary, #e8e8f0);
 }
 
 .rowDelete:hover {
@@ -214,46 +441,30 @@
   background: rgba(93, 202, 165, 0.1);
 }
 
-.rowMove {
-  position: relative;
-  flex-shrink: 0;
-  width: 18px;
-  height: 18px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  border: none;
-  color: var(--text-muted, #606070);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-  opacity: 0;
-  padding: 0;
-}
-
-.row:hover .rowMove,
-.rowMove:focus-visible {
-  opacity: 1;
-}
-
-.rowMove:hover {
+.rowMove:hover,
+.rowAdd:hover {
   color: var(--accent, #7c6af5);
   background: rgba(124, 106, 245, 0.1);
 }
 
 .rowDocsActive {
   color: var(--accent-ai, #5dcaa5);
-  opacity: 1;
 }
 
 .rowDocsActive:hover {
   background: rgba(93, 202, 165, 0.18);
 }
 
-.active .rowDocsActive {
-  opacity: 1;
+/* Selo de idade do Quick Notes (nota mais antiga com mais de 7 dias). */
+.staleBadge {
+  flex-shrink: 0;
+  font-size: 10px;
+  line-height: 16px;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-lg);
+  color: var(--accent-late);
+  background: color-mix(in srgb, var(--accent-late) 12%, transparent);
+  font-variant-numeric: tabular-nums;
 }
 
 .active {
@@ -327,6 +538,15 @@
   padding: var(--space-0);
 }
 
+.quickNotesIcon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-late);
+  padding: var(--space-0);
+}
+
 .tasksIcon {
   flex-shrink: 0;
   display: inline-flex;
@@ -360,7 +580,9 @@
 .footerCollapsed {
   padding: var(--space-2) 0;
   margin-top: auto;
-  justify-content: center;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 .settings {
@@ -394,9 +616,6 @@
   cursor: default !important;
   background: transparent !important;
   border-radius: 0 !important;
-  border-left: 2px solid var(--border, #333340);
-  margin-left: var(--space-2);
-  padding-left: 0 !important;
   /* animation */
   overflow: hidden;
   max-height: 0;
@@ -411,7 +630,7 @@
 .subjectContainer.open {
   max-height: 600px;
   opacity: 1;
-  margin-bottom: var(--space-1h) !important;
+  margin-bottom: var(--space-1) !important;
 }
 
 .subjectContainer:hover {
@@ -419,24 +638,28 @@
   color: inherit !important;
 }
 
+/* Subjects um nível abaixo do caderno, sem rótulo: linha-guia de 1px em
+   --hair alinhada ao centro do ícone do caderno (12px de padding + 9px). */
 .subjectList {
   list-style: none;
-  margin: var(--space-0) 0 0 0;
-  /* sub-itens recuados 12px da linha-guia, com 2px entre eles */
-  padding: 0 0 var(--space-1) var(--space-3);
+  margin: var(--space-0) 0 0 var(--space-5);
+  padding: 0 0 0 var(--space-2);
+  border-left: 1px solid var(--hair);
   display: flex;
   flex-direction: column;
   gap: var(--space-0);
 }
 
-/* Sub-item: 20px de line-height + 4px de padding = 28px */
-.subjectRow {
+/* Sub-item: 12px, peso 400, --text-muted; 20px de line-height + 4px de
+   padding = 28px. Seletores com .subjectList para vencer o `.list li`. */
+.subjectList .subjectRow {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--space-1h);
   padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-md);
-  color: var(--text-secondary, #a0a0b8);
+  color: var(--text-muted, #606070);
   cursor: pointer;
   font-size: 12px;
   line-height: var(--lh-row);
@@ -445,14 +668,19 @@
   text-overflow: ellipsis;
 }
 
-.subjectRow:hover {
+.subjectList .subjectRow:hover {
   background: var(--surface-1, #1e1e22);
   color: var(--text-primary, #e8e8f0);
 }
 
-.subjectRow.active {
+.subjectList .subjectRow.active {
   background: var(--surface-2, #26262c) !important;
   color: var(--text-primary, #e8e8f0) !important;
+}
+
+/* "New subject": última linha da lista. */
+.subjectList .subjectAddRow {
+  font-style: italic;
 }
 
 .subjectIcon {
@@ -475,6 +703,7 @@
   white-space: nowrap;
 }
 
+/* Ações do subject, dentro de .rowActions. */
 .subjectDelete,
 .subjectMove {
   position: relative;
@@ -490,7 +719,6 @@
   border-radius: var(--radius-sm);
   cursor: pointer;
   line-height: 1;
-  opacity: 0;
   padding: 0;
 }
 
@@ -502,13 +730,6 @@
   inset: -4px;
 }
 
-.subjectRow:hover .subjectDelete,
-.subjectDelete:focus-visible,
-.subjectRow:hover .subjectMove,
-.subjectMove:focus-visible {
-  opacity: 1;
-}
-
 .subjectMove:hover {
   color: var(--accent, #7c6af5);
   background: rgba(124, 106, 245, 0.1);
@@ -517,62 +738,6 @@
 .subjectDelete:hover {
   color: #ff6b6b;
   background: rgba(255, 107, 107, 0.1);
-}
-
-.subjectHeader {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  padding: var(--space-0) var(--space-1) var(--space-0) var(--space-3);
-  margin-top: 0;
-}
-
-.subjectHeaderLabel {
-  flex: 1;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-muted, #606070);
-  opacity: 0.6;
-  user-select: none;
-}
-
-.subjectAdd {
-  background: transparent;
-  border: none;
-  color: var(--text-muted, #606070);
-  /* glifo de 12px + 6px de cada lado = área clicável de 24×24 */
-  padding: var(--space-1h);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  line-height: 1;
-}
-
-.subjectAdd:hover {
-  color: var(--accent, #7c6af5);
-  background: var(--surface-1, #1e1e22);
-}
-
-.subjectDragHandle {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-muted, #606070);
-  cursor: grab;
-  opacity: 0;
-  padding: var(--space-0);
-  border-radius: var(--radius-sm);
-}
-
-.subjectDragHandle:active {
-  cursor: grabbing;
-}
-
-.subjectRow:hover .subjectDragHandle {
-  opacity: 1;
 }
 
 .subjectRenameInput {

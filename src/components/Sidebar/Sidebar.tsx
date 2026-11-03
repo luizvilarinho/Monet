@@ -240,6 +240,11 @@ export interface SidebarProps {
   typeFilterOptions?: NoteType[]
   typeFilter?: string | null
   onTypeFilterChange?: (typeId: string | null) => void
+  // Seção "Subjects" do mesmo filtro: subjects do caderno aberto; escolher um
+  // é o mesmo que clicá-lo na coluna de cadernos. null = sem subject.
+  subjectFilterOptions?: Subject[]
+  subjectFilter?: string | null
+  onSubjectFilterChange?: (subjectId: string | null) => void
   // Ordem da lista (as notas já chegam ordenadas); fora de 'manual', sem
   // arrastar. "Reorder types…" abre o modal de tipos na ordem dos tipos.
   sort?: NoteSort
@@ -291,6 +296,9 @@ export function Sidebar({
   typeFilterOptions = [],
   typeFilter = null,
   onTypeFilterChange,
+  subjectFilterOptions = [],
+  subjectFilter = null,
+  onSubjectFilterChange,
   sort = 'manual',
   onSortChange,
   onReorderTypes,
@@ -439,20 +447,46 @@ export function Sidebar({
           <div className={styles.header}>
             <span>Notes</span>
             <div className={styles.headerActions}>
-              {onTypeFilterChange && typeFilterOptions.length > 0 && (
+              {onTypeFilterChange && (typeFilterOptions.length > 0 || (onSubjectFilterChange && subjectFilterOptions.length > 0)) && (
                 <select
                   className={styles.typeFilter}
-                  value={typeFilter ?? ''}
-                  onChange={(e) => onTypeFilterChange(e.target.value || null)}
-                  aria-label="filter notes by type"
-                  title="Filter by type"
+                  // Um valor só no select: o tipo, senão o subject. Os dois
+                  // filtros se somam; "All" limpa os dois.
+                  value={typeFilter ? `type:${typeFilter}` : subjectFilter ? `subject:${subjectFilter}` : ''}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    if (!v) {
+                      onTypeFilterChange(null)
+                      onSubjectFilterChange?.(null)
+                    } else if (v.startsWith('type:')) {
+                      onTypeFilterChange(v.slice(5))
+                    } else if (v.startsWith('subject:')) {
+                      onTypeFilterChange(null)
+                      onSubjectFilterChange?.(v.slice(8))
+                    }
+                  }}
+                  aria-label="filter notes by type or subject"
+                  title="Filter by type or subject"
                 >
                   <option value="">All</option>
-                  {typeFilterOptions.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
+                  {typeFilterOptions.length > 0 && (
+                    <optgroup label="Types">
+                      {typeFilterOptions.map((t) => (
+                        <option key={t.id} value={`type:${t.id}`}>
+                          {t.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {onSubjectFilterChange && subjectFilterOptions.length > 0 && (
+                    <optgroup label="Subjects">
+                      {subjectFilterOptions.map((s) => (
+                        <option key={s.id} value={`subject:${s.id}`}>
+                          {s.name || 'unnamed'}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
                 </select>
               )}
               {onSortChange && (

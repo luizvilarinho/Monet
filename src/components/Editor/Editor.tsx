@@ -978,6 +978,7 @@ export function Editor({
       <div className={styles.titleRow}>
         <input
           ref={titleRef}
+          data-note-title
           className={`${styles.title} ${weekdayLabel ? styles.titleCompact : ''}`}
           value={title}
           onChange={(e) => onTitleChange(e.target.value)}

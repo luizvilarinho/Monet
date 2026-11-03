@@ -12,7 +12,7 @@ import {
   parseCalendarTitle,
 } from '../../lib/calendar'
 import { storage } from '../../storage'
-import type { Note, Notebook } from '../../types'
+import type { Note, Notebook, NoteType } from '../../types'
 import { useTasks } from '../../hooks/useTasks'
 import { useToday } from '../../hooks/useToday'
 import { useTaskStatuses } from '../../hooks/useTaskStatuses'
@@ -98,6 +98,14 @@ export function KeepPanel() {
   }
   const loadNotebooksRef = useRef(loadNotebooks)
   loadNotebooksRef.current = loadNotebooks
+  // Tipos de nota para o ícone/nome do tipo nos cards do calendário.
+  const [noteTypes, setNoteTypes] = useState<NoteType[]>([])
+  useEffect(() => {
+    storage
+      .getNoteTypes()
+      .then(setNoteTypes)
+      .catch((err) => console.error('keep: failed to load note types', err))
+  }, [])
 
   const editor = useEditor({
     immediatelyRender: false,
@@ -402,6 +410,7 @@ export function KeepPanel() {
         notes={calendarNotes}
         datedNotes={datedNotes}
         notebooks={notebooks}
+        noteTypes={noteTypes}
         recentlyActiveNotes={activeNotes}
         onDayClick={(date) => loadDayRef.current(date, { focus: true })}
         onNoteClick={(noteId) => {

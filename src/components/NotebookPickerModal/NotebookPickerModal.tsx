@@ -28,7 +28,7 @@ export function NotebookPickerModal({ title, confirmLabel, notebooks, onConfirm,
 
   return (
     <div className={styles.overlay} onClick={onClose}>
-      <div className={styles.panel} onClick={(e) => e.stopPropagation()}>
+      <div className={styles.panel} role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
         <div className={styles.title}>{title}</div>
         <ul className={styles.list}>
           {notebooks.map((nb) => (

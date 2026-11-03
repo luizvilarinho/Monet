@@ -294,13 +294,45 @@
   outline-offset: -1px;
 }
 
-.noteCardNotebook {
-  display: block;
+/* Linha de cima do card: tipo da nota (ícone + nome na cor do tipo) e caderno. */
+.noteCardMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
   font-size: 11px;
-  color: var(--text-muted, #606070);
   line-height: 1.4;
   margin-bottom: var(--space-0);
   white-space: nowrap;
+  overflow: hidden;
+}
+
+.noteCardType {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-0);
+  min-width: 0;
+  flex-shrink: 1;
+  color: var(--text-muted, #606070);
+}
+
+.noteCardType svg {
+  flex-shrink: 0;
+}
+
+.noteCardTypeName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.noteCardSep {
+  flex-shrink: 0;
+  color: var(--text-muted, #606070);
+}
+
+.noteCardNotebook {
+  min-width: 0;
+  color: var(--text-muted, #606070);
   overflow: hidden;
   text-overflow: ellipsis;
 }

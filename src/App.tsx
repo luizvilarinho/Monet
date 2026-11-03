@@ -103,6 +103,18 @@ import { SIDEBAR_WIDTH_KEY, SIDEBAR_WIDE_WIDTH_KEY, WIDE_MAX_WIDTH } from './hoo
 import { useTaskViews } from './hooks/useTaskViews'
 import { useToday } from './hooks/useToday'
 import { findCommand } from './lib/commands'
+import {
+  agendaContents,
+  formatAgendaContext,
+  formatNoteDateMatch,
+  lastOpenDeadline,
+  matchNoteDates,
+  PLANNER_DEFAULT_HOURS_PER_DAY,
+  selectAgenda,
+  withWeekday,
+  type AgendaInput,
+  type NoteDateMatch,
+} from './lib/agenda'
 import { onAssistantNoteRequest } from './lib/assistantNoteBridge'
 import {
   getUpdatePreference,
@@ -128,8 +140,10 @@ import { ocrTextsForContent } from './lib/imageOcr'
 import { RemindersProvider } from './components/Editor/RemindersContext'
 import { TasksProvider } from './components/Editor/TasksContext'
 import {
+  addDaysKey,
   checklistProgress,
   compareTasks,
+  endOfWeekKey,
   extractTaskRefTitles,
   INBOX_NOTEBOOK_ID,
   isDone,
@@ -137,8 +151,10 @@ import {
   isTaskBodyNote,
   isTasksSubject,
   normalizeName,
+  QUICK_NOTES_NAME,
   rewriteTaskRefItemTitle,
   splitPipeTitle,
+  startOfWeekKey,
   summaryMatches,
   stripPipePrefix,
   TASK_SUMMARY_KEYS,
@@ -198,6 +214,7 @@ import type {
   AiResponse,
   AiSource,
   CommandExecutionRequest,
+  MetadataDef,
   MetadataValue,
   Note,
   Notebook,
@@ -233,6 +250,7 @@ General rules:
 - If the command depends on web search, use only the provided results.
 - If search results are insufficient, respond exactly: "I could not find enough information in the available results."
 - If there is no relevant complement beyond what is already explicit in the note, respond exactly: "No relevant complement beyond what is already in the note."
+- The user message starts with today's date (the user's local date) and, in a Calendar note, the date of that note. Resolve "today", "tomorrow", "yesterday", "this week", "next week" and other relative dates from today's date, never from the Calendar note's date. Weeks start on Monday. Use the Calendar note's date only when the user refers to the day of that note.
 
 Command behavior:
 - /summarize: synthesize only the essentials of the note in short bullets. Here you may rephrase note content, but without embellishment.
@@ -242,7 +260,15 @@ Command behavior:
 - /search and /profile: respond factually, based only on the provided results.
 - /expand: deliver only new and useful information not explicitly present in the note. Do not summarize, rephrase, or repeat the note's text in other words. Add only context, connections, implications, examples, exceptions, risks, counterpoints, or missing details.
 - /docs: respond using exclusively the "Relevant document excerpts from the notebook". Ignore the note and your general knowledge. Cite the document name in parentheses at the end of each claim. If the excerpts do not contain enough information to answer, respond exactly: "I could not find this information in the notebook documents."
-- /week: respond using exclusively the "Calendar notes from the last 7 days" block as context. Answer the user's free-form question about their week (activities, plans, patterns) based only on those notes. If they do not contain enough information, say so plainly.`
+- /week: a summary of the user's week, not a planner. Use only the "Agenda" block (tasks, TODOS deliverables, dated notes and Calendar daily notes). Answer in two sections, titled in the user's language as "Done" and "To do". "Done": what was completed or happened in the "Done" period (completed tasks, TODOS progress, notes and daily-note activities). "To do": what is open or overdue and must be delivered by the end of the "To do" period (open and overdue tasks, TODOS with remaining tasks, deadlines, ongoing plans), ordered by deadline, with overdue items marked. Start each section with its period as a short date range (e.g. "Done · 27/10–03/11"). Do not distribute work across days and do not estimate effort. If a Parameter is given, focus the summary on it or answer it with the same data. If a section has nothing, say so in one line. Never invent tasks, dates or deliverables.
+- /planner: act as a planning specialist. Use only the "Agenda" block and the current note. Build a plan so that every open task and TODOS deliverable is finished by its deadline:
+  1. Capacity: read the daily capacity in hours from the Parameter (e.g. "4h per day"); if it is absent or invalid, use the default capacity from the agenda header and state the value you used.
+  2. Estimate: estimate the effort in hours of each open task (and of each TODOS without open tasks) from its title, its notes, the TODOS content and the remaining checklist. Show it next to the task, marked as an AI estimate (e.g. "~2h, AI estimate").
+  3. Distribute: allocate the effort over the days from today until each deadline. Never schedule work before today. Saturdays and Sundays are days off: schedule nothing on them unless the Parameter says otherwise or a task already has its do date on that day. Keep a task on the do date the user already set, account for the commitments in the Calendar daily notes, and put overdue items first, then the nearest deadlines. Do not invent tasks; you may split an existing task into steps, citing the task.
+  4. Layout: detail the week given in the agenda header day by day, then the next 3 weeks grouped by week. Beyond that, list each remaining deliverable in one line with its deadline and estimated hours, without distributing it, unless the Parameter asks for a longer detailed horizon. Cite the source of each item (task, TODOS or note title).
+  5. Risks: when the estimated effort does not fit in the capacity before a deadline, end with a "Risks" section naming the deliverable at risk, the missing hours and what would have to change (postpone, cut scope, renegotiate the deadline).
+  Apply the focus or constraints given in the Parameter (e.g. "focus on the migration", "out on Thursday"). If there are no open tasks or no deadlines, say so plainly instead of inventing a plan. The plan is a suggestion: never claim to have scheduled or changed anything.
+- The general goal and rules about complementing the current note do not apply to /week and /planner.`
 }
 
 const SYSTEM_PROMPT = buildSystemPrompt(USER_LANGUAGE)
@@ -259,6 +285,19 @@ type MainArea =
   | { kind: 'noteBoard'; typeId: string }
 
 const NOTES_AREA: MainArea = { kind: 'notes' }
+
+// Nota do Quick Notes sem título, conteúdo e tipo: o Ctrl+N a reaproveita e
+// ela não conta no Quick Notes da coluna.
+function isBlankQuickNote(note: Note): boolean {
+  return (
+    note.notebookId === INBOX_NOTEBOOK_ID &&
+    !note.subjectId &&
+    !note.typeId &&
+    !note.archivedAt &&
+    note.title.trim() === '' &&
+    note.content.trim() === ''
+  )
+}
 
 function stripCommandLines(content: string): string {
   return content
@@ -299,33 +338,6 @@ function formatRagContext(chunks: ChunkResult[]): string {
   return `Relevant document excerpts from the notebook:\n\n${blocks.join('\n\n')}\n\n---`
 }
 
-function getWeekCalendarNotes(
-  notes: Note[],
-  anchor: Date
-): { dateLabel: string; note: Note }[] {
-  const byTitle = new Map(
-    notes
-      .filter((n) => n.notebookId === CALENDAR_NOTEBOOK_ID)
-      .map((n) => [n.title, n] as const)
-  )
-  const entries: { dateLabel: string; note: Note }[] = []
-  for (let i = 6; i >= 0; i--) {
-    const day = new Date(anchor)
-    day.setDate(day.getDate() - i)
-    const title = formatCalendarTitle(day)
-    const note = byTitle.get(title)
-    if (!note) continue
-    entries.push({ dateLabel: title, note })
-  }
-  return entries
-}
-
-function formatWeekContext(entries: { dateLabel: string; content: string }[]): string {
-  if (entries.length === 0) return ''
-  const blocks = entries.map((e) => `[${e.dateLabel}]\n${e.content}`)
-  return `Calendar notes from the last 7 days:\n\n${blocks.join('\n\n')}\n\n---`
-}
-
 function toIsoDate(date: Date): string {
   const y = date.getFullYear()
   const m = String(date.getMonth() + 1).padStart(2, '0')
@@ -333,33 +345,59 @@ function toIsoDate(date: Date): string {
   return `${y}-${m}-${d}`
 }
 
-function getDatedNotes(notes: Note[], anchor: Date): Note[] {
-  const isoDate = toIsoDate(anchor)
-  return notes.filter((note) => note.notebookId !== CALENDAR_NOTEBOOK_ID && note.date === isoDate)
+// Notas com alguma data no dia (data da nota ou propriedade de data do tipo,
+// e as "em andamento"), fora do Calendar, das notas-corpo, das arquivadas e
+// dos cadernos com a IA desligada.
+function datedNotesForDay(
+  notes: Note[],
+  defs: MetadataDef[],
+  dayKey: string,
+  disabled: Set<string>
+): Array<{ note: Note; match: NoteDateMatch }> {
+  const out: Array<{ note: Note; match: NoteDateMatch }> = []
+  for (const note of notes) {
+    if (note.notebookId === CALENDAR_NOTEBOOK_ID || isTaskBodyNote(note) || note.archivedAt) continue
+    if (note.notebookId && disabled.has(note.notebookId)) continue
+    const match = matchNoteDates(note, defs, dayKey, dayKey)
+    if (match) out.push({ note, match })
+  }
+  return out
 }
 
 function formatDatedNotesContext(entries: { title: string; content: string }[]): string {
   if (entries.length === 0) return ''
   const blocks = entries.map((e) => `[${e.title}]\n${e.content}`)
-  return `Notes tagged with this date:\n\n${blocks.join('\n\n')}\n\n---`
+  return `Notes dated on this day:\n\n${blocks.join('\n\n')}\n\n---`
 }
 
-function buildUserMessage(
-  command: string,
-  description: string,
-  query: string,
-  noteContent: string,
-  searchContext?: string,
-  ragContext?: string,
-  weekContext?: string,
+function buildUserMessage({
+  command,
+  description,
+  query,
+  noteContent,
+  dateContext,
+  searchContext,
+  ragContext,
+  agendaContext,
+  datedNotesContext,
+}: {
+  command: string
+  description: string
+  query: string
+  noteContent: string
+  dateContext: string
+  searchContext?: string
+  ragContext?: string
+  agendaContext?: string
   datedNotesContext?: string
-): string {
+}): string {
   const parts: string[] = []
+  parts.push(dateContext)
   parts.push(`Command: ${command} - ${description}`)
   if (query.trim()) parts.push(`Parameter: ${query.trim()}`)
   if (ragContext) parts.push(`\n${ragContext}`)
   if (searchContext) parts.push(`\n${searchContext}`)
-  if (weekContext) parts.push(`\n${weekContext}`)
+  if (agendaContext) parts.push(`\n${agendaContext}`)
   if (datedNotesContext) parts.push(`\n${datedNotesContext}`)
   const cleanContent = noteContent.trim()
   if (cleanContent) {
@@ -374,6 +412,11 @@ function findNotebookByName(notebooks: Notebook[], name: string): Notebook | und
   return notebooks.find(
     (nb) => nb.id !== CALENDAR_NOTEBOOK_ID && nb.name.trim().toLowerCase() === key
   )
+}
+
+// "Quick Notes" é o nome do caderno fixo `inbox`: nenhum outro caderno o usa.
+function isReservedNotebookName(name: string): boolean {
+  return name.trim().toLowerCase() === QUICK_NOTES_NAME.toLowerCase()
 }
 
 function App() {
@@ -424,6 +467,9 @@ function App() {
     : null
   const { subjects: allNotesSubjects } = useSubjects(allNotesNoteNotebookId)
   const effectiveSubjects = activeNotebookId === null ? allNotesSubjects : subjects
+  // Subjects da coluna de cadernos: o subject "Tasks" (contêiner das notas-corpo)
+  // fica fora, mas continua no banco e no state.
+  const columnSubjects = useMemo(() => subjects.filter((s) => !isTasksSubject(s)), [subjects])
   const [search, setSearch] = useState('')
   const [aiOpen, setAiOpen] = useState(true)
   // Aba da coluna direita (AI = cards dos slash commands; Chat = chat do caderno).
@@ -706,18 +752,19 @@ function App() {
     return map
   }, [tasks])
 
-  // Inbox: caderno singleton de id fixo (como o Calendar) que recebe as tasks
-  // sem projeto. Criado no boot e, por garantia, antes de receber uma task.
+  // Quick Notes: caderno singleton de id fixo `inbox` (como o Calendar) que
+  // recebe as notas e tasks sem caderno. Criado no boot e, por garantia, antes
+  // de receber uma task.
   const ensureInbox = useCallback(async (): Promise<string> => {
     if (!notebooksRef.current.some((nb) => nb.id === INBOX_NOTEBOOK_ID)) {
       const now = Date.now()
-      await saveNotebook({ id: INBOX_NOTEBOOK_ID, name: 'Inbox', createdAt: now, updatedAt: now })
+      await saveNotebook({ id: INBOX_NOTEBOOK_ID, name: QUICK_NOTES_NAME, createdAt: now, updatedAt: now })
     }
     return INBOX_NOTEBOOK_ID
   }, [saveNotebook])
 
   // Caderno escolhido no seletor de projeto. Nome novo reaproveita um caderno
-  // de mesmo nome; vazio cai no Inbox. O Calendar nunca é projeto.
+  // de mesmo nome; vazio cai no Quick Notes. O Calendar nunca é projeto.
   const resolveProject = useCallback(
     async (choice: ProjectChoice): Promise<string> => {
       if ('notebookId' in choice) {
@@ -1223,11 +1270,24 @@ function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [notebooksLoaded])
 
-  // Bootstrap do Inbox. Com a leitura falha não cria (o UPSERT renomearia um
-  // Inbox existente).
+  // Bootstrap do Quick Notes. Com a leitura falha não cria (o UPSERT renomearia
+  // um caderno existente).
   useEffect(() => {
     if (!notebooksLoaded || notebooksLoadFailed) return
     void ensureInbox()
+    // Migração do nome (o antigo "Inbox"), pelo state para o índice de notas
+    // reindexar o "Notes — <Caderno>". Um caderno do usuário com o nome
+    // reservado vira "Quick Notes (old)".
+    const inbox = notebooksRef.current.find((nb) => nb.id === INBOX_NOTEBOOK_ID)
+    if (!inbox || inbox.name === QUICK_NOTES_NAME) return
+    const clash = notebooksRef.current.find(
+      (nb) => nb.id !== INBOX_NOTEBOOK_ID && nb.id !== CALENDAR_NOTEBOOK_ID && isReservedNotebookName(nb.name)
+    )
+    void (async () => {
+      const now = Date.now()
+      if (clash) await saveNotebook({ ...clash, name: `${QUICK_NOTES_NAME} (old)`, updatedAt: now })
+      await saveNotebook({ ...inbox, name: QUICK_NOTES_NAME, updatedAt: now })
+    })()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [notebooksLoaded])
 
@@ -1254,6 +1314,9 @@ function App() {
     return set
   }, [responses])
 
+  // Ctrl+N: versão atual do handleQuickNote (o listener abaixo é registrado uma vez).
+  const quickNoteRef = useRef<() => void>(() => {})
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.key === ' ') {
@@ -1263,6 +1326,15 @@ function App() {
       if (e.ctrlKey && e.key === 'p') {
         e.preventDefault()
         setSearchPaletteOpen((v) => !v)
+      }
+      // Ctrl+N: nota nova no Quick Notes, de qualquer modo do app. Captura +
+      // preventDefault: o editor não trata a tecla e o WebView2 não abre janela.
+      // Com um modal aberto, não faz nada.
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === 'n') {
+        e.preventDefault()
+        e.stopPropagation()
+        if (e.repeat || document.querySelector('[aria-modal="true"]')) return
+        quickNoteRef.current()
       }
     }
     document.addEventListener('keydown', handleKeyDown, true)
@@ -1388,7 +1460,7 @@ function App() {
 
   async function handleRenameNotebook(id: string, name: string) {
     const nb = notebooks.find((n) => n.id === id)
-    if (!nb) return
+    if (!nb || id === INBOX_NOTEBOOK_ID || isReservedNotebookName(name)) return
     await saveNotebook({ ...nb, name: name.trim() || nb.name, updatedAt: Date.now() })
   }
 
@@ -1422,6 +1494,19 @@ function App() {
     return listed.filter((n) => n.notebookId === activeNotebookId)
   }, [notes, activeNotebookId, activeSubjectId])
 
+  // Linha Quick Notes da coluna: contagem (sem notas-corpo de task e sem
+  // arquivadas) e criação da nota mais antiga (selo de idade).
+  const quickNotesStats = useMemo(() => {
+    let count = 0
+    let oldestAt: number | null = null
+    for (const n of notes) {
+      if (n.notebookId !== INBOX_NOTEBOOK_ID || isTaskBodyNote(n) || n.archivedAt || isBlankQuickNote(n)) continue
+      count++
+      if (oldestAt === null || n.createdAt < oldestAt) oldestAt = n.createdAt
+    }
+    return { count, oldestAt }
+  }, [notes])
+
   const orderedNotebooks = useMemo(
     () => applyOrder(notebooks, notebookOrder),
     [notebooks, notebookOrder]
@@ -1433,7 +1518,8 @@ function App() {
     (notebookId: string, noteId: string, subjectId?: string | null) => {
       setActiveMode('notebook')
       setActiveNotebookId(notebookId)
-      setActiveSubjectId(subjectId ?? null)
+      // Nota-corpo de task: o subject "Tasks" não está na coluna para desmarcar.
+      setActiveSubjectId(subjectId && subjectId === tasksSubjectId(notebookId) ? null : subjectId ?? null)
       setActiveId(noteId)
       setSearch('')
     },
@@ -1926,7 +2012,7 @@ function App() {
       if (def.calendarOnly && activeNote?.notebookId !== CALENDAR_NOTEBOOK_ID) {
         return false
       }
-      if (def.takesQuery && query.trim().length === 0) {
+      if (def.takesQuery && !def.optionalQuery && query.trim().length === 0) {
         return false
       }
       // O card nasce na aba AI; se o Chat estiver aberto, troca para ela.
@@ -1964,12 +2050,88 @@ function App() {
         }
       }
 
-      const noteContent = activeNote?.content ?? ''
+      // Data de hoje montada a cada comando (o app fica aberto de um dia para
+      // o outro); numa nota do Calendar, também a data dela.
+      const todayKey = toIsoDate(new Date())
       const anchor = activeNote ? parseCalendarTitle(activeNote.title) : null
-      const weekNotes = cmd === '/week' && anchor ? getWeekCalendarNotes(notes, anchor) : []
+      const calendarDate = activeNote?.notebookId === CALENDAR_NOTEBOOK_ID ? anchor : null
+      const calendarKey = calendarDate ? toIsoDate(calendarDate) : null
+      const dateContext = [
+        `Today: ${withWeekday(todayKey)}`,
+        calendarKey
+          ? `Calendar note date: ${withWeekday(calendarKey)} — the day open in the Calendar; it may differ from today.`
+          : '',
+      ]
+        .filter(Boolean)
+        .join('\n')
+
+      const isWeekOnly = cmd === '/week'
+      const isPlanner = cmd === '/planner'
+      if (isWeekOnly && !calendarKey) {
+        addErrorCard(
+          activeId,
+          cmd,
+          query,
+          "This note's title is not a valid calendar date (DD/MM/YYYY)."
+        )
+        return true
+      }
+
+      // /week e /planner: agenda comum (tasks, TODOS, notas datadas e diárias).
+      let agendaInput: AgendaInput | null = null
+      let agendaHeader = ''
+      const agendaBase = {
+        today: todayKey,
+        tasks,
+        notes,
+        notebooks,
+        defs: noteTypes.defs,
+        statuses: statusRegistry,
+        checklist: taskChecklist,
+        disabledNotebookIds,
+      }
+      if (isWeekOnly && calendarKey) {
+        // Nota no futuro: "Done" vai até hoje e "To do" começa hoje.
+        const split = calendarKey < todayKey ? calendarKey : todayKey
+        const from = addDaysKey(calendarKey, -7)
+        const to = addDaysKey(calendarKey, 7)
+        agendaInput = { ...agendaBase, from, to, done: { from, to: split } }
+        agendaHeader = [
+          `Agenda — week summary around the Calendar note of ${withWeekday(calendarKey)}:`,
+          `"Done" period: ${from} to ${split}.`,
+          `"To do" period: ${split} to ${to}, plus anything overdue.`,
+        ].join('\n')
+      } else if (isPlanner) {
+        // Âncora: a nota do Calendar (se a semana dela não passou) ou hoje.
+        let anchorKey = calendarKey ?? todayKey
+        if (endOfWeekKey(anchorKey) < todayKey) anchorKey = todayKey
+        const weekStart = startOfWeekKey(anchorKey)
+        const weekEnd = addDaysKey(weekStart, 6)
+        const last = lastOpenDeadline(agendaBase)
+        const to = last && last > weekEnd ? last : weekEnd
+        agendaInput = { ...agendaBase, from: todayKey, to, done: null }
+        agendaHeader = [
+          `Agenda — planning from ${todayKey} (today) to ${to}.`,
+          `Detailed week (day by day): ${weekStart} (Monday) to ${weekEnd} (Sunday); days before today are past and get no work.`,
+          last ? `Last open deadline: ${last}.` : 'No open deadlines.',
+          `Default daily capacity: ${PLANNER_DEFAULT_HOURS_PER_DAY}h (use the capacity stated in the Parameter instead, if any).`,
+        ].join('\n')
+      }
+      const agenda = agendaInput ? selectAgenda(agendaInput) : null
+
+      // A nota aberta não entra no /week (o dia dela já está nas diárias) nem
+      // no /planner numa nota do Calendar de hoje em diante (a agenda do
+      // planner começa hoje; uma nota de dia passado entra como nota aberta).
+      const noteContent =
+        isWeekOnly || (isPlanner && calendarKey && calendarKey >= todayKey) ? '' : activeNote?.content ?? ''
+      // Notas datadas no dia da nota do Calendar (a agenda já cobre /week e /planner).
       const datedNotes =
-        activeNote?.notebookId === CALENDAR_NOTEBOOK_ID && anchor ? getDatedNotes(notes, anchor) : []
-      const contextContents = [noteContent, ...weekNotes.map((e) => e.note.content), ...datedNotes.map((n) => n.content)]
+        calendarKey && !agenda ? datedNotesForDay(notes, noteTypes.defs, calendarKey, disabledNotebookIds) : []
+      const contextContents = [
+        noteContent,
+        ...(agenda ? agendaContents(agenda) : []),
+        ...datedNotes.map((e) => e.note.content),
+      ]
       const embeds = await loadEmbedResponses(contextContents, resolveNoteContent)
       const imageTexts = await ocrTextsForContent(contextContents.join('\n'))
       const toAiText = (content: string) =>
@@ -2070,48 +2232,35 @@ function App() {
         return true
       }
 
-      const isWeekOnly = cmd === '/week'
-      let weekContext: string | undefined
-      if (isWeekOnly) {
-        if (!anchor) {
-          addErrorCard(
-            activeId,
-            cmd,
-            query,
-            "This note's title is not a valid calendar date (DD/MM/YYYY)."
-          )
-          return true
-        }
-        const weekEntries = weekNotes
-          .map((e) => ({ dateLabel: e.dateLabel, content: toAiText(e.note.content) }))
-          .filter((e) => e.content)
-        if (weekEntries.length === 0) {
-          addErrorCard(
-            activeId,
-            cmd,
-            query,
-            'No calendar notes with content found in the last 7 days.'
-          )
-          return true
-        }
-        weekContext = formatWeekContext(weekEntries)
-      }
+      const agendaContext =
+        agenda && agendaInput
+          ? `${agendaHeader}\n\n${formatAgendaContext(agenda, agendaInput, toAiText)}\n\n---`
+          : undefined
 
       let datedNotesContext: string | undefined
       if (datedNotes.length > 0) {
         const datedEntries = datedNotes
-          .map((n) => ({ title: n.title.trim() || 'Untitled', content: toAiText(n.content) }))
+          .map(({ note, match }) => ({
+            title: `${note.title.trim() || 'Untitled'} · ${formatNoteDateMatch(match)}`,
+            content: toAiText(note.content),
+          }))
           .filter((e) => e.content)
         if (datedEntries.length > 0) {
           datedNotesContext = formatDatedNotesContext(datedEntries)
         }
       }
 
-      const userMessage = isDocsOnly
-        ? buildUserMessage(cmd, def.description, query, '', undefined, ragContext, undefined, datedNotesContext)
-        : isWeekOnly
-          ? buildUserMessage(cmd, def.description, query, '', searchContext, ragContext, weekContext, datedNotesContext)
-          : buildUserMessage(cmd, def.description, query, noteText, searchContext, ragContext, undefined, datedNotesContext)
+      const userMessage = buildUserMessage({
+        command: cmd,
+        description: def.description,
+        query,
+        noteContent: isDocsOnly ? '' : noteText,
+        dateContext,
+        searchContext: isDocsOnly ? undefined : searchContext,
+        ragContext,
+        agendaContext,
+        datedNotesContext,
+      })
 
       // Log dos contextos montados para o slash command (complementa o log
       // do payload final em useAi.ts).
@@ -2120,9 +2269,10 @@ function App() {
         query,
         model: modelId,
         systemPrompt: SYSTEM_PROMPT,
+        dateContext,
         searchContext,
         ragContext,
-        weekContext,
+        agendaContext,
         datedNotesContext,
         userMessage,
       })
@@ -2139,7 +2289,7 @@ function App() {
       })
       return true
     },
-    [activeId, activeNote, modelId, models.length, start, addErrorCard, notes, setRightTab, resolveAiNoteTitle, resolveAiNoteContent]
+    [activeId, activeNote, modelId, models.length, start, addErrorCard, notes, tasks, notebooks, statusRegistry, taskChecklist, noteTypes.defs, disabledNotebookIds, setRightTab, resolveAiNoteTitle, resolveAiNoteContent]
   )
 
   const effectiveNotebookWidth = notebookCollapsed ? COLLAPSED_PANEL_WIDTH : notebookWidth
@@ -2159,6 +2309,12 @@ function App() {
   async function handleCreateNotebook() {
     const name = window.prompt('Notebook name')
     if (name === null) return
+    // Nome reservado: abre o Quick Notes em vez de criar outro.
+    if (isReservedNotebookName(name)) {
+      setActiveNotebookId(await ensureInbox())
+      setActiveId(null)
+      return
+    }
     const nb = await createNotebook(name)
     setActiveNotebookId(nb.id)
     setActiveId(null)
@@ -2192,8 +2348,31 @@ function App() {
     setActiveId(note.id)
   }
 
+  // Ctrl+N: nota vazia no Quick Notes, aberta com o foco no título (o Editor
+  // remontado pela key foca o título de nota vazia). Se o Quick Notes já tem
+  // uma nota vazia (a aberta primeiro), volta a ela em vez de empilhar outra.
+  async function handleQuickNote() {
+    const notebookId = await ensureInbox()
+    const blank =
+      notesRef.current.find((n) => n.id === activeId && isBlankQuickNote(n)) ??
+      notesRef.current.find(isBlankQuickNote)
+    const noteId = blank ? blank.id : (await createTypedNote(notebookId, null, null)).id
+    setActiveMode('notebook')
+    setActiveNotebookId(notebookId)
+    setActiveSubjectId(null)
+    setSearch('')
+    setActiveId(noteId)
+    // Mesma nota: nada muda no state, então o efeito de navegação não fecha a
+    // área (Tasks, board) e o Editor montado não refoca sozinho.
+    if (blank && blank.id === activeId) {
+      setMainArea(NOTES_AREA)
+      document.querySelector<HTMLInputElement>('[data-note-title]')?.focus()
+    }
+  }
+  quickNoteRef.current = () => void handleQuickNote()
+
   // "New" do board: nota do tipo no caderno escolhido pelo board (null =
-  // Inbox), com os valores da coluna/seção gravados pelo setter das
+  // Quick Notes), com os valores da coluna/seção gravados pelo setter das
   // propriedades, aberta no modal sobre o board.
   async function handleCreateBoardNote(
     typeId: string,
@@ -2259,7 +2438,7 @@ function App() {
 
   async function handleDeleteNotebook(id: string) {
     if (id === INBOX_NOTEBOOK_ID || id === CALENDAR_NOTEBOOK_ID) return
-    // As tasks do caderno (com as notas-corpo) vão para o Inbox ANTES da
+    // As tasks do caderno (com as notas-corpo) vão para o Quick Notes ANTES da
     // exclusão em cascata das notas do caderno.
     const { movedNoteIds, ok } = await relocateNotebookTasks(id, await ensureInbox())
     if (!ok) return
@@ -2277,7 +2456,7 @@ function App() {
       )
     }
     const childNotes = notes.filter((n) => n.notebookId === id && !movedNoteIds.has(n.id))
-    // Tasks (já no Inbox) das TODOS apagadas ficam sem TODOS.
+    // Tasks (já no Quick Notes) das TODOS apagadas ficam sem TODOS.
     await detachTodosChildren(new Set(childNotes.filter(isTodosNote).map((n) => n.id)))
     childNotes.forEach((n) => removeNote(n.id))
     if (activeNotebookId === id) {
@@ -2342,8 +2521,8 @@ function App() {
     await createSubject(name)
   }
 
-  // Visão Tasks filtrada por um caderno (subject "Tasks" e "Show all" da
-  // seção de tasks da coluna de notas).
+  // Visão Tasks filtrada por um caderno ("Show all" da seção de tasks da
+  // coluna de notas).
   function openNotebookTasks(notebookId: string) {
     setTasksFilter(notebookId)
     setTasksSummaryFilter(null)
@@ -2351,11 +2530,6 @@ function App() {
   }
 
   function handleSelectSubject(id: string | null) {
-    const subject = id ? subjects.find((s) => s.id === id) : undefined
-    if (subject && isTasksSubject(subject)) {
-      openNotebookTasks(subject.notebookId)
-      return
-    }
     setActiveSubjectId(id)
     if (id === null) return
     const first = applyOrder(
@@ -2641,6 +2815,12 @@ function App() {
 
   const handleCreateNotebookFromChat = useCallback(
     async (name: string) => {
+      // Nome reservado: devolve o Quick Notes existente.
+      if (isReservedNotebookName(name)) {
+        const id = await ensureInbox()
+        const now = Date.now()
+        return notebooksRef.current.find((nb) => nb.id === id) ?? { id, name: QUICK_NOTES_NAME, createdAt: now, updatedAt: now }
+      }
       const nb = await createNotebook(name)
       setNotebookOrder((prev) => {
         const next = [nb.id, ...prev.filter((x) => x !== nb.id)]
@@ -2649,7 +2829,7 @@ function App() {
       })
       return nb
     },
-    [createNotebook]
+    [createNotebook, ensureInbox]
   )
 
   const handleCreateNoteFromChat = useCallback(
@@ -3461,6 +3641,9 @@ function App() {
           }}
           onOpenKnowledgeBase={() => setKbOpen(true)}
           notebooksWithDocs={notebooksWithDocs}
+          quickNotesCount={quickNotesStats.count}
+          quickNotesOldestAt={quickNotesStats.oldestAt}
+          onNewQuickNote={() => void handleQuickNote()}
           tags={tagSummary}
           activeTag={tagViewTag}
           onOpenTag={openTagView}
@@ -3489,8 +3672,8 @@ function App() {
           onToggleCollapsed={() => setNotebookCollapsed((v) => !v)}
           onWidthChange={setNotebookWidth}
           onReorder={handleNotebookReorder}
-          subjects={subjects}
-          activeSubjectId={tasksViewOpen && tasksFilter ? tasksSubjectId(tasksFilter) : activeSubjectId}
+          subjects={columnSubjects}
+          activeSubjectId={activeSubjectId}
           onSelectSubject={handleSelectSubject}
           onCreateSubject={handleCreateSubject}
           onDeleteSubject={handleDeleteSubject}
@@ -3634,6 +3817,7 @@ function App() {
             notes={notes.filter((n) => n.notebookId === calendarNotebookId)}
             datedNotes={notes.filter((n) => !!n.date)}
             notebooks={notebooks}
+            noteTypes={noteTypes.types}
             recentlyActiveNotes={notes.filter((n) => !isTaskBodyNote(n))}
             onDayClick={handleCalendarDayClick}
             onNoteClick={(noteId) => {
@@ -3667,18 +3851,16 @@ function App() {
             onSelect={setActiveId}
             onCreate={() => void handleCreateNote()}
             noteTypes={noteTypes.types}
-            // Subject "Tasks": as notas são notas-corpo, sem tipo (D4).
-            onCreateTyped={
-              activeNotebookId && activeSubjectId === tasksSubjectId(activeNotebookId)
-                ? undefined
-                : (typeId) => void handleCreateNote(typeId)
-            }
+            onCreateTyped={(typeId) => void handleCreateNote(typeId)}
             noteDefs={noteTypes.defs}
             todosProgress={todosProgress}
             todosTaskCount={todosTaskCount}
             typeFilterOptions={typeFilterOptions}
             typeFilter={activeTypeFilter}
             onTypeFilterChange={setNoteTypeFilter}
+            subjectFilterOptions={activeNotebookId ? columnSubjects : []}
+            subjectFilter={activeSubjectId}
+            onSubjectFilterChange={handleSelectSubject}
             sort={noteSort}
             onSortChange={setNoteSort}
             onReorderTypes={() => setNoteTypesOpen({ focusTypeId: null, reorder: true })}

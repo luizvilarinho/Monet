@@ -293,6 +293,8 @@ export interface CommandDef {
   description: string
   example: string
   takesQuery: boolean
+  // Aceita query, mas roda sem ela.
+  optionalQuery?: boolean
   usesSearch?: boolean
   calendarOnly?: boolean
   // Tratado pelo próprio editor (não chama a IA).

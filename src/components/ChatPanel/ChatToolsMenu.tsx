@@ -182,7 +182,7 @@ export function ChatToolsMenu({
                 <div className={styles.toolText}>
                   <span className={styles.toolName}>Daily notes</span>
                   <span className={styles.toolDescription}>
-                    Lets the AI read your daily and dated notes from any notebook when you ask about a day or period (&quot;what do I have today?&quot;).
+                    Lets the AI read your daily notes and the notes dated in a day or period, including deadlines and start/end dates of note types (&quot;what do I have this week?&quot;).
                   </span>
                 </div>
                 <button

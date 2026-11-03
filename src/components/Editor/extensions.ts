@@ -38,6 +38,33 @@ const InlineCode = Code.extend({
   },
 })
 
+// Tags que não são conteúdo inline vizinho de um <br> (blocos HTML e os
+// nodes de bloco custom do editor).
+const BLOCK_TAGS = new Set(['P', 'DIV', 'UL', 'OL', 'LI', 'BLOCKQUOTE', 'PRE', 'TABLE', 'THEAD', 'TBODY', 'TR', 'TD', 'TH', 'HR', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'EMBED-BLOCK', 'LINKED-NOTE', 'TASKS-QUERY', 'TOGGLE-BLOCK'])
+
+function hasInlineNeighbor(br: Element, dir: 'previousSibling' | 'nextSibling'): boolean {
+  let n = br[dir]
+  while (n) {
+    if (n.nodeType === Node.TEXT_NODE) {
+      if (n.textContent?.trim()) return true
+    } else if (n.nodeType === Node.ELEMENT_NODE) {
+      const tag = (n as Element).tagName
+      if (tag !== 'BR') return !BLOCK_TAGS.has(tag)
+    }
+    n = n[dir]
+  }
+  return false
+}
+
+// <br> de linha em branco: fora de <p>, com pai de bloco (ou a raiz) e sem
+// conteúdo inline dos lados. O resto é hardBreak (Shift+Enter) e fica.
+function isBlankLineBr(br: Element, root: HTMLElement): boolean {
+  if (br.closest('p')) return false
+  const parent = br.parentElement
+  if (parent && parent !== root && !BLOCK_TAGS.has(parent.tagName)) return false
+  return !hasInlineNeighbor(br, 'previousSibling') && !hasInlineNeighbor(br, 'nextSibling')
+}
+
 // Markdown puro não representa parágrafo vazio: o serializer padrão emite
 // nada e a linha em branco some no próximo parse (ex.: linha em branco criada
 // na janela keep desaparecia ao abrir a nota na main). Serializamos parágrafo
@@ -77,13 +104,16 @@ const ParagraphWithBlankLines = Paragraph.extend({
           // volta a um único <br> — o round-trip fica instável (1 blank
           // duplica/colapsa a cada troca de nota). Aqui cada <br> solto de
           // topo é embrulhado num <p></p> próprio, parseando para exatamente
-          // um parágrafo vazio. <br> já dentro de <p> (hardBreak legítimo
-          // entre texto) é preservado inalterado.
+          // um parágrafo vazio. O <br> de hardBreak (Shift+Enter) é
+          // preservado: dentro de <p>, inclusive sob marca/negrito/link
+          // (`<p><mark>a<br>b</mark></p>`), dentro de inline num item tight
+          // (`<li><mark>a<br>b</mark></li>`) e entre texto num item tight ou
+          // célula (`<li>a<br>b</li>`, `<td>x<br>y</td>`). Trocá-lo por <p>
+          // partia o parágrafo e a 2ª linha perdia a marcação.
           updateDOM(element: HTMLElement) {
             element.querySelectorAll('br').forEach((br) => {
-              if (br.parentElement?.tagName === 'P') return
-              const p = br.ownerDocument.createElement('p')
-              br.replaceWith(p)
+              if (!isBlankLineBr(br, element)) return
+              br.replaceWith(br.ownerDocument.createElement('p'))
             })
           },
         },

@@ -409,7 +409,7 @@ export function SearchPalette({
 
   return (
     <div className={styles.overlay} onMouseDown={onClose}>
-      <div className={styles.panel} onMouseDown={(e) => e.stopPropagation()}>
+      <div className={styles.panel} role="dialog" aria-modal="true" onMouseDown={(e) => e.stopPropagation()}>
         <input
           ref={inputRef}
           className={styles.input}
