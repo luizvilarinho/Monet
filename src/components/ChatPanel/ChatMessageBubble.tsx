@@ -1,15 +1,49 @@
+import { CalendarPlus, IdentificationCard } from '@phosphor-icons/react'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { ChatMessage } from '../../hooks/useChat'
+import { agentNoteDraft, type AgentNoteDraft } from '../../lib/agentNotes'
+import { CHAT_AGENTS } from '../../lib/agents/chat'
+import { dateKeyFromMs } from '../../lib/calendar'
 import { renderMarkdown } from '../../lib/markdown'
 import { linkNoteMarks } from '../../lib/noteMarks'
 import styles from './ChatMessageBubble.module.css'
 
+// Respostas que levam o rótulo do agente: com agentId diferente do da resposta
+// anterior do assistant (General não grava agentId).
+export function agentLabelIds(messages: ChatMessage[]): Set<string> {
+  const ids = new Set<string>()
+  let previous: string | undefined
+  for (const m of messages) {
+    if (m.role !== 'assistant') continue
+    if (m.agentId && m.agentId !== previous) ids.add(m.id)
+    previous = m.agentId
+  }
+  return ids
+}
+
+// Ícone + nome do agente acima da resposta (id desconhecido = sem rótulo).
+export function AgentReplyLabel({ agentId }: { agentId: string | undefined }) {
+  const agent = CHAT_AGENTS.find((a) => a.id === agentId)
+  if (!agent) return null
+  const Icon = agent.icon
+  return (
+    <div className={styles.agentLabel}>
+      <Icon size={12} aria-hidden />
+      {agent.label}
+    </div>
+  )
+}
+
 interface ChatMessageBubbleProps {
   message: ChatMessage
   isStreaming: boolean
+  // Mostra o rótulo do agente acima da resposta (ver agentLabelIds).
+  showAgentLabel?: boolean
   // Ausente esconde o botao "Save to note".
   onSaveToNote?: (content: string) => void
+  // Ausente esconde o "Save as Plan note" (resposta do planner com plano datado).
+  onSaveAgentNote?: (draft: AgentNoteDraft) => void
   // Clique numa marca (`==texto==`) citada na resposta: abre a nota nela (o
   // App decide entre abrir direto e o seletor de notas).
   onOpenMark?: (text: string) => void
@@ -17,7 +51,15 @@ interface ChatMessageBubbleProps {
   footer?: ReactNode
 }
 
-export function ChatMessageBubble({ message, isStreaming, onSaveToNote, onOpenMark, footer }: ChatMessageBubbleProps) {
+export function ChatMessageBubble({
+  message,
+  isStreaming,
+  showAgentLabel,
+  onSaveToNote,
+  onSaveAgentNote,
+  onOpenMark,
+  footer,
+}: ChatMessageBubbleProps) {
   const isUser = message.role === 'user'
   const [html, setHtml] = useState('')
   const [copied, setCopied] = useState(false)
@@ -31,6 +73,10 @@ export function ChatMessageBubble({ message, isStreaming, onSaveToNote, onOpenMa
     !isStreamingPlaceholder &&
     !isErrorMessage &&
     message.content.trim().length > 0
+  const agentDraft = useMemo(
+    () => (canSaveToNote && onSaveAgentNote ? agentNoteDraft(message, dateKeyFromMs(Date.now())) : null),
+    [canSaveToNote, onSaveAgentNote, message]
+  )
 
   const cacheKey = useMemo(
     () => (isUser ? null : `${message.id}:${message.content.length}`),
@@ -71,6 +117,7 @@ export function ChatMessageBubble({ message, isStreaming, onSaveToNote, onOpenMa
       className={isUser ? (hasAttachedDocs ? styles.bubbleUserWrapper : styles.bubbleUser) : styles.bubbleAssistant}
       data-role={message.role}
     >
+      {!isUser && showAgentLabel && <AgentReplyLabel agentId={message.agentId} />}
       {isUser ? (
         <>
           {hasAttachedDocs && (
@@ -132,6 +179,23 @@ export function ChatMessageBubble({ message, isStreaming, onSaveToNote, onOpenMa
             </div>
           )}
           <div className={styles.assistantActions}>
+            {agentDraft && onSaveAgentNote && (
+              <button
+                type="button"
+                className={styles.saveBtn}
+                onClick={() => onSaveAgentNote(agentDraft)}
+                aria-label={
+                  agentDraft.kind === 'profile' ? 'Save this study profile as a note' : 'Save this plan as a Plan note'
+                }
+              >
+                {agentDraft.kind === 'profile' ? (
+                  <IdentificationCard size={13} aria-hidden />
+                ) : (
+                  <CalendarPlus size={13} aria-hidden />
+                )}
+                {agentDraft.kind === 'profile' ? 'Save study profile' : 'Save as Plan note'}
+              </button>
+            )}
             {canSaveToNote && onSaveToNote && (
               <button
                 type="button"

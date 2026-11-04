@@ -15,7 +15,7 @@ export function EmbedBlockView({ node, updateAttributes, editor, selected }: Nod
     [responses, commandId]
   )
 
-  const title = response ? getToggleTitle(response.command) : 'Resposta gerada pela IA'
+  const title = response ? getToggleTitle(response.command, response.query) : 'Resposta gerada pela IA'
   const body = response?.response ?? ''
 
   const [renderedHtml, setRenderedHtml] = useState('')

@@ -1,5 +1,6 @@
 import { emitTo, listen } from '@tauri-apps/api/event'
 import type { Note, Notebook } from '../types'
+import type { AgentNoteRequest } from './agentNotes'
 
 // Ponte de "Save to note" entre a janela `assistant` e a main. A main é dona
 // das notas abertas (estado + Editor), então é ela quem grava: assim a lista e
@@ -15,6 +16,7 @@ export type AssistantNoteRequest =
   | { kind: 'create-notebook'; name: string }
   | { kind: 'create-note'; notebookId: string; title: string; content: string }
   | { kind: 'append'; noteId: string; block: string }
+  | { kind: 'create-agent-note'; note: AgentNoteRequest }
 
 export interface AssistantNoteResult {
   note?: Note
@@ -81,6 +83,12 @@ export async function createNoteViaMain(
   return note
 }
 
+export async function createAgentNoteViaMain(note: AgentNoteRequest, requestId: string): Promise<Note> {
+  const res = await requestMain({ kind: 'create-agent-note', note }, requestId)
+  if (!res.note) throw new Error('Failed to create note.')
+  return res.note
+}
+
 export async function appendToNoteViaMain(noteId: string, block: string, requestId: string): Promise<void> {
   await requestMain({ kind: 'append', noteId, block }, requestId)
 }
@@ -91,6 +99,24 @@ export async function appendToNoteViaMain(noteId: string, block: string, request
 const handled = new Map<string, Promise<AssistantNoteResult>>()
 
 const isStr = (v: unknown): v is string => typeof v === 'string'
+const isStrOrNull = (v: unknown): v is string | null => v === null || isStr(v)
+
+function isValidAgentNote(n: unknown): n is AgentNoteRequest {
+  if (!n || typeof n !== 'object') return false
+  const r = n as Record<string, unknown>
+  if (r.kind === 'profile') return isStr(r.notebookId) && isStr(r.title) && isStr(r.content)
+  return (
+    r.kind === 'plan' &&
+    isStr(r.notebookId) &&
+    isStr(r.title) &&
+    isStr(r.content) &&
+    isStr(r.start) &&
+    isStr(r.end) &&
+    (r.capacity === null || typeof r.capacity === 'number') &&
+    isStrOrNull(r.book) &&
+    isStrOrNull(r.archiveNoteId)
+  )
+}
 
 function isValidPayload(p: unknown): p is RequestPayload {
   if (!p || typeof p !== 'object') return false
@@ -103,6 +129,8 @@ function isValidPayload(p: unknown): p is RequestPayload {
       return isStr(request.notebookId) && isStr(request.title) && isStr(request.content)
     case 'append':
       return isStr(request.noteId) && isStr(request.block)
+    case 'create-agent-note':
+      return isValidAgentNote(request.note)
     default:
       return false
   }
@@ -110,9 +138,10 @@ function isValidPayload(p: unknown): p is RequestPayload {
 
 // Atende os pedidos da assistant com `handle` e responde com o resultado ou o
 // erro. Um requestId repetido recebe o resultado do primeiro (ou espera por
-// ele); um pedido que falhou pode ser refeito. Devolve o cleanup síncrono.
+// ele); um pedido que falhou pode ser refeito (o `handle` recebe o mesmo
+// requestId). Devolve o cleanup síncrono.
 export function onAssistantNoteRequest(
-  handle: (request: AssistantNoteRequest) => Promise<AssistantNoteResult>
+  handle: (request: AssistantNoteRequest, requestId: string) => Promise<AssistantNoteResult>
 ): () => void {
   let cancelled = false
   let unlisten: (() => void) | undefined
@@ -128,7 +157,7 @@ export function onAssistantNoteRequest(
     }
     let result = handled.get(requestId)
     if (!result) {
-      result = handle(request)
+      result = handle(request, requestId)
       handled.set(requestId, result)
       result.catch(() => handled.delete(requestId))
       if (handled.size > HANDLED_LIMIT) handled.delete(handled.keys().next().value as string)

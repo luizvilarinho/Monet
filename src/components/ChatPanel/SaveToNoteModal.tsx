@@ -51,7 +51,7 @@ type Stage =
       retry: () => void
     }
 
-function loadLastNotebookId(): string | null {
+export function loadLastNotebookId(): string | null {
   try {
     const raw = localStorage.getItem(LAST_NOTEBOOK_KEY)
     return raw && raw.length > 0 ? raw : null
@@ -60,7 +60,7 @@ function loadLastNotebookId(): string | null {
   }
 }
 
-function saveLastNotebookId(id: string): void {
+export function saveLastNotebookId(id: string): void {
   try {
     localStorage.setItem(LAST_NOTEBOOK_KEY, id)
   } catch (err) {

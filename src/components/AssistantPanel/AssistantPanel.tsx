@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { emitTo, listen } from '@tauri-apps/api/event'
 import { FileText, Brain } from '@phosphor-icons/react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { notesFolderDocId, notesIndexGetDisabledNotebooks } from '../../lib/documents'
 import {
   useChat,
@@ -12,8 +12,10 @@ import {
 import { useChatPanelState } from '../../hooks/useChatPanelState'
 import { useStickToBottom } from '../../hooks/useStickToBottom'
 import { CALENDAR_NOTEBOOK_ID, dateKeyFromMs, parseCalendarTitle } from '../../lib/calendar'
+import type { AgentNoteDraft } from '../../lib/agentNotes'
 import {
   appendToNoteViaMain,
+  createAgentNoteViaMain,
   createNotebookViaMain,
   createNoteViaMain,
 } from '../../lib/assistantNoteBridge'
@@ -26,12 +28,13 @@ import { storage } from '../../storage'
 import type { AiModel, Note, Notebook } from '../../types'
 import { ModelSelector } from '../AiPanel/ModelSelector'
 import { ChatComposer } from '../ChatPanel/ChatComposer'
-import { ChatMessageBubble } from '../ChatPanel/ChatMessageBubble'
+import { agentLabelIds, ChatMessageBubble } from '../ChatPanel/ChatMessageBubble'
 import { FolderSystemPromptModal } from '../ChatPanel/FolderSystemPromptModal'
 import { FolderDocumentSelectorModal } from '../ChatPanel/FolderDocumentSelectorModal'
 import { FolderMemoryModal } from '../ChatPanel/FolderMemoryModal'
 import { SystemPromptIcon } from '../ChatPanel/SystemPromptIcon'
 import { MessageSources } from '../ChatPanel/MessageSources'
+import { SaveAgentNoteModal } from '../ChatPanel/SaveAgentNoteModal'
 import { SaveToNoteModal } from '../ChatPanel/SaveToNoteModal'
 import { ScrollToBottomButton } from '../ChatPanel/ScrollToBottomButton'
 import styles from './AssistantPanel.module.css'
@@ -121,6 +124,9 @@ export function AssistantPanel() {
     toggleThinking,
     error,
     send,
+    activeAgentId,
+    agentsAvailable,
+    setConversationAgent,
     cancel,
     startAssistantConversation,
     conversations,
@@ -153,6 +159,11 @@ export function AssistantPanel() {
     notebooks: Notebook[]
     notes: Note[]
   } | null>(null)
+  const [agentNoteTarget, setAgentNoteTarget] = useState<{
+    draft: AgentNoteDraft
+    notebooks: Notebook[]
+    notes: Note[]
+  } | null>(null)
   const assistantFolder = useMemo(
     () => folders.find((f) => f.name === ASSISTANT_FOLDER_NAME) ?? null,
     [folders]
@@ -174,6 +185,8 @@ export function AssistantPanel() {
   folderIdRef.current = effectiveFolder?.id
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const { historyRef, atBottom, onScroll, scrollToBottom } = useStickToBottom({ messages, isStreaming, activeId })
+  // Respostas com o rótulo do agente (quando ele muda).
+  const agentLabels = agentLabelIds(messages)
 
   // Carrega os modelos de forma independente da janela principal.
   useEffect(() => {
@@ -271,6 +284,16 @@ export function AssistantPanel() {
       console.error('failed to load notebooks for save to note', err)
     }
   }
+
+  // Estável: o balão memoiza o rascunho (plano ou perfil) por esta prop.
+  const openSaveAgentNote = useCallback(async (draft: AgentNoteDraft) => {
+    try {
+      const { notebooks, notes } = await loadSaveTargets()
+      setAgentNoteTarget({ draft, notebooks, notes })
+    } catch (err) {
+      console.error('failed to load notebooks for save agent note', err)
+    }
+  }, [])
 
   return (
     <div className={styles.window}>
@@ -388,7 +411,9 @@ export function AssistantPanel() {
                 key={m.id}
                 message={m}
                 isStreaming={m.id === streamingMessageId}
+                showAgentLabel={agentLabels.has(m.id)}
                 onSaveToNote={(content) => void openSaveToNote(content)}
+                onSaveAgentNote={openSaveAgentNote}
                 // Marca citada: a main aparece e abre a nota nela.
                 onOpenMark={(text) => void emitTo('main', 'assistant-open-mark', text)}
                 footer={<MessageSources message={m} trace={ragTraces[m.id]} timings={chatTimings[m.id]} />}
@@ -424,7 +449,10 @@ export function AssistantPanel() {
         webSourcesToast={webSourcesToast}
         resetKey={activeId}
         rows={2}
-        onSend={(text, image, docs) => void send(text, image, docs)}
+        agentId={activeAgentId}
+        agentsAvailable={agentsAvailable}
+        onSelectAgent={setConversationAgent}
+        onSend={(text, image, docs, agentId) => void send(text, image, docs, agentId ? { agentId } : undefined)}
         onStop={cancel}
         inputRef={inputRef}
         onCaptureScreen={() => invoke<string>('capture_screen_without_assistant')}
@@ -451,6 +479,20 @@ export function AssistantPanel() {
           )
         }}
         onClose={() => setSaveTarget(null)}
+      />
+      <SaveAgentNoteModal
+        open={agentNoteTarget !== null}
+        draft={agentNoteTarget?.draft ?? null}
+        notebooks={agentNoteTarget?.notebooks ?? []}
+        notes={agentNoteTarget?.notes ?? []}
+        defaultNotebookId={folderNotebookId}
+        onCreate={createAgentNoteViaMain}
+        onNavigateToNote={(_notebookId, noteId) => {
+          void invoke('open_note_in_main', { noteId }).catch((err) =>
+            console.warn('open note in main failed', err)
+          )
+        }}
+        onClose={() => setAgentNoteTarget(null)}
       />
       <FolderSystemPromptModal
         open={promptOpen}

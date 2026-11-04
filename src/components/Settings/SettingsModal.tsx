@@ -29,9 +29,16 @@ import {
   mincerListTranscriptionModels,
   type MincerModel,
 } from '../../lib/mincer'
+import {
+  DEFAULT_WORK_DAYS,
+  DEFAULT_WORK_HOURS_PER_DAY,
+  isValidWorkHours,
+  loadWorkCapacity,
+  saveWorkCapacity,
+} from '../../lib/workCapacity'
 import styles from './SettingsModal.module.css'
 
-export type SettingsSection = 'openrouter' | 'search' | 'mincer' | 'about'
+export type SettingsSection = 'openrouter' | 'search' | 'agenda' | 'mincer' | 'about'
 
 export interface SettingsModalProps {
   open: boolean
@@ -45,9 +52,25 @@ export interface SettingsModalProps {
 const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: 'openrouter', label: 'OpenRouter Integration' },
   { id: 'search', label: 'Web Search' },
+  { id: 'agenda', label: 'Agenda' },
   { id: 'mincer', label: 'Mincer' },
   { id: 'about', label: 'About & Updates' },
 ]
+
+// Dias de trabalho na ordem seg→dom; valor como em Date.getDay().
+const WORK_DAY_OPTIONS: Array<{ day: number; label: string }> = [
+  { day: 1, label: 'Mon' },
+  { day: 2, label: 'Tue' },
+  { day: 3, label: 'Wed' },
+  { day: 4, label: 'Thu' },
+  { day: 5, label: 'Fri' },
+  { day: 6, label: 'Sat' },
+  { day: 0, label: 'Sun' },
+]
+// Texto do padrão, dos mesmos valores que o agente usa.
+const DEFAULT_WORK_DAY_NAMES = WORK_DAY_OPTIONS.filter(({ day }) => DEFAULT_WORK_DAYS.includes(day))
+  .map(({ label }) => label)
+  .join(', ')
 
 export function SettingsModal({
   open,
@@ -68,6 +91,15 @@ export function SettingsModal({
   }>({ kind: 'idle', message: '' })
   // Modelo da reescrita da consulta do RAG (vazio = padrão do backend)
   const [rewriteModel, setRewriteModel] = useState('')
+
+  // Agenda state (capacidade de trabalho do plan-week)
+  const [workHours, setWorkHours] = useState('')
+  const [workDays, setWorkDays] = useState<number[]>([])
+  const [workConfigured, setWorkConfigured] = useState(false)
+  const [workStatus, setWorkStatus] = useState<{ kind: 'idle' | 'error'; message: string }>({
+    kind: 'idle',
+    message: '',
+  })
 
   // Mincer state
   const [transcriptionModel, setTranscriptionModel] = useState('')
@@ -113,6 +145,11 @@ export function SettingsModal({
     setSummaryModel(localStorage.getItem(MINCER_SUMMARY_MODEL_KEY) ?? '')
     setSilenceStop(localStorage.getItem(MINCER_SILENCE_STOP_KEY) ?? String(DEFAULT_SILENCE_STOP_MINUTES))
     setMaxRecordHours(localStorage.getItem(MINCER_MAX_RECORD_KEY) ?? String(DEFAULT_MAX_RECORD_HOURS))
+    const capacity = loadWorkCapacity()
+    setWorkHours(String(capacity.hoursPerDay))
+    setWorkDays(capacity.workDays)
+    setWorkConfigured(capacity.configured)
+    setWorkStatus({ kind: 'idle', message: '' })
     setTavilyValue('')
     setTavStatus({ kind: 'idle', message: '' })
     hasTavilyKey()
@@ -215,6 +252,33 @@ export function SettingsModal({
     const trimmed = value.trim()
     if (trimmed) localStorage.setItem(key, trimmed)
     else localStorage.removeItem(key)
+  }
+
+  function handleWorkHoursChange(value: string) {
+    setWorkHours(value)
+    const n = Number(value.replace(',', '.'))
+    if (isValidWorkHours(n)) {
+      saveWorkCapacity(n, workDays)
+      setWorkConfigured(true)
+      setWorkStatus({ kind: 'idle', message: '' })
+    } else {
+      setWorkStatus({ kind: 'error', message: 'Enter a number of hours greater than 0 and up to 24.' })
+    }
+  }
+
+  function handleWorkDayToggle(day: number, checked: boolean) {
+    const next = checked ? [...workDays, day] : workDays.filter((d) => d !== day)
+    if (next.length === 0) {
+      setWorkStatus({ kind: 'error', message: 'Choose at least one work day.' })
+      return
+    }
+    setWorkDays(next)
+    // Horas inválidas no campo: grava os dias com as horas já salvas.
+    const n = Number(workHours.replace(',', '.'))
+    const hoursOk = isValidWorkHours(n)
+    saveWorkCapacity(hoursOk ? n : loadWorkCapacity().hoursPerDay, next)
+    setWorkConfigured(true)
+    if (hoursOk) setWorkStatus({ kind: 'idle', message: '' })
   }
 
   async function handleTavilySave() {
@@ -452,6 +516,51 @@ export function SettingsModal({
                   {hasTavily
                     ? 'Web search active. /search and /profile commands query the internet.'
                     : 'Without the key, /search and /profile use only the model\'s knowledge.'}
+                </p>
+              </div>
+            )}
+
+            {section === 'agenda' && (
+              <div className={styles.form}>
+                <h3 className={styles.formTitle}>Agenda</h3>
+                <p className={styles.formHelp}>
+                  Your work capacity. The Plan week agent in Chat uses it to fit your week.
+                </p>
+                <label className={styles.label} htmlFor="work-hours">
+                  Hours available for tasks on a work day (leave out meetings)
+                </label>
+                <input
+                  id="work-hours"
+                  className={styles.input}
+                  type="number"
+                  min="0.5"
+                  max="24"
+                  step="0.5"
+                  inputMode="decimal"
+                  value={workHours}
+                  onChange={(e) => handleWorkHoursChange(e.target.value)}
+                />
+                <p className={styles.formHelp}>
+                  Study plans have their own pace (the Capacity property of each plan).
+                </p>
+                <span className={styles.label}>Work days</span>
+                <div className={styles.dayRow}>
+                  {WORK_DAY_OPTIONS.map(({ day, label }) => (
+                    <label key={day} className={styles.day}>
+                      <input
+                        type="checkbox"
+                        checked={workDays.includes(day)}
+                        onChange={(e) => handleWorkDayToggle(day, e.target.checked)}
+                      />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+                {workStatus.kind === 'error' && <p className={styles.statusError}>{workStatus.message}</p>}
+                <p className={styles.footNote}>
+                  {workConfigured
+                    ? 'Saved. The Plan week agent uses these values.'
+                    : `Not configured: the Plan week agent uses the default (${DEFAULT_WORK_HOURS_PER_DAY} h, ${DEFAULT_WORK_DAY_NAMES}).`}
                 </p>
               </div>
             )}

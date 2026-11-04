@@ -21,6 +21,9 @@ export interface AgendaWindow {
   to: string
   done: { from: string; to: string } | null
   header: string
+  // Dias cujos itens de cada plano (feitos e abertos) entram no resumo do plano
+  // ("Items dated …"); ausente = só o resumo de hoje.
+  planDays?: { from: string; to: string }
 }
 export type AgendaPolicy = (args: { calendarKey: string; todayKey: string; statuses: TaskStatusDef[] }) => AgendaWindow
 

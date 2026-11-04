@@ -1,5 +1,5 @@
 import { openUrl } from '@tauri-apps/plugin-opener'
-import { Stop, FileText, Brain } from '@phosphor-icons/react'
+import { Stop, FileText, Brain, CalendarPlus, IdentificationCard } from '@phosphor-icons/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   useChat,
@@ -11,6 +11,8 @@ import {
 } from '../../hooks/useChat'
 import { useStickToBottom } from '../../hooks/useStickToBottom'
 import { renderMarkdown } from '../../lib/markdown'
+import { agentNoteDraft, type AgentNoteDraft, type AgentNoteRequest } from '../../lib/agentNotes'
+import { dateKeyFromMs } from '../../lib/calendar'
 import { linkNoteMarks } from '../../lib/noteMarks'
 import { notesFolderDocId } from '../../lib/documents'
 import { loadEmbedResponses } from '../../lib/noteFileText'
@@ -25,15 +27,19 @@ import type { AiModel, Note, Notebook, Task } from '../../types'
 import { ModelSelector } from '../AiPanel/ModelSelector'
 import { useTasksEnv } from '../TasksView/TasksEnv'
 import { SystemPromptIcon } from '../ChatPanel/SystemPromptIcon'
+import { AgentPicker, AgentSuggestions, useAgentShortcut } from '../ChatPanel/AgentPicker'
+import { parseAgentShortcut } from '../../lib/agents/chat'
 import { ChatToolsMenu } from '../ChatPanel/ChatToolsMenu'
 import { FolderSystemPromptModal } from '../ChatPanel/FolderSystemPromptModal'
 import { FolderDocumentSelectorModal } from '../ChatPanel/FolderDocumentSelectorModal'
 import { FolderMemoryModal } from '../ChatPanel/FolderMemoryModal'
 import { RagSearchStatus } from '../ChatPanel/RagSearchStatus'
 import { MessageSources } from '../ChatPanel/MessageSources'
+import { AgentReplyLabel, agentLabelIds } from '../ChatPanel/ChatMessageBubble'
 import { ScrollToBottomButton } from '../ChatPanel/ScrollToBottomButton'
+import { SaveAgentNoteModal } from '../ChatPanel/SaveAgentNoteModal'
 import type { RagResponse } from '../../lib/rag'
-import { buildNotesContext } from './notesContext'
+import { buildNotesContext, type NoteMetaForAi } from './notesContext'
 import { codeFence, messageToMarkdown, splitMessageBlocks, type NoteInsert } from './noteBlocks'
 import styles from './NotesChatPanel.module.css'
 
@@ -74,11 +80,18 @@ interface NotesChatPanelProps {
   // Clique numa NoteMark (`==texto==`) citada na resposta: abre a nota no
   // ponto marcado (o App decide entre abrir direto e o seletor de notas).
   onOpenMark?: (text: string) => void
+  // "Save as Plan note" da resposta do planner.
+  notes: Note[]
+  onCreateAgentNote: (req: AgentNoteRequest, requestId: string) => Promise<Note>
+  onNavigateToNote: (notebookId: string, noteId: string) => void
+  // Subject, tipo, propriedades e tags da nota aberta, para o contexto da IA.
+  describeNote: (note: Note) => NoteMetaForAi
 }
 
 export function NotesChatPanel({
   notebook,
   activeNote,
+  describeNote,
   resolveNoteTitle,
   isNoteArchived,
   resolveNoteContent,
@@ -94,6 +107,9 @@ export function NotesChatPanel({
   canInsert,
   onInsertIntoNote,
   onOpenMark,
+  notes,
+  onCreateAgentNote,
+  onNavigateToNote,
 }: NotesChatPanelProps) {
   const [models, setModels] = useState<AiModel[]>([])
   const [modelsLoading, setModelsLoading] = useState(false)
@@ -136,6 +152,9 @@ export function NotesChatPanel({
     chatTimings,
     error,
     send,
+    activeAgentId,
+    agentsAvailable,
+    setConversationAgent,
     cancel,
     startAssistantConversation,
     selectConversation,
@@ -149,15 +168,19 @@ export function NotesChatPanel({
   } = useChat(models, { mode: 'notes', getTasksSnapshot: () => tasksSnapshotRef.current })
 
   const [draft, setDraft] = useState('')
+  const shortcut = useAgentShortcut(draft, setDraft, agentsAvailable)
   const [notebookFolderId, setNotebookFolderId] = useState<string | null>(null)
   const [promptOpen, setPromptOpen] = useState(false)
   const [docsOpen, setDocsOpen] = useState(false)
   const [memoryOpen, setMemoryOpen] = useState(false)
+  const [agentDraft, setAgentDraft] = useState<AgentNoteDraft | null>(null)
   // Chip do contexto: nota aberta e/ou seleção fora do envio (R8).
   const [excludedNoteId, setExcludedNoteId] = useState<string | null>(null)
   const [removedSelection, setRemovedSelection] = useState<string | null>(null)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const { historyRef, atBottom, onScroll, scrollToBottom } = useStickToBottom({ messages, isStreaming, activeId })
+  // Respostas com o rótulo do agente (quando ele muda).
+  const agentLabels = agentLabelIds(messages)
 
   // Trocar de nota zera as remoções do chip.
   useEffect(() => {
@@ -400,11 +423,18 @@ export function NotesChatPanel({
   const selectionIncluded = !!selection && selection !== removedSelection
 
   async function handleSend() {
+    // Atalho "/agente": sem texto, só liga o seletor (também durante o streaming).
+    const parsed = agentsAvailable ? parseAgentShortcut(draft) : null
+    if (parsed && !parsed.rest) {
+      setConversationAgent(parsed.agent.id)
+      setDraft('')
+      return
+    }
     if (!canSend || !notebook) return
     // Idempotente; recria a pasta (e refresca o ref usado pelo fallback do
     // send) caso ela tenha sido apagada em outra janela durante a sessão.
     ensureScopedFolder({ kind: 'notebook', id: notebook.id, title: notebook.name })
-    const text = draft
+    const text = parsed ? parsed.rest : draft
     setDraft('')
     // Contexto montado NO MOMENTO do envio: trocar de nota depois não afeta
     // a resposta em streaming.
@@ -423,6 +453,7 @@ export function NotesChatPanel({
     const ephemeralContext = buildNotesContext({
       notebookName: notebook.name,
       note: attachedNote,
+      noteMeta: attachedNote ? describeNote(attachedNote) : null,
       selectionText,
       resolveNoteTitle,
       isNoteArchived,
@@ -437,6 +468,7 @@ export function NotesChatPanel({
     void send(text, undefined, undefined, {
       ephemeralContext,
       excludeNoteId: note?.id ?? null,
+      agentId: parsed?.agent.id,
       noteContext: attachedNote
         ? {
             noteId: attachedNote.id,
@@ -589,9 +621,11 @@ export function NotesChatPanel({
                     key={m.id}
                     message={m}
                     isStreaming={m.id === streamingMessageId}
+                    showAgentLabel={agentLabels.has(m.id)}
                     canInsert={canInsert}
                     onInsert={onInsertIntoNote}
                     onOpenMark={onOpenMark}
+                    onSaveAgentNote={setAgentDraft}
                     trace={ragTraces[m.id]}
                     timings={chatTimings[m.id]}
                   />
@@ -686,12 +720,18 @@ export function NotesChatPanel({
                 )}
               </div>
             )}
+            <AgentSuggestions
+              items={shortcut.suggestions}
+              highlighted={shortcut.highlighted}
+              onPick={shortcut.pick}
+            />
             <textarea
               ref={inputRef}
               className={styles.input}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
+                if (shortcut.onKeyDown(e)) return
                 if (e.key === 'Enter' && !e.ctrlKey && !e.shiftKey) {
                   e.preventDefault()
                   void handleSend()
@@ -707,6 +747,9 @@ export function NotesChatPanel({
               aria-label="message"
             />
             <div className={styles.actions}>
+              {agentsAvailable && (
+                <AgentPicker agentId={activeAgentId} onSelect={setConversationAgent} compact />
+              )}
               {isStreaming ? (
                 <button type="button" className={styles.stopBtn} onClick={cancel}>
                   <Stop size={13} weight="fill" />
@@ -753,6 +796,16 @@ export function NotesChatPanel({
         onConfirm={(folderId, text) => setFolderMemory(folderId, text)}
         onClose={() => setMemoryOpen(false)}
       />
+      <SaveAgentNoteModal
+        open={agentDraft !== null}
+        draft={agentDraft}
+        notebooks={notebooks}
+        notes={notes}
+        defaultNotebookId={notebook?.id ?? null}
+        onCreate={onCreateAgentNote}
+        onNavigateToNote={onNavigateToNote}
+        onClose={() => setAgentDraft(null)}
+      />
     </section>
   )
 }
@@ -760,19 +813,37 @@ export function NotesChatPanel({
 interface NotesChatBubbleProps {
   message: ChatMessage
   isStreaming: boolean
+  showAgentLabel: boolean
   canInsert: boolean
   onInsert: (content: NoteInsert, where: 'cursor' | 'end') => void
   onOpenMark?: (text: string) => void
+  onSaveAgentNote: (draft: AgentNoteDraft) => void
   trace?: RagResponse
   timings?: ChatTimings
 }
 
-function NotesChatBubble({ message, isStreaming, canInsert, onInsert, onOpenMark, trace, timings }: NotesChatBubbleProps) {
+function NotesChatBubble({
+  message,
+  isStreaming,
+  showAgentLabel,
+  canInsert,
+  onInsert,
+  onOpenMark,
+  onSaveAgentNote,
+  trace,
+  timings,
+}: NotesChatBubbleProps) {
   const isUser = message.role === 'user'
   const isEmpty = !isUser && message.content.length === 0
   const segments = useMemo(
     () => (isUser ? [] : splitMessageBlocks(message.content)),
     [isUser, message.content]
+  )
+  // Resposta do planner com plano datado ou do tutor com bloco de perfil
+  // (só depois do streaming).
+  const agentDraft = useMemo(
+    () => (isUser || isStreaming ? null : agentNoteDraft(message, dateKeyFromMs(Date.now()))),
+    [isUser, isStreaming, message]
   )
 
   if (isUser) {
@@ -805,6 +876,7 @@ function NotesChatBubble({ message, isStreaming, canInsert, onInsert, onOpenMark
 
   return (
     <div className={styles.assistantBlock}>
+      {showAgentLabel && <AgentReplyLabel agentId={message.agentId} />}
       <div
         className={`${styles.bubbleAssistant} ${onOpenMark ? styles.markClickable : ''}`}
         data-streaming={isStreaming || undefined}
@@ -858,6 +930,24 @@ function NotesChatBubble({ message, isStreaming, canInsert, onInsert, onOpenMark
         })}
       </div>
       <div className={styles.messageActions}>
+        {agentDraft && (
+          <button
+            type="button"
+            className={styles.messageActionBtn}
+            disabled={isStreaming}
+            onClick={() => onSaveAgentNote(agentDraft)}
+            aria-label={
+              agentDraft.kind === 'profile' ? 'Save this study profile as a note' : 'Save this plan as a Plan note'
+            }
+          >
+            {agentDraft.kind === 'profile' ? (
+              <IdentificationCard size={13} className={styles.messageActionIcon} aria-hidden />
+            ) : (
+              <CalendarPlus size={13} className={styles.messageActionIcon} aria-hidden />
+            )}
+            {agentDraft.kind === 'profile' ? 'Save study profile' : 'Save as Plan note'}
+          </button>
+        )}
         <button
           type="button"
           className={styles.messageActionBtn}

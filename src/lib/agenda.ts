@@ -112,9 +112,6 @@ export function formatNoteDateMatch(m: NoteDateMatch): string {
 
 // ─── Contexto do /week-review e do /today ───────────────────────────────────
 
-// usado pelo plan-week (fase 2)
-export const PLANNER_DEFAULT_HOURS_PER_DAY = 6
-
 // Orçamentos de texto (caracteres) por bloco; cada nota leva uma parte do
 // orçamento do bloco, no mínimo AGENDA_MIN_SHARE.
 const AGENDA_TASKS_BUDGET = 12000
@@ -255,10 +252,13 @@ function omittedLine(n: number): string {
 }
 
 // Agenda em texto para a IA. Seções sempre presentes (vazia = "(none)").
+// `planSummaries` (id da nota → resumo de agendaPlanSummaries, planNotes.ts):
+// a nota de plano entra pelo resumo calculado pelo app, não pelo corpo.
 export function formatAgendaContext(
   sel: AgendaSelection,
   input: AgendaInput,
-  toAiText: (content: string) => string
+  toAiText: (content: string) => string,
+  planSummaries: Map<string, string>
 ): string {
   const { today, defs, disabledNotebookIds: disabled } = input
   const names = new Map(input.notebooks.map((nb) => [nb.id, nb.name || 'unnamed']))
@@ -349,6 +349,8 @@ export function formatAgendaContext(
 
   sections.push(
     noteSection('Dated notes:', sel.datedNotes, AGENDA_DATED_BUDGET, ({ note, match }, cap) => {
+      const plan = planSummaries.get(note.id)
+      if (plan) return plan
       const folder = notebookName(note.notebookId)
       const header = `${note.title.trim() || 'Untitled'}${folder ? ` — ${folder}` : ''} · ${formatNoteDateMatch(match)}`
       const body = truncate(toAiText(note.content).trim(), cap)
@@ -366,7 +368,7 @@ export function formatAgendaContext(
   return sections.join('\n\n')
 }
 
-// usado pelo plan-week (fase 2)
+// Horizonte do plan-week (agente de chat).
 // Último prazo aberto (>= hoje): deadline das tasks abertas e datas das
 // propriedades das TODOS com tasks abertas. null = nenhum.
 export function lastOpenDeadline(

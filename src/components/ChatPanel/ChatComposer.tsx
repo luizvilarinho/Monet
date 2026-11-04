@@ -6,6 +6,8 @@ import { useEffect, useRef, useState, type RefObject } from 'react'
 import type { ChatFolder, ChatTools } from '../../hooks/useChat'
 import type { DeepResearchPhase } from '../../lib/deepResearch'
 import type { AiModel } from '../../types'
+import { parseAgentShortcut } from '../../lib/agents/chat'
+import { AgentPicker, AgentSuggestions, useAgentShortcut } from './AgentPicker'
 import { ChatToolsMenu } from './ChatToolsMenu'
 import { RagSearchStatus } from './RagSearchStatus'
 import styles from './ChatComposer.module.css'
@@ -32,7 +34,12 @@ interface ChatComposerProps {
   // Muda a cada troca de conversa: limpa o rascunho.
   resetKey: string | null
   rows: number
-  onSend: (text: string, image?: string, docs?: DraftDoc[]) => void
+  // Agente da conversa: seletor e atalho "/agente" (sem agentes = escondidos).
+  agentId: string
+  agentsAvailable: boolean
+  onSelectAgent: (id: string) => void
+  // `agentId` vem do atalho "/agente texto".
+  onSend: (text: string, image?: string, docs?: DraftDoc[], agentId?: string) => void
   onStop: () => void
   inputRef: RefObject<HTMLTextAreaElement | null>
   // So no Assistant: print da tela (data URL), anexado como imagem colada.
@@ -57,12 +64,16 @@ export function ChatComposer({
   webSourcesToast,
   resetKey,
   rows,
+  agentId,
+  agentsAvailable,
+  onSelectAgent,
   onSend,
   onStop,
   inputRef,
   onCaptureScreen,
 }: ChatComposerProps) {
   const [draft, setDraft] = useState('')
+  const shortcut = useAgentShortcut(draft, setDraft, agentsAvailable)
   const [draftImage, setDraftImage] = useState<string | null>(null)
   const [imageError, setImageError] = useState<string | null>(null)
   const [draftDocs, setDraftDocs] = useState<DraftDoc[]>([])
@@ -93,15 +104,23 @@ export function ChatComposer({
     !visionWarning
 
   function handleSend() {
+    const parsed = agentsAvailable ? parseAgentShortcut(draft) : null
+    const hasAttachments = !!draftImage || draftDocs.length > 0
+    if (parsed && !parsed.rest && !hasAttachments) {
+      // Só o comando: liga o seletor (vale também durante o streaming).
+      onSelectAgent(parsed.agent.id)
+      setDraft('')
+      return
+    }
     if (!canSend) return
-    const text = draft
+    const text = parsed ? parsed.rest : draft
     const img = draftImage
     const docs = draftDocs
     setDraft('')
     setDraftImage(null)
     setImageError(null)
     setDraftDocs([])
-    onSend(text, img ?? undefined, docs.length > 0 ? docs : undefined)
+    onSend(text, img ?? undefined, docs.length > 0 ? docs : undefined, parsed?.agent.id)
   }
 
   async function handleCaptureScreen() {
@@ -285,12 +304,18 @@ export function ChatComposer({
             {docError}
           </div>
         )}
+        <AgentSuggestions
+          items={shortcut.suggestions}
+          highlighted={shortcut.highlighted}
+          onPick={shortcut.pick}
+        />
         <textarea
           ref={inputRef}
           className={styles.input}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
+            if (shortcut.onKeyDown(e)) return
             if (e.key === 'Enter' && !e.ctrlKey && !e.shiftKey) {
               e.preventDefault()
               handleSend()
@@ -319,6 +344,7 @@ export function ChatComposer({
           aria-label="message"
         />
         <div className={styles.composerActions}>
+          {agentsAvailable && <AgentPicker agentId={agentId} onSelect={onSelectAgent} />}
           {onCaptureScreen && (
             <button
               type="button"

@@ -12,9 +12,19 @@ const NOTE_TEXT_BUDGET = 8000
 const SELECTION_BUDGET = 2000
 const PROJECT_TASKS_LIMIT = 100
 
+// Onde a nota aberta está e o que ela é: subject, tipo, propriedades e tags.
+export interface NoteMetaForAi {
+  subject: string | null
+  type: string | null
+  properties: Array<{ name: string; value: string }>
+  tags: string[]
+}
+
 export interface NotesContextInput {
   notebookName: string
   note: Note | null
+  // Metadados da nota aberta; ausente = só título e conteúdo.
+  noteMeta?: NoteMetaForAi | null
   // '' = sem seleção
   selectionText: string
   resolveNoteTitle: (noteId: string) => string | undefined
@@ -50,6 +60,13 @@ export function buildNotesContext(input: NotesContextInput): string {
 
   if (input.note) {
     lines.push(`Current note: "${input.note.title.trim() || 'Untitled'}"`)
+    const meta = input.noteMeta
+    if (meta?.subject) lines.push(`Subject (section of the notebook): "${meta.subject}"`)
+    if (meta?.type) lines.push(`Note type: ${meta.type}`)
+    if (meta && meta.properties.length > 0) {
+      lines.push(`Properties: ${meta.properties.map((p) => `${p.name}: ${p.value}`).join('; ')}`)
+    }
+    if (meta && meta.tags.length > 0) lines.push(`Tags: ${meta.tags.join(', ')}`)
     const date = noteDate(input.note)
     if (date) lines.push(`Date: ${date}`)
     if (input.note.archivedAt) lines.push(`Archived: ${dateKeyFromMs(input.note.archivedAt)}`)

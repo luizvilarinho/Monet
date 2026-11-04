@@ -17,7 +17,7 @@ export const critiqueAgent: AgentDef = {
   complementRules: false,
   behavior: `Role: reviewer of this note. In one pass, judge whether the note has the right depth and covers the most important points of its subject.
 - Judge only the "User text". The "AI blocks already in the note" were written by AI and already complement it: do not judge them, and do not list as missing what they already cover.
-- Use the note type and properties to understand what the note is (e.g. a Summary with Chapter 4 is the summary of one chapter).
+- Use the note type and properties to understand what the note is (e.g. a summary note with a chapter number is the summary of one chapter).
 - "Relevant document excerpts from the notebook", when present, are only for checking coverage of the notebook's sources. Do not summarize them.
 - If a Parameter is given, it is an instruction: focus the review on it.
 - Do not rewrite the note, do not recommend readings and do not plan studies. You may say that a point is usually covered in a given chapter or source.

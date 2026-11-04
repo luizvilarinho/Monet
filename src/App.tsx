@@ -22,6 +22,7 @@ import { EmptyEditor } from './components/Editor/EmptyEditor'
 import { ArchivedBadge } from './components/Editor/ArchivedBadge'
 import { NotebookList } from './components/NotebookList/NotebookList'
 import { NotesChatPanel } from './components/NotesChat/NotesChatPanel'
+import type { NoteMetaForAi } from './components/NotesChat/notesContext'
 import { NotebookTasksSection } from './components/Sidebar/NotebookTasksSection'
 import { codeFence, type NoteInsert } from './components/NotesChat/noteBlocks'
 import { insertAsListContinuation } from './components/Editor/listContinuation'
@@ -126,6 +127,11 @@ import {
   type NoteDateMatch,
 } from './lib/agenda'
 import { onAssistantNoteRequest } from './lib/assistantNoteBridge'
+import type { AgentNoteRequest } from './lib/agentNotes'
+import { agendaPlanSummaries, isPlanType, planSaveChanges } from './lib/planNotes'
+import { loadReaderBooks } from './lib/agents/agentData'
+import { STUDY_PROFILE_TAG } from './lib/studyProfile'
+import { emitTasksChanged } from './lib/tasksEvents'
 import {
   getUpdatePreference,
   getSkippedVersion,
@@ -297,7 +303,7 @@ function expandEmbedBlocks(content: string, responses: AiResponse[]): string {
     if (!response) return ''
     const body = response.response.trim()
     if (!body) return ''
-    const title = getAiBlockTitle(response.command)
+    const title = getAiBlockTitle(response.command, response.query)
     const quoted = body
       .split('\n')
       .map((l) => (l.length > 0 ? `> ${l}` : '>'))
@@ -1925,6 +1931,17 @@ function App() {
   // Resolvedores dos pontos que geram texto para a IA: nota de caderno com a
   // indexação de IA desligada conta como inexistente (só as referências — a
   // nota aberta e a seleção do NotesChat seguem como hoje).
+  // Subject, tipo, propriedades e tags da nota aberta, para o contexto do chat
+  // das Anotações (dizem ao modelo onde a nota está e o que ela é).
+  const describeNoteForAi = useCallback(
+    (note: Note): NoteMetaForAi => ({
+      subject: note.subjectId ? effectiveSubjects.find((s) => s.id === note.subjectId)?.name ?? null : null,
+      type: note.typeId ? noteTypes.types.find((t) => t.id === note.typeId)?.name ?? null : null,
+      properties: propertiesForAi(note, noteTypes.defs),
+      tags: note.tags ?? [],
+    }),
+    [effectiveSubjects, noteTypes.types, noteTypes.defs]
+  )
   const resolveAiNoteTitle = useCallback(
     (noteId: string) => {
       const note = notes.find((n) => n.id === noteId)
@@ -2020,8 +2037,10 @@ function App() {
       }
       let agendaInput: AgendaInput | null = null
       let agendaHeader = ''
+      let agendaPlanDays: { from: string; to: string } | undefined
       if (policy.agenda && calendarKey) {
         const agendaWindow = policy.agenda({ calendarKey, todayKey, statuses: statusRegistry })
+        agendaPlanDays = agendaWindow.planDays
         agendaInput = {
           today: todayKey,
           tasks,
@@ -2128,7 +2147,7 @@ function App() {
           .map((r) => {
             const body = r.response.trim()
             const text = body.length > AI_BLOCK_MAX_CHARS ? `${body.slice(0, AI_BLOCK_MAX_CHARS)} [truncated]` : body
-            return `[${getToggleTitle(r.command)}]\n${text}`
+            return `[${getToggleTitle(r.command, r.query)}]\n${text}`
           })
         if (blocks.length > 0) {
           extraContext.push(
@@ -2248,9 +2267,26 @@ function App() {
         ragSources = docsSources(selected)
       }
 
-      const agendaContext =
+      // Notas de plano da agenda entram pelo resumo do app (o mesmo do coach).
+      // Os livros do Reader só são lidos se alguma nota datada pode ser plano.
+      const planSummaries =
         agenda && agendaInput
-          ? `${agendaHeader}\n\n${formatAgendaContext(agenda, agendaInput, toAiText)}\n\n---`
+          ? agendaPlanSummaries({
+              notes: agenda.datedNotes.map((e) => e.note),
+              defs: noteTypes.defs,
+              types: noteTypes.types,
+              notebooks,
+              books: agenda.datedNotes.some((e) => isPlanType(e.note.typeId, noteTypes.defs))
+                ? await loadReaderBooks()
+                : [],
+              todayKey,
+              disabledNotebookIds,
+              planDays: agendaPlanDays,
+            })
+          : null
+      const agendaContext =
+        agenda && agendaInput && planSummaries
+          ? `${agendaHeader}\n\n${formatAgendaContext(agenda, agendaInput, toAiText, planSummaries)}\n\n---`
           : undefined
 
       let datedNotesContext: string | undefined
@@ -2915,19 +2951,26 @@ function App() {
       // `requestId` continua no 4º lugar (é o que o "Save to note" do Chat
       // passa) e segue sem uso aqui; o `typeId` é o 5º para não colidir com ele.
       _requestId?: string,
-      typeId?: string | null
+      typeId?: string | null,
+      extra?: { tags?: string[]; properties?: Record<string, MetadataValue> }
     ) => {
       const note = await createNote(notebookId)
       const filled: Note = {
         ...note,
         title,
         content,
+        tags: extra?.tags ?? note.tags,
         updatedAt: Date.now(),
       }
       if (!(await saveNote(filled))) throw new Error('Failed to save note.')
       if (typeId) {
         // O tipo fica fora do UPSERT do saveNote (de propósito): grava depois.
         await setNoteType(filled.id, typeId)
+        if (extra?.properties && Object.keys(extra.properties).length > 0) {
+          if (!(await setNoteProperties(filled.id, extra.properties))) {
+            throw new Error('Failed to save note properties.')
+          }
+        }
       }
       setNoteOrder((prev) => {
         const next = [filled.id, ...prev.filter((x) => x !== filled.id)]
@@ -2936,7 +2979,50 @@ function App() {
       })
       return filled
     },
-    [createNote, saveNote, setNoteType]
+    [createNote, saveNote, setNoteType, setNoteProperties]
+  )
+
+  // "Save as Plan note" (resposta do planner, nas três superfícies do chat):
+  // cria ou completa o tipo de plano (só o que falta, relido do banco: o
+  // acréscimo é idempotente), cria a nota com as propriedades e, no
+  // replanejamento, arquiva o plano antigo. "Save study profile" (tutor): nota
+  // sem tipo com a tag do perfil. O "Try again" (mesmo requestId) reaproveita
+  // a nota de plano já criada e refaz só as propriedades e o arquivamento.
+  const agentNoteByRequestRef = useRef(new Map<string, Note>())
+  const handleCreateAgentNoteFromChat = useCallback(
+    async (req: AgentNoteRequest, requestId?: string): Promise<Note> => {
+      if (req.kind === 'profile') {
+        return handleCreateNoteFromChat(req.notebookId, req.title, req.content, undefined, null, {
+          tags: [STUDY_PROFILE_TAG],
+        })
+      }
+      const [types, defs] = await Promise.all([storage.getNoteTypes(), storage.getMetadataDefs()])
+      const p = planSaveChanges(types, defs.filter((d) => d.scope === 'note'))
+      // Uma execução por linha, sem BEGIN/COMMIT (pool sqlx): falha parcial é
+      // segura, a próxima gravação completa o que faltar.
+      if (p.newType) await storage.saveNoteType(p.type)
+      for (const d of p.newDefs) await storage.saveMetadataDef(d)
+      if (p.newType || p.newDefs.length > 0) {
+        await noteTypes.reload()
+        emitTasksChanged()
+      }
+      const properties: Record<string, MetadataValue> = { [p.startDefId]: req.start, [p.endDefId]: req.end }
+      if (req.capacity !== null) {
+        properties[p.capacityDef.id] = p.capacityDef.type === 'number' ? req.capacity : String(req.capacity)
+      }
+      if (req.book) properties[p.bookDef.id] = req.book
+      let note = requestId ? agentNoteByRequestRef.current.get(requestId) : undefined
+      if (!note) {
+        note = await handleCreateNoteFromChat(req.notebookId, req.title, req.content, undefined, p.type.id)
+        if (requestId) agentNoteByRequestRef.current.set(requestId, note)
+      }
+      if (!(await setNoteProperties(note.id, properties))) throw new Error('Failed to save note properties.')
+      if (requestId) agentNoteByRequestRef.current.delete(requestId)
+      // Falha ao arquivar não desfaz a nota nova: o banner de erro das notas avisa.
+      if (req.archiveNoteId) await setNoteArchived(req.archiveNoteId, true)
+      return note
+    },
+    [handleCreateNoteFromChat, noteTypes.reload, setNoteProperties, setNoteArchived]
   )
 
   // "Save to note" da janela assistant (Ctrl+M): a main grava, para a lista e
@@ -2944,7 +3030,7 @@ function App() {
   // usuário no modal da assistant.
   useEffect(
     () =>
-      onAssistantNoteRequest(async (request) => {
+      onAssistantNoteRequest(async (request, requestId) => {
         if (request.kind === 'create-notebook') {
           return { notebook: await handleCreateNotebookFromChat(request.name) }
         }
@@ -2952,6 +3038,9 @@ function App() {
           return {
             note: await handleCreateNoteFromChat(request.notebookId, request.title, request.content),
           }
+        }
+        if (request.kind === 'create-agent-note') {
+          return { note: await handleCreateAgentNoteFromChat(request.note, requestId) }
         }
         // Parte da versão mais recente entre o estado (inclui o que está sendo
         // digitado no Editor) e o banco (a keep grava direto nele).
@@ -2970,7 +3059,7 @@ function App() {
         void emit('calendar-note-updated', { noteId: note.id })
         return { note }
       }),
-    [handleCreateNotebookFromChat, handleCreateNoteFromChat, saveNote]
+    [handleCreateNotebookFromChat, handleCreateNoteFromChat, handleCreateAgentNoteFromChat, saveNote]
   )
 
   const handleOpenResponseInChat = useCallback((response: AiResponse) => {
@@ -3676,6 +3765,7 @@ function App() {
             notes={notes}
             onCreateNotebook={handleCreateNotebookFromChat}
             onCreateNote={handleCreateNoteFromChat}
+            onCreateAgentNote={handleCreateAgentNoteFromChat}
             onSaveNote={async (note) => {
               await saveNote(note)
             }}
@@ -4001,6 +4091,7 @@ function App() {
             <NotesChatPanel
               notebook={chatNotebook}
               activeNote={activeNote}
+              describeNote={describeNoteForAi}
               projectTasks={chatProjectTasks}
               todayKey={today}
               taskChecklist={taskChecklist}
@@ -4016,6 +4107,9 @@ function App() {
               canInsert={canInsertIntoNote}
               onInsertIntoNote={handleInsertIntoNote}
               onOpenMark={handleOpenMark}
+              notes={notes}
+              onCreateAgentNote={handleCreateAgentNoteFromChat}
+              onNavigateToNote={handleNavigateToNote}
             />
           }
         />

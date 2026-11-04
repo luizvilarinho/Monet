@@ -120,7 +120,7 @@ export function cleanNoteContentForAi(content: string, opts: NoteAiTextOptions):
   const embedResponseText = (commandId: string): string => {
     const r = resolveEmbed?.(commandId)
     if (!r || r.status === 'error' || !r.response.trim()) return ''
-    return `${getAiBlockTitle(r.command)}\n${r.response.trim()}`
+    return `${getAiBlockTitle(r.command, r.query)}\n${r.response.trim()}`
   }
 
   const linkedNoteText = (noteId: string): string => {

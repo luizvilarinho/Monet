@@ -339,16 +339,40 @@ planner (cria/refaz) ──▶ nota Plan ──▶ plan-week (aloca na semana)
    - `/today` (com `plannedDay`);
    - saída do `/planner` slash;
    - nome do agente no bloco.
-2. **Agentes de chat, primeira leva:**
+2. **Agentes de chat, primeira leva — feita em 2026-11-04:**
    - seletor por conversa e atalho `/agente`;
    - montador de `ephemeralContext`;
    - capacidade de trabalho em Settings;
    - **plan-week** (todos os dados já existem).
-3. **Planos:**
+   - O que entrou e os desvios: registro `src/lib/agents/chat.ts` (General + Plan week) e `planWeek.ts`; `/general` como atalho de volta ao padrão; sem agentes no Reader, nas pastas do Mincer e também nas pastas de livro abertas no chat principal; com agente, o prompt da pasta entra com o cabeçalho "Folder instructions"; capacidade em localStorage (`monet:work-capacity`, Settings › Agenda); janela do plan-week: começa hoje num dia de trabalho, no último dia de trabalho cobre hoje e a próxima semana, depois dele só a próxima; os prazos depois da semana entram até 4 semanas à frente, uma linha por item (seção Upcoming), sem distribuição nos dias.
+3. **Planos — feita em 2026-11-04:**
    - Capacidade e Livro no Plan;
    - parser do contrato (`plan.ts`);
    - **planner** e **coach**.
-4. **tutor:** nota de perfil, índice de fichamentos e glossário.
+   - O que entrou e os desvios:
+     - contrato em `src/lib/plan.ts` (formato novo com a data `dd/mm` em negrito no item e o antigo "Dia N" por Início + N − 1, em dias corridos, com aviso da regra) e regras em `src/lib/planNotes.ts`;
+     - plano identificado pelo par de datas do tipo (mesma regra do "ongoing" do `matchNoteDates`), com o TODOS fora, e, desde o U6, pelo nome de plano do tipo ou pelo checklist no formato do contrato (ver as melhorias abaixo); na gravação, o tipo só é escolhido pelo nome de plano, senão é criado o tipo "Plan" (Start, End, Capacity, Book);
+     - Capacidade e Livro no idioma das datas do tipo (Início/Fim → Capacidade/Livro), lidos por alias PT/EN, acrescentados só no primeiro "Save as Plan note" e **sem migração** no arranque: até lá o coach assume 1 h/dia e diz onde preencher;
+     - proteção de duplicata por mensagem (`monet:agent-note-by-message`) e `ChatMessage.agentId` (o botão só nas respostas do planner);
+     - replanejar: com "Replaces: <título>" nas premissas, o modal oferece **Archive previous plan** (ligado por padrão), para o coach não cobrar dois planos do mesmo objetivo;
+     - sumário do livro indisponível ao app: o planner estima pelas páginas ou usa os capítulos dados, e declara (D16 mantido);
+     - `buildContext` recebe o caderno da pasta, o nome da pasta e as mensagens do usuário (`AgentContextInput`).
+4. **tutor — feita em 2026-11-04:** nota de perfil, índice de fichamentos e glossário.
+   - O que entrou e os desvios:
+     - perfil do estudo pela tag `study profile` (aliases `perfil de estudo`/`perfil do estudo`), com o título como reserva; com várias, vale a mais recente. O bloco "Study profile — <caderno>" da resposta vira nota sem tipo com a tag pelo botão **Save study profile** (`src/lib/studyProfile.ts`);
+     - escopo do caderno recalculado a cada mensagem: vínculo da pasta, depois o nome "Notebook - X", depois o caderno citado nas mensagens do usuário (palavra inteira, o nome mais longo ganha); caderno com a IA desligada é dito, sem notas;
+     - resumos por propriedade `number` com nome de capítulo (aliases), com as demais notas listadas com tipo e propriedades;
+     - glossário pelo `/define` das notas do caderno, marcas abertas e planos do caderno no contexto;
+     - `forceNotesTool` no tutor: `get_note`/`search_marks` no turno mesmo com a tool Notes desligada.
+   - Melhorias do UX Report e correções do review (2026-11-04):
+     - **U1, política de contexto por agente de chat** (`ChatAgentDef.context`): plan-week, planner e coach sem RAG, web search e deep research; o tutor com RAG e web search (pelo toggle), sem deep research; o General segue o toggle e a pasta como antes. A nota aberta do chat das Anotações vai a todos. Quando o escopo do tutor vem da mensagem (outro caderno que o da pasta, ou chat sem pasta), o RAG e o `search_knowledge_base` buscam nesse caderno (`AgentContext.ragNotebookId`); o contexto diz "Knowledge base search: available | not available";
+     - **U2, planos na agenda:** plan-week, `/today` e `/week-review` recebem as notas de plano pelo resumo do app (`agendaPlanSummaries`, o mesmo texto do coach), não pelo corpo cru. O `/today` recebe também os itens do plano no dia da nota (feitos e abertos), e o plan-week os itens nos dias a planejar ("Items dated …");
+     - **U3, rótulo do agente na resposta:** ícone e nome quando o agente muda na conversa;
+     - **U6, definição de plano:** tipo com par de datas e, além disso, nome de plano (Plan, Plano, Study plan, Reading plan, Plano de estudo/leitura) ou ao menos um item no formato do contrato. Nomes genéricos (Schedule, Cronograma, Planning) são ambíguos e contam só pelo checklist; o "Save as Plan note" nunca os usa. Início e Fim vêm das propriedades com esses nomes (uma 3ª data não muda o intervalo; sem nome, a menor e a maior); um plano só com Fim é cobrado;
+     - **U7, escopo do tutor:** a mensagem do turno troca o caderno da pasta só quando cita outro entre aspas ou junto de "caderno"/"notebook"; o tutor diz o caderno na 1ª resposta e quando o escopo muda;
+     - **U16, título do bloco slash** `<rótulo> · <query>` (query cortada em 40 caracteres), também no export e no texto para a IA;
+     - **contrato do plano mais tolerante:** o item aceita o dia da semana antes da data, a data ISO, a data sem negrito seguida de separador e, no formato antigo, `(…)` depois do número e "Dias N–M" (no 1º dia). Sem ano, o Start cai a partir de uma semana antes de hoje e o End a partir do Start; End antes de Start ou nenhum item datado mostram o motivo no modal em vez de esconder o botão;
+     - **Archive previous plan** só casa notas de plano: título igual ao de "Replaces:" ou o único plano ativo/vencido do mesmo livro.
 5. **Fase 2 de qualidade** (seção 10), começando pelos agentes já entregues.
 
 ## 10. Pendências para a fase 2 (qualidade das respostas)

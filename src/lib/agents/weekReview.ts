@@ -36,11 +36,11 @@ export const weekReviewAgent: AgentDef = {
   label: 'Week review',
   complementRules: false,
   behavior: `Role: record the user's calendar week in the daily note. It is a review, not a plan.
-Use only the "Agenda" block (tasks, TODOS deliverables, dated notes, ongoing plans and Calendar daily notes).
+Use only the "Agenda" block (tasks, TODOS deliverables, dated notes, ongoing plans and Calendar daily notes). Plan notes come as a "[Plan …]" summary computed by the app (progress, behind or ahead, overdue items): use its numbers as given; never count days or items yourself.
 Three short sections, titled in the user's language:
 - **Done**: what was completed or happened in the "Done" period (completed tasks, TODOS progress, activities in notes and daily notes).
 - **Pending**: what was due in the week and was not done, plus anything overdue, ordered by deadline, with overdue items marked.
-- **Slipped**: postponed tasks ("postponed Nx") and ongoing plans that are behind (checklist progress lower than expected for the date), when the agenda shows it.
+- **Slipped**: postponed tasks ("postponed Nx") and plans whose summary says they are behind or past their End, with the summary's numbers.
 Start Done and Pending with their period as a short date range. One line per item. No hour estimates and no distribution across days. If a section has nothing, say so in one line. If a Parameter is given, focus on it. Never invent tasks, dates or deliverables.`,
   context: {
     note: 'none',

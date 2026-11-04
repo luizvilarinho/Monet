@@ -1,0 +1,162 @@
+.wrap {
+  position: relative;
+  display: inline-flex;
+  /* Primeiro item da barra de ações: fica à esquerda, as ações à direita. */
+  margin-right: auto;
+}
+
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1h);
+  height: var(--control-lg);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-md);
+  background: transparent;
+  border: 1px solid var(--border, #333340);
+  color: var(--text-secondary, #a0a0b8);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.trigger:hover {
+  color: var(--text-primary, #e8e8f0);
+  border-color: var(--text-secondary, #a0a0b8);
+}
+
+/* Agente diferente do General: destaque para ficar visível na conversa. */
+.triggerAgent {
+  color: var(--accent, #7c6af5);
+  border-color: var(--accent, #7c6af5);
+  background: rgba(124, 106, 245, 0.1);
+}
+
+.triggerAgent:hover {
+  color: var(--accent, #7c6af5);
+  border-color: var(--accent, #7c6af5);
+}
+
+.compact {
+  height: var(--control-md);
+  padding: 0 var(--space-2);
+  gap: var(--space-1);
+}
+
+.menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 1100;
+  width: 320px;
+  padding: var(--space-1);
+  background: var(--bg-panel, #161618);
+  border: 1px solid var(--border, #333340);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0);
+}
+
+.item,
+.itemChecked {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2);
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-primary, #e8e8f0);
+  text-align: left;
+  cursor: pointer;
+}
+
+.item:hover {
+  background: var(--surface-1, #1e1e22);
+}
+
+.itemChecked {
+  background: rgba(124, 106, 245, 0.12);
+}
+
+.itemIcon {
+  flex-shrink: 0;
+  display: inline-flex;
+  width: var(--control-md);
+  height: var(--control-md);
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  background: var(--surface-1, #1e1e22);
+  color: var(--text-secondary, #a0a0b8);
+}
+
+.itemChecked .itemIcon {
+  color: var(--accent, #7c6af5);
+}
+
+.itemText {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0);
+}
+
+.itemLabel {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.itemDescription {
+  font-size: 11px;
+  color: var(--text-muted, #606070);
+  line-height: 1.4;
+}
+
+.itemCommand {
+  flex-shrink: 0;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  color: var(--text-secondary, #a0a0b8);
+}
+
+.suggestions {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 1100;
+  padding: var(--space-1);
+  background: var(--bg-panel, #161618);
+  border: 1px solid var(--border, #333340);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0);
+}
+
+.suggestion,
+.suggestionActive {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-1h) var(--space-2);
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-primary, #e8e8f0);
+  text-align: left;
+  cursor: pointer;
+}
+
+.suggestion:hover,
+.suggestionActive {
+  background: var(--surface-1, #1e1e22);
+}

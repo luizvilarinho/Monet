@@ -244,6 +244,7 @@ export function useNoteTypes(opts?: { onRemoved?: () => void }) {
     types,
     defs,
     saveError: saveError ?? (loadFailed ? 'Failed to load note types.' : null),
+    reload,
     createType,
     updateType,
     removeType,

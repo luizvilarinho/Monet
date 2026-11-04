@@ -337,6 +337,12 @@
   cursor: not-allowed;
 }
 
+/* Ícone antes do rótulo ("Save as Plan note"). */
+.messageActionIcon {
+  flex-shrink: 0;
+  margin-right: var(--space-1);
+}
+
 .streamingDots span {
   display: inline-block;
   width: 5px;
@@ -427,6 +433,8 @@
 }
 
 .composer {
+  /* Âncora da lista do atalho "/agente". */
+  position: relative;
   flex-shrink: 0;
   border-top: 1px solid var(--border, #333340);
   background: var(--bg-panel, #161625);

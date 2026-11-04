@@ -8,6 +8,7 @@ import {
 import { useChatPanelState } from '../../hooks/useChatPanelState'
 import { useStickToBottom } from '../../hooks/useStickToBottom'
 import { notesFolderDocId } from '../../lib/documents'
+import type { AgentNoteDraft, AgentNoteRequest } from '../../lib/agentNotes'
 import { mincerGet } from '../../lib/mincer'
 import type { ChecklistProgress } from '../../lib/tasks'
 import type { AiModel, Note, Notebook, Task } from '../../types'
@@ -16,12 +17,13 @@ import { buildMincerContext, mincerTruncationNotice } from '../Mincer/mincerCont
 import { useTasksEnv } from '../TasksView/TasksEnv'
 import styles from './ChatPanel.module.css'
 import { ChatComposer } from './ChatComposer'
-import { ChatMessageBubble } from './ChatMessageBubble'
+import { agentLabelIds, ChatMessageBubble } from './ChatMessageBubble'
 import { MessageSources } from './MessageSources'
 import { ChatSidebar } from './ChatSidebar'
 import { FolderDocumentSelectorModal } from './FolderDocumentSelectorModal'
 import { FolderMemoryModal } from './FolderMemoryModal'
 import { FolderSystemPromptModal } from './FolderSystemPromptModal'
+import { SaveAgentNoteModal } from './SaveAgentNoteModal'
 import { SaveToNoteModal } from './SaveToNoteModal'
 import { ScrollToBottomButton } from './ScrollToBottomButton'
 
@@ -35,6 +37,8 @@ export interface ChatPanelProps {
   notes: Note[]
   onCreateNotebook: (name: string) => Promise<Notebook>
   onCreateNote: (notebookId: string, title: string, content: string) => Promise<Note>
+  // "Save as Plan note" da resposta do planner; o "Try again" repete o requestId.
+  onCreateAgentNote: (req: AgentNoteRequest, requestId: string) => Promise<Note>
   onSaveNote: (note: Note) => Promise<void>
   onNavigateToNote: (notebookId: string, noteId: string) => void
   // Tool "Tasks" (opt-in no menu de ferramentas).
@@ -58,6 +62,7 @@ export function ChatPanel({
   notes,
   onCreateNotebook,
   onCreateNote,
+  onCreateAgentNote,
   onSaveNote,
   onNavigateToNote,
   tasks,
@@ -114,6 +119,9 @@ export function ChatPanel({
     toggleThinking,
     error,
     send,
+    activeAgentId,
+    agentsAvailable,
+    setConversationAgent,
     cancel,
     selectConversation,
     newConversation,
@@ -141,6 +149,7 @@ export function ChatPanel({
   } = useChat(models, { getTasksSnapshot: () => tasksSnapshotRef.current })
 
   const [saveTarget, setSaveTarget] = useState<{ messageId: string; content: string } | null>(null)
+  const [agentNoteDraft, setAgentNoteDraft] = useState<AgentNoteDraft | null>(null)
   const [systemPromptFolderId, setSystemPromptFolderId] = useState<string | null>(
     null,
   )
@@ -157,6 +166,8 @@ export function ChatPanel({
   const folderDocsNotebookId = folderDocsFolder ? getFolderNotebookId(folderDocsFolder.id) : null
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const { historyRef, atBottom, onScroll, scrollToBottom } = useStickToBottom({ messages, isStreaming, activeId })
+  // Respostas com o rótulo do agente (quando ele muda).
+  const agentLabels = agentLabelIds(messages)
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const saved = parseInt(localStorage.getItem('monet:chat-sidebar-width') ?? '', 10)
     if (isNaN(saved)) return 240
@@ -212,14 +223,16 @@ export function ChatPanel({
     }
   }, [mincerItemId])
 
-  // Pasta de um item do Mincer: o conteúdo do item vai como contexto efêmero.
+  // Pasta de um item do Mincer: o conteúdo do item vai como contexto efêmero
+  // (sem agentes ali: `agentId` só vem fora do Mincer).
   async function handleSend(
     text: string,
     image?: string,
-    docs?: Array<{ name: string; type: string; data: string }>
+    docs?: Array<{ name: string; type: string; data: string }>,
+    agentId?: string
   ) {
     if (!mincerItemId) {
-      await send(text, image, docs)
+      await send(text, image, docs, agentId ? { agentId } : undefined)
       return
     }
     const item = await mincerGet(mincerItemId).catch(() => null)
@@ -315,9 +328,11 @@ export function ChatPanel({
                 key={m.id}
                 message={m}
                 isStreaming={m.id === streamingMessageId}
+                showAgentLabel={agentLabels.has(m.id)}
                 onSaveToNote={(content) =>
                   setSaveTarget({ messageId: m.id, content })
                 }
+                onSaveAgentNote={setAgentNoteDraft}
                 onOpenMark={onOpenMark}
                 footer={<MessageSources message={m} trace={ragTraces[m.id]} timings={chatTimings[m.id]} />}
               />
@@ -357,7 +372,10 @@ export function ChatPanel({
           webSourcesToast={webSourcesToast}
           resetKey={activeId}
           rows={3}
-          onSend={(text, image, docs) => void handleSend(text, image, docs)}
+          agentId={activeAgentId}
+          agentsAvailable={agentsAvailable}
+          onSelectAgent={setConversationAgent}
+          onSend={(text, image, docs, agentId) => void handleSend(text, image, docs, agentId)}
           onStop={cancel}
           inputRef={inputRef}
         />
@@ -373,6 +391,17 @@ export function ChatPanel({
         onSaveNote={onSaveNote}
         onNavigateToNote={onNavigateToNote}
         onClose={() => setSaveTarget(null)}
+      />
+
+      <SaveAgentNoteModal
+        open={agentNoteDraft !== null}
+        draft={agentNoteDraft}
+        notebooks={notebooks}
+        notes={notes}
+        defaultNotebookId={activeFolder ? getFolderNotebookId(activeFolder.id) : null}
+        onCreate={onCreateAgentNote}
+        onNavigateToNote={onNavigateToNote}
+        onClose={() => setAgentNoteDraft(null)}
       />
 
       <FolderSystemPromptModal

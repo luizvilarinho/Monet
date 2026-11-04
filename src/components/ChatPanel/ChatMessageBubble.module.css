@@ -287,6 +287,16 @@
   align-self: flex-start;
 }
 
+.agentLabel {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 11px;
+  color: var(--text-muted, #606070);
+  margin-bottom: var(--space-1);
+  align-self: flex-start;
+}
+
 /* Wrapper para mensagem do usuario com docs anexados */
 .bubbleUserWrapper {
   max-width: 70%;

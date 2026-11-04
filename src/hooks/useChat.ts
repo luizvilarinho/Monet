@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { nanoid } from 'nanoid'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   cancelOpenRouterStream,
   hasOpenRouterKey,
@@ -57,6 +57,7 @@ import { cleanNoteContentForAi, loadEmbedResponses, noteDate } from '../lib/note
 import { formatNoteDateMatch, matchNoteDates, type NoteDateMatch } from '../lib/agenda'
 import { extractNoteMarks, markLabelKey, summarizeMarks, type NoteMarkEntry } from '../lib/noteMarks'
 import { isTodosNote } from '../lib/noteTypes'
+import { findChatAgent, GENERAL_AGENT_ID, type AgentContextInput } from '../lib/agents/chat'
 import { ocrTextsForContent } from '../lib/imageOcr'
 import { storage } from '../storage'
 
@@ -254,6 +255,8 @@ export interface ChatMessage {
   noteTitle?: string
   // A seleção do editor entrou no contexto enviado.
   hadSelection?: boolean
+  // Agente (não General) que gerou esta resposta do assistant.
+  agentId?: string
 }
 
 // Tempos de uma resposta (linha compacta abaixo do assistant): efêmeros, não
@@ -286,6 +289,9 @@ export interface ChatConversation {
   // uma leitura defasada de FOLDERS_KEY em outra janela não consegue mais
   // "desvincular" uma conversa da pasta.
   folderId?: string | null
+  // Agente de chat da conversa (id de CHAT_AGENTS, src/lib/agents/chat.ts).
+  // Ausente = "General" (CHAT_SYSTEM_PROMPT); id desconhecido também.
+  agentId?: string
 }
 
 export type SystemPromptMode = 'replace' | 'append'
@@ -818,8 +824,8 @@ export function getMincerItemIdForChatFolder(folderId: string): string | null {
 }
 
 // Pastas automáticas (vinculadas a livro do Reader, a caderno ou a item do
-// Mincer), por id — o nome é cosmético. Usado só para agrupar visualmente na
-// sidebar do chat.
+// Mincer), por id — o nome é cosmético. Usado para agrupar visualmente na
+// sidebar do chat e para tirar os agentes das pastas de livro e do Mincer.
 export function getAutoFolderGroups(): {
   library: Set<string>
   notebook: Set<string>
@@ -830,6 +836,23 @@ export function getAutoFolderGroups(): {
     notebook: new Set(Object.values(loadNotebookChatFolderLinks())),
     mincer: new Set(Object.values(loadMincerItemFolderLinks())),
   }
+}
+
+// Superfície do chat (instância do useChat).
+type ChatMode = 'main' | 'assistant' | 'reader' | 'notes'
+
+// Valor gravado em ChatConversation.agentId: General (ou id inválido) = ausente.
+function storedAgentId(agentId: string): string | undefined {
+  const agent = findChatAgent(agentId)
+  return agent.id === GENERAL_AGENT_ID ? undefined : agent.id
+}
+
+// Agentes não valem no chat do Reader nem nas pastas de livro e do Mincer.
+function agentsAllowed(mode: ChatMode, folderId: string | null | undefined): boolean {
+  if (mode === 'reader') return false
+  if (!folderId) return true
+  const groups = getAutoFolderGroups()
+  return !groups.library.has(folderId) && !groups.mincer.has(folderId)
 }
 
 export function linkNotebookToChatFolder(notebookId: string, folderId: string): void {
@@ -1388,8 +1411,16 @@ export interface UseChatResult {
       excludeNoteId?: string | null
       // Nota em que a mensagem foi escrita (chip/registro do chat do Notebook).
       noteContext?: { noteId: string; noteTitle: string; hadSelection: boolean }
+      // Atalho "/agente texto": grava o agente na conversa antes do turno.
+      agentId?: string
     }
   ) => Promise<void>
+  // Agente da conversa ativa (General quando não há agentes nesta conversa).
+  activeAgentId: string
+  // false no Reader e nas pastas de livro e do Mincer (sem seletor nem atalho).
+  agentsAvailable: boolean
+  // Troca o agente da conversa ativa (vale a partir da próxima mensagem).
+  setConversationAgent: (agentId: string) => void
   cancel: () => void
   selectConversation: (id: string) => void
   newConversation: () => void
@@ -1706,7 +1737,7 @@ async function searchMarksText(
 export function useChat(
   models: AiModel[] = [],
   options?: {
-    mode?: 'main' | 'assistant' | 'reader' | 'notes'
+    mode?: ChatMode
     // Chat principal, NotesChat e Assistant passam: habilita a tool "Tasks".
     // O Assistant carrega do storage (assíncrono), por não ter o estado da main.
     getTasksSnapshot?: () => TasksSnapshot | Promise<TasksSnapshot>
@@ -2284,6 +2315,36 @@ export function useChat(
     [setConversations]
   )
 
+  // Agente da conversa ativa (seletor e atalho sem texto). Vale também durante
+  // o streaming: o turno em curso já capturou o seu agente. Sem conversa ativa
+  // (só no chat principal), cria uma já com o agente.
+  const setConversationAgent = useCallback(
+    (agentId: string) => {
+      const next = storedAgentId(agentId)
+      const draft = draftRef.current
+      if (draft && draft.id === activeId) {
+        const updated = { ...draft, agentId: next }
+        draftRef.current = updated
+        setDraftConversation(updated)
+        return
+      }
+      if (activeId && conversationsRef.current.some((c) => c.id === activeId)) {
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.id === activeId ? { ...c, agentId: next, updatedAt: new Date().toISOString() } : c
+          )
+        )
+        return
+      }
+      if (isDetached) return
+      const conv: ChatConversation = { ...makeNewConversation(), agentId: next }
+      setConversations((prev) => [conv, ...prev])
+      setLooseOrder((prev) => [conv.id, ...prev])
+      setActiveIdState(conv.id)
+    },
+    [activeId, isDetached, setConversations, setLooseOrder]
+  )
+
   const renameFolder = useCallback(
     (id: string, name: string) => {
       const trimmed = name.trim()
@@ -2833,6 +2894,7 @@ export function useChat(
         excludeNoteId?: string | null
         // Nota em que a mensagem foi escrita (chip/registro do chat do Notebook).
         noteContext?: { noteId: string; noteTitle: string; hadSelection: boolean }
+        agentId?: string
       }
     ) => {
       const trimmed = text.trim()
@@ -2929,12 +2991,27 @@ export function useChat(
         setActiveIdState(conv.id)
       }
       const targetId = convId
+      // Atalho "/agente texto": grava o agente na conversa (as atualizações
+      // funcionais em fila já incluem a conversa criada/materializada acima).
+      if (opts?.agentId) {
+        const nextAgentId = storedAgentId(opts.agentId)
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.id === targetId ? { ...c, agentId: nextAgentId, updatedAt: new Date().toISOString() } : c
+          )
+        )
+      }
 
       // Captura o historico ANTES de inserir a nova mensagem do usuario,
       // senao ela apareceria duplicada no payload (no historico + na ultima msg).
       // Documentos anexados sao armazenados como paths no filesystem; ler conteudo
       // a partir do disco para mensagens antigas (paralelo via Promise.all).
       const currentConv = conversationsRef.current.find((c) => c.id === targetId)
+      // Agente do turno, capturado agora: trocar durante o streaming vale só
+      // para a próxima mensagem. O rascunho recém-materializado ainda não está
+      // no ref.
+      const turnAgentId =
+        opts?.agentId ?? (currentConv ?? (draft && draft.id === targetId ? draft : null))?.agentId
       // Balão do assistant vazio (app fechado durante a tool) fica fora: alguns
       // provedores recusam mensagem vazia.
       const priorMessages = (currentConv?.messages ?? []).filter(
@@ -3035,6 +3112,23 @@ export function useChat(
         setWebSearchActive(false)
       }
 
+      // Resolucao pela FONTE DE VERDADE (conversation.folderId). No turno da
+      // 1a mensagem de uma instancia dedicada a conversa acabou de ser
+      // materializada neste send (estado ainda nao commitado): usamos o
+      // folderId/objeto capturados na materializacao para aplicar system
+      // prompt/RAG/memoria ja na 1a mensagem.
+      const targetConvFolderId =
+        materializedFolderId !== undefined
+          ? materializedFolderId
+          : conversationsRef.current.find((c) => c.id === targetId)?.folderId ??
+            null
+      // Agente do turno: o prompt dele substitui o CHAT_SYSTEM_PROMPT. Sem
+      // agentes nesta superfície/pasta, vale o General (agentId ignorado).
+      const turnAgent = findChatAgent(agentsAllowed(mode, targetConvFolderId) ? turnAgentId : undefined)
+      // Política de contexto do agente: o toggle só vale se o agente aceita.
+      const useDeepResearch = toolsRef.current.deepResearch && turnAgent.context.deepResearch
+      const useWebSearch = toolsRef.current.webSearch && turnAgent.context.web
+
       // Busca web — deep research tem prioridade sobre web search simples
       // Data LOCAL do usuário ("hoje", "ontem", "semana passada" nas tools).
       const currentDate = dateKeyFromMs(Date.now())
@@ -3044,7 +3138,7 @@ export function useChat(
       // Resultados da busca pré-turno (modelos SEM tools) para o bibliotecário;
       // consumidos abaixo, depois que containingFolder for resolvido.
       let preTurnSearchResults: SearchResult[] | null = null
-      if (toolsRef.current.deepResearch) {
+      if (useDeepResearch) {
         const tavilyOk = await hasTavilyKey()
         if (!tavilyOk) {
           failOnAssistant(
@@ -3083,7 +3177,7 @@ export function useChat(
             )
           }
         }
-      } else if (toolsRef.current.webSearch) {
+      } else if (useWebSearch) {
         const tavilyOk = await hasTavilyKey()
         if (!tavilyOk) {
           failOnAssistant(
@@ -3130,16 +3224,6 @@ export function useChat(
       // - sem pasta ou prompt vazio -> apenas o prompt padrao
       // - modo "replace" -> apenas o prompt da pasta (padrao nao entra)
       // - modo "append"  -> prompt padrao primeiro, depois o da pasta
-      // Resolucao pela FONTE DE VERDADE (conversation.folderId). No turno da
-      // 1a mensagem de uma instancia dedicada a conversa acabou de ser
-      // materializada neste send (estado ainda nao commitado): usamos o
-      // folderId/objeto capturados na materializacao para aplicar system
-      // prompt/RAG/memoria ja na 1a mensagem.
-      const targetConvFolderId =
-        materializedFolderId !== undefined
-          ? materializedFolderId
-          : conversationsRef.current.find((c) => c.id === targetId)?.folderId ??
-            null
       const containingFolder = targetConvFolderId
         ? foldersRef.current.find((f) => f.id === targetConvFolderId) ??
           (materializedFolder?.id === targetConvFolderId
@@ -3159,19 +3243,36 @@ export function useChat(
           searchResults: preTurnSearchResults,
         }
       }
+      if (turnAgent.id !== GENERAL_AGENT_ID) {
+        updateMessages(targetId, (msgs) =>
+          msgs.map((m) => (m.id === assistantId ? { ...m, agentId: turnAgent.id } : m))
+        )
+      }
+      const language = localStorage.getItem('monet:user-language') ?? navigator.language
+      const basePrompt = turnAgent.prompt ? turnAgent.prompt(language) : CHAT_SYSTEM_PROMPT
       const folderPrompt = containingFolder?.systemPrompt.trim() ?? ''
       let systemMessages: ChatMessageInput[]
       if (containingFolder && folderPrompt.length > 0) {
-        if (containingFolder.systemPromptMode === 'replace') {
+        if (!turnAgent.prompt && containingFolder.systemPromptMode === 'replace') {
           systemMessages = [{ role: 'system', content: folderPrompt }]
-        } else {
+        } else if (!turnAgent.prompt) {
           systemMessages = [
             { role: 'system', content: CHAT_SYSTEM_PROMPT },
             { role: 'system', content: folderPrompt },
           ]
+        } else {
+          // D9: com agente, o prompt da pasta é sempre complemento (append),
+          // mesmo em 'replace'.
+          systemMessages = [
+            { role: 'system', content: basePrompt },
+            {
+              role: 'system',
+              content: `Folder instructions (context for this topic; they do not change your role or output format):\n\n${folderPrompt}`,
+            },
+          ]
         }
       } else {
-        systemMessages = [{ role: 'system', content: CHAT_SYSTEM_PROMPT }]
+        systemMessages = [{ role: 'system', content: basePrompt }]
       }
       // Memoria da pasta: injetada SEMPRE que memoryEnabled, independente do
       // systemPromptMode (mesmo em 'replace', que descarta o CHAT_SYSTEM_PROMPT
@@ -3197,11 +3298,33 @@ export function useChat(
       // ChatMessage.content, no historico persistido ou nas queries de web
       // search/deep research (que derivam de historyForApi/trimmed). Por ser
       // `const` no closure do send(), entra nos DOIS payloads (inicial e
-      // pos tool-call).
-      const ephemeralSystemMessage: ChatMessageInput | null =
-        opts?.ephemeralContext?.trim()
-          ? { role: 'system', content: opts.ephemeralContext }
-          : null
+      // pos tool-call). O contexto do agente (remontado a cada mensagem) vai
+      // no mesmo system message.
+      let agentContext = ''
+      // Caderno do RAG resolvido pelo agente (AgentContext.ragNotebookId).
+      let agentRagNotebookId: string | null | undefined
+      if (turnAgent.buildContext) {
+        try {
+          const contextInput: AgentContextInput = {
+            todayKey: currentDate,
+            notebookId: targetConvFolderId ? getNotebookIdForChatFolder(targetConvFolderId) : null,
+            folderName: containingFolder?.name ?? null,
+            userMessages: [
+              trimmed,
+              ...priorMessages
+                .filter((m) => m.role === 'user')
+                .map((m) => m.content)
+                .reverse(),
+            ],
+          }
+          const built = await turnAgent.buildContext(contextInput)
+          agentContext = built.text
+          agentRagNotebookId = built.ragNotebookId
+        } catch (err) {
+          console.warn('agent context failed:', err)
+          agentContext = `${turnAgent.label} context could not be loaded for this message. Say so in one line and answer from the conversation.`
+        }
+      }
 
       // RAG context for folder documents. A selecao (ids de arquivo e de pasta)
       // vem da tabela do caderno quando a pasta de chat e vinculada a um caderno
@@ -3213,9 +3336,22 @@ export function useChat(
       // Gating: agradecimento nao busca; "continue"/"tenta de novo" reaproveita
       // os trechos do turno anterior (rowids em ragSources).
       // O escopo também alimenta a tool search_knowledge_base (null = pasta
-      // sem documentos visíveis: nem RAG nem tool).
+      // sem documentos visíveis: nem RAG nem tool). Agente sem RAG = null.
+      // Agente com caderno próprio no turno (tutor com escopo da mensagem): o
+      // escopo é esse caderno, como no slash /docs; null = sem RAG.
       let ragScope: RagScope | null = null
-      if (containingFolder) {
+      if (turnAgent.context.rag && agentRagNotebookId) {
+        try {
+          ragScope = {
+            ids: await getNotebookVisibleDocumentIds(agentRagNotebookId),
+            notebookId: agentRagNotebookId,
+            excludeNoteId: opts?.excludeNoteId ?? null,
+            includeAiFolders: true,
+          }
+        } catch (err) {
+          console.warn('RAG scope of the agent notebook failed (continuing without):', err)
+        }
+      } else if (containingFolder && turnAgent.context.rag && agentRagNotebookId === undefined) {
         try {
           const linkedNotebookId = getNotebookIdForChatFolder(containingFolder.id)
           const rawFolderDocIds = linkedNotebookId
@@ -3233,6 +3369,16 @@ export function useChat(
           console.warn('RAG scope in chat failed (continuing without):', err)
         }
       }
+      // Agente com RAG: o contexto diz se a tool search_knowledge_base existe no turno.
+      if (agentContext && turnAgent.context.rag) {
+        agentContext += `\nKnowledge base search: ${supportsTools && ragScope ? 'available' : 'not available'}.`
+      }
+      const ephemeralText = [opts?.ephemeralContext?.trim(), agentContext.trim()]
+        .filter(Boolean)
+        .join('\n\n---\n\n')
+      const ephemeralSystemMessage: ChatMessageInput | null = ephemeralText
+        ? { role: 'system', content: ephemeralText }
+        : null
       let ragSystemMessage: ChatMessageInput | null = null
       // Fontes do RAG automático; as tools de busca continuam a numeração.
       let turnRagSources: RagSource[] = []
@@ -3361,10 +3507,10 @@ export function useChat(
         required: ['queries'],
       }
       const toolDefs: object[] = []
-      if (supportsTools && (toolsRef.current.deepResearch || toolsRef.current.webSearch)) {
+      if (supportsTools && (useDeepResearch || useWebSearch)) {
         const tavilyOk = await hasTavilyKey()
         if (tavilyOk) {
-          if (toolsRef.current.deepResearch) {
+          if (useDeepResearch) {
             toolDefs.push({
               type: 'function',
               function: {
@@ -3373,7 +3519,7 @@ export function useChat(
                 parameters: deepResearchToolParameters,
               },
             })
-          } else if (toolsRef.current.webSearch) {
+          } else if (useWebSearch) {
             toolDefs.push({
               type: 'function',
               function: {
@@ -3409,11 +3555,16 @@ export function useChat(
           },
         })
       }
-      // query_tasks: só com a tool "Tasks" ligada pelo usuário e num chat que
-      // fornece o snapshot das tasks. Lido uma vez por envio: os status entram
-      // no enum da tool, e o mesmo snapshot responde à chamada.
+      // query_tasks: só com a tool "Tasks" ligada pelo usuário ou pelo agente
+      // da conversa, e num chat que fornece o snapshot das tasks. Lido uma vez
+      // por envio: os status entram no enum da tool, e o mesmo snapshot
+      // responde à chamada.
       let tasksSnapshot: TasksSnapshot | null = null
-      if (supportsTools && toolsRef.current.tasks && getTasksSnapshotRef.current) {
+      if (
+        supportsTools &&
+        (toolsRef.current.tasks || turnAgent.forceTasksTool) &&
+        getTasksSnapshotRef.current
+      ) {
         try {
           tasksSnapshot = await getTasksSnapshotRef.current()
         } catch (err) {
@@ -3495,9 +3646,10 @@ export function useChat(
           },
         })
       }
-      // get_note: com a tool "Notes" ligada (padrão), busca uma nota por título
-      // em qualquer caderno com a IA ligada, fora do escopo da pasta.
-      if (supportsTools && toolsRef.current.notes) {
+      // get_note: com a tool "Notes" ligada (padrão) ou pelo agente da conversa,
+      // busca uma nota por título em qualquer caderno com a IA ligada, fora do
+      // escopo da pasta.
+      if (supportsTools && (toolsRef.current.notes || turnAgent.forceNotesTool)) {
         toolDefs.push({
           type: 'function',
           function: {
@@ -4038,6 +4190,12 @@ export function useChat(
       ? draftConversation
       : null)
   const messages = activeConversation?.messages ?? []
+  const activeFolderId =
+    activeConversation?.folderId ??
+    folders.find((f) => f.conversationIds.includes(activeId ?? ''))?.id ??
+    null
+  const agentsAvailable = useMemo(() => agentsAllowed(mode, activeFolderId), [mode, activeFolderId])
+  const activeAgentId = agentsAvailable ? findChatAgent(activeConversation?.agentId).id : GENERAL_AGENT_ID
 
   return {
     conversations,
@@ -4063,6 +4221,9 @@ export function useChat(
     toggleThinking: () => setThinkingEnabled((v) => !v),
     error,
     send,
+    activeAgentId,
+    agentsAvailable,
+    setConversationAgent,
     cancel,
     selectConversation,
     newConversation,
