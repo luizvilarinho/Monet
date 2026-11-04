@@ -80,7 +80,16 @@ Funciona como um caderno escolar: o usuário cria **cadernos**, organiza **maté
 - **Calendar**: uma agenda dentro de Anotações que funciona como agenda de papel — cada dia tem sua própria área de anotação, com captura rápida global e lembretes.
 - **Tasks**: pasta especial de tarefas leves (status, projeto, prazo). Itens de checklist de qualquer nota viram tasks via "Add to Tasks", ficam vinculados à nota de origem e aparecem no Calendar (laranja; vencidas em vermelho) até serem concluídas. Do date × deadline (atraso de planejamento em amarelo, deadline estourado em vermelho), faixa de resumo da semana e **dropdown de visões**: List (Group by data/projeto/status/group), Week board, Kanban (colunas por status; arrastar muda status), Projects e Groups (colunas por projeto/group; arrastar entre projetos move a task e a nota-corpo), My Day (plan today: planejamento diário sem tocar em Do date/Deadline; só na TasksView) e Review (weekly review, reflexão salva no Calendar). **Status customizáveis** (Manage statuses: nome, cor, limite WIP; to do/doing/done/dropped são fixos; excluir um status devolve as tasks a to do; status custom conta como aberto e em andamento) e **visões salvas** (base + projeto + filtro + busca + group by). Quick add com linguagem natural (`fri`, `!17/10`, `#Projeto`, `@<status>`, `!!`), busca de texto (`/`, Ctrl+F), snooze (`z`/`Z` e menu: 1 dia, 1 semana, próxima segunda), tempo em doing (badge), cor por projeto, largura própria da coluna (até 640px) com cadernos ocultos, groups dentro do projeto, atalhos de teclado e ações em lote, bloco `/tasks` vivo nas notas e "Due today" na nota diária, flag Important, recorrência simples (diária/semanal/mensal), progresso do checklist da nota-corpo, lembretes de deadline (véspera e dia) e uma tool "Tasks" opcional no Chat. Na lista, atrasadas aparecem em Overdue (têm prioridade sobre In progress); os chips de resumo não são exclusivos.
 
-*Comandos disponíveis:* `/search`, `/profile`, `/define`, `/summarize`, `/opinion`, `/table`, `/expand`, `/explain`, `/guide`, `/mindmap`, `/ask`, `/docs`, `/action`, `/week`.
+*Comandos disponíveis:*
+- **Agentes especializados** (ver `DOCS/features/agents_study.md`), cada um com prompt e contexto próprios e o nome do agente no bloco:
+  - `/define`: glossário curto, com a definição anterior do termo;
+  - `/critique`: julga a profundidade da nota;
+  - `/docs`: responde só pelas fontes do caderno, citando doc ou nota;
+  - `/expand`: dados novos, com web quando há instrução;
+  - `/week-review` e `/today`: só no Calendar.
+- **Demais comandos:** `/search`, `/profile`, `/summarize`, `/opinion`, `/table`, `/explain`, `/guide`, `/mindmap`, `/ask` e `/action`.
+
+A resposta fica na nota como bloco de IA não editável. O planejamento (planner, plan-week), o tutor e o coach estão previstos como agentes do Chat.
 
 **Chat**
 

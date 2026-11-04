@@ -15,7 +15,7 @@ import {
 } from './tasks'
 
 // Agenda para a IA: datas de uma nota num período (tool do chat e slash
-// commands) e o contexto comum do /week e do /planner. Funções puras: quem
+// commands) e o contexto comum do /week-review e do /today. Funções puras: quem
 // chama passa notas, tasks e defs.
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -110,8 +110,9 @@ export function formatNoteDateMatch(m: NoteDateMatch): string {
   return `${main} (also: ${m.other.map((f) => `${f.name} ${f.date}`).join(', ')})`
 }
 
-// ─── Contexto do /week e do /planner ────────────────────────────────────────
+// ─── Contexto do /week-review e do /today ───────────────────────────────────
 
+// usado pelo plan-week (fase 2)
 export const PLANNER_DEFAULT_HOURS_PER_DAY = 6
 
 // Orçamentos de texto (caracteres) por bloco; cada nota leva uma parte do
@@ -126,7 +127,7 @@ export interface AgendaInput {
   from: string
   to: string
   today: string
-  // Período das tasks concluídas; null = sem esse bloco (/planner).
+  // Período das tasks concluídas; null = sem esse bloco (/today num dia futuro).
   done: { from: string; to: string } | null
   tasks: Task[]
   notes: Note[]
@@ -174,7 +175,11 @@ export function selectAgenda(input: AgendaInput): AgendaSelection {
     .filter(
       (t) =>
         isOpen(t) &&
-        (isOverdue(t, today) || isInProgress(t) || inRange(t.scheduledDate, from, to) || inRange(t.dueDate, from, to))
+        (isOverdue(t, today) ||
+          isInProgress(t) ||
+          inRange(t.scheduledDate, from, to) ||
+          inRange(t.dueDate, from, to) ||
+          inRange(t.plannedDay, from, to))
     )
     .sort(compareTasks)
 
@@ -270,7 +275,8 @@ export function formatAgendaContext(
       input.checklist.get(t.id) ?? null,
       input.statuses,
       todosVisible ? todosVisible.title : null,
-      !!todosVisible?.archivedAt
+      !!todosVisible?.archivedAt,
+      { from: input.from, to: input.to }
     )
     return isDone(t) && t.completedAt !== null ? `${line} · completed ${dateKeyFromMs(t.completedAt)}` : line
   }
@@ -360,6 +366,7 @@ export function formatAgendaContext(
   return sections.join('\n\n')
 }
 
+// usado pelo plan-week (fase 2)
 // Último prazo aberto (>= hoje): deadline das tasks abertas e datas das
 // propriedades das TODOS com tasks abertas. null = nenhum.
 export function lastOpenDeadline(

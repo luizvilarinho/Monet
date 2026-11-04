@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { nanoid } from 'nanoid'
+import { emit } from '@tauri-apps/api/event'
 import type { MetadataValue, Note } from '../types'
 import { storage } from '../storage'
 
@@ -10,8 +11,27 @@ export function useNotes() {
   const [saveError, setSaveError] = useState<string | null>(null)
 
   useEffect(() => {
-    storage
-      .getNotes()
+    // A limpeza única das notas diárias duplicadas roda antes da 1ª leitura,
+    // para o estado nunca ter as notas apagadas. Uma falha dela nunca impede
+    // a carga.
+    const cleanup = async () => {
+      try {
+        const r = await storage.cleanupDuplicateDailyNotes()
+        if (!r) return
+        console.info('[daily-notes cleanup]', {
+          deleted: r.deleted.length,
+          keptLinked: r.keptLinked.length,
+          skippedTitles: r.skippedTitles,
+        })
+        // A keep recarrega o dia se segurava uma nota apagada (senão o
+        // autosave dela a recriaria).
+        for (const d of r.deleted) void emit('calendar-note-updated', { noteId: d.id })
+      } catch (err) {
+        console.error('daily notes cleanup failed', err)
+      }
+    }
+    cleanup()
+      .then(() => storage.getNotes())
       .then((list) => setNotes(list))
       .catch((err) => {
         console.error('failed to load notes', err)

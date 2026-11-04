@@ -43,7 +43,7 @@ interface WeeklyReviewProps {
   onUpdateTasks: (changes: TaskChanges) => void
   checklist: Map<string, ChecklistProgress>
   // Acrescenta o review (markdown) à nota diária de hoje. `askAi`: também
-  // acrescenta uma linha `/week` e abre a nota para o usuário executá-la.
+  // acrescenta uma linha `/week-review` e abre a nota para o usuário executá-la.
   onSaveReview: (markdown: string, askAi: boolean) => Promise<void>
 }
 
@@ -304,9 +304,9 @@ export function WeeklyReview({
               type="button"
               className={styles.button}
               onClick={() => void save(true)}
-              title="Saves the review and opens today's note with a /week line for you to run (Enter)"
+              title="Saves the review and opens today's note with a /week-review line for you to run (Enter)"
             >
-              Ask AI (/week)
+              Ask AI (/week-review)
             </button>
             {saved && <span className={styles.saved}>Saved to today's note.</span>}
           </div>

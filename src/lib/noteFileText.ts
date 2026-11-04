@@ -1,6 +1,6 @@
 import type { AiResponse, Note, Task, TaskStatusDef } from '../types'
 import { storage } from '../storage'
-import { getToggleTitle } from '../components/Editor/commandParser'
+import { getAiBlockTitle } from '../components/Editor/commandParser'
 import { dateKeyFromMs, getWeekdayName, parseCalendarTitle } from './calendar'
 import { markTagsToAiText } from './noteMarks'
 import {
@@ -120,7 +120,7 @@ export function cleanNoteContentForAi(content: string, opts: NoteAiTextOptions):
   const embedResponseText = (commandId: string): string => {
     const r = resolveEmbed?.(commandId)
     if (!r || r.status === 'error' || !r.response.trim()) return ''
-    return `${getToggleTitle(r.command)}\n${r.response.trim()}`
+    return `${getAiBlockTitle(r.command)}\n${r.response.trim()}`
   }
 
   const linkedNoteText = (noteId: string): string => {
@@ -195,6 +195,11 @@ function collectIds(content: string, re: RegExp): string[] {
 // Ids das notas linkadas citadas no conteúdo (o título delas vem do índice).
 export function collectLinkedNoteIds(content: string): string[] {
   return collectIds(content, LINKED_NOTE_ID_RE)
+}
+
+// Ids das respostas da IA embutidas no conteúdo (`<embed-block data-cmd>`).
+export function collectEmbedIds(content: string): string[] {
+  return collectIds(content, EMBED_ID_RE)
 }
 
 // Busca no storage as respostas da IA embutidas nos conteúdos (e nas notas

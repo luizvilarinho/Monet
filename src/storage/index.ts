@@ -17,6 +17,12 @@ import type {
 import { TauriStorage } from './tauri'
 import { BrowserStorage } from './browser'
 
+export interface DailyCleanupResult {
+  deleted: Array<{ id: string; title: string }>
+  keptLinked: Array<{ id: string; title: string }>
+  skippedTitles: string[]
+}
+
 export interface StorageAdapter {
   getNotebooks(): Promise<Notebook[]>
   saveNotebook(notebook: Notebook): Promise<void>
@@ -30,6 +36,11 @@ export interface StorageAdapter {
 
   getNotes(): Promise<Note[]>
   getNote(id: string): Promise<Note | null>
+  // Nota de um caderno pelo título exato (a mais recente, se houver várias).
+  findNoteByTitle(notebookId: string, title: string): Promise<Note | null>
+  // Limpeza única das notas diárias duplicadas e vazias do Calendar; null =
+  // já rodou antes.
+  cleanupDuplicateDailyNotes(): Promise<DailyCleanupResult | null>
   saveNote(note: Note): Promise<void>
   deleteNote(id: string): Promise<void>
   // Notas com `date` no período (YYYY-MM-DD, inclusivo) e as do Calendar cujo
@@ -85,6 +96,9 @@ export interface StorageAdapter {
 
   getResponses(noteId: string): Promise<AiResponse[]>
   getResponsesByIds(ids: string[]): Promise<AiResponse[]>
+  // Respostas concluídas desses comandos, de todas as notas (inclusive as
+  // órfãs), da mais nova para a mais antiga.
+  getCompletedResponsesByCommands(commands: string[]): Promise<AiResponse[]>
   saveResponse(response: AiResponse): Promise<void>
   deleteResponse(id: string): Promise<void>
   deleteResponses(noteId: string): Promise<void>

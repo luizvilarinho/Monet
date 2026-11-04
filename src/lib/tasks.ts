@@ -1127,7 +1127,9 @@ export function queryTasksText(
 
 // Uma task em uma linha para os chats (tool `query_tasks` e contexto do chat
 // das Anotações): status, título, projeto/TODOS (com `(archived)` se a TODOS
-// está arquivada) e os metadados.
+// está arquivada) e os metadados. O "planned for" (My Day) só sai quando o
+// plannedDay é hoje ou cai no período pedido (`plannedRange`, da agenda): um
+// plannedDay velho não é limpo na virada do dia e não vale mais.
 export function taskLineForAi(
   t: Task,
   todayKey: string,
@@ -1135,7 +1137,8 @@ export function taskLineForAi(
   checklist: ChecklistProgress | null,
   statuses: TaskStatusDef[] = BUILTIN_STATUS_DEFS,
   todosTitle: string | null = null,
-  todosArchived = false
+  todosArchived = false,
+  plannedRange: { from: string; to: string } | null = null
 ): string {
   const todos =
     todosTitle !== null ? `TODOS "${todosTitle.trim() || 'Untitled'}"${todosArchived ? ' (archived)' : ''}` : null
@@ -1143,9 +1146,15 @@ export function taskLineForAi(
     .filter(Boolean)
     .join(' / ')
   const late = overdueKind(t, todayKey)
+  const planned =
+    isOpen(t) &&
+    t.plannedDay !== null &&
+    (t.plannedDay === todayKey ||
+      (plannedRange !== null && t.plannedDay >= plannedRange.from && t.plannedDay <= plannedRange.to))
   const meta = [
     t.scheduledDate ? `do ${t.scheduledDate}` : '',
     t.dueDate ? `deadline ${t.dueDate}` : '',
+    planned ? `planned for ${t.plannedDay}` : '',
     late === 'deadline' ? 'deadline missed' : late === 'plan' ? 'do date passed' : '',
     t.rescheduleCount > 0 ? `postponed ${t.rescheduleCount}x` : '',
     t.important ? 'important' : '',

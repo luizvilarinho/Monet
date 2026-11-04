@@ -27,7 +27,7 @@ import { BUILTIN_STATUS_DEFS, TASK_COLOR_PALETTE } from '../lib/tasks'
 import { TODOS_DEFAULT_TEMPLATE, TODOS_TYPE_ID } from '../lib/noteTypes'
 import { parseBoardConfig } from '../lib/noteBoard'
 import { CALENDAR_NOTEBOOK_ID, parseCalendarTitle } from '../lib/calendar'
-import type { StorageAdapter } from './index'
+import type { DailyCleanupResult, StorageAdapter } from './index'
 
 const DB_URL = 'sqlite:monet.db'
 
@@ -613,6 +613,45 @@ async function addMissingColumns(
 // rejeita o dbPromise: uma falha é apenas logada.
 const CHECKPOINT_INTERVAL_MS = 1500
 
+const DAILY_CLEANUP_MIGRATION = 'dedupe_daily_notes_v1'
+
+// Vínculos que impedem apagar uma nota diária vazia (só as tabelas que
+// existirem; os links de outras notas são contados à parte).
+const DAILY_CLEANUP_LINKS: Array<[string, string]> = [
+  ['ai_responses', 'note_id'],
+  ['reminder_state', 'note_id'],
+  ['notebook_tasks', 'note_id'],
+  ['notebook_tasks', 'source_note_id'],
+  ['notebook_tasks', 'parent_note_id'],
+  ['book_quotes', 'target_note_id'],
+  ['todos_migration_done', 'note_id'],
+]
+
+// Vazia = só parágrafos, quebras e espaços. Qualquer outra marcação (bloco de
+// IA, lembrete, nota linkada, imagem, checklist) conta como conteúdo.
+function isBlankNoteContent(content: string): boolean {
+  return (
+    content
+      .replace(/<\/?p\b[^>]*>/gi, '')
+      .replace(/<br\s*\/?>/gi, '')
+      .replace(/&nbsp;/gi, ' ')
+      .trim() === ''
+  )
+}
+
+// Nota diária vazia: conteúdo vazio e sem tags, tipo, propriedades, data ou
+// arquivamento (colunas ausentes num banco novo contam como vazias).
+function isBlankDailyNote(r: NoteRow): boolean {
+  return (
+    isBlankNoteContent(r.content) &&
+    (r.tags ?? '[]').trim() === '[]' &&
+    !r.type_id &&
+    (!r.properties || ['', '{}'].includes(r.properties.trim())) &&
+    !r.date &&
+    r.archived_at == null
+  )
+}
+
 export class TauriStorage implements StorageAdapter {
   private dbPromise?: Promise<Database>
   private checkpointTimer?: ReturnType<typeof setTimeout>
@@ -625,6 +664,7 @@ export class TauriStorage implements StorageAdapter {
   // disputarem entre si o lock de escrita do monet.db no cold start (que já
   // é disputado com as outras janelas e com o scan do Rust).
   private ddlQueue: Promise<unknown> = Promise.resolve()
+  private dailyCleanup?: Promise<DailyCleanupResult | null>
 
   private db(): Promise<Database> {
     if (!this.dbPromise) {
@@ -802,6 +842,125 @@ export class TauriStorage implements StorageAdapter {
       [id]
     )
     return rows[0] ? rowToNote(rows[0]) : null
+  }
+
+  async findNoteByTitle(notebookId: string, title: string): Promise<Note | null> {
+    const db = await this.db()
+    const rows = await db.select<NoteRow[]>(
+      'SELECT * FROM notes WHERE notebook_id = $1 AND title = $2 ORDER BY updated_at DESC LIMIT 1',
+      [notebookId, title]
+    )
+    return rows[0] ? rowToNote(rows[0]) : null
+  }
+
+  // Tabela de controle das migrações de dados únicas. Fica no banco (e não no
+  // localStorage) para acompanhar o DB no clone prod→dev.
+  private ensureDataMigrationsTable(db: Database): Promise<void> {
+    return this.serialDdl(async () => {
+      await db.execute(
+        `CREATE TABLE IF NOT EXISTS data_migrations (
+          name TEXT PRIMARY KEY,
+          done_at INTEGER NOT NULL,
+          info TEXT
+        )`
+      )
+    })
+  }
+
+  // Limpeza única (idempotente) das notas diárias duplicadas do Calendar: por
+  // título de data válida, apaga só as vazias (conteúdo e metadados) quando
+  // há outra com o mesmo título (todas vazias: fica a de updated_at mais
+  // recente). Não mexe no título com 2+
+  // notas com conteúdo, nem em nota vazia com vínculo. Um DELETE por nota,
+  // sem transação manual (pool do plugin). Memoizada: o StrictMode chama duas
+  // vezes; se rejeitar, a próxima chamada tenta de novo.
+  cleanupDuplicateDailyNotes(): Promise<DailyCleanupResult | null> {
+    if (!this.dailyCleanup) {
+      const p = this.runDailyCleanup()
+      this.dailyCleanup = p
+      p.catch(() => {
+        if (this.dailyCleanup === p) this.dailyCleanup = undefined
+      })
+    }
+    return this.dailyCleanup
+  }
+
+  private async runDailyCleanup(): Promise<DailyCleanupResult | null> {
+    const db = await this.db()
+    await this.ensureDataMigrationsTable(db)
+    const done = await db.select<Array<{ name: string }>>(
+      'SELECT name FROM data_migrations WHERE name = $1',
+      [DAILY_CLEANUP_MIGRATION]
+    )
+    if (done.length > 0) return null
+
+    const rows = await db.select<NoteRow[]>(
+      `SELECT * FROM notes
+        WHERE notebook_id = $1 AND title IN (
+          SELECT title FROM notes WHERE notebook_id = $1 GROUP BY title HAVING COUNT(*) > 1)
+        ORDER BY title, updated_at DESC, created_at DESC, id`,
+      [CALENDAR_NOTEBOOK_ID]
+    )
+    const groups = new Map<string, typeof rows>()
+    for (const r of rows) {
+      // Só títulos que são datas válidas do Calendar (notas diárias).
+      if (parseCalendarTitle(r.title) === null) continue
+      const g = groups.get(r.title)
+      if (g) g.push(r)
+      else groups.set(r.title, [r])
+    }
+
+    const tables = new Set(
+      (await db.select<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'table'")).map(
+        (t) => t.name
+      )
+    )
+    const links = DAILY_CLEANUP_LINKS.filter(([table]) => tables.has(table))
+    const linkCount = async (id: string): Promise<number> => {
+      let total = 0
+      for (const [table, column] of links) {
+        const r = await db.select<Array<{ n: number }>>(`SELECT COUNT(*) AS n FROM ${table} WHERE ${column} = $1`, [id])
+        total += r[0]?.n ?? 0
+      }
+      const linked = await db.select<Array<{ n: number }>>(
+        `SELECT COUNT(*) AS n FROM notes WHERE id <> $1
+          AND (instr(content, 'data-note-id="' || $1 || '"') > 0 OR instr(content, 'monet://note/' || $1) > 0)`,
+        [id]
+      )
+      return total + (linked[0]?.n ?? 0)
+    }
+
+    const result: DailyCleanupResult = { deleted: [], keptLinked: [], skippedTitles: [] }
+    for (const [title, group] of groups) {
+      const filled = group.filter((n) => !isBlankDailyNote(n))
+      if (filled.length >= 2) {
+        result.skippedTitles.push(title)
+        continue
+      }
+      const candidates = filled.length === 1 ? group.filter(isBlankDailyNote) : group.slice(1)
+      for (const n of candidates) {
+        if ((await linkCount(n.id)) > 0) {
+          result.keptLinked.push({ id: n.id, title })
+          continue
+        }
+        await db.execute('DELETE FROM notes WHERE id = $1', [n.id])
+        result.deleted.push({ id: n.id, title })
+      }
+    }
+
+    const info = JSON.stringify({
+      deleted: result.deleted.length,
+      keptLinked: result.keptLinked,
+      skippedTitles: result.skippedTitles,
+      deletedTitles: result.deleted.map((d) => d.title),
+    })
+    await db.execute('INSERT OR IGNORE INTO data_migrations (name, done_at, info) VALUES ($1, $2, $3)', [
+      DAILY_CLEANUP_MIGRATION,
+      Date.now(),
+      info,
+    ])
+    this.scheduleCheckpoint()
+    return result
   }
 
   async getNotesByDateRange(from: string, to: string): Promise<Note[]> {
@@ -1514,6 +1673,18 @@ export class TauriStorage implements StorageAdapter {
     const rows = await db.select<AiResponseRow[]>(
       `SELECT * FROM ai_responses WHERE id IN (${placeholders})`,
       ids
+    )
+    return rows.map(rowToResponse)
+  }
+
+  // Sem filtro por nota: as respostas órfãs (nota apagada) também contam.
+  async getCompletedResponsesByCommands(commands: string[]): Promise<AiResponse[]> {
+    if (commands.length === 0) return []
+    const db = await this.db()
+    const placeholders = commands.map((_, i) => `$${i + 1}`).join(', ')
+    const rows = await db.select<AiResponseRow[]>(
+      `SELECT * FROM ai_responses WHERE command IN (${placeholders}) AND status = 'completed' ORDER BY created_at DESC`,
+      commands
     )
     return rows.map(rowToResponse)
   }

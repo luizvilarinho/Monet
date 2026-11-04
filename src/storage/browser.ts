@@ -14,7 +14,7 @@ import type {
   TaskStatusDef,
   TaskView,
 } from '../types'
-import type { StorageAdapter } from './index'
+import type { DailyCleanupResult, StorageAdapter } from './index'
 
 export class BrowserStorage implements StorageAdapter {
   async getNotebooks(): Promise<Notebook[]> {
@@ -46,6 +46,12 @@ export class BrowserStorage implements StorageAdapter {
   }
   async getNote(_id: string): Promise<Note | null> {
     throw new Error('BrowserStorage.getNote not implemented')
+  }
+  async findNoteByTitle(_notebookId: string, _title: string): Promise<Note | null> {
+    throw new Error('BrowserStorage.findNoteByTitle not implemented')
+  }
+  async cleanupDuplicateDailyNotes(): Promise<DailyCleanupResult | null> {
+    return null
   }
   async saveNote(_note: Note): Promise<void> {
     throw new Error('BrowserStorage.saveNote not implemented')
@@ -183,6 +189,9 @@ export class BrowserStorage implements StorageAdapter {
   }
   async getResponsesByIds(_ids: string[]): Promise<AiResponse[]> {
     throw new Error('BrowserStorage.getResponsesByIds not implemented')
+  }
+  async getCompletedResponsesByCommands(_commands: string[]): Promise<AiResponse[]> {
+    throw new Error('BrowserStorage.getCompletedResponsesByCommands not implemented')
   }
   async saveResponse(_response: AiResponse): Promise<void> {
     throw new Error('BrowserStorage.saveResponse not implemented')
