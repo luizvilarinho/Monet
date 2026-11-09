@@ -3,6 +3,7 @@ import { Stop, FileText, Brain, CalendarPlus, IdentificationCard } from '@phosph
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   useChat,
+  folderConversationIds,
   type ChatMessage,
   type ChatConversation,
   type ChatTimings,
@@ -30,6 +31,8 @@ import { SystemPromptIcon } from '../ChatPanel/SystemPromptIcon'
 import { AgentPicker, AgentSuggestions, useAgentShortcut } from '../ChatPanel/AgentPicker'
 import { parseAgentShortcut } from '../../lib/agents/chat'
 import { ChatToolsMenu } from '../ChatPanel/ChatToolsMenu'
+import { ClearAllChatsButton, ClearChatButton } from '../ChatPanel/ChatClearActions'
+import { clickedImage, useImageViewer } from '../ImageViewer/ImageViewer'
 import { FolderSystemPromptModal } from '../ChatPanel/FolderSystemPromptModal'
 import { FolderDocumentSelectorModal } from '../ChatPanel/FolderDocumentSelectorModal'
 import { FolderMemoryModal } from '../ChatPanel/FolderMemoryModal'
@@ -159,6 +162,8 @@ export function NotesChatPanel({
     startAssistantConversation,
     selectConversation,
     ensureScopedFolder,
+    clearConversations,
+    deleteFolderConversations,
     setFolderSystemPrompt,
     setFolderVisibleDocuments,
     getFolderVisibleDocumentIds,
@@ -532,6 +537,12 @@ export function NotesChatPanel({
               >
                 <Brain size={12} aria-hidden />
               </button>
+              <ClearAllChatsButton
+                folderName={notebook.name}
+                count={notebookFolder ? folderConversationIds(notebookFolder, conversations, folders).length : 0}
+                onClearAll={() => notebookFolder && deleteFolderConversations(notebookFolder.id)}
+                className={styles.iconBtn}
+              />
               <div className={styles.toolsMenu}>
                 <ChatToolsMenu
                   tools={tools}
@@ -600,6 +611,17 @@ export function NotesChatPanel({
             >
               New chat
             </button>
+            <ClearChatButton
+              className={styles.newChatBtn}
+              disabled={messages.length === 0 || isDraftActive}
+              conversationTitle={activeConversation?.title ?? ''}
+              messageCount={messages.length}
+              streaming={isStreaming}
+              onClear={() => {
+                if (activeId) clearConversations([activeId])
+                inputRef.current?.focus()
+              }}
+            />
           </div>
 
           {apiKeyChecked && !hasApiKey && (
@@ -845,6 +867,7 @@ function NotesChatBubble({
     () => (isUser || isStreaming ? null : agentNoteDraft(message, dateKeyFromMs(Date.now()))),
     [isUser, isStreaming, message]
   )
+  const imageViewer = useImageViewer()
 
   if (isUser) {
     return (
@@ -882,6 +905,11 @@ function NotesChatBubble({
         data-streaming={isStreaming || undefined}
         data-chat-message
         onClick={(e) => {
+          const img = clickedImage(e)
+          if (img) {
+            imageViewer.open(img.src, img.alt)
+            return
+          }
           const nm = (e.target as HTMLElement).closest('mark[data-nm]')
           if (nm) {
             const text = nm.getAttribute('data-nm')
@@ -966,6 +994,7 @@ function NotesChatBubble({
         </button>
       </div>
       <MessageSources message={message} trace={trace} timings={timings} />
+      {imageViewer.viewer}
     </div>
   )
 }

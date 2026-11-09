@@ -17,6 +17,7 @@ import { formatLocalTimestamp, getWeekdayName, parseCalendarTitle } from '../../
 import { findClosestHeading, parseHeadings, type Heading } from '../../lib/headingParser'
 import { attachSpellCheckEnforcer } from '../../lib/spellcheck'
 import { HeadingNavigator } from '../HeadingNavigator/HeadingNavigator'
+import { attachNoteImageOpener, useImageViewer } from '../ImageViewer/ImageViewer'
 import styles from './Editor.module.css'
 import contextMenuStyles from './ContextMenu.module.css'
 import { FormattingToolbar } from './FormattingToolbar'
@@ -283,6 +284,8 @@ export function Editor({
   onRevealConsumedRef.current = onRevealConsumed
   const onShowMarkInListRef = useRef(onShowMarkInList)
   onShowMarkInListRef.current = onShowMarkInList
+  const imageViewer = useImageViewer()
+  const openImage = imageViewer.open
 
   const contextValue = useMemo(
     () => ({ responses: responses ?? [] }),
@@ -634,11 +637,22 @@ export function Editor({
     storage.taskStatus.onToggleLinked = onToggleLinkedTask ?? null
   }, [editor, onToggleLinkedTask])
 
+  // Texto novo vindo de fora (ex.: a keep editou a nota do dia): fora do
+  // desfazer (Ctrl+Z não volta ao texto anterior nem o grava de novo) e, com
+  // o editor em uso, o cursor fica onde estava em vez de pular para o fim.
   useEffect(() => {
     if (!editor) return
     const current = getMarkdown(editor)
     if (current === value) return
-    editor.commands.setContent(value, { emitUpdate: false })
+    const head = editor.isFocused ? editor.state.selection.head : null
+    editor.chain().setMeta('addToHistory', false).setContent(value, { emitUpdate: false }).run()
+    if (head === null) return
+    const { doc } = editor.state
+    editor.view.dispatch(
+      editor.state.tr
+        .setSelection(Selection.near(doc.resolve(Math.min(head, doc.content.size))))
+        .setMeta('addToHistory', false)
+    )
   }, [value, editor])
 
   useEffect(() => {
@@ -777,13 +791,15 @@ export function Editor({
         if (noteId) onNavigateToNoteRef.current?.(noteId)
       }
     }
+    const detachImageOpener = attachNoteImageOpener(dom, openImage)
     dom.addEventListener('mousedown', listHandler, true)
     dom.addEventListener('click', handler, true)
     return () => {
+      detachImageOpener()
       dom.removeEventListener('mousedown', listHandler, true)
       dom.removeEventListener('click', handler, true)
     }
-  }, [editor])
+  }, [editor, openImage])
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -1334,6 +1350,7 @@ export function Editor({
           setAutocomplete((prev) => (prev.visible ? { ...prev, selectedIdx: idx } : prev))
         }
       />
+      {imageViewer.viewer}
     </div>
   )
 }

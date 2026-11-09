@@ -333,3 +333,14 @@
   margin-bottom: 6px;
   object-fit: contain;
 }
+
+/* Imagens abrem ampliadas com clique (anexo e imagens da resposta fora de
+   link). */
+.userMessageImage,
+.assistantBody :global(img) {
+  cursor: zoom-in;
+}
+
+.assistantBody :global(a img) {
+  cursor: pointer;
+}

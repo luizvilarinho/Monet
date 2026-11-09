@@ -48,9 +48,33 @@
 
 .header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
+  row-gap: var(--space-1h);
   flex-shrink: 0;
+}
+
+.todayRow {
+  flex-basis: 100%;
+  display: flex;
+}
+
+.todayBtn {
+  height: var(--control-sm);
+  padding: 0 var(--space-2);
+  background: transparent;
+  border: 1px solid var(--border, #333340);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary, #a0a0b8);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.todayBtn:hover {
+  color: var(--accent, #7c6af5);
+  border-color: var(--accent, #7c6af5);
 }
 
 .monthNav {

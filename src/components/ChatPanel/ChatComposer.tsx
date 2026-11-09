@@ -10,6 +10,7 @@ import { parseAgentShortcut } from '../../lib/agents/chat'
 import { AgentPicker, AgentSuggestions, useAgentShortcut } from './AgentPicker'
 import { ChatToolsMenu } from './ChatToolsMenu'
 import { RagSearchStatus } from './RagSearchStatus'
+import { useImageViewer } from '../ImageViewer/ImageViewer'
 import styles from './ChatComposer.module.css'
 
 type DraftDoc = { name: string; type: string; data: string }
@@ -82,6 +83,8 @@ export function ChatComposer({
   const [isCapturing, setIsCapturing] = useState(false)
   // Conversa atual, lida depois do await da captura.
   const resetKeyRef = useRef(resetKey)
+  // Miniatura do anexo (ex.: print do Assistant): conferir antes de enviar.
+  const imageViewer = useImageViewer()
 
   // Limpa o draft ao trocar de conversa
   useEffect(() => {
@@ -227,7 +230,13 @@ export function ChatComposer({
           <div className={styles.attachmentPreviews}>
             {draftImage && (
               <div className={styles.imagePreview}>
-                <img src={draftImage} alt="attachment preview" className={styles.imagePreviewThumb} />
+                <img
+                  src={draftImage}
+                  alt="attachment preview"
+                  className={styles.imagePreviewThumb}
+                  title="Open image"
+                  onClick={() => imageViewer.open(draftImage)}
+                />
                 <button
                   type="button"
                   className={styles.imagePreviewRemove}
@@ -419,6 +428,7 @@ export function ChatComposer({
           )}
         </div>
       </div>
+      {imageViewer.viewer}
     </footer>
   )
 }

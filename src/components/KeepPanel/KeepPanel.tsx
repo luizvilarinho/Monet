@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { listen } from '@tauri-apps/api/event'
+import { emitTo, listen } from '@tauri-apps/api/event'
 import { EditorContent, useEditor } from '@tiptap/react'
 import type { Editor as TiptapEditor } from '@tiptap/core'
 import { nanoid } from 'nanoid'
@@ -23,6 +23,7 @@ import { TasksProvider } from '../Editor/TasksContext'
 import { taskStatusPluginKey, type TaskStatusStorage } from '../Editor/TaskStatus'
 import { TimePicker } from '../Editor/TimePicker'
 import { CalendarView } from '../CalendarView/CalendarView'
+import { attachNoteImageOpener, useImageViewer } from '../ImageViewer/ImageViewer'
 import { isTaskBodyNote, type TodosInfo } from '../../lib/tasks'
 import { isTodosNote } from '../../lib/noteTypes'
 import styles from './KeepPanel.module.css'
@@ -60,6 +61,23 @@ export function KeepPanel() {
   const timePickerInsertPosRef = useRef<number>(0)
   const noteRef = useRef<Note | null>(null)
   noteRef.current = note
+  // Gravações de nota feitas aqui ainda sem aviso à main, que só relê o banco
+  // ao ganhar foco: sem o aviso, a nota do dia aberta lá ficava velha até o F5.
+  const noteWritesRef = useRef<Promise<unknown> | null>(null)
+  const trackNoteWrite = (write: Promise<unknown>) => {
+    noteWritesRef.current = Promise.all([noteWritesRef.current, write])
+  }
+  // Ao perder o foco (fechar, Ctrl+K, clicar fora): espera a última
+  // gravação e avisa a main para reler as notas.
+  const notifyMainRef = useRef(() => {})
+  notifyMainRef.current = () => {
+    const writes = noteWritesRef.current
+    if (!writes) return
+    noteWritesRef.current = null
+    void writes.then(() =>
+      emitTo('main', 'keep-notes-saved').catch((err) => console.warn('keep: notify main failed', err))
+    )
+  }
   const todayKey = useToday()
   const { tasks, tasksById, updateTaskFresh, reload: reloadTasks } = useTasks()
   // Registro de status (SQLite) para o bloco `/tasks` mostrar nomes/cores custom.
@@ -138,14 +156,24 @@ export function KeepPanel() {
       noteRef.current = updated
       setNote(updated)
       setAllNotes((prev) => prev.map((n) => (n.id === updated.id ? updated : n)))
-      void storage.saveNote(updated).catch((err) => {
-        console.error('keep: failed to save note', err)
-      })
+      trackNoteWrite(
+        storage.saveNote(updated).catch((err) => {
+          console.error('keep: failed to save note', err)
+        })
+      )
     },
   })
 
   const editorRef = useRef(editor)
   editorRef.current = editor
+
+  // Imagem da nota: clique nela selecionada (ou duplo clique) abre ampliada.
+  const imageViewer = useImageViewer()
+  const openImage = imageViewer.open
+  useEffect(() => {
+    if (!editor) return
+    return attachNoteImageOpener(editor.view.dom, openImage)
+  }, [editor, openImage])
 
   // Serializa as cargas da nota do dia: mount e `keep-shown` podem disparar
   // quase juntos (e o StrictMode duplica efeitos em dev) — duas execuções
@@ -181,7 +209,9 @@ export function KeepPanel() {
             createdAt: now,
             updatedAt: now,
           }
-          await storage.saveNote(today)
+          const write = storage.saveNote(today)
+          trackNoteWrite(write.catch(() => {}))
+          await write
           all.push(today)
         }
         // Sincroniza o editor ANTES de ler os fired ids: se a leitura de
@@ -195,7 +225,12 @@ export function KeepPanel() {
         noteRef.current = today
         setAllNotes(all)
         setNote(today)
-        editorRef.current?.commands.setContent(today.content, { emitUpdate: false })
+        // Fora do desfazer: Ctrl+Z não traz o texto do dia carregado antes.
+        editorRef.current
+          ?.chain()
+          .setMeta('addToHistory', false)
+          .setContent(today.content, { emitUpdate: false })
+          .run()
 
         const fired = await storage.getFiredReminderIds(today.id)
         if (cancelled) return
@@ -250,7 +285,10 @@ export function KeepPanel() {
     let unlistenFocus: (() => void) | undefined
     void getCurrentWindow()
       .onFocusChanged(({ payload: focused }) => {
-        if (!focused) return
+        if (!focused) {
+          notifyMainRef.current()
+          return
+        }
         const ed = editorRef.current
         if (!ed) return
         const active = document.activeElement
@@ -466,6 +504,7 @@ export function KeepPanel() {
           onCancel={handleTimePickerCancel}
         />
       )}
+      {imageViewer.viewer}
     </div>
     </TasksEnvProvider>
   )

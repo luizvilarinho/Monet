@@ -229,6 +229,7 @@
   border-radius: 6px;
   border: 1px solid var(--border, #333340);
   object-fit: cover;
+  cursor: zoom-in;
 }
 
 .imagePreviewRemove {

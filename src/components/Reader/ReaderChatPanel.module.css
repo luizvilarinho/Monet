@@ -160,6 +160,18 @@
   border-color: var(--accent, #7b6ed4);
 }
 
+/* Clear / Clear all sem nada a limpar. */
+.iconBtn:disabled,
+.iconBtn:disabled:hover,
+.newChatBtn:disabled,
+.newChatBtn:disabled:hover {
+  opacity: 0.4;
+  cursor: default;
+  color: var(--text-muted, #7c7c93);
+  background: transparent;
+  border-color: var(--border, #333340);
+}
+
 .keyBanner {
   background: rgba(239, 159, 39, 0.08);
   border-bottom: 1px solid rgba(239, 159, 39, 0.3);
@@ -239,6 +251,21 @@
 
 .bubbleAssistant a {
   color: var(--accent-ai, #5dcaa5);
+}
+
+/* Imagens da resposta: cabem na bolha e abrem ampliadas com clique (fora de
+   link, que continua abrindo o endereço). */
+.bubbleAssistant :global(img) {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-sm);
+  display: block;
+  margin: var(--space-2) 0;
+  cursor: zoom-in;
+}
+
+.bubbleAssistant :global(a img) {
+  cursor: pointer;
 }
 
 .streamingDots span {

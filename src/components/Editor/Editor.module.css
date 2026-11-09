@@ -772,6 +772,12 @@
   outline-offset: 2px;
 }
 
+/* O 1º clique seleciona a imagem; clicar nela selecionada (ou o duplo
+   clique) abre ampliada: a lupa aparece só aí. */
+.proseEditor :global(img.ProseMirror-selectednode:not(a img)) {
+  cursor: zoom-in;
+}
+
 
 /* Tabela */
 .proseEditor :global(table) {

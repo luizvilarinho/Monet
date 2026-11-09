@@ -1,0 +1,12 @@
+/* Clear all: ícone + rótulo escrito (ação destrutiva), sobre a classe do
+   botão de ícone de cada chat. */
+.clearAll {
+  gap: var(--space-1);
+  white-space: nowrap;
+}
+
+.clearAllLabel {
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1;
+}

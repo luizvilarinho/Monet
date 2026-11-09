@@ -7,6 +7,7 @@ import { CHAT_AGENTS } from '../../lib/agents/chat'
 import { dateKeyFromMs } from '../../lib/calendar'
 import { renderMarkdown } from '../../lib/markdown'
 import { linkNoteMarks } from '../../lib/noteMarks'
+import { clickedImage, useImageViewer } from '../ImageViewer/ImageViewer'
 import styles from './ChatMessageBubble.module.css'
 
 // Respostas que levam o rótulo do agente: com agentId diferente do da resposta
@@ -63,6 +64,7 @@ export function ChatMessageBubble({
   const isUser = message.role === 'user'
   const [html, setHtml] = useState('')
   const [copied, setCopied] = useState(false)
+  const imageViewer = useImageViewer()
   const isStreamingPlaceholder = !isUser && message.content.length === 0
   const isErrorMessage =
     !isUser &&
@@ -133,6 +135,8 @@ export function ChatMessageBubble({
                 src={message.imageDataUrl}
                 alt="attached image"
                 className={styles.userMessageImage}
+                title="Open image"
+                onClick={() => imageViewer.open(message.imageDataUrl!)}
               />
             )}
             <p className={styles.userText}>{message.content}</p>
@@ -160,6 +164,11 @@ export function ChatMessageBubble({
               if (nm) {
                 const text = nm.getAttribute('data-nm')
                 if (text) onOpenMark?.(text)
+                return
+              }
+              const img = clickedImage(e)
+              if (img) {
+                imageViewer.open(img.src, img.alt)
                 return
               }
               const target = (e.target as HTMLElement).closest('a')
@@ -244,6 +253,7 @@ export function ChatMessageBubble({
           {!isErrorMessage && footer}
         </>
       )}
+      {imageViewer.viewer}
     </div>
   )
 }

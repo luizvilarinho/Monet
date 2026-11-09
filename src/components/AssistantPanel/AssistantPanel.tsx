@@ -7,6 +7,7 @@ import { notesFolderDocId, notesIndexGetDisabledNotebooks } from '../../lib/docu
 import {
   useChat,
   ASSISTANT_FOLDER_NAME,
+  folderConversationIds,
   type TasksSnapshot,
 } from '../../hooks/useChat'
 import { useChatPanelState } from '../../hooks/useChatPanelState'
@@ -33,6 +34,7 @@ import { FolderSystemPromptModal } from '../ChatPanel/FolderSystemPromptModal'
 import { FolderDocumentSelectorModal } from '../ChatPanel/FolderDocumentSelectorModal'
 import { FolderMemoryModal } from '../ChatPanel/FolderMemoryModal'
 import { SystemPromptIcon } from '../ChatPanel/SystemPromptIcon'
+import { ClearAllChatsButton, ClearChatButton } from '../ChatPanel/ChatClearActions'
 import { MessageSources } from '../ChatPanel/MessageSources'
 import { SaveAgentNoteModal } from '../ChatPanel/SaveAgentNoteModal'
 import { SaveToNoteModal } from '../ChatPanel/SaveToNoteModal'
@@ -129,9 +131,12 @@ export function AssistantPanel() {
     setConversationAgent,
     cancel,
     startAssistantConversation,
+    activeConversation,
     conversations,
     folders,
     ensureAssistantFolder,
+    clearConversations,
+    deleteFolderConversations,
     setFolderSystemPrompt,
     setFolderVisibleDocuments,
     getFolderVisibleDocumentIds,
@@ -368,9 +373,27 @@ export function AssistantPanel() {
             >
               <Brain size={12} aria-hidden />
             </button>
+            <ClearAllChatsButton
+              folderName={effectiveFolder?.name || ASSISTANT_FOLDER_NAME}
+              count={effectiveFolder ? folderConversationIds(effectiveFolder, conversations, folders).length : 0}
+              onClearAll={() => effectiveFolder && deleteFolderConversations(effectiveFolder.id)}
+              className={styles.iconBtn}
+              showLabel={false}
+            />
           </div>
         </div>
         <div className={styles.titleActions}>
+          <ClearChatButton
+            className={styles.clearBtn}
+            disabled={messages.length === 0}
+            conversationTitle={activeConversation?.title ?? ''}
+            messageCount={messages.length}
+            streaming={isStreaming}
+            onClear={() => {
+              if (activeId) clearConversations([activeId])
+              inputRef.current?.focus()
+            }}
+          />
           <ModelSelector
             hasApiKey={hasApiKey}
             apiKeyChecked={apiKeyChecked}

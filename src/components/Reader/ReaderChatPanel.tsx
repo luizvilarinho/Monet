@@ -3,6 +3,7 @@ import { Stop, Sliders, Files, Brain } from '@phosphor-icons/react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   useChat,
+  folderConversationIds,
   type ChatMessage,
   type ChatConversation,
   type ChatTimings,
@@ -17,6 +18,8 @@ import {
 import type { AiModel, Book, BookHighlight } from '../../types'
 import { ModelSelector } from '../AiPanel/ModelSelector'
 import { ChatToolsMenu } from '../ChatPanel/ChatToolsMenu'
+import { ClearAllChatsButton, ClearChatButton } from '../ChatPanel/ChatClearActions'
+import { clickedImage, useImageViewer } from '../ImageViewer/ImageViewer'
 import { FolderSystemPromptModal } from '../ChatPanel/FolderSystemPromptModal'
 import { FolderDocumentSelectorModal } from '../ChatPanel/FolderDocumentSelectorModal'
 import { FolderMemoryModal } from '../ChatPanel/FolderMemoryModal'
@@ -102,6 +105,8 @@ export function ReaderChatPanel({
     startAssistantConversation,
     selectConversation,
     ensureScopedFolder,
+    clearConversations,
+    deleteFolderConversations,
     setFolderSystemPrompt,
     setFolderVisibleDocuments,
     getFolderVisibleDocumentIds,
@@ -379,6 +384,13 @@ export function ReaderChatPanel({
           >
             <Brain size={14} />
           </button>
+          <ClearAllChatsButton
+            folderName={book.title}
+            count={bookFolder ? folderConversationIds(bookFolder, conversations, folders).length : 0}
+            onClearAll={() => bookFolder && deleteFolderConversations(bookFolder.id)}
+            className={styles.iconBtn}
+            iconSize={14}
+          />
           <div className={styles.toolsMenu}>
             <ChatToolsMenu
               tools={tools}
@@ -447,6 +459,17 @@ export function ReaderChatPanel({
         >
           New chat
         </button>
+        <ClearChatButton
+          className={styles.newChatBtn}
+          disabled={messages.length === 0 || isDraftActive}
+          conversationTitle={activeConversation?.title ?? ''}
+          messageCount={messages.length}
+          streaming={isStreaming}
+          onClear={() => {
+            if (activeId) clearConversations([activeId])
+            inputRef.current?.focus()
+          }}
+        />
       </div>
 
       {apiKeyChecked && !hasApiKey && (
@@ -579,6 +602,7 @@ function ReaderChatBubble({ message, isStreaming, trace, timings }: ReaderChatBu
   // Memoizado: o React 19 compara `__html` por identidade e um objeto novo a
   // cada render reescreveria o DOM, desfazendo a seleção do usuário.
   const inner = useMemo(() => ({ __html: html }), [html])
+  const imageViewer = useImageViewer()
 
   if (isUser) {
     return <div className={styles.bubbleUser}>{message.content}</div>
@@ -601,6 +625,11 @@ function ReaderChatBubble({ message, isStreaming, trace, timings }: ReaderChatBu
         data-streaming={isStreaming || undefined}
         dangerouslySetInnerHTML={inner}
         onClick={(e) => {
+          const img = clickedImage(e)
+          if (img) {
+            imageViewer.open(img.src, img.alt)
+            return
+          }
           const target = (e.target as HTMLElement).closest('a')
           if (!target) return
           const href = target.getAttribute('href')
@@ -610,6 +639,7 @@ function ReaderChatBubble({ message, isStreaming, trace, timings }: ReaderChatBu
         }}
       />
       <MessageSources message={message} trace={trace} timings={timings} />
+      {imageViewer.viewer}
     </>
   )
 }

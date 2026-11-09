@@ -1972,6 +1972,25 @@ function App() {
     }
   }, [refreshNotes])
 
+  // A keep avisa ao perder o foco, depois da última gravação: o foco da main
+  // pode chegar antes dela (ou nem chegar, com outra nota aberta e a nota do
+  // dia só nos cards/calendário). As tasks já se sincronizam por
+  // `tasks-changed`.
+  useEffect(() => {
+    let cancelled = false
+    let unlisten: (() => void) | undefined
+    void listen('keep-notes-saved', () => {
+      void refreshNotes().catch((err) => console.error('refresh after keep failed', err))
+    }).then((fn) => {
+      if (cancelled) fn()
+      else unlisten = fn
+    })
+    return () => {
+      cancelled = true
+      unlisten?.()
+    }
+  }, [refreshNotes])
+
   // Cards do calendário da keep: abre a nota ou a task clicada. A nota é
   // buscada na lista recém-lida do banco (pode ter sido criada pela keep).
   // Marca citada no chat da janela assistant: a main aparece e abre a nota na

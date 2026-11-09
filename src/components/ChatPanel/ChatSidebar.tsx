@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Brain, FileText, SidebarSimple } from '@phosphor-icons/react'
 import { SystemPromptIcon } from './SystemPromptIcon'
+import { CLEAR_ALL_CONFIRM, ClearAllChatsTrigger, clearAllMessage } from './ChatClearActions'
 import {
   DndContext,
   PointerSensor,
@@ -19,7 +20,11 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import { useConfirm } from '../../hooks/useConfirm'
 import type { ChatConversation, ChatFolder } from '../../hooks/useChat'
-import { ASSISTANT_FOLDER_NAME, folderConversationIds, getAutoFolderGroups } from '../../hooks/useChat'
+import {
+  ASSISTANT_FOLDER_NAME,
+  folderConversationIds,
+  getAutoFolderGroups,
+} from '../../hooks/useChat'
 import {
   documentsDeleteWatchedFolder,
   documentsListGlobal,
@@ -39,6 +44,8 @@ export interface ChatSidebarProps {
   onCreateFolder: () => string
   onRenameFolder: (id: string, name: string) => void
   onDeleteFolder: (id: string) => void
+  // Clear all: limpa as mensagens de todas as conversas da pasta.
+  onClearFolder: (id: string) => void
   onToggleFolderExpanded: (id: string, expanded: boolean) => void
   onNewConversationInFolder: (folderId: string) => void
   onMoveConversation: (
@@ -149,6 +156,7 @@ export function ChatSidebar({
   onCreateFolder,
   onRenameFolder,
   onDeleteFolder,
+  onClearFolder,
   onToggleFolderExpanded,
   onNewConversationInFolder,
   onMoveConversation,
@@ -351,6 +359,12 @@ export function ChatSidebar({
     setEditingConvName('')
   }
 
+  // Confirmação no modal da sidebar, fora da linha da pasta: os eventos do
+  // modal (portal) subiriam até o clique/arrasto da linha.
+  async function handleClearFolder(folder: ChatFolder, count: number) {
+    if (await confirm(clearAllMessage(folder.name, count), CLEAR_ALL_CONFIRM)) onClearFolder(folder.id)
+  }
+
   async function handleDeleteFolder(folder: ChatFolder) {
     const convCount = folderConversationIds(folder, conversations, folders).length
     const hasConvs = convCount > 0
@@ -538,6 +552,8 @@ export function ChatSidebar({
           onToggleFolderExpanded(folder.id, !folder.expanded)
         }
         onDeleteFolder={() => handleDeleteFolder(folder)}
+        conversationCount={folderConversationIds(folder, conversations, folders).length}
+        onClearFolder={(count) => void handleClearFolder(folder, count)}
         onOpenSystemPrompt={() => onOpenFolderSystemPrompt(folder)}
         onOpenFolderMemory={() => onOpenFolderMemory(folder)}
         onOpenFolderDocuments={() => onOpenFolderDocuments(folder)}
@@ -715,6 +731,8 @@ interface SortableFolderProps {
   onNewConversation: () => void
   onToggleExpanded: () => void
   onDeleteFolder: () => void
+  conversationCount: number
+  onClearFolder: (count: number) => void
   onOpenSystemPrompt: () => void
   onOpenFolderMemory: () => void
   onOpenFolderDocuments: () => void
@@ -746,6 +764,8 @@ function SortableFolder({
   onNewConversation,
   onToggleExpanded,
   onDeleteFolder,
+  conversationCount,
+  onClearFolder,
   onOpenSystemPrompt,
   onOpenFolderMemory,
   onOpenFolderDocuments,
@@ -915,6 +935,16 @@ function SortableFolder({
               >
                 <PlusIcon />
               </button>
+              <ClearAllChatsTrigger
+                folderName={folder.name}
+                count={conversationCount}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onClearFolder(conversationCount)
+                }}
+                className={styles.folderActionBtn}
+                showLabel={false}
+              />
               {folder.name !== ASSISTANT_FOLDER_NAME && (
                 <button
                   type="button"

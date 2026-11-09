@@ -19,6 +19,7 @@ import styles from './ChatPanel.module.css'
 import { ChatComposer } from './ChatComposer'
 import { agentLabelIds, ChatMessageBubble } from './ChatMessageBubble'
 import { MessageSources } from './MessageSources'
+import { ClearChatButton } from './ChatClearActions'
 import { ChatSidebar } from './ChatSidebar'
 import { FolderDocumentSelectorModal } from './FolderDocumentSelectorModal'
 import { FolderMemoryModal } from './FolderMemoryModal'
@@ -102,6 +103,7 @@ export function ChatPanel({
     folders,
     looseConversationIds,
     activeId,
+    activeConversation,
     messages,
     model,
     setModel,
@@ -127,6 +129,8 @@ export function ChatPanel({
     newConversation,
     newConversationInFolder,
     deleteConversation,
+    clearConversations,
+    deleteFolderConversations,
     renameConversation,
     createFolder,
     renameFolder,
@@ -261,6 +265,7 @@ export function ChatPanel({
         onCreateFolder={createFolder}
         onRenameFolder={renameFolder}
         onDeleteFolder={deleteFolder}
+        onClearFolder={deleteFolderConversations}
         onToggleFolderExpanded={setFolderExpanded}
         onNewConversationInFolder={newConversationInFolder}
         onMoveConversation={moveConversation}
@@ -283,16 +288,29 @@ export function ChatPanel({
       <div className={styles.main}>
         <header className={styles.header}>
           <span className={styles.title}>Chat</span>
-          <ModelSelector
-            hasApiKey={hasApiKey}
-            apiKeyChecked={apiKeyChecked}
-            loading={modelsLoading}
-            error={modelsError}
-            models={models}
-            selectedId={model}
-            onSelect={setModel}
-            onOpenSettings={onOpenSettings}
-          />
+          <div className={styles.headerActions}>
+            <ClearChatButton
+              className={styles.clearBtn}
+              disabled={messages.length === 0}
+              conversationTitle={activeConversation?.title ?? ''}
+              messageCount={messages.length}
+              streaming={isStreaming}
+              onClear={() => {
+                if (activeId) clearConversations([activeId])
+                inputRef.current?.focus()
+              }}
+            />
+            <ModelSelector
+              hasApiKey={hasApiKey}
+              apiKeyChecked={apiKeyChecked}
+              loading={modelsLoading}
+              error={modelsError}
+              models={models}
+              selectedId={model}
+              onSelect={setModel}
+              onOpenSettings={onOpenSettings}
+            />
+          </div>
         </header>
 
         {apiKeyChecked && !hasApiKey && (

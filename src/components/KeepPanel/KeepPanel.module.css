@@ -106,3 +106,22 @@
 .proseEditor p {
   margin: 0 0 var(--flow-p);
 }
+
+/* Imagens da nota do dia: cabem na coluna; selecionada, o clique abre
+   ampliada (mesmo padrão do editor da main). */
+.proseEditor :global(img) {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-sm);
+  margin: var(--flow-p) 0;
+}
+
+.proseEditor :global(img.ProseMirror-selectednode) {
+  outline: 2px solid var(--accent, #7c6af5);
+  outline-offset: 2px;
+}
+
+.proseEditor :global(img.ProseMirror-selectednode:not(a img)) {
+  cursor: zoom-in;
+}

@@ -162,10 +162,20 @@
   gap: var(--space-0);
   opacity: 0;
   flex-shrink: 0;
+  /* Escondidas sem ocupar largura: o nome da pasta usa a linha toda e só
+     encolhe com as ações à vista. Continuam focáveis pelo teclado. */
+  max-width: 0;
+  overflow: hidden;
 }
 
-.folderHeader:hover .folderActions {
+/* Foco só do teclado: o cabeçalho é focável (dnd-kit) e o clique do mouse
+   nele não deve deixar as ações abertas. */
+.folderHeader:hover .folderActions,
+.folderHeader:focus-visible .folderActions,
+.folderActions:focus-within {
   opacity: 1;
+  max-width: none;
+  overflow: visible;
 }
 
 /* Área clicável mínima de 24×24 sem crescer as linhas: os botões visíveis
@@ -205,6 +215,14 @@
 .folderActionBtnDelete:hover {
   color: var(--accent-warn, #ef9f27);
   background: rgba(239, 159, 39, 0.12);
+}
+
+/* Clear all sem conversa com mensagens na pasta. */
+.folderActionBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+  color: var(--text-muted, #606070);
+  background: transparent;
 }
 
 /* System prompt icon — sempre visivel.

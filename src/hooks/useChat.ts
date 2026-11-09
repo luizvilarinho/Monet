@@ -227,6 +227,10 @@ const MODEL_KEY = 'monet:chat-model'
 const TOOLS_KEY = 'monet:chat-tools'
 const LEGACY_HISTORY_KEY = 'monet:chat-history'
 const RESPONSE_LINK_KEY = 'monet:ai-response-chat-link'
+// Sinal de Clear/apagar para as outras janelas (ids das conversas, operação
+// `clear` ou `delete` + nonce): chega ANTES da lista nova e para o turno que a
+// outra janela gera numa delas, que o merge protegeria e devolveria.
+const CLEARED_KEY = 'monet:chat-cleared'
 const READER_BOOK_FOLDER_LINK_KEY = 'monet:reader-book-folder-link'
 const NOTEBOOK_CHAT_FOLDER_LINK_KEY = 'monet:notes-notebook-folder-link'
 const MINCER_ITEM_FOLDER_LINK_KEY = 'monet:mincer-item-folder-link'
@@ -454,6 +458,33 @@ function deriveTitle(messages: ChatMessage[]): string {
   return cleaned.length > 50 ? cleaned.slice(0, 50) + '…' : cleaned
 }
 
+// Conversas sem as mensagens (Clear). Título automático — o da 1ª pergunta,
+// cortado ou não (o "Open in chat" usa a pergunta inteira) — volta a "New
+// conversation" e é refeito na próxima; título renomeado fica.
+function clearedConversations(list: ChatConversation[], targets: Set<string>): ChatConversation[] {
+  const now = new Date().toISOString()
+  return list.map((c) => {
+    if (!targets.has(c.id) || c.messages.length === 0) return c
+    const firstQuestion = c.messages.find((m) => m.role === 'user')?.content.replace(/\s+/g, ' ').trim()
+    const autoTitle = c.title === deriveTitle(c.messages) || c.title.replace(/\s+/g, ' ').trim() === firstQuestion
+    return { ...c, messages: [], title: autoTitle ? 'New conversation' : c.title, updatedAt: now }
+  })
+}
+
+// Documentos anexados às mensagens das conversas (Clear e apagar).
+function deleteAttachedDocs(list: ChatConversation[], targets: Set<string>): void {
+  for (const conv of list) {
+    if (!targets.has(conv.id)) continue
+    for (const msg of conv.messages) {
+      for (const doc of msg.attachedDocs ?? []) {
+        void invoke('delete_chat_doc', { path: doc.path }).catch(() => {
+          /* ignorar erros */
+        })
+      }
+    }
+  }
+}
+
 // ─── Anti-eco de persistência ────────────────────────────────────────────────
 // Último valor conhecido de cada chave de chat NESTA janela — escrito por nós
 // ou recebido via evento `storage` (e.newValue). Os save-effects comparam com
@@ -647,6 +678,20 @@ export function linkResponseToChatConversation(
   const links = loadResponseLinks()
   links[responseId] = conversationId
   saveResponseLinks(links)
+}
+
+// Conversa limpa ou apagada (Clear/Clear all): o "Open in chat" do bloco de
+// IA da nota volta a criar uma conversa com a pergunta e a resposta, em vez de
+// abrir a conversa vazia ou já reaproveitada para outro assunto.
+function unlinkResponsesFromConversations(conversationIds: Set<string>): void {
+  const links = loadResponseLinks()
+  let changed = false
+  for (const [responseId, convId] of Object.entries(links)) {
+    if (!conversationIds.has(convId)) continue
+    delete links[responseId]
+    changed = true
+  }
+  if (changed) saveResponseLinks(links)
 }
 
 export function unlinkResponseFromChat(responseId: string): void {
@@ -1431,6 +1476,10 @@ export interface UseChatResult {
   ensureAssistantFolder: () => void
   ensureScopedFolder: (scope: ChatFolderScope) => string
   deleteConversation: (id: string) => void
+  // Clear: apaga as mensagens (a conversa fica). Clear all: apaga as conversas
+  // da pasta (a pasta fica).
+  clearConversations: (ids: string[]) => void
+  deleteFolderConversations: (folderId: string) => void
   renameConversation: (id: string, title: string) => void
   createFolder: () => string
   renameFolder: (id: string, name: string) => void
@@ -1839,6 +1888,13 @@ export function useChat(
     roundText: string
     roundThinking: boolean
   } | null>(null)
+  // Conversa do turno em andamento: fixada no envio, vale também antes do
+  // stream começar (busca na web, RAG), quando a ativa pode já ser outra.
+  const turnConvIdRef = useRef<string | null>(null)
+  const isStreamingRef = useRef(isStreaming)
+  isStreamingRef.current = isStreaming
+  const streamingConvId = (): string | null =>
+    isStreamingRef.current ? (activeStreamRef.current?.convId ?? turnConvIdRef.current) : null
   const conversationsRef = useRef<ChatConversation[]>(conversations)
   conversationsRef.current = conversations
   const foldersRef = useRef<ChatFolder[]>(folders)
@@ -1951,7 +2007,7 @@ export function useChat(
   // normalmente.
   const mergeRemoteConversations = useCallback(
     (remote: ChatConversation[]): ChatConversation[] => {
-      const streamingId = activeStreamRef.current?.convId
+      const streamingId = streamingConvId()
       if (!streamingId) return remote
       const local = conversationsRef.current.find((c) => c.id === streamingId)
       if (!local) return remote
@@ -2251,43 +2307,6 @@ export function useChat(
       return folder.id
     },
     [setFolders]
-  )
-
-  const deleteConversation = useCallback(
-    (id: string) => {
-      // Limpa arquivos de documentos anexados antes de remover do estado
-      const conv = conversationsRef.current.find((c) => c.id === id)
-      if (conv) {
-        for (const msg of conv.messages) {
-          for (const doc of msg.attachedDocs ?? []) {
-            void invoke('delete_chat_doc', { path: doc.path }).catch(() => {
-              /* ignorar erros */
-            })
-          }
-        }
-      }
-      setConversations((prev) => prev.filter((c) => c.id !== id))
-      setFolders((prev) =>
-        prev.map((f) =>
-          f.conversationIds.includes(id)
-            ? {
-                ...f,
-                conversationIds: f.conversationIds.filter((cid) => cid !== id),
-              }
-            : f
-        )
-      )
-      setLooseOrder((prev) => prev.filter((cid) => cid !== id))
-      setActiveIdState((current) => {
-        if (current !== id) return current
-        // Mesmo padrao de isDetached usado no efeito de fallback acima:
-        // instancias detached nao pulam para uma conversa alheia.
-        if (isDetached) return null
-        const remaining = conversationsRef.current.filter((c) => c.id !== id)
-        return remaining[0]?.id ?? null
-      })
-    },
-    [setFolders, setLooseOrder, isDetached]
   )
 
   const createFolder = useCallback((): string => {
@@ -3090,6 +3109,8 @@ export function useChat(
         timestamp: new Date().toISOString(),
       }
       updateMessages(targetId, (msgs) => [...msgs, userMsg, assistantMsg])
+      turnConvIdRef.current = targetId
+      isStreamingRef.current = true
       setIsStreaming(true)
 
       const failOnAssistant = (message: string) => {
@@ -4155,14 +4176,114 @@ export function useChat(
     setIsStreaming(false)
   }, [updateMessages, patchTimings])
 
+  // Antes de limpar ou apagar conversas: cancela a resposta em andamento numa
+  // delas e avisa as outras janelas (CLEARED_KEY), que fazem o mesmo com o
+  // turno delas e aplicam a operação na cópia local.
+  const beginConversationsChange = (ids: string[], op: 'clear' | 'delete') => {
+    const turnConvId = streamingConvId()
+    if (turnConvId && ids.includes(turnConvId)) cancel()
+    try {
+      localStorage.setItem(CLEARED_KEY, JSON.stringify({ ids, op, nonce: nanoid() }))
+    } catch {
+      // sem storage: as outras janelas recebem só a lista nova
+    }
+  }
+
+  // Clear: apaga as mensagens das conversas (o contexto do próximo turno volta
+  // a zero) sem apagar a conversa: id, pasta e agente ficam (título: ver
+  // `clearedConversations`). Os documentos anexados saem como no apagar.
+  const clearConversations = useCallback(
+    (ids: string[]) => {
+      const targets = new Set(ids)
+      beginConversationsChange(ids, 'clear')
+      deleteAttachedDocs(conversationsRef.current, targets)
+      unlinkResponsesFromConversations(targets)
+      setConversations((prev) => clearedConversations(prev, targets))
+    },
+    // beginConversationsChange usa só cancel e refs.
+    [cancel]
+  )
+
+  // Apaga as conversas, com os documentos anexados. A conversa aberta que sai
+  // dá lugar à primeira restante — instâncias detached (Assistant, Reader,
+  // Anotações) não pulam para uma conversa alheia: ficam sem conversa e o
+  // painel abre um rascunho.
+  const deleteConversations = useCallback(
+    (ids: string[]) => {
+      if (ids.length === 0) return
+      const targets = new Set(ids)
+      beginConversationsChange(ids, 'delete')
+      deleteAttachedDocs(conversationsRef.current, targets)
+      unlinkResponsesFromConversations(targets)
+      setConversations((prev) => prev.filter((c) => !targets.has(c.id)))
+      setFolders((prev) =>
+        prev.map((f) =>
+          f.conversationIds.some((cid) => targets.has(cid))
+            ? { ...f, conversationIds: f.conversationIds.filter((cid) => !targets.has(cid)) }
+            : f
+        )
+      )
+      setLooseOrder((prev) => prev.filter((cid) => !targets.has(cid)))
+      setActiveIdState((current) => {
+        if (!current || !targets.has(current)) return current
+        if (isDetached) return null
+        return conversationsRef.current.find((c) => !targets.has(c.id))?.id ?? null
+      })
+    },
+    // beginConversationsChange usa só cancel e refs.
+    [cancel, setFolders, setLooseOrder, isDetached]
+  )
+
+  const deleteConversation = useCallback((id: string) => deleteConversations([id]), [deleteConversations])
+
+  // Clear all: apaga as conversas da pasta, que fica vazia (a pasta, a
+  // memória, o prompt e os documentos dela ficam).
+  const deleteFolderConversations = useCallback(
+    (folderId: string) => {
+      const folder = foldersRef.current.find((f) => f.id === folderId)
+      if (folder) deleteConversations(folderConversationIds(folder, conversationsRef.current, foldersRef.current))
+    },
+    [deleteConversations]
+  )
+
+  // Clear ou apagar feito em outra janela: para o turno daqui numa das
+  // conversas e aplica a operação na cópia local antes de a lista nova chegar
+  // (o merge protegeria a conversa do turno e a devolveria com as mensagens).
+  // Pastas, ordem e conversa ativa se ajustam pelo reparo (reconcileOrders) e
+  // pelo fallback do activeId, e chegam também nas chaves da outra janela.
+  const cancelRef = useRef(cancel)
+  cancelRef.current = cancel
+  useEffect(() => {
+    function onCleared(e: StorageEvent) {
+      if (e.key !== CLEARED_KEY || !e.newValue) return
+      let ids: string[] = []
+      let op: 'clear' | 'delete' = 'clear'
+      try {
+        const parsed = JSON.parse(e.newValue) as { ids?: unknown; op?: unknown } | null
+        if (Array.isArray(parsed?.ids)) ids = parsed.ids.filter((id): id is string => typeof id === 'string')
+        if (parsed?.op === 'delete') op = 'delete'
+      } catch {
+        return
+      }
+      const targets = new Set(ids)
+      const turnConvId = streamingConvId()
+      if (turnConvId && targets.has(turnConvId)) cancelRef.current()
+      setConversations((prev) =>
+        op === 'delete' ? prev.filter((c) => !targets.has(c.id)) : clearedConversations(prev, targets)
+      )
+    }
+    window.addEventListener('storage', onCleared)
+    return () => window.removeEventListener('storage', onCleared)
+    // streamingConvId e cancelRef são refs.
+  }, [])
+
   // Registro desta instância em `mountedChats`. Antes de apagar ou fundir uma
-  // pasta, para o turno em andamento numa conversa dela (antes do stream
-  // começar, a conversa do turno é a ativa).
+  // pasta, para o turno em andamento numa conversa dela.
   const mountedRef = useRef<MountedChat | null>(null)
   const cancelIfStreamingIn = (folderId: string) => {
     const folder = foldersRef.current.find((f) => f.id === folderId)
-    const convId = activeStreamRef.current?.convId ?? activeId
-    if (!isStreaming || !folder || !convId) return
+    const convId = streamingConvId()
+    if (!folder || !convId) return
     if (folderConversationIds(folder, conversationsRef.current, foldersRef.current).includes(convId)) cancel()
   }
   mountedRef.current = {
@@ -4232,6 +4353,8 @@ export function useChat(
     ensureAssistantFolder,
     ensureScopedFolder,
     deleteConversation,
+    clearConversations,
+    deleteFolderConversations,
     renameConversation,
     createFolder,
     renameFolder,

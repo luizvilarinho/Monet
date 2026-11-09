@@ -260,6 +260,17 @@ export function CalendarView({
     }
   }
 
+  // Volta ao mês de hoje, marca o dia e abre a nota dele, como o clique no dia
+  // (com o mês atual já à vista, só marca e abre).
+  function goToToday() {
+    const today = parseDateKey(todayKey)
+    setYear(today.y)
+    setYearInput(String(today.y))
+    setMonth(today.m)
+    setSelectedDay(todayKey)
+    onDayClick(new Date(today.y, today.m, today.d))
+  }
+
   function applyYearInput() {
     const parsed = parseInt(yearInput, 10)
     if (!isNaN(parsed) && parsed > 0) {
@@ -370,6 +381,13 @@ export function CalendarView({
                 }}
                 aria-label="year"
               />
+            </div>
+            {/* Linha própria: na largura mínima (220px) o cabeçalho já não
+                tem espaço para mais um botão. */}
+            <div className={styles.todayRow}>
+              <button type="button" className={styles.todayBtn} onClick={goToToday} title="Go to today and open its note">
+                Today
+              </button>
             </div>
           </div>
 
