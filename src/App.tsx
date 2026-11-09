@@ -8,7 +8,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createNodeFromContent, type Editor as TiptapEditor } from '@tiptap/core'
 import { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import './App.css'
-import { AiPanel } from './components/AiPanel/AiPanel'
+import { AiPanel, type RightTab } from './components/AiPanel/AiPanel'
+import { OpenNotesPanel, type OpenNoteCard } from './components/OpenNotes/OpenNotesPanel'
+import { SideNotePanel } from './components/OpenNotes/SideNotePanel'
 import { CalendarView } from './components/CalendarView/CalendarView'
 import { ChatPanel } from './components/ChatPanel/ChatPanel'
 import { appendToggleToContent } from './components/ChatPanel/SaveToNoteModal'
@@ -104,6 +106,8 @@ import {
 import { SIDEBAR_WIDTH_KEY, SIDEBAR_WIDE_WIDTH_KEY, WIDE_MAX_WIDTH } from './hooks/useSidebarResize'
 import { useTaskViews } from './hooks/useTaskViews'
 import { useToday } from './hooks/useToday'
+import { useOpenNotes } from './hooks/useOpenNotes'
+import { useNoteResponses } from './hooks/useNoteResponses'
 import { AGENTS, findAgent } from './lib/agents'
 import { buildAgentSystemPrompt } from './lib/agents/core'
 import { CRITIQUE_TOO_SHORT } from './lib/agents/critique'
@@ -461,15 +465,17 @@ function App() {
   const columnSubjects = useMemo(() => subjects.filter((s) => !isTasksSubject(s)), [subjects])
   const [search, setSearch] = useState('')
   const [aiOpen, setAiOpen] = useState(true)
-  // Aba da coluna direita (AI = cards dos slash commands; Chat = chat do caderno).
-  const [rightTab, setRightTabState] = useState<'ai' | 'chat'>(() => {
+  // Aba da coluna direita (AI = cards dos slash commands; Chat = chat do
+  // caderno; Open = notas abertas hoje e a nota lateral).
+  const [rightTab, setRightTabState] = useState<RightTab>(() => {
     try {
-      return localStorage.getItem('monet:notes-right-tab') === 'chat' ? 'chat' : 'ai'
+      const saved = localStorage.getItem('monet:notes-right-tab')
+      return saved === 'chat' || saved === 'open' ? saved : 'ai'
     } catch {
       return 'ai'
     }
   })
-  const setRightTab = useCallback((tab: 'ai' | 'chat') => {
+  const setRightTab = useCallback((tab: RightTab) => {
     setRightTabState(tab)
     try {
       localStorage.setItem('monet:notes-right-tab', tab)
@@ -1305,6 +1311,8 @@ function App() {
 
   // Ctrl+N: versão atual do handleQuickNote (o listener abaixo é registrado uma vez).
   const quickNoteRef = useRef<() => void>(() => {})
+  // Alt+←: versão atual da volta para a nota anterior (definida com a aba Open).
+  const previousNoteRef = useRef<() => void>(() => {})
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -1324,6 +1332,13 @@ function App() {
         e.stopPropagation()
         if (e.repeat || document.querySelector('[aria-modal="true"]')) return
         quickNoteRef.current()
+      }
+      // Alt+←: volta para a nota anterior (aba Open). preventDefault sempre:
+      // no WebView2 a tecla é o "voltar" do navegador.
+      if (e.altKey && !e.ctrlKey && !e.shiftKey && !e.metaKey && e.key === 'ArrowLeft') {
+        e.preventDefault()
+        if (e.repeat || document.querySelector('[aria-modal="true"]')) return
+        previousNoteRef.current()
       }
     }
     document.addEventListener('keydown', handleKeyDown, true)
@@ -1533,6 +1548,140 @@ function App() {
   // Booleano (e não a nota): o contexto dos cards não muda a cada tecla.
   const activeNoteIsTodos = !!activeNote && isTodosNote(activeNote)
 
+  // Abertura automática (a 1ª nota ao escolher um caderno ou subject): a nota
+  // só entra na aba Open depois de 3 s na tela ou de um clique/tecla no
+  // editor principal. A nota "de passagem" a caminho de outra não suja a
+  // lista nem o Alt+←.
+  const [autoOpenedId, setAutoOpenedId] = useState<string | null>(null)
+  const autoOpenNote = useCallback((noteId: string | null) => {
+    setAutoOpenedId(noteId)
+    setActiveId(noteId)
+  }, [])
+  useEffect(() => {
+    if (!autoOpenedId) return
+    if (autoOpenedId !== activeId) {
+      setAutoOpenedId(null)
+      return
+    }
+    const settle = () => setAutoOpenedId(null)
+    const timer = window.setTimeout(settle, 3000)
+    // Atalho (Ctrl/Alt/Meta) ou modificador sozinho não é interação com a
+    // nota: o Ctrl+P a caminho de outra nota não a registra.
+    const onInput = (e: Event) => {
+      if (
+        e instanceof KeyboardEvent &&
+        (e.ctrlKey || e.altKey || e.metaKey || ['Shift', 'Control', 'Alt', 'Meta'].includes(e.key))
+      ) {
+        return
+      }
+      const target = e.target instanceof Element ? e.target : null
+      if (target?.closest('[data-note-editor]') && !target.closest('[data-side-note]')) settle()
+    }
+    document.addEventListener('pointerdown', onInput, true)
+    document.addEventListener('keydown', onInput, true)
+    return () => {
+      window.clearTimeout(timer)
+      document.removeEventListener('pointerdown', onInput, true)
+      document.removeEventListener('keydown', onInput, true)
+    }
+  }, [autoOpenedId, activeId])
+
+  // Aba Open: notas abertas hoje, a mais recente primeiro. Ficam fora a
+  // nota-corpo de task (abre pela task), a Quick Note em branco, a nota sem
+  // caderno e a nota apagada.
+  const { entries: openNoteEntries, record: recordOpenNoteId, remove: removeOpenNote } = useOpenNotes(
+    activeNote && !isTaskBodyNote(activeNote) && activeNote.id !== autoOpenedId ? activeNote.id : null,
+    today,
+  )
+  const openNoteCards = useMemo<OpenNoteCard[]>(() => {
+    const byId = new Map(notes.map((n) => [n.id, n]))
+    return openNoteEntries.flatMap((entry) => {
+      const note = byId.get(entry.noteId)
+      if (!note || !note.notebookId || isTaskBodyNote(note) || isBlankQuickNote(note)) return []
+      const notebookName = notebooks.find((nb) => nb.id === note.notebookId)?.name ?? ''
+      const type = note.typeId ? noteTypes.types.find((t) => t.id === note.typeId) : undefined
+      return [{ note, notebookName, type, openedAt: entry.openedAt }]
+    })
+  }, [openNoteEntries, notes, notebooks, noteTypes.types])
+
+  // Alt+←: a última nota aberta antes da atual.
+  previousNoteRef.current = () => {
+    if (activeMode !== 'notebook') return
+    const previous = openNoteCards.find((c) => c.note.id !== activeId)
+    if (previous) handleNoteLinkNavigation(previous.note.id)
+  }
+
+  // Nota lateral da aba Open: a segunda nota aberta, editável ao lado da
+  // principal. Apagada por fora, a lateral volta para a lista.
+  const [sideNoteId, setSideNoteId] = useState<string | null>(null)
+  const sideNote = useMemo(
+    () => (sideNoteId ? notes.find((n) => n.id === sideNoteId) ?? null : null),
+    [notes, sideNoteId]
+  )
+  const sideNoteIsTodos = !!sideNote && isTodosNote(sideNote)
+  const sideNoteResponses = useNoteResponses(sideNote?.id ?? null)
+  // A nota aberta na lateral também entra na aba Open (reabre depois de
+  // fechar a lateral).
+  useEffect(() => {
+    if (sideNoteId) recordOpenNoteId(sideNoteId)
+  }, [sideNoteId, recordOpenNoteId])
+
+  // A mesma nota nunca fica nos dois lados: quando a principal vira a nota da
+  // lateral (card, Alt+←, lista, link), a lateral fica com a principal
+  // anterior. Nota-corpo de task não vai para a lateral (o título dela é o da
+  // task): a lateral fecha.
+  const prevActiveIdRef = useRef(activeId)
+  useEffect(() => {
+    const prev = prevActiveIdRef.current
+    prevActiveIdRef.current = activeId
+    if (!activeId || activeId !== sideNoteId) return
+    const prevNote = prev && prev !== activeId ? notesRef.current.find((n) => n.id === prev) : undefined
+    setSideNoteId(prevNote && !isTaskBodyNote(prevNote) ? prevNote.id : null)
+  }, [activeId, sideNoteId])
+
+  // Abre na lateral (cards, Alt+Enter no Ctrl+P, links da própria lateral) e
+  // mostra a aba Open. Devolve false quando a nota não vai para a lateral (a
+  // principal, nota-corpo de task, fora do modo Notebook): quem chamou abre na
+  // principal. `focusMain`: o foco volta ao cursor da principal, para seguir
+  // escrevendo enquanto consulta a lateral.
+  const openNoteOnSide = useCallback(
+    (noteId: string, { focusMain = false } = {}) => {
+      const note = notesRef.current.find((n) => n.id === noteId)
+      if (activeMode !== 'notebook' || !activeId || noteId === activeId || !note?.notebookId || isTaskBodyNote(note)) {
+        return false
+      }
+      setSideNoteId(noteId)
+      setRightTab('open')
+      setAiOpen(true)
+      const main = notesEditorRef.current
+      if (focusMain && main && !main.isDestroyed) main.commands.focus(null, { scrollIntoView: false })
+      return true
+    },
+    [activeMode, activeId, setRightTab]
+  )
+  const openNoteOnSideFromList = useCallback(
+    (noteId: string) => void openNoteOnSide(noteId, { focusMain: true }),
+    [openNoteOnSide]
+  )
+  // Link na nota lateral navega dentro da lateral; a principal só muda por
+  // "Swap with main" (ou quando o link aponta para uma nota que não vai para
+  // a lateral).
+  const navigateFromSideNote = useCallback(
+    (noteId: string) => {
+      if (!openNoteOnSide(noteId)) handleNoteLinkNavigation(noteId)
+    },
+    [openNoteOnSide, handleNoteLinkNavigation]
+  )
+
+  // Grava a nota lateral sobre a base da memória (não da render).
+  const updateSideNote = useCallback(
+    (patch: Partial<Note>) => {
+      const current = sideNoteId ? notesRef.current.find((n) => n.id === sideNoteId) : undefined
+      if (current) void saveNote({ ...current, ...patch, updatedAt: Date.now() })
+    },
+    [sideNoteId, saveNote]
+  )
+
   // Card do board: a nota vira a ativa e abre no modal; o board fica (a
   // navegação é dele). `order`: os cards na ordem visível ao abrir (Previous/
   // Next); ausente = mantém a ordem atual (navegação dentro do modal).
@@ -1665,6 +1814,17 @@ function App() {
       createTodosNote,
       openTaskModalInPlace,
     ]
+  )
+  // Editor da nota lateral: a "nota atual" dos cards de task é a lateral, e
+  // abrir a TODOS a partir dela navega na lateral (como os links).
+  const sideTasksContextValue = useMemo(
+    () => ({
+      ...tasksContextValue,
+      currentNoteId: sideNoteId,
+      currentNoteIsTodos: sideNoteIsTodos,
+      onOpenTodos: navigateFromSideNote,
+    }),
+    [tasksContextValue, sideNoteId, sideNoteIsTodos, navigateFromSideNote]
   )
 
   // Filtro por tipo da lista de notas (N4): opções = tipos presentes nas notas
@@ -2592,7 +2752,7 @@ function App() {
       notes.filter((n) => n.notebookId === activeNotebookId && n.subjectId === id && !n.archivedAt),
       noteOrder
     )[0]
-    setActiveId(first?.id ?? null)
+    autoOpenNote(first?.id ?? null)
   }
 
   async function handleDeleteSubject(id: string) {
@@ -2765,14 +2925,18 @@ function App() {
     }
   }, [refreshNotes, ensureCalendarNote])
 
+  // `auto`: a nota do dia aberta sozinha ao escolher o caderno Calendar (só
+  // entra na aba Open se o usuário ficar nela).
   const handleCalendarDayClick = useCallback(
-    async (date: Date) => {
+    async (date: Date, auto = false) => {
       if (!calendarNotebookId) return
       setActiveNotebookId(calendarNotebookId)
       const note = await ensureCalendarNote(date)
-      if (note) setActiveId(note.id)
+      if (!note) return
+      if (auto) autoOpenNote(note.id)
+      else setActiveId(note.id)
     },
-    [calendarNotebookId, ensureCalendarNote]
+    [calendarNotebookId, ensureCalendarNote, autoOpenNote]
   )
 
   // Weekly review: acrescenta o markdown ao fim da nota diária de hoje (nunca
@@ -3529,6 +3693,7 @@ function App() {
     <TasksProvider value={tasksContextValue}>
     <Editor
       key={activeNote.id}
+      viewStateKey={activeNote.id}
       notebookName={notebooks.find((nb) => nb.id === activeNote.notebookId)?.name}
       subjectName={effectiveSubjects.find(s => s.id === activeNote.subjectId)?.name}
       title={activeNote.title}
@@ -3698,6 +3863,55 @@ function App() {
     </RemindersProvider>
   ) : null
 
+  // Aba Open da coluna da direita: a nota lateral, quando aberta, ou a lista
+  // das notas abertas hoje. A lateral não tem slash nem IA (como no Reader).
+  const openPanel = sideNote ? (
+    <SideNotePanel
+      onClose={() => setSideNoteId(null)}
+      onSwap={() => handleNoteLinkNavigation(sideNote.id)}
+    >
+      <RemindersProvider value={remindersContextValue}>
+      <TasksProvider value={sideTasksContextValue}>
+      <Editor
+        key={sideNote.id}
+        viewStateKey={sideNote.id}
+        restoreFocus={false}
+        notebookName={notebooks.find((nb) => nb.id === sideNote.notebookId)?.name}
+        title={sideNote.title}
+        onTitleChange={(title) => updateSideNote({ title })}
+        tags={sideNote.tags}
+        onTagsChange={(tags) => updateSideNote({ tags })}
+        date={sideNote.date}
+        onDateChange={(date) => updateSideNote({ date })}
+        value={sideNote.content}
+        onChange={(content) => updateSideNote({ content })}
+        responses={sideNoteResponses}
+        notebookNotes={notes.filter((n) => n.notebookId === sideNote.notebookId && n.id !== sideNote.id)}
+        onNavigateToNote={navigateFromSideNote}
+        isCalendarNote={sideNote.notebookId === calendarNotebookId}
+        disableSlashCommands
+        disableBlockHandles
+        disableRelatedTerms
+        markLabels={markLabels}
+        tagSuggestions={allTags}
+        onOpenTag={openTagView}
+        taskStatuses={taskStatuses}
+        onToggleLinkedTask={handleToggleLinkedTask}
+      />
+      </TasksProvider>
+      </RemindersProvider>
+    </SideNotePanel>
+  ) : (
+    <OpenNotesPanel
+      cards={openNoteCards}
+      activeNoteId={activeId}
+      sideNoteId={sideNoteId}
+      onOpen={handleNoteLinkNavigation}
+      onOpenOnSide={openNoteOnSideFromList}
+      onRemove={removeOpenNote}
+    />
+  )
+
   return (
     <TasksEnvProvider value={tasksEnv}>
     <div className="app">
@@ -3786,14 +4000,14 @@ function App() {
             setMainArea(NOTES_AREA)
             setActiveSubjectId(null)
             if (id === calendarNotebookId) {
-              void handleCalendarDayClick(new Date())
+              void handleCalendarDayClick(new Date(), true)
             } else {
               setActiveNotebookId(id)
               const notebookNotes = applyOrder(
                 notes.filter((n) => n.notebookId === id && !isTaskBodyNote(n) && !n.archivedAt),
                 noteOrder
               )
-              setActiveId(notebookNotes[0]?.id ?? null)
+              autoOpenNote(notebookNotes[0]?.id ?? null)
             }
           }}
           onCreate={handleCreateNotebook}
@@ -4087,6 +4301,8 @@ function App() {
           onOpenInChat={handleOpenResponseInChat}
           activeTab={rightTab}
           onTabChange={setRightTab}
+          openPanel={openPanel}
+          sideNoteOpen={!!sideNote}
           chatPanel={
             <NotesChatPanel
               notebook={chatNotebook}
@@ -4162,6 +4378,13 @@ function App() {
           handleNavigateToNote(notebookId, noteId, subjectId)
           setSearchPaletteOpen(false)
         }}
+        onOpenNoteOnSide={
+          activeMode === 'notebook' && activeId
+            ? (noteId) => {
+                if (!openNoteOnSide(noteId, { focusMain: true })) handleNoteLinkNavigation(noteId)
+              }
+            : undefined
+        }
         onSelectMark={handleSelectMark}
         onSelectNotebook={(notebookId) => {
           setActiveMode('notebook')

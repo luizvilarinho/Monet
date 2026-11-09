@@ -13,7 +13,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { loadOrder, saveOrder } from '../../lib/noteOrder'
 import type { AiModel, AiResponse } from '../../types'
 import { AiCard } from './AiCard'
@@ -22,6 +22,23 @@ import { ModelSelector } from './ModelSelector'
 
 const MIN_WIDTH = 300
 const MAX_WIDTH = 720
+const WIDE_WIDTH_KEY = 'monet:side-note-width'
+
+export type RightTab = 'ai' | 'chat' | 'open'
+
+// Coluna com a nota lateral (aba Open): largura própria, que pode passar de
+// MAX_WIDTH para caber uma nota ao lado da principal.
+function wideMaxWidth() {
+  return Math.max(MAX_WIDTH, Math.round(window.innerWidth * 0.6))
+}
+
+function clampWide(px: number) {
+  return Math.min(wideMaxWidth(), Math.max(MIN_WIDTH, px))
+}
+
+// Largura mínima da nota principal com a nota lateral aberta: a coluna larga
+// cede antes de apertar a nota em que se escreve.
+const MAIN_MIN_WIDTH = 480
 
 function aiOrderKey(noteId: string | null) {
   return `monet:ai-order:${noteId ?? ''}`
@@ -93,11 +110,16 @@ export interface AiPanelProps {
   navigateToCard?: { index: number; ts: number } | null
   onDeleteResponse?: (id: string) => void
   onOpenInChat?: (response: AiResponse) => void
-  activeTab: 'ai' | 'chat'
-  onTabChange: (tab: 'ai' | 'chat') => void
+  activeTab: RightTab
+  onTabChange: (tab: RightTab) => void
   // Sempre renderizado (escondido via CSS fora da aba Chat): desmontar o chat
   // cancelaria um stream ativo.
   chatPanel: ReactNode
+  // Conteúdo da aba Open (notas abertas hoje ou a nota lateral).
+  openPanel: ReactNode
+  // Há nota lateral aberta: na aba Open a coluna usa a largura larga; nas
+  // outras abas, a aba Open ganha um ponto (a nota continua lá).
+  sideNoteOpen: boolean
 }
 
 export function AiPanel({
@@ -118,11 +140,58 @@ export function AiPanel({
   activeTab,
   onTabChange,
   chatPanel,
+  openPanel,
+  sideNoteOpen,
 }: AiPanelProps) {
+  const wide = activeTab === 'open' && sideNoteOpen
   const [width, setWidth] = useState(() => {
     const saved = parseInt(localStorage.getItem('monet:ai-width') ?? '', 10)
     return isNaN(saved) ? MIN_WIDTH : Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, saved))
   })
+  const [wideWidth, setWideWidth] = useState(() => {
+    const saved = parseInt(localStorage.getItem(WIDE_WIDTH_KEY) ?? '', 10)
+    return clampWide(isNaN(saved) ? Math.round(window.innerWidth * 0.4) : saved)
+  })
+  const wideRef = useRef(wide)
+  wideRef.current = wide
+  // Teto da coluna larga no layout atual: a soma da coluna com a nota
+  // principal (o espaço que as duas dividem) menos o mínimo da principal.
+  // Refeito quando a janela ou a principal mudam de largura (colunas da
+  // esquerda recolhidas ou arrastadas) e quando a principal é trocada; sem
+  // nota principal, sem teto. A soma não muda com a largura da coluna: sem
+  // laço de medida.
+  const asideRef = useRef<HTMLElement | null>(null)
+  const [wideRoom, setWideRoom] = useState<number | null>(null)
+  const wideRoomRef = useRef(wideRoom)
+  wideRoomRef.current = wideRoom
+  useLayoutEffect(() => {
+    const aside = asideRef.current
+    const workspace = aside?.parentElement
+    if (!wide || !open || !aside || !workspace) {
+      setWideRoom(null)
+      return
+    }
+    let observedMain: HTMLElement | null = null
+    const measure = () => {
+      const main = workspace.querySelector<HTMLElement>(':scope > [data-note-editor]')
+      if (main !== observedMain) {
+        if (observedMain) resizes.unobserve(observedMain)
+        if (main) resizes.observe(main)
+        observedMain = main
+      }
+      setWideRoom(main ? aside.offsetWidth + main.offsetWidth - MAIN_MIN_WIDTH : null)
+    }
+    const resizes = new ResizeObserver(measure)
+    const children = new MutationObserver(measure)
+    resizes.observe(workspace)
+    children.observe(workspace, { childList: true })
+    measure()
+    return () => {
+      resizes.disconnect()
+      children.disconnect()
+    }
+  }, [wide, open])
+  const shownWideWidth = wideRoom === null ? wideWidth : Math.max(MIN_WIDTH, Math.min(wideWidth, wideRoom))
   const [forceOpenIndex, setForceOpenIndex] = useState<number | null>(null)
   const [expandAll, setExpandAll] = useState<boolean | null>(null)
   const [orderedIds, setOrderedIds] = useState<string[]>([])
@@ -165,26 +234,38 @@ export function AiPanel({
     e.preventDefault()
     dragging.current = true
     startX.current = e.clientX
-    startWidth.current = width
+    startWidth.current = wide ? shownWideWidth : width
     document.body.style.cursor = 'col-resize'
     document.body.style.userSelect = 'none'
-  }, [width])
+  }, [wide, shownWideWidth, width])
 
   useEffect(() => {
-    let lastWidth = MIN_WIDTH
+    // null até o primeiro movimento: clique na alça sem arrastar não grava.
+    let lastWidth: number | null = null
     const onMouseMove = (e: MouseEvent) => {
       if (!dragging.current) return
       const delta = startX.current - e.clientX
-      const next = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startWidth.current + delta))
-      lastWidth = next
-      setWidth(next)
+      if (wideRef.current) {
+        const room = wideRoomRef.current
+        let next = clampWide(startWidth.current + delta)
+        if (room !== null) next = Math.max(MIN_WIDTH, Math.min(next, room))
+        lastWidth = next
+        setWideWidth(next)
+      } else {
+        const next = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startWidth.current + delta))
+        lastWidth = next
+        setWidth(next)
+      }
     }
     const onMouseUp = () => {
       if (!dragging.current) return
       dragging.current = false
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
-      localStorage.setItem('monet:ai-width', String(lastWidth))
+      if (lastWidth !== null) {
+        localStorage.setItem(wideRef.current ? WIDE_WIDTH_KEY : 'monet:ai-width', String(lastWidth))
+        lastWidth = null
+      }
     }
     document.addEventListener('mousemove', onMouseMove)
     document.addEventListener('mouseup', onMouseUp)
@@ -228,8 +309,9 @@ export function AiPanel({
   // manter o chat montado.
   return (
     <aside
+      ref={asideRef}
       className={open ? styles.panel : `${styles.panel} ${styles.panelHidden}`}
-      style={{ width }}
+      style={{ width: wide ? shownWideWidth : width }}
     >
       <div className={styles.resizeHandle} onMouseDown={onMouseDown} />
       <header className={styles.header}>
@@ -245,10 +327,24 @@ export function AiPanel({
           <button
             type="button"
             className={styles.tab}
-            aria-pressed={!isAiTab}
+            aria-pressed={activeTab === 'chat'}
             onClick={() => onTabChange('chat')}
           >
             Chat
+          </button>
+          <button
+            type="button"
+            className={styles.tab}
+            aria-pressed={activeTab === 'open'}
+            onClick={() => onTabChange('open')}
+            title={
+              sideNoteOpen && !wide
+                ? 'Notes opened today. A side note is open here'
+                : 'Notes opened today (Alt+← goes to the last note)'
+            }
+          >
+            Open
+            {sideNoteOpen && !wide && <span className={styles.tabDot} role="img" aria-label="Side note open" />}
           </button>
         </div>
         {isAiTab && (
@@ -312,7 +408,8 @@ export function AiPanel({
           )}
         </div>
       )}
-      <div className={isAiTab ? styles.chatTabHidden : styles.chatTab}>{chatPanel}</div>
+      <div className={activeTab === 'chat' ? styles.chatTab : styles.chatTabHidden}>{chatPanel}</div>
+      {activeTab === 'open' && openPanel}
     </aside>
   )
 }

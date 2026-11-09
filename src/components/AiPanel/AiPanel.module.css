@@ -63,7 +63,7 @@
   display: none;
 }
 
-/* Abas AI | Chat no header (segmented control). */
+/* Abas AI | Chat | Open no header (segmented control). */
 .tabs {
   display: inline-flex;
   gap: 2px;
@@ -85,6 +85,17 @@
   padding: 3px 10px;
   cursor: pointer;
   transition: color 0.15s, background 0.15s;
+}
+
+/* Ponto na aba Open: há nota lateral aberta lá. */
+.tabDot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: var(--space-1);
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: middle;
 }
 
 .tab:hover {

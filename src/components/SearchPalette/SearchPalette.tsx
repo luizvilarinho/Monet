@@ -26,6 +26,9 @@ interface SearchPaletteProps {
   open: boolean
   onClose: () => void
   onSelectNote: (notebookId: string, noteId: string, subjectId?: string | null) => void
+  // Alt+Enter / Alt+clique numa nota: abre na nota lateral da aba Open (só no
+  // modo Notebook; sem a prop, o rodapé com a dica some).
+  onOpenNoteOnSide?: (noteId: string) => void
   // Marca (`has:mark`/`mark:`): abre a nota na marca.
   onSelectMark?: (note: Note, entry: NoteMarkEntry) => void
   onSelectNotebook?: (notebookId: string) => void
@@ -92,6 +95,7 @@ export function SearchPalette({
   open,
   onClose,
   onSelectNote,
+  onOpenNoteOnSide,
   onSelectMark,
   onSelectNotebook,
   onSelectTask,
@@ -117,7 +121,7 @@ export function SearchPalette({
   const scrollToSelectedRef = useRef(false)
   const meaningRequestRef = useRef(0)
   // Enter antes do debounce: abre o 1º resultado da consulta digitada.
-  const enterPendingRef = useRef(false)
+  const enterPendingRef = useRef<'main' | 'side' | null>(null)
 
   const notebookMap = new Map(notebooks.map((nb) => [nb.id, nb.name]))
   // Nota sem caderno (Reader) não abre pela palette.
@@ -292,7 +296,7 @@ export function SearchPalette({
     }
   }, [meaningKey, parsed.typeId, parsed.archived, parsed.tag, meaningScopeIds, text, searchable, results.length])
 
-  const selectResult = useCallback((result: SearchResult) => {
+  const selectResult = useCallback((result: SearchResult, onSide = false) => {
     if (result.kind === 'meaning') {
       if (!currentMeaning || currentMeaning.status === 'error') void runMeaningSearch()
       return
@@ -305,12 +309,11 @@ export function SearchPalette({
       if (result.note.notebookId) onSelectMark?.(result.note, result.entry)
     } else {
       const note = result.note
-      if (note.notebookId) {
-        onSelectNote(note.notebookId, note.id, note.subjectId)
-      }
+      if (onSide && onOpenNoteOnSide) onOpenNoteOnSide(note.id)
+      else if (note.notebookId) onSelectNote(note.notebookId, note.id, note.subjectId)
     }
     onClose()
-  }, [onSelectNotebook, onSelectNote, onSelectMark, onSelectTask, onClose, currentMeaning, runMeaningSearch])
+  }, [onSelectNotebook, onSelectNote, onSelectMark, onSelectTask, onOpenNoteOnSide, onClose, currentMeaning, runMeaningSearch])
 
   useEffect(() => {
     if (!open) return
@@ -329,12 +332,12 @@ export function SearchPalette({
       } else if (e.key === 'Enter') {
         e.preventDefault()
         if (query !== debounced) {
-          enterPendingRef.current = true
+          enterPendingRef.current = e.altKey ? 'side' : 'main'
           setDebounced(query)
           return
         }
         const result = items[selectedIndex]
-        if (result) selectResult(result)
+        if (result) selectResult(result, e.altKey)
       }
     }
     document.addEventListener('keydown', handleKeyDown, true)
@@ -343,9 +346,10 @@ export function SearchPalette({
 
   useEffect(() => {
     if (!enterPendingRef.current || query !== debounced) return
-    enterPendingRef.current = false
+    const onSide = enterPendingRef.current === 'side'
+    enterPendingRef.current = null
     const result = items[0]
-    if (result) selectResult(result)
+    if (result) selectResult(result, onSide)
   }, [items, query, debounced, selectResult])
 
   const removeChip = (raw: string) => {
@@ -528,7 +532,7 @@ export function SearchPalette({
               // Sem tirar o foco do input (a linha "Search by meaning" não fecha a palette).
               onMouseDown: (e: MouseEvent) => {
                 e.preventDefault()
-                selectResult(result)
+                selectResult(result, e.altKey)
               },
             }
             let body
@@ -644,6 +648,12 @@ export function SearchPalette({
             )
           })}
         </div>
+        {onOpenNoteOnSide && (
+          <div className={styles.footer}>
+            <span><kbd>Enter</kbd> open</span>
+            <span><kbd>Alt</kbd>+<kbd>Enter</kbd> open on the side</span>
+          </div>
+        )}
       </div>
     </div>
   )

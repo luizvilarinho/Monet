@@ -23,6 +23,12 @@ Bugs e ideias registrados pelo Coordenador ou deixados para trás nas entregas, 
 
 - **Export .md com HTML das marcas (2026-11-02):** o export .md (`handleExport`, `App.tsx`) grava `<mark data-mark>` e `<span data-bg>` como HTML cru. O termo do Related content já sai limpo (`stripRelatedTermTags`). Caminho: desembrulhar os dois na mesma função. O text/plain do clipboard (`serializeBlocks` em `MonetClipboard.ts`, copiar para fora do Monet) vaza os mesmos dois do mesmo jeito; o termo já sai limpo ali também. Limpar o export e o clipboard juntos (o paste interno usa o HTML e não é afetado).
 
+- **`/critique` marca "Inaccurate" sem contradição (2026-11-05, fase de qualidade dos prompts):** na nota do cap. 6 de *Fundamentals of Software Architecture* (caderno Arquitetura de Software), a crítica (Haiku 5.5) disse que a ressalva sobre IA generativa não era do autor. Ela era: o Coordenador lê a 2ª edição (2025). Duas causas:
+  - o modelo supôs a edição de 2020;
+  - o modelo tratou a ausência do trecho nos 5 excertos do RAG como prova de erro. A KB do caderno tem o PDF da 1ª edição (`OReilly.Fundamentals.of.Software.Architecture.2020.1.pdf`).
+
+  Caminho: no `behavior` de `src/lib/agents/critique.ts`, só marcar "Inaccurate" quando os excertos ou um fato consolidado contradizem a nota de forma explícita. Não encontrar algo nos excertos não é erro, e o modelo não deve supor edição nem data da fonte. Quando faltar base, a crítica deve dizer "não encontrei nos trechos" em vez de corrigir. Incluir o caso no harness de prompts.
+
 ---
 
 ## Ideias
@@ -38,6 +44,20 @@ Bugs e ideias registrados pelo Coordenador ou deixados para trás nas entregas, 
 - **Mincer — gravação pelo uso do microfone (2026-10-31):** parar (e sugerir iniciar) a gravação quando o app da reunião (Teams, Zoom, navegador) solta/pega o microfone, lendo `LastUsedTimeStart/Stop` em `HKCU\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone`. Mais preciso que o silêncio, mas depende de detalhe interno do Windows e o navegador segura o microfone com a aba aberta. Hoje a parada é por silêncio + teto + tray/Ctrl+Alt+R.
 - **Mincer — guardar o áudio da gravação (2026-10-31):** hoje o áudio é apagado depois da transcrição. Ideia: opção "Keep recording audio" que salva o MP3 junto do item (e no Save .md).
 - **Mincer — duração e custo antes de iniciar (2026-10-31, uxreport G):** nada informa a duração do arquivo/vídeo nem o custo estimado da transcrição antes do Start; um vídeo longo do YouTube pode gerar conta inesperada. Ideia: ler a duração (ffprobe/yt-dlp) e estimar pelo preço por minuto do modelo, se o OpenRouter expuser.
+- **Notas de contexto para a IA (2026-11-05):** o Coordenador gostou do padrão "nota que o agente lê", como o "Perfil de estudo" que o tutor exige. O padrão já existe de três formas:
+  - o perfil de estudo (tag `study profile` ou título, `src/lib/studyProfile.ts`), lido só pelo tutor;
+  - as notas de plano (Plan/Capacidade/Livro), lidas pelo planner e pelo coach;
+  - notas como "Dados do livro", que só chegam pelo RAG.
+
+  A ideia é uma convenção única de contexto por caderno, lida por todos os agentes. Os dados pessoais ficam em notas e os prompts continuam genéricos.
+
+  **Antes de decidir:** o Coordenador vai avaliar se o system prompt da pasta do chat (`FolderSystemPromptModal`) basta ou se faltam campos. Com agente, esse prompt já entra como "Folder instructions" em append (D9, `useChat.ts`). Diferenças em relação a uma nota:
+  - ele vive no localStorage do chat, que é efêmero de propósito;
+  - os slash da nota (`/critique`, `/define`…) não o enxergam.
+
+  **Riscos:** nota desatualizada orientando a IA sem ninguém perceber; contexto inflado em toda chamada.
+
+  **Primeiro passo concreto, independente da decisão:** o `/critique` também ler o perfil de estudo do caderno. Com "lendo a 2ª edição (2025)" no perfil, o falso positivo de edição registrado em Ajustes teria sido evitado.
 - **Tipos de nota/TODOS — fase 5 (2026-10-20):** remover `task_group` 4 semanas após o release da 1.5.0.
 - **Busca FTS5 — plano B (2026-10-20):** só se a busca do Ctrl+P voltar a ficar lenta (ver `DOCS/features/note_types_study.md`).
 - **`get_note` — próximos passos (2026-10-21):** opcional detectar localmente um título citado na pergunta para pular o RAG; depois, avaliar o Jev (TypeSafe, via OpenRouter) como porteiro antes do RAG.

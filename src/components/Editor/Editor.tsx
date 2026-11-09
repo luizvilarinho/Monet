@@ -11,7 +11,7 @@ import {
 import { CalendarBlank, X } from '@phosphor-icons/react'
 import { nanoid } from 'nanoid'
 import type { Editor as TiptapEditor } from '@tiptap/core'
-import { TextSelection } from '@tiptap/pm/state'
+import { Selection, TextSelection } from '@tiptap/pm/state'
 import { Mapping } from '@tiptap/pm/transform'
 import { formatLocalTimestamp, getWeekdayName, parseCalendarTitle } from '../../lib/calendar'
 import { findClosestHeading, parseHeadings, type Heading } from '../../lib/headingParser'
@@ -32,6 +32,7 @@ import {
   getCurrentCommandLine,
 } from './CommandExtension'
 import { buildBaseExtensions } from './extensions'
+import { getEditorViewState, setEditorViewState } from './editorViewState'
 import { PreviewMode, setPreviewMode } from './PreviewMode'
 import { EditorResponsesProvider } from './EditorResponsesContext'
 import { EditorNotesProvider } from './EditorNotesContext'
@@ -133,6 +134,12 @@ export interface EditorProps {
   // consumido uma única vez.
   revealRequest?: { index: number; text: string; nonce: number; action: 'reveal' | 'resolve' } | null
   onRevealConsumed?: () => void
+  // Id da nota: guarda o cursor e a rolagem dela e, ao montar de novo,
+  // restaura os dois com o foco no editor (voltar à nota onde parou).
+  viewStateKey?: string
+  // false: restaura sem pôr o foco (nota lateral, que não toma o foco da
+  // principal).
+  restoreFocus?: boolean
 }
 
 function getMarkdown(editor: TiptapEditor): string {
@@ -216,6 +223,8 @@ export function Editor({
   tagsRowSlot,
   revealRequest,
   onRevealConsumed,
+  viewStateKey,
+  restoreFocus = true,
 }: EditorProps) {
   const [adding, setAdding] = useState(false)
   const [draft, setDraft] = useState('')
@@ -644,6 +653,54 @@ export function Editor({
     return detach
   }, [editor])
 
+  // Cursor e rolagem da nota (`viewStateKey`): gravados a cada mudança e, ao
+  // montar de novo, restaurados com o foco no editor. Com um pedido de marca
+  // pendente na montagem, ele decide a posição (efeito abaixo) e nada é
+  // restaurado.
+  const skipViewRestoreRef = useRef(!!revealRequest)
+  useEffect(() => {
+    if (!editor || !viewStateKey) return
+    const scrollEl = scrollRef.current
+    const saved = getEditorViewState(viewStateKey)
+    let frame = 0
+    if (saved && !skipViewRestoreRef.current) {
+      // `near`: a posição salva de um bloco selecionado (NodeSelection) cai
+      // entre blocos, onde não cabe cursor de texto.
+      const { doc, tr } = editor.state
+      const pos = Math.min(saved.pos, doc.content.size)
+      editor.view.dispatch(tr.setSelection(Selection.near(doc.resolve(pos))))
+      const restoreScroll = () => {
+        if (scrollEl) scrollEl.scrollTop = saved.scrollTop
+      }
+      restoreScroll()
+      // No quadro seguinte: node views (React) e imagens ainda mudam a altura,
+      // e o EditorContent ainda move o DOM do editor na montagem (o foco dado
+      // antes se perderia). Não tira o foco de quem está digitando (título da
+      // nota vazia, outro editor, chat).
+      frame = requestAnimationFrame(() => {
+        restoreScroll()
+        const focused = document.activeElement
+        const typing =
+          focused instanceof HTMLInputElement ||
+          focused instanceof HTMLTextAreaElement ||
+          (focused instanceof HTMLElement && focused.isContentEditable)
+        if (restoreFocus && !typing && !editor.isDestroyed) editor.view.focus()
+      })
+    }
+    const save = () =>
+      setEditorViewState(viewStateKey, {
+        pos: editor.state.selection.head,
+        scrollTop: scrollEl?.scrollTop ?? 0,
+      })
+    editor.on('selectionUpdate', save)
+    scrollEl?.addEventListener('scroll', save, { passive: true })
+    return () => {
+      cancelAnimationFrame(frame)
+      editor.off('selectionUpdate', save)
+      scrollEl?.removeEventListener('scroll', save)
+    }
+  }, [editor, viewStateKey, restoreFocus])
+
   // Pedido sobre uma marca (R7). Acha o run pelo índice e confere o texto; se
   // não bater (nota editada desde a lista), o run de mesmo texto mais perto do
   // índice. Sem texto igual, `reveal` ainda vai ao índice; `resolve` não mexe
@@ -731,10 +788,12 @@ export function Editor({
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.key === 'f') {
-        // Dois editores convivem (modal da task sobre a nota): o Ctrl+F é do
-        // editor (ou do modal) que está com o foco.
-        const owner = document.activeElement?.closest('.ProseMirror, [aria-modal="true"]')
-        if (owner && editor && !owner.contains(editor.view.dom)) return
+        // Dois editores convivem (modal da task sobre a nota, nota lateral da
+        // aba Open): o Ctrl+F é do editor (ou do modal) que está com o foco;
+        // sem foco em nenhum, a nota lateral não responde.
+        if (!editor) return
+        const owner = document.activeElement?.closest('[data-note-editor], [aria-modal="true"]')
+        if (owner ? !owner.contains(editor.view.dom) : editor.view.dom.closest('[data-side-note]')) return
         e.preventDefault()
         setSearchVisible(v => !v)
       }
@@ -969,7 +1028,7 @@ export function Editor({
   const weekdayLabel = calendarDate ? getWeekdayName(calendarDate) : null
 
   return (
-    <div className={styles.editor}>
+    <div className={styles.editor} data-note-editor>
       {notebookName && (
         <span className={styles.notebookLabel}>
           {notebookName}{subjectName ? ` | ${subjectName}` : ''}
