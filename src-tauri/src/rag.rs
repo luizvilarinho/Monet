@@ -820,6 +820,26 @@ const REWRITE_MAX_KEYWORDS: usize = 8;
 // Sem reescrita, a consulta é o começo da mensagem: uma mensagem colada
 // enorme não vira consulta gigante.
 const FALLBACK_QUERY_CHARS: usize = 1000;
+// Roteador do chat do caderno (a reescrita com a árvore de títulos): notas
+// listadas na árvore (as editadas mais recentemente) e corte de cada título.
+const ROUTER_TREE_MAX_NOTES: usize = 120;
+const ROUTER_TREE_TITLE_CHARS: usize = 100;
+// Propriedades da nota na linha da árvore: corte do nome e do valor de cada
+// uma e máximo por nota.
+const ROUTER_TREE_PROPERTY_CHARS: usize = 40;
+const ROUTER_TREE_MAX_PROPERTIES: usize = 5;
+// Teto da soma das linhas das notas (as propriedades alongam as linhas):
+// acima dele, saem também as editadas há mais tempo.
+const ROUTER_TREE_MAX_CHARS: usize = 24_000;
+// Notas lidas por turno e referências aceitas da saída do modelo.
+const ROUTER_MAX_NOTES: usize = 3;
+const ROUTER_MAX_REFS: usize = 10;
+// Nota cujos chunks somam até isto vai inteira; acima, só os melhores trechos.
+const ROUTER_NOTE_FULL_CHARS: usize = 8000;
+const ROUTER_EXCERPT_CHUNKS: usize = 2;
+// A entrada do roteador (com a árvore) é maior que a da reescrita.
+const ROUTE_TIMEOUT: Duration = Duration::from_secs(5);
+const ROUTE_MAX_TOKENS: u32 = 350;
 
 // Peso por fonte: o que o usuário escreveu (notas, reuniões) vale mais que
 // documentos, e estes mais que páginas web salvas pela IA.
@@ -904,16 +924,22 @@ Return JSON with:\n\
     )
 }
 
-fn rewrite_input(history: &[RagTurn], message: &str) -> String {
+// Últimas mensagens do histórico como linhas `User:`/`Assistant:`, cortadas
+// (entrada da reescrita e do roteador).
+fn history_lines(history: &[RagTurn]) -> Vec<String> {
     let start = history.len().saturating_sub(REWRITE_HISTORY_TURNS);
-    let turns: Vec<String> = history[start..]
+    history[start..]
         .iter()
         .filter(|t| !t.content.trim().is_empty())
         .map(|t| {
             let who = if t.role == "assistant" { "Assistant" } else { "User" };
             format!("{}: {}", who, trim_to_chars(&t.content, REWRITE_TURN_CHARS))
         })
-        .collect();
+        .collect()
+}
+
+fn rewrite_input(history: &[RagTurn], message: &str) -> String {
+    let turns = history_lines(history);
     let latest = trim_to_chars(message, REWRITE_MESSAGE_CHARS);
     if turns.is_empty() {
         format!("Latest user message:\n{}", latest)
@@ -925,10 +951,18 @@ fn rewrite_input(history: &[RagTurn], message: &str) -> String {
 // Valida a saída da reescrita: consulta vazia = falha; keywords cortadas;
 // dateRange só com duas datas ISO (invertidas são trocadas).
 fn parse_rewrite(content: &str) -> Option<Rewrite> {
-    let v: serde_json::Value = serde_json::from_str(content.trim()).ok().or_else(|| {
+    parse_json_object(content).and_then(|v| rewrite_from_value(&v))
+}
+
+// Objeto JSON da resposta do modelo, aceitando texto (markdown) em volta.
+fn parse_json_object(content: &str) -> Option<serde_json::Value> {
+    serde_json::from_str(content.trim()).ok().or_else(|| {
         let (start, end) = (content.find('{')?, content.rfind('}')?);
         serde_json::from_str(content.get(start..=end)?).ok()
-    })?;
+    })
+}
+
+fn rewrite_from_value(v: &serde_json::Value) -> Option<Rewrite> {
     let query = trim_to_chars(v.get("query")?.as_str()?, REWRITE_QUERY_MAX_CHARS);
     if query.is_empty() {
         return None;
@@ -982,20 +1016,7 @@ async fn rewrite_request(
                     "properties": {
                         "query": { "type": "string" },
                         "keywords": { "type": "array", "items": { "type": "string" } },
-                        "dateRange": {
-                            "anyOf": [
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "from": { "type": "string" },
-                                        "to": { "type": "string" }
-                                    },
-                                    "required": ["from", "to"],
-                                    "additionalProperties": false
-                                },
-                                { "type": "null" }
-                            ]
-                        }
+                        "dateRange": date_range_schema()
                     },
                     "required": ["query", "keywords", "dateRange"],
                     "additionalProperties": false
@@ -1003,13 +1024,38 @@ async fn rewrite_request(
             }
         },
     });
+    parse_rewrite(&chat_completion_content(key, &body).await?)
+        .ok_or_else(|| "invalid rewrite JSON".to_string())
+}
+
+// `dateRange` dos schemas da reescrita e do roteador: período ou null.
+fn date_range_schema() -> serde_json::Value {
+    serde_json::json!({
+        "anyOf": [
+            {
+                "type": "object",
+                "properties": {
+                    "from": { "type": "string" },
+                    "to": { "type": "string" }
+                },
+                "required": ["from", "to"],
+                "additionalProperties": false
+            },
+            { "type": "null" }
+        ]
+    })
+}
+
+// POST no chat completions do OpenRouter; devolve o texto da 1ª escolha
+// (vazio sem ele).
+async fn chat_completion_content(key: &str, body: &impl Serialize) -> Result<String, String> {
     let resp = http_client()
         .post("https://openrouter.ai/api/v1/chat/completions")
         .bearer_auth(key)
         .header("Content-Type", "application/json")
         .header("HTTP-Referer", "https://monet.local")
         .header("X-Title", "Monet")
-        .json(&body)
+        .json(body)
         .send()
         .await
         .map_err(|e| format!("network error: {}", e))?;
@@ -1020,11 +1066,11 @@ async fn rewrite_request(
         .json()
         .await
         .map_err(|e| format!("invalid response: {}", e))?;
-    let content = data
+    Ok(data
         .pointer("/choices/0/message/content")
         .and_then(|c| c.as_str())
-        .unwrap_or("");
-    parse_rewrite(content).ok_or_else(|| "invalid rewrite JSON".to_string())
+        .unwrap_or("")
+        .to_string())
 }
 
 // Reescreve a mensagem (com o histórico) numa consulta autossuficiente,
@@ -1049,6 +1095,534 @@ pub async fn rewrite_query(
         }
         Err(_) => {
             eprintln!("rag rewrite timed out");
+            None
+        }
+    }
+}
+
+// --- Roteador do chat do caderno: a reescrita recebe a árvore de títulos do
+// caderno ativo e decide também se a resposta precisa de busca, de notas
+// específicas, das duas ou de nada.
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RouterSubject {
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+}
+
+// Propriedade do tipo atual da nota com valor, já como texto (o
+// `propertiesForAi` do front).
+#[derive(Clone, Deserialize)]
+pub struct RouterProperty {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub value: String,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RouterNote {
+    pub id: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub subject_id: Option<String>,
+    // Nome do tipo da nota.
+    #[serde(default, rename = "type")]
+    pub note_type: Option<String>,
+    // Na ordem do tipo.
+    #[serde(default)]
+    pub properties: Vec<RouterProperty>,
+    // `YYYY-MM-DD`: data da nota, título do Calendar ou dia de criação.
+    #[serde(default)]
+    pub date: Option<String>,
+    // `YYYY-MM-DD` da arquivação.
+    #[serde(default)]
+    pub archived: Option<String>,
+    // ms
+    #[serde(default)]
+    pub updated_at: i64,
+}
+
+// Dados da árvore montados pelo front (o texto e as referências saem daqui).
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RouterInput {
+    #[serde(default)]
+    pub notebook_name: Option<String>,
+    // Na ordem de sortOrder.
+    #[serde(default)]
+    pub subjects: Vec<RouterSubject>,
+    #[serde(default)]
+    pub notes: Vec<RouterNote>,
+    // Nota aberta E incluída no contexto.
+    #[serde(default)]
+    pub open_note_id: Option<String>,
+    #[serde(default)]
+    pub has_attachment: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TreeEntry {
+    // "n3"
+    pub note_ref: String,
+    pub note_id: String,
+    pub title: String,
+    pub open: bool,
+}
+
+// Texto da árvore enviado ao roteador e as notas listadas, na ordem das
+// referências. `list` = o mesmo texto sem as referências (a lista de notas do
+// modelo principal). `omitted` = notas fora do teto.
+pub struct RouterTree {
+    pub text: String,
+    pub list: String,
+    pub entries: Vec<TreeEntry>,
+    pub omitted: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum RouteKind {
+    None,
+    Notes,
+    Kb,
+    Both,
+    // A resposta é a lista de notas do caderno (ou parte dela): sem busca e
+    // sem leitura de nota.
+    List,
+}
+
+impl RouteKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RouteKind::None => "none",
+            RouteKind::Notes => "notes",
+            RouteKind::Kb => "kb",
+            RouteKind::Both => "both",
+            RouteKind::List => "list",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_lowercase().as_str() {
+            "none" => Some(RouteKind::None),
+            "notes" => Some(RouteKind::Notes),
+            "kb" => Some(RouteKind::Kb),
+            "both" => Some(RouteKind::Both),
+            "list" => Some(RouteKind::List),
+            _ => None,
+        }
+    }
+}
+
+// Saída validada do roteador. `rewrite` None só com a rota `none` (consulta
+// vazia).
+#[derive(Debug, PartialEq)]
+pub struct Route {
+    pub kind: RouteKind,
+    pub refs: Vec<String>,
+    pub rewrite: Option<Rewrite>,
+}
+
+// Rota depois de casar as referências com a árvore.
+#[derive(Debug, PartialEq)]
+pub struct ResolvedRoute {
+    pub kind: RouteKind,
+    pub notes: Vec<TreeEntry>,
+    pub ignored: Vec<String>,
+}
+
+// Espaços (inclusive quebras de linha) viram um, pontas aparadas, corte.
+fn clean_tree_part(s: &str, max: usize) -> String {
+    s.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(max)
+        .collect()
+}
+
+fn clean_tree_text(s: &str) -> String {
+    clean_tree_part(s, ROUTER_TREE_TITLE_CHARS)
+}
+
+// Linha de uma nota na árvore, sem a referência: título e, quando há, tipo,
+// propriedades, data, arquivada e a marca da nota aberta. Devolve também o
+// título limpo.
+fn tree_line(n: &RouterNote, open: bool) -> (String, String) {
+    let title = clean_tree_text(&n.title);
+    let title = if title.is_empty() { "Untitled".to_string() } else { title };
+    let mut parts = vec![title.clone()];
+    parts.extend(n.note_type.as_deref().map(clean_tree_text).filter(|t| !t.is_empty()));
+    let properties: Vec<String> = n
+        .properties
+        .iter()
+        .map(|p| {
+            (
+                clean_tree_part(&p.name, ROUTER_TREE_PROPERTY_CHARS),
+                clean_tree_part(&p.value, ROUTER_TREE_PROPERTY_CHARS),
+            )
+        })
+        .filter(|(name, value)| !name.is_empty() && !value.is_empty())
+        .take(ROUTER_TREE_MAX_PROPERTIES)
+        .map(|(name, value)| format!("{}: {}", name, value))
+        .collect();
+    if !properties.is_empty() {
+        parts.push(properties.join("; "));
+    }
+    parts.extend(n.date.as_deref().map(str::trim).filter(|d| !d.is_empty()).map(String::from));
+    parts.extend(
+        n.archived.as_deref().map(str::trim).filter(|d| !d.is_empty()).map(|d| format!("archived {}", d)),
+    );
+    if open {
+        parts.push("open in the editor (already in the context)".into());
+    }
+    (title, parts.join(" · "))
+}
+
+// Árvore de títulos do caderno: as notas editadas mais recentemente (até os
+// tetos de notas e de caracteres, com a nota aberta sempre dentro), agrupadas
+// por subject na ordem dos subjects, com referências `n1…nK` na ordem das
+// linhas. A lista é a mesma árvore sem as referências.
+pub fn build_tree(input: &RouterInput) -> RouterTree {
+    if input.notes.is_empty() {
+        return RouterTree { text: String::new(), list: String::new(), entries: vec![], omitted: 0 };
+    }
+    let open_id = input.open_note_id.as_deref().filter(|id| !id.is_empty());
+    let mut sorted: Vec<&RouterNote> = input.notes.iter().collect();
+    sorted.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then_with(|| a.id.cmp(&b.id)));
+    // As mais recentes até os tetos (a 1ª sempre entra); a aberta, fora
+    // deles, entra no lugar da última.
+    let mut kept: Vec<&RouterNote> = Vec::new();
+    let mut chars = 0;
+    for n in sorted.iter().take(ROUTER_TREE_MAX_NOTES) {
+        let len = tree_line(n, open_id == Some(n.id.as_str())).1.chars().count();
+        if !kept.is_empty() && chars + len > ROUTER_TREE_MAX_CHARS {
+            break;
+        }
+        chars += len;
+        kept.push(*n);
+    }
+    if let Some(open) = open_id {
+        if !kept.iter().any(|n| n.id == open) {
+            if let Some(note) = sorted.iter().find(|n| n.id == open) {
+                kept.pop();
+                kept.push(note);
+            }
+        }
+    }
+    let omitted = input.notes.len() - kept.len();
+
+    let known: HashSet<&str> = input.subjects.iter().map(|s| s.id.as_str()).collect();
+    let mut groups: Vec<(String, Vec<&RouterNote>)> = Vec::new();
+    for s in &input.subjects {
+        let notes: Vec<&RouterNote> =
+            kept.iter().filter(|n| n.subject_id.as_deref() == Some(s.id.as_str())).copied().collect();
+        if !notes.is_empty() {
+            let name = clean_tree_text(&s.name);
+            groups.push((if name.is_empty() { "Untitled subject".into() } else { name }, notes));
+        }
+    }
+    let headed = !groups.is_empty();
+    let loose: Vec<&RouterNote> = kept
+        .iter()
+        .filter(|n| !n.subject_id.as_deref().is_some_and(|id| known.contains(id)))
+        .copied()
+        .collect();
+    if !loose.is_empty() {
+        groups.push(("No subject".into(), loose));
+    }
+
+    let mut lines: Vec<String> = Vec::new();
+    let mut list_lines: Vec<String> = Vec::new();
+    let mut entries: Vec<TreeEntry> = Vec::new();
+    for (name, notes) in groups {
+        if headed {
+            lines.push(format!("## {}", name));
+            list_lines.push(format!("## {}", name));
+        }
+        for n in notes {
+            let note_ref = format!("n{}", entries.len() + 1);
+            let open = open_id == Some(n.id.as_str());
+            let (title, line) = tree_line(n, open);
+            lines.push(format!("- {}: {}", note_ref, line));
+            list_lines.push(format!("- {}", line));
+            entries.push(TreeEntry { note_ref, note_id: n.id.clone(), title, open });
+        }
+    }
+
+    let name = input.notebook_name.as_deref().map(clean_tree_text).unwrap_or_default();
+    let mut header =
+        if name.is_empty() { "Notebook".to_string() } else { format!("Notebook \"{}\"", name) };
+    header.push_str(&format!(
+        ": {} {}",
+        entries.len(),
+        if entries.len() == 1 { "note" } else { "notes" }
+    ));
+    if headed {
+        header.push_str(", grouped by subject");
+    }
+    if omitted > 0 {
+        header.push_str(&format!(" (the {} least recently edited notes are not listed)", omitted));
+    }
+    header.push(':');
+    lines.insert(0, header.clone());
+    list_lines.insert(0, header);
+    RouterTree { text: lines.join("\n"), list: list_lines.join("\n"), entries, omitted }
+}
+
+fn route_prompt(current_date: &str) -> String {
+    let day = weekday(current_date).map(|w| format!(" ({})", w)).unwrap_or_default();
+    format!(
+        "Current date: {current_date}{day}.\n\n\
+You route the latest message in a chat about one of the user's notebooks. Before the answer, the app can read notes of this notebook and search the user's knowledge base (their own notes, meeting transcripts, documents and saved web pages). You decide what the answer needs and write the search request.\n\n\
+The notebook tree lists the notes of this notebook, grouped by subject when it has subjects. Each line has the note reference and title and, when present, the note type, the properties of that type with their values (\"Name: value; Name: value\"), the date, the archive date and the mark of the note open in the editor.\n\n\
+Return JSON with:\n\
+- \"query\": one self-contained search query of at most 300 characters, in the language of the user's message. Resolve pronouns and references to earlier turns (\"it\", \"that version\", \"and in version X?\") using the conversation. Keep every specific entity: names, projects, notebooks, documents, versions, codes, dates. Drop greetings, filler and instructions about the answer itself (\"search\", \"explain step by step\", \"make a list\"), and ignore pasted text that does not help to find the information. Always fill it, whatever the route.\n\
+- \"keywords\": up to 8 exact terms likely to appear verbatim in the relevant text: proper names, project, product, notebook or file names, versions, codes, endpoints, table names, acronyms and distinctive technical terms. One term per item, 1 to 3 words, spelled as the user wrote them. Never generic words such as \"meeting\", \"rule\", \"document\", \"how\", \"reunião\", \"regra\".\n\
+- \"dateRange\": only when the message refers to a specific day or period (\"on 14/10\", \"yesterday\", \"last week\", \"in August\"): {{\"from\": \"YYYY-MM-DD\", \"to\": \"YYYY-MM-DD\"}}, inclusive. Numeric dates are day/month. A date without a year means its most recent occurrence not after the current date. Otherwise null.\n\
+- \"route\": what the answer needs.\n  \
+- \"none\": nothing beyond the conversation, the note open in the editor or the attached image or file: greetings, thanks and small talk, questions about this chat or your previous answers, requests to rewrite, translate, shorten, format or continue text that is already there, and any request about the attachment itself, such as summarizing, describing or translating it.\n  \
+- \"notes\": only when the message explicitly refers to specific notes of the tree, and those notes are enough: by title (\"the note X\"), as the daily note of a date (\"my note from yesterday\"), or as a note already discussed in this conversation.\n  \
+- \"list\": the answer is the list of this notebook's notes, or part of it, selected by type, property, subject or title, without what the notes say: listing the notes of a type, which notes have a property set to a value, what is in a subject, how many notes there are of something. The answer receives that list with the type, date and properties of each note. When the request also needs the content of those notes (such as \"and summarize what I wrote in each one\"), the route is \"notes\" with up to 3 notes of the set. A question about what the notes say on a topic is not a list: it goes to \"kb\".\n  \
+- \"kb\": every other question that needs the user's information. A title in the tree that looks related to the topic of the question is not a reference to that note: a question about a topic goes to \"kb\", because the answer can be in any note or source, and only the search finds it.\n  \
+- \"both\": the message refers to a note as in \"notes\" and also asks for information from other sources.\n  \
+When unsure, do not choose \"none\": skipping a needed search gives a wrong answer, while an unneeded search only costs a second. When unsure whether the message refers to a note, choose \"kb\"; when it does but you are unsure which note is meant, choose \"both\" with your best guesses.\n\
+- \"notes\": for \"notes\" and \"both\", the references of the chosen notes as listed in the tree (such as \"n3\"), never titles; at most 3, most relevant first. Use subject, type, properties and date to tell similar titles apart. Never choose the note marked as open in the editor: its text is already in the context (when the answer is in it, the route is \"none\"). A follow-up about a note discussed earlier points to that note again. For \"none\", \"list\" and \"kb\", an empty list.\n\n\
+When the notebook tree is not available, choose only \"none\" or \"kb\"."
+    )
+}
+
+fn route_input(history: &[RagTurn], message: &str, tree_text: &str, has_attachment: bool) -> String {
+    let mut blocks: Vec<String> = Vec::new();
+    blocks.push(if tree_text.is_empty() {
+        "Notebook tree: not available.".to_string()
+    } else {
+        format!("Notebook tree:\n{}", tree_text)
+    });
+    let turns = history_lines(history);
+    if !turns.is_empty() {
+        blocks.push(format!("Conversation so far:\n{}", turns.join("\n")));
+    }
+    let header = if has_attachment {
+        "Latest user message (an image or file is attached to it and is already in the context):"
+    } else {
+        "Latest user message:"
+    };
+    blocks.push(format!("{}\n{}", header, trim_to_chars(message, REWRITE_MESSAGE_CHARS)));
+    blocks.join("\n\n")
+}
+
+// Corpo do request do roteador em structs, que serializam na ordem de
+// declaração: um `Value` (sem `preserve_order`) ordena as chaves por nome, e o
+// modelo escreve as propriedades na ordem do schema. Aqui a consulta vem antes
+// da rota, e a rota antes das notas.
+#[derive(Serialize)]
+struct RouteBody<'a> {
+    model: &'a str,
+    messages: serde_json::Value,
+    max_tokens: u32,
+    temperature: u32,
+    response_format: RouteFormat,
+}
+
+#[derive(Serialize)]
+struct RouteFormat {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    json_schema: RouteJsonSchema,
+}
+
+#[derive(Serialize)]
+struct RouteJsonSchema {
+    name: &'static str,
+    strict: bool,
+    schema: RouteSchema,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RouteSchema {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    properties: RouteProperties,
+    required: [&'static str; 5],
+    additional_properties: bool,
+}
+
+#[derive(Serialize)]
+struct RouteProperties {
+    query: serde_json::Value,
+    keywords: serde_json::Value,
+    #[serde(rename = "dateRange")]
+    date_range: serde_json::Value,
+    route: serde_json::Value,
+    notes: serde_json::Value,
+}
+
+fn route_schema() -> RouteSchema {
+    RouteSchema {
+        kind: "object",
+        properties: RouteProperties {
+            query: serde_json::json!({ "type": "string" }),
+            keywords: serde_json::json!({ "type": "array", "items": { "type": "string" } }),
+            date_range: date_range_schema(),
+            route: serde_json::json!({ "type": "string", "enum": ["none", "notes", "list", "kb", "both"] }),
+            notes: serde_json::json!({ "type": "array", "items": { "type": "string" } }),
+        },
+        required: ["query", "keywords", "dateRange", "route", "notes"],
+        additional_properties: false,
+    }
+}
+
+fn route_body<'a>(
+    model: &'a str,
+    history: &[RagTurn],
+    message: &str,
+    current_date: &str,
+    tree_text: &str,
+    has_attachment: bool,
+) -> RouteBody<'a> {
+    RouteBody {
+        model,
+        messages: serde_json::json!([
+            { "role": "system", "content": route_prompt(current_date) },
+            { "role": "user", "content": route_input(history, message, tree_text, has_attachment) },
+        ]),
+        max_tokens: ROUTE_MAX_TOKENS,
+        temperature: 0,
+        response_format: RouteFormat {
+            kind: "json_schema",
+            json_schema: RouteJsonSchema { name: "rag_route", strict: true, schema: route_schema() },
+        },
+    }
+}
+
+// Referência da árvore como o modelo a devolveu ("[n12]", "n12: Título",
+// "N3", "7") → "n12"/"n3"/"n7"; None sem prefixo alfanumérico.
+fn normalize_ref(raw: &str) -> Option<String> {
+    let token: String = raw
+        .trim()
+        .trim_start_matches(|c: char| !c.is_alphanumeric())
+        .chars()
+        .take_while(|c| c.is_alphanumeric())
+        .collect::<String>()
+        .to_lowercase();
+    if token.is_empty() {
+        None
+    } else if token.chars().all(|c| c.is_ascii_digit()) {
+        Some(format!("n{}", token))
+    } else {
+        Some(token)
+    }
+}
+
+// Valida a saída do roteador: rota desconhecida = falha; a consulta passa
+// pelas mesmas validações da reescrita e só pode faltar na rota `none`;
+// referências normalizadas, sem repetição e cortadas.
+fn parse_route(content: &str) -> Option<Route> {
+    let v = parse_json_object(content)?;
+    let kind = RouteKind::parse(v.get("route")?.as_str()?)?;
+    let rewrite = rewrite_from_value(&v);
+    if rewrite.is_none() && kind != RouteKind::None {
+        return None;
+    }
+    let mut seen: HashSet<String> = HashSet::new();
+    let refs = v
+        .get("notes")
+        .and_then(|n| n.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|r| r.as_str())
+                .filter_map(normalize_ref)
+                .filter(|r| seen.insert(r.clone()))
+                .take(ROUTER_MAX_REFS)
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(Route { kind, refs, rewrite })
+}
+
+// Casa as referências com a árvore. Ignoradas: desconhecida, nota aberta (já
+// está no contexto), repetida e o que passar do teto. `notes` sem nenhuma
+// válida vira `none` se a nota aberta foi pedida, senão `kb`; `both` vira `kb`.
+// `notes` com nota válida vira `both`: o modelo às vezes adivinha a nota pelo
+// título numa pergunta de conteúdo, e a busca na KB cobre esse erro. Por isso
+// a rota final nunca é `notes`. `list` não lê notas (a resposta vem da lista)
+// e, sem árvore, vira `kb`.
+pub fn resolve_route(route: &Route, tree: &RouterTree) -> ResolvedRoute {
+    if matches!(route.kind, RouteKind::None | RouteKind::Kb | RouteKind::List) {
+        let kind = if route.kind == RouteKind::List && tree.entries.is_empty() { RouteKind::Kb } else { route.kind };
+        return ResolvedRoute { kind, notes: vec![], ignored: route.refs.clone() };
+    }
+    let mut notes: Vec<TreeEntry> = Vec::new();
+    let mut ignored: Vec<String> = Vec::new();
+    let mut open_asked = false;
+    for r in &route.refs {
+        match tree.entries.iter().find(|e| e.note_ref == *r) {
+            Some(e) if e.open => {
+                open_asked = true;
+                ignored.push(r.clone());
+            }
+            Some(e)
+                if notes.len() < ROUTER_MAX_NOTES && !notes.iter().any(|n| n.note_id == e.note_id) =>
+            {
+                notes.push(e.clone())
+            }
+            _ => ignored.push(r.clone()),
+        }
+    }
+    let kind = if !notes.is_empty() {
+        RouteKind::Both
+    } else if route.kind == RouteKind::Notes && open_asked {
+        RouteKind::None
+    } else {
+        RouteKind::Kb
+    };
+    ResolvedRoute { kind, notes, ignored }
+}
+
+async fn route_request(
+    key: &str,
+    model: &str,
+    history: &[RagTurn],
+    message: &str,
+    current_date: &str,
+    tree_text: &str,
+    has_attachment: bool,
+) -> Result<Route, String> {
+    let body = route_body(model, history, message, current_date, tree_text, has_attachment);
+    parse_route(&chat_completion_content(key, &body).await?)
+        .ok_or_else(|| "invalid route JSON".to_string())
+}
+
+// Roteia a mensagem (com o histórico e a árvore) e escreve a consulta. Erro,
+// timeout ou JSON inválido = None (o turno cai na busca).
+pub async fn route_query(
+    key: &str,
+    model: &str,
+    history: &[RagTurn],
+    message: &str,
+    current_date: &str,
+    tree_text: &str,
+    has_attachment: bool,
+) -> Option<Route> {
+    match tokio::time::timeout(
+        ROUTE_TIMEOUT,
+        route_request(key, model, history, message, current_date, tree_text, has_attachment),
+    )
+    .await
+    {
+        Ok(Ok(r)) => Some(r),
+        Ok(Err(e)) => {
+            eprintln!("rag router failed: {}", e);
+            None
+        }
+        Err(_) => {
+            eprintln!("rag router timed out");
             None
         }
     }
@@ -1193,6 +1767,8 @@ pub struct RagRequest {
     pub threshold: f64,
     // Filtros da tool `search_knowledge_base`; None = só o escopo.
     pub filters: Option<RagFilters>,
+    // Árvore do roteador: só o chat do caderno; None = fluxo atual.
+    pub router: Option<RouterInput>,
 }
 
 // Filtros por metadados do chunk, aplicados em SQL sobre `chunks_meta` antes
@@ -1337,6 +1913,39 @@ pub struct RagResponse {
     pub selected: Vec<RagCandidate>,
     // Tempo de cada etapa (0 = etapa pulada ou não executada).
     pub timings: RagTimings,
+    // Rota do turno do roteador; None fora dele (ou sem nada a rotear).
+    pub route: Option<RouteTrace>,
+}
+
+// Nota escolhida pelo roteador: chunks da nota inteira ou, na nota longa, só
+// os trechos (`excerpts`).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoutedNote {
+    #[serde(rename = "ref")]
+    pub note_ref: String,
+    pub note_id: String,
+    pub title: String,
+    pub rowids: Vec<i64>,
+    pub excerpts: Option<Vec<RagCandidate>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RouteTrace {
+    // Rota final (depois da resolução e do fallback); nunca `notes`.
+    pub route: &'static str,
+    // A que o modelo devolveu; None = o roteador falhou.
+    pub model_route: Option<&'static str>,
+    pub refs: Vec<String>,
+    pub ignored_refs: Vec<String>,
+    pub notes: Vec<RoutedNote>,
+    pub tree_notes: usize,
+    pub tree_omitted: usize,
+    pub tree_chars: usize,
+    // Lista das notas do caderno (a árvore sem as referências), só nas rotas
+    // finais `both`/`list`: vai ao modelo principal para os pedidos de lista.
+    pub note_list: Option<String>,
 }
 
 // Mantém os candidatos sem data e os com data no período. Só vale se algum
@@ -1384,6 +1993,9 @@ pub async fn retrieve(
     key: &str,
     req: &RagRequest,
 ) -> Result<RagResponse, String> {
+    if let (Some(router), None) = (&req.router, &req.filters) {
+        return retrieve_routed(vec_db, key, req, router).await;
+    }
     // Tempo de cada etapa do pipeline (0 = etapa pulada); vai na resposta para
     // a linha de tempos do chat.
     let mut timings = RagTimings::default();
@@ -1433,6 +2045,7 @@ pub async fn retrieve(
         candidates: vec![],
         selected: vec![],
         timings: RagTimings::default(),
+        route: None,
     };
     if !searchable {
         // Escopo com documentos, mas nenhum passou nos filtros.
@@ -1446,20 +2059,37 @@ pub async fn retrieve(
     let embedding_started = std::time::Instant::now();
     let embedding = embed_query(key, &query).await?;
     timings.embedding_ms = embedding_started.elapsed().as_millis() as u64;
+    search_scope(vec_db, key, req, doc_ids, &query, &embedding, &mut response, &mut timings).await?;
+    response.timings = timings;
+    Ok(response)
+}
+
+// Híbrida em `doc_ids`, período, rerank e seleção, gravando candidatos,
+// selecionados e flags em `response` (com os termos e o período já nela).
+// Os tempos somam em `timings`.
+async fn search_scope(
+    vec_db: &Mutex<Connection>,
+    key: &str,
+    req: &RagRequest,
+    doc_ids: &[String],
+    query: &str,
+    embedding: &[f32],
+    response: &mut RagResponse,
+    timings: &mut RagTimings,
+) -> Result<(), String> {
     let search_started = std::time::Instant::now();
     let found = {
         let conn = vec_db.lock().map_err(|e| e.to_string())?;
-        hybrid_search(&conn, doc_ids, &embedding, &response.keywords, HYBRID_K_EACH, HYBRID_POOL)?
+        hybrid_search(&conn, doc_ids, embedding, &response.keywords, HYBRID_K_EACH, HYBRID_POOL)?
     };
-    timings.search_ms = search_started.elapsed().as_millis() as u64;
+    timings.search_ms += search_started.elapsed().as_millis() as u64;
     let mut candidates: Vec<RagCandidate> = found.into_iter().map(RagCandidate::from).collect();
     if let Some(range) = &response.date_range {
         apply_date_range(&mut candidates, range);
     }
     if candidates.is_empty() {
         response.nothing_relevant = true;
-        response.timings = timings;
-        return Ok(response);
+        return Ok(());
     }
 
     let scores = if req.use_rerank {
@@ -1467,7 +2097,7 @@ pub async fn retrieve(
         let docs = rerank_documents(&candidates);
         // top_n = todos: o custo é o mesmo e o trace mostra o rerank de cada
         // candidato; a seleção corta em MAX_SELECTED.
-        let call = rerank(key, RERANK_MODEL, &query, &docs, docs.len());
+        let call = rerank(key, RERANK_MODEL, query, &docs, docs.len());
         let result = match tokio::time::timeout(RERANK_TIMEOUT, call).await {
             Ok(Ok(scores)) => Some(scores),
             Ok(Err(e)) => {
@@ -1479,7 +2109,7 @@ pub async fn retrieve(
                 None
             }
         };
-        timings.rerank_ms = rerank_started.elapsed().as_millis() as u64;
+        timings.rerank_ms += rerank_started.elapsed().as_millis() as u64;
         result
     } else {
         None
@@ -1495,8 +2125,179 @@ pub async fn retrieve(
         }
     }
     response.candidates = candidates;
+    Ok(())
+}
+
+// Turno do roteador (chat do caderno): a chamada da reescrita decide a rota e
+// escreve a consulta; as notas escolhidas vão inteiras ou, quando longas, pelos
+// trechos de uma busca restrita a cada uma; a KB só é buscada em `kb`/`both`,
+// sem as notas escolhidas. Falha do roteador = `kb` com a consulta de fallback.
+async fn retrieve_routed(
+    vec_db: &Mutex<Connection>,
+    key: &str,
+    req: &RagRequest,
+    router: &RouterInput,
+) -> Result<RagResponse, String> {
+    let mut timings = RagTimings::default();
+    let tree = build_tree(router);
+    let original = req.message.trim().to_string();
+    let mut response = RagResponse {
+        original_query: original.clone(),
+        rewritten_query: None,
+        keywords: vec![],
+        date_range: None,
+        rewrite_failed: false,
+        rerank_failed: false,
+        nothing_relevant: false,
+        candidates: vec![],
+        selected: vec![],
+        timings: RagTimings::default(),
+        route: None,
+    };
+    if original.is_empty() || (req.doc_ids.is_empty() && tree.entries.is_empty()) {
+        return Ok(response);
+    }
+
+    let route_started = std::time::Instant::now();
+    let route = route_query(
+        key,
+        &req.rewrite_model,
+        &req.history,
+        &original,
+        &req.current_date,
+        &tree.text,
+        router.has_attachment,
+    )
+    .await;
+    timings.rewrite_ms = route_started.elapsed().as_millis() as u64;
+    let (resolved, model_route, refs, rewrite) = match route {
+        Some(r) => (resolve_route(&r, &tree), Some(r.kind.as_str()), r.refs.clone(), r.rewrite),
+        None => {
+            response.rewrite_failed = true;
+            (ResolvedRoute { kind: RouteKind::Kb, notes: vec![], ignored: vec![] }, None, vec![], None)
+        }
+    };
+    let query = match &rewrite {
+        Some(r) => r.query.clone(),
+        None => fallback_query(&original),
+    };
+    response.keywords = match &rewrite {
+        _ if !req.use_fts => vec![],
+        Some(r) if !r.keywords.is_empty() => r.keywords.clone(),
+        _ => message_terms(&query),
+    };
+    if let Some(r) = rewrite {
+        response.rewritten_query = Some(r.query);
+        response.date_range = r.date_range;
+    }
+
+    let (mut notes, long_notes, kb_ids) = {
+        let conn = vec_db.lock().map_err(|e| e.to_string())?;
+        routed_notes(&conn, &resolved, &req.doc_ids)?
+    };
+
+    // Um só embedding da consulta, para os trechos das notas longas e a KB.
+    // Sem KB, a falha não derruba o turno: as notas longas vão inteiras.
+    let embedding = if !long_notes.is_empty() || !kb_ids.is_empty() {
+        let embedding_started = std::time::Instant::now();
+        let result = embed_query(key, &query).await;
+        timings.embedding_ms = embedding_started.elapsed().as_millis() as u64;
+        match result {
+            Ok(embedding) => Some(embedding),
+            Err(e) if kb_ids.is_empty() => {
+                eprintln!("rag router: note excerpts skipped (embedding failed): {}", e);
+                None
+            }
+            Err(e) => return Err(e),
+        }
+    } else {
+        None
+    };
+    if !long_notes.is_empty() {
+        let excerpts_started = std::time::Instant::now();
+        let conn = vec_db.lock().map_err(|e| e.to_string())?;
+        apply_note_excerpts(&conn, &mut notes, &long_notes, embedding.as_deref(), &response.keywords)?;
+        timings.search_ms += excerpts_started.elapsed().as_millis() as u64;
+    }
+    if let Some(embedding) = embedding.as_deref().filter(|_| !kb_ids.is_empty()) {
+        search_scope(vec_db, key, req, &kb_ids, &query, embedding, &mut response, &mut timings).await?;
+    }
+
+    let note_list =
+        (matches!(resolved.kind, RouteKind::Both | RouteKind::List) && !tree.list.is_empty()).then_some(tree.list);
+    response.route = Some(RouteTrace {
+        route: resolved.kind.as_str(),
+        model_route,
+        refs,
+        ignored_refs: resolved.ignored,
+        notes,
+        tree_notes: tree.entries.len(),
+        tree_omitted: tree.omitted,
+        tree_chars: tree.text.chars().count(),
+        note_list,
+    });
     response.timings = timings;
     Ok(response)
+}
+
+// Notas escolhidas, com os chunks delas no índice, as notas longas (índice em
+// `notes` e doc) e o escopo da KB. A soma dos chunks decide entre inteira e
+// trechos; fora do escopo ou sem chunks (índice atrasado), vai inteira, sem
+// rowids. A KB só existe em `kb`/`both`, sem as notas escolhidas (a numeração
+// [n] não repete a nota).
+fn routed_notes(
+    conn: &Connection,
+    resolved: &ResolvedRoute,
+    doc_ids: &[String],
+) -> Result<(Vec<RoutedNote>, Vec<(usize, String)>, Vec<String>), String> {
+    let mut notes: Vec<RoutedNote> = Vec::new();
+    let mut long_notes: Vec<(usize, String)> = Vec::new();
+    for e in &resolved.notes {
+        let doc = note_doc_id(&e.note_id);
+        let chunks = if doc_ids.contains(&doc) { note_chunks(conn, &doc)? } else { vec![] };
+        if chunks.iter().map(|(_, len)| len).sum::<usize>() > ROUTER_NOTE_FULL_CHARS {
+            long_notes.push((notes.len(), doc));
+        }
+        notes.push(RoutedNote {
+            note_ref: e.note_ref.clone(),
+            note_id: e.note_id.clone(),
+            title: e.title.clone(),
+            rowids: chunks.iter().map(|(rowid, _)| *rowid).collect(),
+            excerpts: None,
+        });
+    }
+    let kb_ids: Vec<String> = if matches!(resolved.kind, RouteKind::Kb | RouteKind::Both) {
+        let picked: HashSet<String> = resolved.notes.iter().map(|e| note_doc_id(&e.note_id)).collect();
+        doc_ids.iter().filter(|id| !picked.contains(*id)).cloned().collect()
+    } else {
+        vec![]
+    };
+    Ok((notes, long_notes, kb_ids))
+}
+
+// Trechos das notas longas pela busca restrita a cada uma; sem trechos (ou
+// sem embedding), só os primeiros chunks.
+fn apply_note_excerpts(
+    conn: &Connection,
+    notes: &mut [RoutedNote],
+    long_notes: &[(usize, String)],
+    embedding: Option<&[f32]>,
+    terms: &[String],
+) -> Result<(), String> {
+    for (i, doc) in long_notes {
+        let excerpts = match embedding {
+            Some(embedding) => note_excerpts(conn, doc, embedding, terms)?,
+            None => vec![],
+        };
+        let note = &mut notes[*i];
+        if excerpts.is_empty() {
+            note.rowids.truncate(ROUTER_EXCERPT_CHUNKS);
+        } else {
+            note.rowids = excerpts.iter().map(|c| c.rowid).collect();
+            note.excerpts = Some(excerpts);
+        }
+    }
+    Ok(())
 }
 
 // Chunks por rowid, na ordem pedida (reaproveitar os trechos do turno
@@ -1519,6 +2320,38 @@ pub fn get_chunks(
         .filter_map(|id| by_rowid.remove(id))
         .map(RagCandidate::from)
         .collect())
+}
+
+// Chunks de um documento no índice, na ordem: (rowid, tamanho em chars).
+fn note_chunks(conn: &Connection, doc_id: &str) -> Result<Vec<(i64, usize)>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT rowid, length(content) FROM chunks_meta WHERE document_id = ?1 ORDER BY chunk_index",
+        )
+        .map_err(|e| format!("failed to prepare note chunks lookup: {}", e))?;
+    let rows = stmt
+        .query_map(params![doc_id], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)? as usize)))
+        .map_err(|e| format!("note chunks lookup failed: {}", e))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("invalid row: {}", e))
+}
+
+// Trechos de uma nota longa: híbrida restrita a ela (preferindo trechos não
+// vizinhos), sem rerank, na ordem da nota.
+fn note_excerpts(
+    conn: &Connection,
+    doc_id: &str,
+    embedding: &[f32],
+    terms: &[String],
+) -> Result<Vec<RagCandidate>, String> {
+    let scope = [doc_id.to_string()];
+    let mut excerpts: Vec<RagCandidate> =
+        hybrid_search(conn, &scope, embedding, terms, HYBRID_K_EACH, ROUTER_EXCERPT_CHUNKS)?
+            .into_iter()
+            .map(RagCandidate::from)
+            .collect();
+    excerpts.sort_by_key(|c| c.chunk_index);
+    Ok(excerpts)
 }
 
 #[derive(Deserialize)]
@@ -1556,6 +2389,7 @@ pub(crate) async fn rag_retrieve(
     history: Vec<RagTurn>,
     rewrite_model: Option<String>,
     filters: Option<RagFilters>,
+    router: Option<RouterInput>,
 ) -> Result<RagResponse, String> {
     let key = crate::read_key(&app, "openrouter_key")
         .ok_or_else(|| "OPENROUTER_KEY_MISSING".to_string())?;
@@ -1577,6 +2411,7 @@ pub(crate) async fn rag_retrieve(
         use_rerank: true,
         threshold: RERANK_THRESHOLD,
         filters,
+        router,
     };
     retrieve(&vec_state.0, &key, &req).await
 }
@@ -2089,5 +2924,463 @@ mod tests {
         })
         .unwrap()
         .is_empty());
+    }
+
+    fn rnote(id: &str, title: &str, subject: Option<&str>, updated_at: i64) -> RouterNote {
+        RouterNote {
+            id: id.into(),
+            title: title.into(),
+            subject_id: subject.map(String::from),
+            note_type: None,
+            properties: vec![],
+            date: None,
+            archived: None,
+            updated_at,
+        }
+    }
+
+    fn rinput(
+        name: Option<&str>,
+        subjects: &[(&str, &str)],
+        notes: Vec<RouterNote>,
+        open: Option<&str>,
+    ) -> RouterInput {
+        RouterInput {
+            notebook_name: name.map(String::from),
+            subjects: subjects
+                .iter()
+                .map(|(id, name)| RouterSubject { id: id.to_string(), name: name.to_string() })
+                .collect(),
+            notes,
+            open_note_id: open.map(String::from),
+            has_attachment: false,
+        }
+    }
+
+    fn route(kind: RouteKind, refs: &[&str]) -> Route {
+        Route {
+            kind,
+            refs: strings(refs),
+            rewrite: Some(Rewrite { query: "q".into(), keywords: vec![], date_range: None }),
+        }
+    }
+
+    #[test]
+    fn route_output_is_validated() {
+        let r = parse_route(
+            r#"{"query":"resumo da nota","keywords":["Arquitetura"],"dateRange":null,"route":"notes","notes":["n2","n5"]}"#,
+        )
+        .unwrap();
+        assert_eq!(r.kind, RouteKind::Notes);
+        assert_eq!(r.refs, strings(&["n2", "n5"]));
+        let rewrite = r.rewrite.unwrap();
+        assert_eq!((rewrite.query.as_str(), rewrite.keywords), ("resumo da nota", strings(&["Arquitetura"])));
+
+        // Markdown em volta; rota com caixa e espaços.
+        let r = parse_route(
+            "```json\n{\"query\":\"q\",\"keywords\":[],\"dateRange\":null,\"route\":\" Both \",\"notes\":[]}\n```",
+        )
+        .unwrap();
+        assert_eq!(r.kind, RouteKind::Both);
+        let r = parse_route(r#"{"query":"notas do tipo X","keywords":[],"dateRange":null,"route":"LIST","notes":["n1"]}"#)
+            .unwrap();
+        assert_eq!((r.kind, r.refs), (RouteKind::List, strings(&["n1"])));
+
+        // Rota desconhecida ou ausente.
+        assert_eq!(parse_route(r#"{"query":"q","keywords":[],"dateRange":null,"route":"web","notes":[]}"#), None);
+        assert_eq!(parse_route(r#"{"query":"q","keywords":[],"dateRange":null,"notes":[]}"#), None);
+        assert_eq!(parse_route("not json"), None);
+        // Consulta vazia: falha fora do `none`.
+        assert_eq!(parse_route(r#"{"query":" ","keywords":[],"dateRange":null,"route":"kb","notes":[]}"#), None);
+        let r = parse_route(r#"{"query":"","keywords":[],"dateRange":null,"route":"none","notes":[]}"#).unwrap();
+        assert_eq!((r.kind, r.rewrite), (RouteKind::None, None));
+
+        // Referências normalizadas, sem repetição e cortadas.
+        let r = parse_route(
+            r#"{"query":"q","keywords":[],"dateRange":null,"route":"notes","notes":["[n12]","n12: Título","N3","7"," ","--"]}"#,
+        )
+        .unwrap();
+        assert_eq!(r.refs, strings(&["n12", "n3", "n7"]));
+        let many: Vec<String> = (1..=20).map(|i| format!("\"n{}\"", i)).collect();
+        let r = parse_route(&format!(
+            "{{\"query\":\"q\",\"keywords\":[],\"dateRange\":null,\"route\":\"both\",\"notes\":[{}]}}",
+            many.join(",")
+        ))
+        .unwrap();
+        assert_eq!(r.refs.len(), ROUTER_MAX_REFS);
+        assert_eq!(r.refs[0], "n1");
+    }
+
+    #[test]
+    fn route_schema_requires_every_property() {
+        let schema = serde_json::to_value(route_schema()).unwrap();
+        let mut props: Vec<&str> =
+            schema["properties"].as_object().unwrap().keys().map(String::as_str).collect();
+        let mut required: Vec<&str> =
+            schema["required"].as_array().unwrap().iter().filter_map(|v| v.as_str()).collect();
+        props.sort();
+        required.sort();
+        assert_eq!(props, required);
+        assert_eq!(schema["properties"]["route"]["enum"], serde_json::json!(["none", "notes", "list", "kb", "both"]));
+        assert_eq!(schema["properties"]["dateRange"], date_range_schema());
+        assert_eq!(schema["additionalProperties"], false);
+    }
+
+    #[test]
+    fn route_body_keeps_property_order() {
+        let body = serde_json::to_string(&route_body("m", &[], "oi", "2026-10-18", "", false)).unwrap();
+        // Propriedades do schema na ordem: a consulta antes da rota, a rota
+        // antes das notas.
+        let props = &body[body.find("\"properties\":").unwrap()..body.rfind("\"required\":").unwrap()];
+        let pos: Vec<usize> = ["query", "keywords", "dateRange", "route", "notes"]
+            .iter()
+            .map(|k| props.find(&format!("\"{}\":", k)).unwrap())
+            .collect();
+        assert!(pos.windows(2).all(|w| w[0] < w[1]), "{}", props);
+
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!((v["model"].as_str(), v["max_tokens"].as_u64()), (Some("m"), Some(ROUTE_MAX_TOKENS as u64)));
+        assert_eq!(v["temperature"], 0);
+        assert_eq!(v["messages"][0]["content"], route_prompt("2026-10-18"));
+        assert_eq!(v["messages"][1]["content"], route_input(&[], "oi", "", false));
+        let format = &v["response_format"];
+        assert_eq!((format["type"].as_str(), format["json_schema"]["name"].as_str()), (Some("json_schema"), Some("rag_route")));
+        assert_eq!(format["json_schema"]["strict"], true);
+        assert_eq!(format["json_schema"]["schema"]["type"], "object");
+    }
+
+    fn rprop(name: &str, value: &str) -> RouterProperty {
+        RouterProperty { name: name.into(), value: value.into() }
+    }
+
+    #[test]
+    fn tree_groups_by_subject_with_refs_in_order() {
+        let mut a = rnote("a", "Capítulo 3", Some("s1"), 50);
+        a.note_type = Some("Summary".into());
+        a.properties = vec![rprop("Status", "open"), rprop("Priority", "high")];
+        a.date = Some("2026-11-09".into());
+        let mut c = rnote("c", "Capítulo 3", Some("s2"), 40);
+        c.archived = Some("2026-10-30".into());
+        let notes = vec![
+            rnote("loose", "Ideias soltas", None, 90),
+            c,
+            rnote("b", "Reunião", Some("s1"), 70),
+            a,
+            rnote("gone", "Subject apagado", Some("s9"), 10),
+        ];
+        let tree = build_tree(&rinput(
+            Some("Estudos"),
+            &[("s1", "Arquitetura"), ("s2", "Leituras")],
+            notes,
+            None,
+        ));
+        assert_eq!(
+            tree.text,
+            "Notebook \"Estudos\": 5 notes, grouped by subject:\n\
+             ## Arquitetura\n\
+             - n1: Reunião\n\
+             - n2: Capítulo 3 · Summary · Status: open; Priority: high · 2026-11-09\n\
+             ## Leituras\n\
+             - n3: Capítulo 3 · archived 2026-10-30\n\
+             ## No subject\n\
+             - n4: Ideias soltas\n\
+             - n5: Subject apagado"
+        );
+        let refs: Vec<(&str, &str)> =
+            tree.entries.iter().map(|e| (e.note_ref.as_str(), e.note_id.as_str())).collect();
+        assert_eq!(refs, vec![("n1", "b"), ("n2", "a"), ("n3", "c"), ("n4", "loose"), ("n5", "gone")]);
+        assert_eq!(tree.omitted, 0);
+        // A lista é a mesma árvore, sem as referências.
+        assert_eq!(
+            tree.list,
+            "Notebook \"Estudos\": 5 notes, grouped by subject:\n\
+             ## Arquitetura\n\
+             - Reunião\n\
+             - Capítulo 3 · Summary · Status: open; Priority: high · 2026-11-09\n\
+             ## Leituras\n\
+             - Capítulo 3 · archived 2026-10-30\n\
+             ## No subject\n\
+             - Ideias soltas\n\
+             - Subject apagado"
+        );
+    }
+
+    #[test]
+    fn tree_cleans_and_caps_properties() {
+        let mut a = rnote("a", "A", None, 1);
+        a.properties = vec![
+            rprop("  Due\ndate ", " 2026-11-20 "),
+            rprop("Empty", "  "),
+            rprop("", "orphan value"),
+            rprop("Long", &"v".repeat(60)),
+            rprop("P3", "3"),
+            rprop("P4", "4"),
+            rprop("P5", "5"),
+            rprop("P6", "6"),
+        ];
+        let tree = build_tree(&rinput(None, &[], vec![a], None));
+        assert_eq!(
+            tree.text.lines().nth(1).unwrap(),
+            format!(
+                "- n1: A · Due date: 2026-11-20; Long: {}; P3: 3; P4: 4; P5: 5",
+                "v".repeat(ROUTER_TREE_PROPERTY_CHARS)
+            )
+        );
+        assert_eq!(tree.list.lines().nth(1).unwrap(), tree.text.lines().nth(1).unwrap().replacen("- n1: ", "- ", 1));
+    }
+
+    #[test]
+    fn tree_without_subjects_is_flat() {
+        // Subject sem notas não conta como grupo.
+        let notes = vec![rnote("x", "05/09/2026", None, 2), rnote("y", "06/09/2026", None, 3)];
+        let tree = build_tree(&rinput(None, &[("s1", "Vazio")], notes, None));
+        assert_eq!(tree.text, "Notebook: 2 notes:\n- n1: 06/09/2026\n- n2: 05/09/2026");
+        assert!(!tree.text.contains("##") && !tree.text.contains("grouped by subject"));
+    }
+
+    #[test]
+    fn tree_cap_keeps_recent_and_open_note() {
+        let notes: Vec<RouterNote> =
+            (0..130).map(|i| rnote(&format!("id{:03}", i), &format!("t{}", i), None, 1000 + i)).collect();
+        // A aberta é a mais antiga: entra no lugar da 120ª.
+        let tree = build_tree(&rinput(Some("Big"), &[], notes, Some("id000")));
+        assert_eq!(tree.entries.len(), ROUTER_TREE_MAX_NOTES);
+        assert_eq!(tree.omitted, 10);
+        assert_eq!(tree.entries[0].note_id, "id129");
+        let last = tree.entries.last().unwrap();
+        assert_eq!((last.note_id.as_str(), last.open), ("id000", true));
+        assert!(!tree.entries.iter().any(|e| e.note_id == "id010"));
+        assert_eq!(tree.entries.iter().filter(|e| e.open).count(), 1);
+        assert!(tree
+            .text
+            .starts_with("Notebook \"Big\": 120 notes (the 10 least recently edited notes are not listed):\n"));
+        assert!(tree.text.ends_with("- n120: t0 · open in the editor (already in the context)"));
+        // A lista mantém a contagem das omitidas e a marca da aberta.
+        assert!(tree
+            .list
+            .starts_with("Notebook \"Big\": 120 notes (the 10 least recently edited notes are not listed):\n- t129\n"));
+        assert!(tree.list.ends_with("\n- t0 · open in the editor (already in the context)"));
+        assert!(!tree.list.contains("n1:"));
+    }
+
+    #[test]
+    fn tree_char_cap_keeps_recent_and_open_note() {
+        // Linhas iguais e longas (5 propriedades no corte): o teto de
+        // caracteres corta antes do de notas.
+        let notes: Vec<RouterNote> = (0..80)
+            .map(|i| {
+                let mut n = rnote(&format!("id{:02}", i), &format!("t{:02}", i), None, 1000 + i);
+                n.properties = (0..5).map(|p| rprop(&format!("{}{}", p, "k".repeat(60)), &"v".repeat(60))).collect();
+                n
+            })
+            .collect();
+        let kept = ROUTER_TREE_MAX_CHARS / tree_line(&notes[0], false).1.chars().count();
+        assert!(kept > 1 && kept < 80);
+        // A aberta é a mais antiga: entra no lugar da última.
+        let tree = build_tree(&rinput(None, &[], notes, Some("id00")));
+        assert_eq!((tree.entries.len(), tree.omitted), (kept, 80 - kept));
+        assert_eq!(tree.entries[0].note_id, "id79");
+        assert_eq!(tree.entries[kept - 2].note_id, format!("id{:02}", 80 - kept + 1));
+        let last = tree.entries.last().unwrap();
+        assert_eq!((last.note_id.as_str(), last.open), ("id00", true));
+        assert!(tree.text.starts_with(&format!(
+            "Notebook: {} notes (the {} least recently edited notes are not listed):\n",
+            kept,
+            80 - kept
+        )));
+    }
+
+    #[test]
+    fn tree_cleans_titles() {
+        let long = "x".repeat(150);
+        let notes = vec![
+            rnote("a", "linha 1\n\n  linha 2 ", Some("s1"), 3),
+            rnote("b", &long, Some("s1"), 2),
+            rnote("c", " \n ", Some("s1"), 1),
+        ];
+        let tree = build_tree(&rinput(Some("  Meu\ncaderno "), &[("s1", "  ")], notes, None));
+        let lines: Vec<&str> = tree.text.lines().collect();
+        assert_eq!(lines[0], "Notebook \"Meu caderno\": 3 notes, grouped by subject:");
+        assert_eq!(lines[1], "## Untitled subject");
+        assert_eq!(lines[2], "- n1: linha 1 linha 2");
+        assert_eq!(lines[3], format!("- n2: {}", "x".repeat(ROUTER_TREE_TITLE_CHARS)));
+        assert_eq!(lines[4], "- n3: Untitled");
+        assert_eq!(tree.entries[2].title, "Untitled");
+    }
+
+    #[test]
+    fn empty_tree_has_no_text() {
+        let tree = build_tree(&rinput(Some("Vazio"), &[("s1", "A")], vec![], Some("x")));
+        assert!(tree.text.is_empty() && tree.list.is_empty() && tree.entries.is_empty());
+        assert_eq!(tree.omitted, 0);
+    }
+
+    #[test]
+    fn resolve_route_rules() {
+        let notes = (1..=5).map(|i| rnote(&format!("id{}", i), &format!("t{}", i), None, 10 - i)).collect();
+        // n1…n5 = id1…id5; n2 é a nota aberta.
+        let tree = build_tree(&rinput(None, &[], notes, Some("id2")));
+        assert!(tree.entries[1].open);
+
+        // `notes` com nota válida busca também na KB, como `both`.
+        let r = resolve_route(&route(RouteKind::Notes, &["n9", "n2", "n3"]), &tree);
+        assert_eq!(r.kind, RouteKind::Both);
+        assert_eq!(r.notes.iter().map(|e| e.note_id.as_str()).collect::<Vec<_>>(), vec!["id3"]);
+        assert_eq!(r.ignored, strings(&["n9", "n2"]));
+
+        // Só a aberta: `notes` vira `none`; `both`, `kb`.
+        assert_eq!(resolve_route(&route(RouteKind::Notes, &["n2"]), &tree).kind, RouteKind::None);
+        assert_eq!(resolve_route(&route(RouteKind::Both, &["n2"]), &tree).kind, RouteKind::Kb);
+        // Nenhuma válida.
+        assert_eq!(resolve_route(&route(RouteKind::Notes, &["n42"]), &tree).kind, RouteKind::Kb);
+        assert_eq!(resolve_route(&route(RouteKind::Both, &[]), &tree).kind, RouteKind::Kb);
+
+        // Repetida e teto de 3.
+        let r = resolve_route(&route(RouteKind::Both, &["n1", "n1", "n3", "n4", "n5"]), &tree);
+        assert_eq!(r.kind, RouteKind::Both);
+        assert_eq!(r.notes.iter().map(|e| e.note_ref.as_str()).collect::<Vec<_>>(), vec!["n1", "n3", "n4"]);
+        assert_eq!(r.ignored, strings(&["n1", "n5"]));
+
+        // `kb` e `none`: todas as referências vão para `ignored`.
+        let r = resolve_route(&route(RouteKind::Kb, &["n1"]), &tree);
+        assert_eq!((r.kind, r.notes.len(), r.ignored), (RouteKind::Kb, 0, strings(&["n1"])));
+        assert_eq!(resolve_route(&route(RouteKind::None, &["n3"]), &tree).ignored, strings(&["n3"]));
+
+        // `list`: sem rede de segurança e sem notas lidas; as referências são
+        // ignoradas. Sem árvore, vira `kb`.
+        let r = resolve_route(&route(RouteKind::List, &["n1", "n3"]), &tree);
+        assert_eq!((r.kind, r.notes.len(), r.ignored), (RouteKind::List, 0, strings(&["n1", "n3"])));
+        let empty = build_tree(&rinput(None, &[], vec![], None));
+        assert_eq!(resolve_route(&route(RouteKind::List, &[]), &empty).kind, RouteKind::Kb);
+    }
+
+    #[test]
+    fn route_input_blocks() {
+        assert_eq!(
+            route_input(&[], "oi", "", false),
+            "Notebook tree: not available.\n\nLatest user message:\noi"
+        );
+        let history = vec![turn("user", "explique X"), turn("assistant", "X é Y.")];
+        assert_eq!(
+            route_input(&history, "e Z?", "Notebook: 1 note:\n- n1: A", true),
+            "Notebook tree:\nNotebook: 1 note:\n- n1: A\n\n\
+             Conversation so far:\nUser: explique X\nAssistant: X é Y.\n\n\
+             Latest user message (an image or file is attached to it and is already in the context):\ne Z?"
+        );
+        let long = "z".repeat(5000);
+        assert_eq!(route_input(&[], &long, "", false).matches('z').count(), REWRITE_MESSAGE_CHARS);
+    }
+
+    #[test]
+    fn route_prompt_starts_with_date() {
+        let p = route_prompt("2026-10-18");
+        assert!(p.starts_with("Current date: 2026-10-18 (Sunday).\n\nYou route the latest message"));
+        assert!(p.contains("{\"from\": \"YYYY-MM-DD\", \"to\": \"YYYY-MM-DD\"}"));
+        assert!(p.contains("\n  - \"none\": nothing beyond the conversation"));
+        assert!(p.contains("\n  - \"list\": the answer is the list of this notebook's notes"));
+        assert!(p.ends_with("choose only \"none\" or \"kb\"."));
+    }
+
+    #[test]
+    fn note_chunks_are_ordered() {
+        let conn = test_db(&[
+            ("note:a", 2, "", "ccc"),
+            ("note:b", 0, "", "other"),
+            ("note:a", 0, "", "a"),
+            ("note:a", 1, "", "bébé"),
+        ]);
+        assert_eq!(note_chunks(&conn, "note:a").unwrap(), vec![(3, 1), (4, 4), (1, 3)]);
+        assert!(note_chunks(&conn, "note:z").unwrap().is_empty());
+    }
+
+    #[test]
+    fn note_excerpts_stay_in_the_note() {
+        let conn = test_db(&[
+            ("note:a", 0, "[A · note]", "kubernetes rollout"),
+            ("note:a", 1, "[A · note]", "alpha"),
+            ("note:a", 2, "[A · note]", "beta"),
+            ("note:a", 3, "[A · note]", "gamma"),
+            ("note:b", 0, "[B · note]", "kubernetes elsewhere"),
+        ]);
+        // Consulta = embedding do chunk 2; o termo FTS está no chunk 0 (e na
+        // nota b, fora do escopo).
+        let got = note_excerpts(&conn, "note:a", &unit(2), &strings(&["kubernetes"])).unwrap();
+        assert!(got.len() <= ROUTER_EXCERPT_CHUNKS);
+        assert!(got.iter().all(|c| c.document_id == "note:a"));
+        assert_eq!(got.iter().map(|c| c.chunk_index).collect::<Vec<_>>(), vec![0, 2]);
+    }
+
+    // Índice do turno roteado: nota curta (rowid 1), nota longa (rowids 2–4,
+    // acima do teto da nota inteira), nota fora do escopo (rowid 5) e um
+    // documento da KB (rowid 6).
+    fn routed_db() -> Connection {
+        let half = "x".repeat(ROUTER_NOTE_FULL_CHARS / 2 + 1);
+        test_db(&[
+            ("note:short", 0, "[S · note]", "short"),
+            ("note:long", 0, "[L · note]", half.as_str()),
+            ("note:long", 1, "[L · note]", half.as_str()),
+            ("note:long", 2, "[L · note]", "tail"),
+            ("note:outside", 0, "[O · note]", "outside"),
+            ("doc:kb", 0, "[K · document]", "kb"),
+        ])
+    }
+
+    fn resolved(kind: RouteKind, ids: &[&str]) -> ResolvedRoute {
+        let notes = ids
+            .iter()
+            .enumerate()
+            .map(|(i, id)| TreeEntry {
+                note_ref: format!("n{}", i + 1),
+                note_id: id.to_string(),
+                title: id.to_string(),
+                open: false,
+            })
+            .collect();
+        ResolvedRoute { kind, notes, ignored: vec![] }
+    }
+
+    #[test]
+    fn routed_notes_split_whole_and_long_and_scope_the_kb() {
+        let conn = routed_db();
+        let scope = strings(&["note:short", "note:long", "doc:kb"]);
+        let (notes, long, kb) =
+            routed_notes(&conn, &resolved(RouteKind::Both, &["short", "long", "outside"]), &scope).unwrap();
+        let rowids: Vec<(&str, Vec<i64>)> = notes.iter().map(|n| (n.note_id.as_str(), n.rowids.clone())).collect();
+        // A nota fora do escopo vai inteira, sem rowids.
+        assert_eq!(rowids, vec![("short", vec![1]), ("long", vec![2, 3, 4]), ("outside", vec![])]);
+        assert!(notes.iter().all(|n| n.excerpts.is_none()));
+        assert_eq!(long, vec![(1, "note:long".to_string())]);
+        // A KB fica sem as notas escolhidas.
+        assert_eq!(kb, strings(&["doc:kb"]));
+
+        let (notes, long, kb) = routed_notes(&conn, &resolved(RouteKind::Kb, &[]), &scope).unwrap();
+        assert!(notes.is_empty() && long.is_empty());
+        assert_eq!(kb, scope);
+        // `none` e `list`: sem notas e sem KB, logo sem embedding.
+        for kind in [RouteKind::None, RouteKind::List] {
+            let (notes, long, kb) = routed_notes(&conn, &resolved(kind, &[]), &scope).unwrap();
+            assert!(notes.is_empty() && long.is_empty() && kb.is_empty());
+        }
+    }
+
+    #[test]
+    fn long_note_goes_by_excerpts() {
+        let conn = routed_db();
+        let scope = strings(&["note:short", "note:long", "doc:kb"]);
+        let route = resolved(RouteKind::Both, &["short", "long"]);
+        let (mut notes, long, _) = routed_notes(&conn, &route, &scope).unwrap();
+        // Consulta = embedding do último chunk da nota longa.
+        apply_note_excerpts(&conn, &mut notes, &long, Some(&unit(3)), &[]).unwrap();
+        let excerpts = notes[1].excerpts.as_ref().expect("excerpts of the long note");
+        assert!(!excerpts.is_empty() && excerpts.len() <= ROUTER_EXCERPT_CHUNKS);
+        assert!(excerpts.iter().all(|c| c.document_id == "note:long"));
+        assert!(excerpts.iter().any(|c| c.rowid == 4));
+        assert_eq!(notes[1].rowids, excerpts.iter().map(|c| c.rowid).collect::<Vec<_>>());
+        assert_eq!((notes[0].rowids.clone(), notes[0].excerpts.is_none()), (vec![1], true));
+
+        // Sem embedding: só os primeiros chunks, sem trechos.
+        let (mut notes, long, _) = routed_notes(&conn, &route, &scope).unwrap();
+        apply_note_excerpts(&conn, &mut notes, &long, None, &[]).unwrap();
+        assert_eq!((notes[1].rowids.clone(), notes[1].excerpts.is_none()), (vec![2, 3], true));
     }
 }

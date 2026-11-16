@@ -44,6 +44,12 @@ export type NoteSummary = Pick<
   'id' | 'notebookId' | 'title' | 'date' | 'createdAt' | 'updatedAt' | 'archivedAt'
 >
 
+// Linha leve da nota, sem conteúdo (árvore do roteador do RAG).
+export type NoteOutline = Pick<
+  Note,
+  'id' | 'notebookId' | 'subjectId' | 'title' | 'typeId' | 'properties' | 'date' | 'createdAt' | 'updatedAt' | 'archivedAt'
+>
+
 // Id de um status do registro `task_statuses`: built-ins (todo/doing/done/
 // dropped) ou custom (`st_<id>`).
 export type TaskStatus = string

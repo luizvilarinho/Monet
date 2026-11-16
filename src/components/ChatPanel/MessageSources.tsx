@@ -31,22 +31,27 @@ function seconds(ms: number): string {
   return `${(ms / 1000).toFixed(2)}s`
 }
 
-// Linha compacta: RAG com as etapas medidas, 1ª palavra, rodadas de tool e o
-// total do turno. Etapa pulada não entra.
+// Linha compacta: RAG com as etapas medidas (no turno do roteador, a rota e
+// as notas lidas), 1ª palavra, rodadas de tool e o total do turno. Etapa
+// pulada não entra.
 function timingLine(t: ChatTimings): string {
   const parts: string[] = []
   const stages = [
-    t.rewriteMs !== undefined && `rewrite ${seconds(t.rewriteMs)}`,
+    t.rewriteMs !== undefined && `${t.route ? 'route' : 'rewrite'} ${seconds(t.rewriteMs)}`,
     t.embeddingMs !== undefined && `embed ${seconds(t.embeddingMs)}`,
     t.searchMs !== undefined && `search ${seconds(t.searchMs)}`,
     t.rerankMs !== undefined && `rerank ${seconds(t.rerankMs)}`,
+    t.readMs !== undefined && `read ${seconds(t.readMs)}`,
   ].filter((s): s is string => !!s)
   if (t.ragSkipped) parts.push('RAG skipped')
   else if (stages.length > 0) {
-    const total = (t.rewriteMs ?? 0) + (t.embeddingMs ?? 0) + (t.searchMs ?? 0) + (t.rerankMs ?? 0)
+    const total =
+      (t.rewriteMs ?? 0) + (t.embeddingMs ?? 0) + (t.searchMs ?? 0) + (t.rerankMs ?? 0) + (t.readMs ?? 0)
     parts.push(`RAG ${seconds(total)} (${stages.join(' · ')})`)
   }
-  if (t.rewriteFailed) parts.push('rewrite failed')
+  if (t.route) parts.push(`route: ${t.route}`)
+  if (t.routeNotes && t.routeNotes.length > 0) parts.push(`read: ${t.routeNotes.join(', ')}`)
+  if (t.rewriteFailed) parts.push(t.route ? 'router failed' : 'rewrite failed')
   if (t.rerankFailed) parts.push('rerank failed')
   if (t.firstWordMs !== undefined) parts.push(`first word ${seconds(t.firstWordMs)}`)
   if (t.toolRounds > 0) parts.push(`${t.toolRounds} tool round${t.toolRounds > 1 ? 's' : ''}`)

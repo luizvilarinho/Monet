@@ -228,7 +228,7 @@ export async function loadEmbedResponses(
   }
 }
 
-export function noteDate(note: Note): string | null {
+export function noteDate(note: Pick<Note, 'date' | 'title'>): string | null {
   if (note.date) {
     const [y, m, d] = note.date.split('-').map(Number)
     const date = new Date(y, m - 1, d)

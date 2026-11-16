@@ -25,8 +25,10 @@ function candidateLabel(c: RagCandidate): string {
 export function RagInspector({ trace }: RagInspectorProps) {
   // Posição de cada trecho enviado, na ordem em que foi para o modelo.
   const sentOrder = new Map(trace.selected.map((c, i) => [c.rowid, i + 1]))
+  // Turno do roteador (chat do caderno): saída do roteador e tamanho da árvore.
+  const route = trace.route
   const flags = [
-    trace.rewriteFailed && 'Rewrite failed (original query used)',
+    trace.rewriteFailed && (route ? 'Router failed (fallback search)' : 'Rewrite failed (original query used)'),
     trace.rerankFailed && 'Rerank failed (RRF order used)',
     trace.nothingRelevant && 'Nothing relevant (all below threshold)',
   ].filter((f): f is string => !!f)
@@ -44,6 +46,45 @@ export function RagInspector({ trace }: RagInspectorProps) {
           <dd>{trace.keywords.length > 0 ? trace.keywords.join(', ') : '—'}</dd>
           <dt>Period</dt>
           <dd>{trace.dateRange ? `${trace.dateRange.from} → ${trace.dateRange.to}` : '—'}</dd>
+          {route && (
+            <>
+              <dt>Route</dt>
+              <dd>
+                {route.route}
+                {route.modelRoute === null
+                  ? ' (router failed: fallback search)'
+                  : route.modelRoute !== route.route
+                    ? ` (model: ${route.modelRoute})`
+                    : ''}
+              </dd>
+              <dt>Notes</dt>
+              <dd>
+                {route.notes.length > 0
+                  ? route.notes
+                      .map((n) => `${n.ref} ${n.title}${n.excerpts ? ` (excerpts: ${n.excerpts.length})` : ''}`)
+                      .join(' · ')
+                  : '—'}
+              </dd>
+              {route.ignoredRefs.length > 0 && (
+                <>
+                  <dt>Ignored refs</dt>
+                  <dd>{route.ignoredRefs.join(', ')}</dd>
+                </>
+              )}
+              <dt>Tree</dt>
+              <dd>
+                {route.treeNotes === 0
+                  ? 'not sent'
+                  : `${route.treeNotes} notes · ${route.treeChars} chars${route.treeOmitted > 0 ? ` (${route.treeOmitted} not listed)` : ''}`}
+              </dd>
+              <dt>Note list</dt>
+              <dd>
+                {route.noteList
+                  ? `sent to the model · ${route.treeNotes} notes · ${route.noteList.length} chars`
+                  : 'not sent'}
+              </dd>
+            </>
+          )}
         </dl>
         {flags.length > 0 && (
           <ul className={styles.flags}>
@@ -52,9 +93,11 @@ export function RagInspector({ trace }: RagInspectorProps) {
             ))}
           </ul>
         )}
-        <p className={styles.count}>
-          {trace.selected.length} of {trace.candidates.length} candidates sent to the model
-        </p>
+        {route?.route !== 'none' && route?.route !== 'list' && (
+          <p className={styles.count}>
+            {trace.selected.length} of {trace.candidates.length} candidates sent to the model
+          </p>
+        )}
         {trace.candidates.length > 0 && (
           <div className={styles.tableWrap}>
             <table className={styles.table}>

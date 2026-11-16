@@ -94,7 +94,7 @@ export function listPropertyValues(
 // Propriedades do tipo atual com valor, como texto para a IA (data ISO,
 // checkbox yes/no). As guardadas de outro tipo não entram.
 export function propertiesForAi(
-  note: Note,
+  note: Pick<Note, 'typeId' | 'properties'>,
   defs: MetadataDef[]
 ): Array<{ name: string; value: string }> {
   const out: Array<{ name: string; value: string }> = []

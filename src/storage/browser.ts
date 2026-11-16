@@ -7,6 +7,7 @@ import type {
   MetadataValue,
   Note,
   Notebook,
+  NoteOutline,
   NoteSummary,
   NoteType,
   Subject,
@@ -64,6 +65,9 @@ export class BrowserStorage implements StorageAdapter {
   }
   async getNoteSummaries(): Promise<NoteSummary[]> {
     throw new Error('BrowserStorage.getNoteSummaries not implemented')
+  }
+  async getNotebookNoteOutline(_notebookId: string): Promise<NoteOutline[]> {
+    throw new Error('BrowserStorage.getNotebookNoteOutline not implemented')
   }
   async getMarkedNotes(): Promise<Note[]> {
     throw new Error('BrowserStorage.getMarkedNotes not implemented')

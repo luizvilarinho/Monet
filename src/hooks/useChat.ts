@@ -19,6 +19,7 @@ import type { AiModel, Note, Notebook, Task, TaskStatusDef } from '../types'
 import {
   queryTasksText,
   taskLineForAi,
+  tasksSubjectId,
   todosProgressByNote,
   type ChecklistProgress,
   type TasksQuery,
@@ -36,6 +37,7 @@ import {
 } from '../lib/documents'
 import {
   buildRagContext,
+  buildRoutedContext,
   citeSource,
   RAG_DETAILED_KEY,
   RAG_REWRITE_MODEL_KEY,
@@ -49,14 +51,19 @@ import {
   type RagCandidate,
   type RagFilters,
   type RagResponse,
+  type RagRouteKind,
+  type RagRoutedNote,
   type RagScope,
   type RagSource,
+  type RoutedNoteRead,
+  type RouterInput,
+  type RouterNote,
 } from '../lib/rag'
 import { CALENDAR_NOTEBOOK_ID, dateKeyFromMs, getWeekdayName } from '../lib/calendar'
 import { cleanNoteContentForAi, loadEmbedResponses, noteDate } from '../lib/noteFileText'
 import { formatNoteDateMatch, matchNoteDates, type NoteDateMatch } from '../lib/agenda'
 import { extractNoteMarks, markLabelKey, summarizeMarks, type NoteMarkEntry } from '../lib/noteMarks'
-import { isTodosNote } from '../lib/noteTypes'
+import { isTodosNote, propertiesForAi } from '../lib/noteTypes'
 import { findChatAgent, GENERAL_AGENT_ID, type AgentContextInput } from '../lib/agents/chat'
 import { ocrTextsForContent } from '../lib/imageOcr'
 import { storage } from '../storage'
@@ -272,6 +279,12 @@ export interface ChatTimings {
   rerankMs?: number
   rewriteFailed?: boolean
   rerankFailed?: boolean
+  // Turno do roteador (chat do caderno): rota final.
+  route?: RagRouteKind
+  // Notas lidas no turno (título curto; " (excerpts)" = só os trechos).
+  routeNotes?: string[]
+  // Leitura das notas escolhidas no storage.
+  readMs?: number
   firstWordMs?: number
   toolRounds: number
   totalMs?: number
@@ -1527,6 +1540,8 @@ const GET_NOTE_BODY_BUDGET = 4000
 const GET_NOTE_TOTAL_BUDGET = 6000
 const GET_NOTE_MAX_TASKS = 40
 const GET_NOTE_CANDIDATES = 5
+// Corpo de uma nota escolhida pelo roteador do RAG, quando vai inteira.
+const ROUTED_NOTE_MAX_CHARS = 8000
 
 function foldText(s: string): string {
   return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim()
@@ -1672,26 +1687,7 @@ async function getNoteText(title: string, notebook: string | undefined): Promise
   const date = noteDate(note)
   if (date) lines.push(`Date: ${date}`)
   if (note.tags.length > 0) lines.push(`Tags: ${note.tags.join(', ')}`)
-  if (isTodosNote(note)) {
-    const [allTasks, statuses] = await Promise.all([
-      storage.getTasks(),
-      storage.getTaskStatuses(),
-    ])
-    const today = dateKeyFromMs(Date.now())
-    const tasks = allTasks.filter(
-      (t) => t.parentNoteId === note.id && !disabled.has(t.notebookId)
-    )
-    const progress = todosProgressByNote(tasks, today).get(note.id)
-    lines.push(`Tasks: ${progress?.done ?? 0}/${progress?.total ?? 0} done`)
-    for (const t of tasks.slice(0, GET_NOTE_MAX_TASKS)) {
-      lines.push(
-        taskLineForAi(t, today, notebookName.get(t.notebookId) ?? null, null, statuses, null)
-      )
-    }
-    if (tasks.length > GET_NOTE_MAX_TASKS) {
-      lines.push(`(${tasks.length - GET_NOTE_MAX_TASKS} more not shown)`)
-    }
-  }
+  if (isTodosNote(note)) lines.push(...(await todosTaskLines(note, disabled, notebookName)))
   const visibleTitles = new Map(visible.map((n) => [n.id, n.title]))
   const [embeds, imageTexts] = await Promise.all([
     loadEmbedResponses([note.content]),
@@ -1714,6 +1710,153 @@ async function getNoteText(title: string, notebook: string | undefined): Promise
     body = room > marker.length ? `${body.slice(0, room - marker.length)}${marker}` : ''
   }
   return body ? `${header}\n\n${body}` : header
+}
+
+// Tasks de uma TODOS como linhas para a IA (get_note e notas lidas pelo
+// roteador do RAG): progresso, as primeiras tasks e quantas ficaram de fora.
+async function todosTaskLines(
+  note: Note,
+  disabled: Set<string>,
+  notebookName: Map<string, string>
+): Promise<string[]> {
+  const [allTasks, statuses] = await Promise.all([
+    storage.getTasks(),
+    storage.getTaskStatuses(),
+  ])
+  const today = dateKeyFromMs(Date.now())
+  const tasks = allTasks.filter(
+    (t) => t.parentNoteId === note.id && !disabled.has(t.notebookId)
+  )
+  const progress = todosProgressByNote(tasks, today).get(note.id)
+  const lines = [`Tasks: ${progress?.done ?? 0}/${progress?.total ?? 0} done`]
+  for (const t of tasks.slice(0, GET_NOTE_MAX_TASKS)) {
+    lines.push(
+      taskLineForAi(t, today, notebookName.get(t.notebookId) ?? null, null, statuses, null)
+    )
+  }
+  if (tasks.length > GET_NOTE_MAX_TASKS) {
+    lines.push(`(${tasks.length - GET_NOTE_MAX_TASKS} more not shown)`)
+  }
+  return lines
+}
+
+// ─── Roteador do RAG (chat do caderno) ──────────────────────────────────────
+// Dados da árvore de títulos do caderno ativo (o backend monta o texto e as
+// referências), com o tipo e as propriedades de cada nota: sem os corpos de
+// task (subject escondido) e sem a nota aberta retirada do contexto pelo chip;
+// a aberta e incluída fica, marcada. Caderno com a IA desligada: sem árvore.
+async function loadRouterInput(args: {
+  notebookId: string
+  openNoteId: string | null
+  excludedNoteId: string | null
+  hasAttachment: boolean
+}): Promise<RouterInput> {
+  const { notebookId, openNoteId, excludedNoteId, hasAttachment } = args
+  const [notebooks, disabledIds] = await Promise.all([
+    storage.getNotebooks(),
+    notesIndexGetDisabledNotebooks(),
+  ])
+  if (disabledIds.includes(notebookId)) {
+    return { notebookName: null, subjects: [], notes: [], openNoteId: null, hasAttachment }
+  }
+  const [subjects, outline, types, defs] = await Promise.all([
+    storage.getSubjects(notebookId),
+    storage.getNotebookNoteOutline(notebookId),
+    storage.getNoteTypes(),
+    storage.getMetadataDefs(),
+  ])
+  const tasksSubject = tasksSubjectId(notebookId)
+  const typeName = new Map(types.map((t) => [t.id, t.name]))
+  const notes: RouterNote[] = outline
+    .filter((n) => n.subjectId !== tasksSubject)
+    .filter((n) => n.id !== excludedNoteId || n.id === openNoteId)
+    .map((n) => ({
+      id: n.id,
+      title: n.title,
+      subjectId: n.subjectId ?? null,
+      type: (n.typeId && typeName.get(n.typeId)) || null,
+      properties: propertiesForAi(n, defs),
+      date: noteDate(n)?.slice(0, 10) ?? dateKeyFromMs(n.createdAt),
+      archived: n.archivedAt ? dateKeyFromMs(n.archivedAt) : null,
+      updatedAt: n.updatedAt,
+    }))
+  return {
+    notebookName: notebooks.find((nb) => nb.id === notebookId)?.name ?? null,
+    subjects: subjects.filter((s) => s.id !== tasksSubject).map((s) => ({ id: s.id, name: s.name })),
+    notes,
+    openNoteId: openNoteId && notes.some((n) => n.id === openNoteId) ? openNoteId : null,
+    hasAttachment,
+  }
+}
+
+// Notas escolhidas pelo roteador, relidas no storage na hora (conteúdo atual,
+// mesma limpeza do get_note): inteiras (cortadas) ou só os trechos que o
+// backend achou na nota longa, mais as tasks de uma TODOS, com o tipo e as
+// propriedades. Pula a nota que sumiu, mudou de caderno ou ficou sem texto e
+// sem propriedades; caderno desligado = nenhuma.
+async function readRoutedNotes(notes: RagRoutedNote[], notebookId: string): Promise<RoutedNoteRead[]> {
+  const [notebooks, summaries, disabledIds, types, defs] = await Promise.all([
+    storage.getNotebooks(),
+    storage.getNoteSummaries(),
+    notesIndexGetDisabledNotebooks(),
+    storage.getNoteTypes(),
+    storage.getMetadataDefs(),
+  ])
+  const disabled = new Set(disabledIds)
+  if (disabled.has(notebookId)) return []
+  const notebookName = new Map(notebooks.map((nb) => [nb.id, nb.name]))
+  const typeName = new Map(types.map((t) => [t.id, t.name]))
+  // Só títulos de caderno ligado: nota linkada de caderno desligado sai "untitled".
+  const visibleTitles = new Map(
+    summaries
+      .filter((n) => !n.notebookId || !disabled.has(n.notebookId))
+      .map((n) => [n.id, n.title])
+  )
+  const folder = `Notes — ${notebookName.get(notebookId) ?? 'Untitled'}`
+  const loaded = await Promise.all(notes.map((rn) => storage.getNote(rn.noteId)))
+  const picked = notes
+    .map((rn, i) => ({ rn, note: loaded[i] }))
+    .filter((p): p is { rn: RagRoutedNote; note: Note } => !!p.note && p.note.notebookId === notebookId)
+  const contents = picked.filter((p) => !p.rn.excerpts?.length).map((p) => p.note.content)
+  const [embeds, imageTexts] = await Promise.all([
+    loadEmbedResponses(contents),
+    ocrTextsForContent(contents.join('\n')),
+  ])
+  const reads: RoutedNoteRead[] = []
+  for (const { rn, note } of picked) {
+    const excerptTexts = (rn.excerpts ?? []).map((c) => c.content)
+    const excerpts = excerptTexts.length > 0
+    let text: string
+    if (excerpts) {
+      text = excerptTexts.join('\n…\n')
+    } else {
+      // Sem resolveLinkedNoteContent: 1 nível não expande (privacidade).
+      text = cleanNoteContentForAi(note.content, {
+        resolveNoteTitle: (id) => visibleTitles.get(id),
+        resolveEmbed: (id) => embeds.get(id),
+        resolveImageText: (url) => imageTexts.get(url),
+      }).trim()
+      if (text.length > ROUTED_NOTE_MAX_CHARS) text = `${text.slice(0, ROUTED_NOTE_MAX_CHARS)} [truncated]`
+    }
+    if (isTodosNote(note)) {
+      text = `${text}\n\n${(await todosTaskLines(note, disabled, notebookName)).join('\n')}`.trim()
+    }
+    const properties = propertiesForAi(note, defs)
+    if (!text && properties.length === 0) continue
+    reads.push({
+      documentId: `note:${note.id}`,
+      title: note.title.trim() || 'Untitled',
+      type: (note.typeId && typeName.get(note.typeId)) || undefined,
+      properties,
+      date: noteDate(note)?.slice(0, 10) ?? dateKeyFromMs(note.createdAt),
+      folder,
+      archived: note.archivedAt ? dateKeyFromMs(note.archivedAt) : undefined,
+      rowids: rn.rowids,
+      excerpts,
+      text,
+    })
+  }
+  return reads
 }
 
 // ─── Tool "Notes" (search_marks) ────────────────────────────────────────────
@@ -3356,6 +3499,9 @@ export function useChat(
       // aberta (ja enviada como contexto efemero).
       // Gating: agradecimento nao busca; "continue"/"tenta de novo" reaproveita
       // os trechos do turno anterior (rowids em ragSources).
+      // No chat do caderno com o General e modelo com tools, a reescrita é o
+      // roteador (árvore de títulos do caderno) e as notas escolhidas entram
+      // como fontes [n].
       // O escopo também alimenta a tool search_knowledge_base (null = pasta
       // sem documentos visíveis: nem RAG nem tool). Agente sem RAG = null.
       // Agente com caderno próprio no turno (tutor com escopo da mensagem): o
@@ -3390,6 +3536,12 @@ export function useChat(
           console.warn('RAG scope in chat failed (continuing without):', err)
         }
       }
+      // Só com tools: num `none`/`list` errado, a tool search_knowledge_base é a
+      // rede de segurança; sem ela, o turno fica com a reescrita e a busca.
+      const routerTurn =
+        mode === 'notes' && turnAgent.id === GENERAL_AGENT_ID && supportsTools && !!ragScope?.notebookId
+      // true = a busca automática na KB rodou (ou o turno não é do roteador): define a descrição da tool.
+      let kbAutoSearched = !routerTurn
       // Agente com RAG: o contexto diz se a tool search_knowledge_base existe no turno.
       if (agentContext && turnAgent.context.rag) {
         agentContext += `\nKnowledge base search: ${supportsTools && ragScope ? 'available' : 'not available'}.`
@@ -3403,6 +3555,8 @@ export function useChat(
       let ragSystemMessage: ChatMessageInput | null = null
       // Fontes do RAG automático; as tools de busca continuam a numeração.
       let turnRagSources: RagSource[] = []
+      // A mensagem do RAG é só o aviso "nada relevante" (sai se uma tool trouxer fontes).
+      let ragOnlyNothingFound = false
       const ragGateResult = trimmed ? ragGate(trimmed) : 'skip'
       if (ragScope && ragGateResult === 'skip') patchTimings(assistantId, { ragSkipped: true })
       if (ragScope && ragGateResult !== 'skip') {
@@ -3426,28 +3580,77 @@ export function useChat(
           // "search", ou "reuse" sem trechos (sem fontes antes, ou rowids
           // que sumiram numa reindexacao).
           if (selected.length === 0) {
+            let router: RouterInput | null = null
+            if (routerTurn && ragScope.notebookId) {
+              try {
+                router = await loadRouterInput({
+                  notebookId: ragScope.notebookId,
+                  openNoteId: opts?.noteContext?.noteId ?? null,
+                  excludedNoteId: opts?.excludeNoteId ?? null,
+                  hasAttachment: !!imageDataUrl || (documents?.length ?? 0) > 0,
+                })
+              } catch (err) {
+                console.warn('RAG router tree failed (searching without it):', err)
+              }
+            }
             trace = await ragRetrieve(
               ragScope,
               ragMessage(trimmed),
               ragHistory(currentConv?.messages ?? []),
-              localStorage.getItem(RAG_REWRITE_MODEL_KEY)
+              localStorage.getItem(RAG_REWRITE_MODEL_KEY),
+              null,
+              router
             )
             selected = trace.selected
-            // Tempos das etapas do RAG (independente do modo detalhado).
+            // Tempos das etapas do RAG (independente do modo detalhado). No
+            // turno do roteador, etapa pulada (0) fica fora da linha.
+            const routed = !!trace.route
+            const stageMs = (ms: number) => (routed && ms === 0 ? undefined : ms)
             patchTimings(assistantId, {
               rewriteMs: trace.timings.rewriteMs,
-              embeddingMs: trace.timings.embeddingMs,
-              searchMs: trace.timings.searchMs,
-              rerankMs: trace.timings.rerankMs,
+              embeddingMs: stageMs(trace.timings.embeddingMs),
+              searchMs: stageMs(trace.timings.searchMs),
+              rerankMs: stageMs(trace.timings.rerankMs),
               rewriteFailed: trace.rewriteFailed,
               rerankFailed: trace.rerankFailed,
+              route: trace.route?.route,
             })
             if (import.meta.env.DEV) console.log('[useChat] RAG retrieve:', trace)
+          }
+          if (routerTurn) {
+            kbAutoSearched = !trace?.route || trace.route.route === 'kb' || trace.route.route === 'both'
+          }
+          // Notas escolhidas pelo roteador, lidas no storage antes da resposta.
+          // Stop durante o roteador: sem leitura (o turno termina depois do bloco).
+          let reads: RoutedNoteRead[] = []
+          if (trace?.route?.notes.length && ragScope.notebookId && !toolCancelledRef.current) {
+            const readStarted = Date.now()
+            try {
+              reads = await readRoutedNotes(trace.route.notes, ragScope.notebookId)
+            } catch (err) {
+              console.warn('RAG routed notes read failed (continuing without):', err)
+            }
+            patchTimings(assistantId, {
+              readMs: Date.now() - readStarted,
+              routeNotes: reads.map((r) => `${r.title.slice(0, 40)}${r.excerpts ? ' (excerpts)' : ''}`),
+            })
           }
           const hasOtherContext = !!ephemeralSystemMessage
           let ragSources: RagSource[] | undefined
           let ragNothingFound: true | undefined
-          if (selected.length > 0) {
+          // Lista das notas do caderno (rotas finais both/list), antes das notas lidas e dos trechos.
+          const noteList = trace?.route?.noteList ?? null
+          if (reads.length > 0 || noteList) {
+            const ctx = buildRoutedContext(reads, selected, !!trace?.nothingRelevant, hasOtherContext, noteList)
+            ragSystemMessage = { role: 'system', content: ctx.content }
+            if (ctx.sources.length > 0) {
+              ragSources = ctx.sources
+              turnRagSources = ctx.sources
+            } else if (trace?.nothingRelevant) {
+              // Só a lista, e a busca da KB não achou nada (o aviso vai no contexto).
+              ragNothingFound = true
+            }
+          } else if (selected.length > 0) {
             const ctx = buildRagContext(selected, hasOtherContext)
             ragSystemMessage = { role: 'system', content: ctx.content }
             ragSources = ctx.sources
@@ -3455,6 +3658,7 @@ export function useChat(
           } else if (trace?.nothingRelevant) {
             ragSystemMessage = { role: 'system', content: ragNothingFoundMessage(hasOtherContext) }
             ragNothingFound = true
+            ragOnlyNothingFound = true
           }
           if (ragSources || ragNothingFound) {
             updateMessages(targetId, (msgs) =>
@@ -3722,7 +3926,9 @@ export function useChat(
           type: 'function',
           function: {
             name: 'search_knowledge_base',
-            description: "Search the user's knowledge base (the notes, meeting transcripts, documents and saved web pages visible in this chat folder). Excerpts for the user's message were already retrieved automatically and are in the context when relevant: call this only when they are missing or insufficient, or when the user asks to search a specific type of source, period or notebook/folder.",
+            description: kbAutoSearched
+              ? "Search the user's knowledge base (the notes, meeting transcripts, documents and saved web pages visible in this chat folder). Excerpts for the user's message were already retrieved automatically and are in the context when relevant: call this only when they are missing or insufficient, or when the user asks to search a specific type of source, period or notebook/folder."
+              : "Search the user's knowledge base (the notes, meeting transcripts, documents and saved web pages visible in this chat folder). No search was run automatically for this message: call this when the answer needs information from those sources that is not already in the context, or when the user asks to search a specific type of source, period or notebook/folder.",
             parameters: {
               type: 'object',
               properties: {
@@ -4060,7 +4266,7 @@ export function useChat(
               ...systemMessages,
               ...(ephemeralSystemMessage ? [ephemeralSystemMessage] : []),
               // O aviso "nada relevante" do RAG automático sai se uma tool trouxe fontes.
-              ...(ragSystemMessage && !(toolFound && turnRagSources.length === 0) ? [ragSystemMessage] : []),
+              ...(ragSystemMessage && !(toolFound && ragOnlyNothingFound) ? [ragSystemMessage] : []),
               ...(toolSearchMessage ? [toolSearchMessage] : []),
               ...(toolTasksMessage ? [toolTasksMessage] : []),
               ...(toolKbMessage ? [toolKbMessage] : []),

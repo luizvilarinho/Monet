@@ -7,6 +7,7 @@ import type {
   MetadataValue,
   Note,
   Notebook,
+  NoteOutline,
   NoteSummary,
   NoteType,
   Subject,
@@ -47,6 +48,9 @@ export interface StorageAdapter {
   // título é uma data no período.
   getNotesByDateRange(from: string, to: string): Promise<Note[]>
   getNoteSummaries(): Promise<NoteSummary[]>
+  // Notas de um caderno sem o conteúdo, editadas mais recentemente primeiro
+  // (árvore do roteador do RAG).
+  getNotebookNoteOutline(notebookId: string): Promise<NoteOutline[]>
   // Notas com alguma marca de atenção (`<mark data-mark>` no conteúdo): a
   // tool search_marks não carrega o conteúdo de todas as notas.
   getMarkedNotes(): Promise<Note[]>

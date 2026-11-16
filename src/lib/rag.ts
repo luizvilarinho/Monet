@@ -62,6 +62,53 @@ export interface RagResponse {
   candidates: RagCandidate[]
   selected: RagCandidate[]
   timings: RagTimings
+  // Turno do roteador (chat do caderno); null fora dele.
+  route?: RagRouteTrace | null
+}
+
+// Dados da árvore do roteador (o Rust monta o texto e as referências).
+export interface RouterNote {
+  id: string
+  title: string
+  subjectId: string | null
+  type: string | null // nome do tipo da nota
+  properties: Array<{ name: string; value: string }> // do tipo atual, com valor (propertiesForAi)
+  date: string | null // YYYY-MM-DD: data da nota, título do Calendar ou dia de criação
+  archived: string | null // YYYY-MM-DD da arquivação
+  updatedAt: number // ms
+}
+
+export interface RouterInput {
+  notebookName: string | null
+  subjects: Array<{ id: string; name: string }> // na ordem de sortOrder
+  notes: RouterNote[]
+  openNoteId: string | null // nota aberta E incluída no contexto
+  hasAttachment: boolean
+}
+
+// 'list': a resposta vem da lista de notas do caderno (sem busca e sem leitura).
+export type RagRouteKind = 'none' | 'notes' | 'list' | 'kb' | 'both'
+
+export interface RagRoutedNote {
+  ref: string // "n3"
+  noteId: string
+  title: string
+  rowids: number[] // chunks da nota inteira, ou os dos trechos
+  excerpts: RagCandidate[] | null // não-null = nota longa: usar só estes trechos
+}
+
+export interface RagRouteTrace {
+  route: RagRouteKind // rota final (depois da resolução e do fallback); nunca 'notes', que vira 'both'
+  modelRoute: RagRouteKind | null // a que o modelo devolveu; null = roteador falhou
+  refs: string[]
+  ignoredRefs: string[]
+  notes: RagRoutedNote[]
+  treeNotes: number
+  treeOmitted: number
+  treeChars: number
+  // Lista das notas do caderno (a árvore sem as referências), só nas rotas
+  // finais both/list; vai ao modelo principal.
+  noteList: string | null
 }
 
 // Filtros da tool `search_knowledge_base` (vazio = sem filtro).
@@ -78,6 +125,7 @@ export async function ragRetrieve(
   history: RagTurn[],
   rewriteModel?: string | null,
   filters?: RagFilters | null,
+  router?: RouterInput | null,
 ): Promise<RagResponse> {
   return invoke<RagResponse>('rag_retrieve', {
     scope: {
@@ -90,6 +138,7 @@ export async function ragRetrieve(
     history,
     rewriteModel: rewriteModel ?? null,
     filters: filters ?? null,
+    router: router ?? null,
   })
 }
 
@@ -246,6 +295,93 @@ export function buildRagContext(
     (hasOtherContext ? OTHER_CONTEXT_NOTE : '') +
     `\n\n${blocks.join('\n---\n')}`
   return { content, sources }
+}
+
+// Nota escolhida pelo roteador, lida no turno: inteira ou só os trechos.
+export interface RoutedNoteRead {
+  documentId: string // note:<id>
+  title: string
+  type?: string // nome do tipo da nota
+  properties: Array<{ name: string; value: string }> // do tipo atual, com valor
+  date?: string
+  folder?: string // "Notes — <caderno>"
+  archived?: string
+  rowids: number[]
+  excerpts: boolean
+  text: string
+}
+
+const NOTE_LIST_FORMAT =
+  'List of the notes in this notebook, without their text: each line has the title and, when present, the note type, the properties of that type ("Name: value; Name: value"), the date and the archive date.'
+const NOTE_LIST_INCOMPLETE = ' When the list says some notes are not listed, say that the answer may be incomplete.'
+
+// Mensagem de sistema do turno do roteador. A lista de notas do caderno
+// (rotas finais both/list) vem primeiro; depois as notas escolhidas e, com
+// busca, os trechos da KB, na mesma numeração [n]. Sem nota lida, a busca
+// que não achou nada leva o aviso de "nada relevante". Só a lista (rota
+// list): a resposta sai dela, sem fontes e sem o aviso.
+export function buildRoutedContext(
+  notes: RoutedNoteRead[],
+  kbChunks: RagCandidate[],
+  kbNothingRelevant: boolean,
+  hasOtherContext: boolean,
+  noteList: string | null,
+): { content: string; sources: RagSource[] } {
+  const sources: RagSource[] = []
+  const parts: string[] = []
+  if (noteList) {
+    const use =
+      notes.length > 0 || kbChunks.length > 0
+        ? ' Answer from this list the questions about which notes exist and the requests to list notes by type, property, subject or title; the notes and knowledge base excerpts below are supporting material. Items that appear only in this list are not sources: cite as [n] only the notes and excerpts below.'
+        : ' Answer from this list: it covers the questions about which notes exist and the requests to list notes by type, property, subject or title. Its items are not sources: do not cite them as [n].'
+    parts.push(`${NOTE_LIST_FORMAT}${use}${NOTE_LIST_INCOMPLETE}\n\n${noteList}`)
+  }
+  if (notes.length > 0) {
+    const noteBlocks = notes.map((note) => {
+      const n = citeSource(sources, {
+        documentId: note.documentId,
+        title: note.title,
+        kind: 'note',
+        date: note.date,
+        folder: note.folder,
+        rowids: note.rowids,
+      })
+      const properties = note.properties.map((p) => `${p.name}: ${p.value}`).join('; ')
+      const header = [
+        note.title,
+        'note',
+        note.type && `type ${note.type}`,
+        properties,
+        note.date,
+        note.archived && `archived ${note.archived}`,
+        note.folder,
+      ]
+        .filter(Boolean)
+        .join(' · ')
+      return `[${n}] [${header}]${note.excerpts ? ' (excerpts)' : ''}${note.text ? `\n${note.text}` : ''}`
+    })
+    let intro =
+      "Notes from this notebook picked for the user's message: each one in full, or only its passages most relevant to the message when the note is long (marked \"excerpts\"). " +
+      'Cite them inline as [n] right after the claim they support. Use only what they say when you describe these notes.'
+    if (kbChunks.length === 0 && kbNothingRelevant) {
+      intro +=
+        ' The search in the rest of the knowledge base found nothing relevant to this message.' +
+        (hasOtherContext ? OTHER_CONTEXT_NOTE : '')
+    }
+    parts.push(`${intro}\n\n${noteBlocks.join('\n---\n')}`)
+  } else if (kbChunks.length === 0 && kbNothingRelevant) {
+    // Rota both sem nota lida: a busca na KB rodou e não achou nada.
+    parts.push(ragNothingFoundMessage(hasOtherContext))
+  }
+  if (kbChunks.length > 0) {
+    parts.push(
+      'Knowledge base excerpts (the numbering continues). Cite them inline as [n] right after the claim they support. ' +
+        "Use only what they say; if neither the notes above nor these excerpts answer the question, say you did not find it in the user's documents." +
+        (hasOtherContext ? OTHER_CONTEXT_NOTE : '') +
+        `\n\n${ragChunkBlocks(kbChunks, sources).join('\n---\n')}`
+    )
+  }
+  return { content: parts.join('\n\n'), sources }
 }
 
 export function ragNothingFoundMessage(hasOtherContext: boolean): string {

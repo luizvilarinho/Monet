@@ -12,6 +12,7 @@ import type {
   MetadataValue,
   Note,
   Notebook,
+  NoteOutline,
   NoteSummary,
   NoteType,
   SelectOption,
@@ -1014,6 +1015,28 @@ export class TauriStorage implements StorageAdapter {
       id: r.id,
       notebookId: r.notebook_id,
       title: r.title,
+      date: r.date ?? null,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+      archivedAt: r.archived_at ?? null,
+    }))
+  }
+
+  async getNotebookNoteOutline(notebookId: string): Promise<NoteOutline[]> {
+    const db = await this.db()
+    // Banco novo pode não ter ainda `notes.type_id`/`properties`/`archived_at`.
+    await this.ensureNotesColumns(db)
+    const rows = await db.select<Array<Omit<NoteRow, 'content' | 'tags'>>>(
+      'SELECT id, notebook_id, subject_id, title, type_id, properties, date, created_at, updated_at, archived_at FROM notes WHERE notebook_id = $1 ORDER BY updated_at DESC',
+      [notebookId]
+    )
+    return rows.map((r) => ({
+      id: r.id,
+      notebookId: r.notebook_id,
+      subjectId: r.subject_id ?? null,
+      title: r.title,
+      typeId: r.type_id ?? null,
+      properties: parseMetadata(r.properties ?? null),
       date: r.date ?? null,
       createdAt: r.created_at,
       updatedAt: r.updated_at,

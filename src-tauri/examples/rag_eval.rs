@@ -10,6 +10,7 @@
 //   cargo run --example rag_eval -- run --label hybrid --pipeline hybrid
 //   cargo run --example rag_eval -- run --pipeline full [--no-rewrite] [--no-fts] [--no-rerank] [--threshold 0.2] [--rewrite-model <id>]
 //   cargo run --example rag_eval -- compare-rerank --models cohere/rerank-4-fast,voyageai/rerank-3-lite
+//   cargo run --example rag_eval -- route [--rewrite-model <id>] [--notebook <id>] [--named <n>]
 //
 // Pipelines: `baseline` = KNN top-5 da pergunta (chat atual); `hybrid` = KNN +
 // FTS5 fundidos por RRF (rag::hybrid_search), termos FTS tirados da pergunta;
@@ -23,6 +24,10 @@
 // manda os mesmos candidatos a cada modelo; as métricas saem por limiar, com o
 // mesmo `select_reranked` do app. `offtopic.json` (opcional, na pasta do eval)
 // tem perguntas fora da base: mede quantas o limiar recusa ("nada relevante").
+//
+// `route` passa as perguntas, mensagens de conversa, pedidos por nome e
+// pedidos de lista (gerados dos tipos do caderno) pelo roteador do chat do
+// caderno e só imprime (ids, rotas, contagens e tempos).
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -30,7 +35,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use monet_lib::rag;
-use rusqlite::{params, Connection, OpenFlags};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -650,6 +655,7 @@ fn run(paths: &DevPaths, args: &[String]) -> Result<(), String> {
                     use_rerank: opts.rerank,
                     threshold: opts.threshold,
                     filters: None,
+                    router: None,
                 };
                 let started = Instant::now();
                 let resp = tauri::async_runtime::block_on(rag::retrieve(&vec_db, k, &req))
@@ -968,6 +974,7 @@ fn compare_rerank(paths: &DevPaths, args: &[String]) -> Result<(), String> {
             use_rerank: false,
             threshold: rag::RERANK_THRESHOLD,
             filters: None,
+            router: None,
         };
         let resp = tauri::async_runtime::block_on(rag::retrieve(&vec_db, &key, &req))
             .map_err(|e| format!("question {}: {}", input.id, e))?;
@@ -1119,6 +1126,475 @@ fn compare_rerank(paths: &DevPaths, args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+// Mensagens de conversa do `route` (esperado `none`): genéricas, sem dado do
+// usuário. (mensagem, anexo, com o histórico fictício)
+const ROUTE_CHAT_MESSAGES: [(&str, bool, bool); 8] = [
+    ("oi", false, false),
+    ("bom dia! tudo bem?", false, false),
+    ("muito obrigado, isso me ajudou bastante", false, false),
+    ("hello, what can you do?", false, false),
+    ("resuma o anexo", true, false),
+    ("pode deixar isso mais curto?", false, true),
+    ("traduza sua resposta para o inglês", false, true),
+    ("transforme isso em uma lista de tópicos", false, true),
+];
+const ROUTE_CHAT_HISTORY: [(&str, &str); 2] = [
+    ("user", "explique o que é idempotência"),
+    (
+        "assistant",
+        "Idempotência é a propriedade de uma operação que, repetida várias vezes, produz o mesmo resultado que uma única execução. Exemplo: um PUT que grava o mesmo recurso.",
+    ),
+];
+const ROUTE_NAMED_DEFAULT: usize = 6;
+// Pedidos de lista do `route` (esperado `list`): os tipos do caderno com mais
+// notas com propriedade, cada um nas frases-modelo de `list_messages`.
+const ROUTE_LIST_TYPES: usize = 3;
+
+// Frases-modelo dos pedidos de lista, com o tipo e o par propriedade/valor
+// mais comum dele, lidos do caderno na hora (nenhum dado fica no código).
+fn list_messages(note_type: &str, property: &str, value: &str) -> [String; 3] {
+    [
+        format!("liste as notas do tipo {}", note_type),
+        format!("quais notas {} estão com {} {}?", note_type, property, value),
+        format!("list all my {} notes", note_type),
+    ]
+}
+
+// Propriedade de tipo de nota (`metadata_defs`, scope 'note').
+struct NoteDef {
+    id: String,
+    name: String,
+    kind: String,
+    // id da opção → nome (select).
+    options: HashMap<String, String>,
+}
+
+// Propriedades por tipo de nota, na ordem do tipo.
+fn note_defs(conn: &Connection) -> Result<HashMap<String, Vec<NoteDef>>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, name, type, note_type_id, options FROM metadata_defs
+             WHERE scope = 'note' AND note_type_id IS NOT NULL
+             ORDER BY sort_order, id",
+        )
+        .map_err(|e| format!("failed to prepare note properties query: {}", e))?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, Option<String>>(4)?,
+            ))
+        })
+        .map_err(|e| format!("note properties query failed: {}", e))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("invalid row: {}", e))?;
+    let mut by_type: HashMap<String, Vec<NoteDef>> = HashMap::new();
+    for (id, name, kind, type_id, options) in rows {
+        let options = options
+            .and_then(|o| serde_json::from_str::<Vec<serde_json::Value>>(&o).ok())
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|o| Some((o.get("id")?.as_str()?.to_string(), o.get("name")?.as_str()?.to_string())))
+            .collect();
+        by_type.entry(type_id).or_default().push(NoteDef { id, name, kind, options });
+    }
+    Ok(by_type)
+}
+
+// Propriedades do tipo atual com valor, como o `propertiesForAi` do front:
+// checkbox yes/no, select pelo nome da opção (opção apagada fica de fora).
+fn properties_for_ai(defs: &[NoteDef], raw: Option<&str>) -> Vec<rag::RouterProperty> {
+    let values = raw
+        .and_then(|r| serde_json::from_str::<serde_json::Value>(r).ok())
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default();
+    defs.iter()
+        .filter_map(|d| {
+            let text = match (d.kind.as_str(), values.get(&d.id)?) {
+                (_, serde_json::Value::Null) => return None,
+                (_, serde_json::Value::String(s)) if s.is_empty() => return None,
+                ("checkbox", v) => (if v.as_bool() == Some(true) { "yes" } else { "no" }).to_string(),
+                ("select", v) => d.options.get(v.as_str()?)?.clone(),
+                (_, serde_json::Value::String(s)) => s.clone(),
+                (_, serde_json::Value::Number(n)) => n.to_string(),
+                (_, serde_json::Value::Bool(b)) => b.to_string(),
+                _ => return None,
+            };
+            (!text.is_empty()).then(|| rag::RouterProperty { name: d.name.clone(), value: text })
+        })
+        .collect()
+}
+
+// Entrada do roteador de um caderno, só com SQL (o app a monta no front):
+// subjects por sort_order sem o das tasks, notas sem os corpos de task e sem a
+// nota excluída, data da nota, do título do Calendar ou do dia de criação,
+// propriedades do tipo atual com valor.
+// Sem caderno, ou com a indexação de notas desligada = entrada vazia.
+fn router_input(
+    conn: &Connection,
+    notebook_id: &str,
+    exclude_note_id: Option<&str>,
+) -> Result<rag::RouterInput, String> {
+    let mut input = rag::RouterInput {
+        notebook_name: None,
+        subjects: vec![],
+        notes: vec![],
+        open_note_id: None,
+        has_attachment: false,
+    };
+    if notebook_id.is_empty() {
+        return Ok(input);
+    }
+    let disabled: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM notebook_notes_index_disabled WHERE notebook_id = ?1)",
+            params![notebook_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| format!("failed to read the notebook settings: {}", e))?;
+    if disabled {
+        return Ok(input);
+    }
+    input.notebook_name = conn
+        .query_row("SELECT name FROM notebooks WHERE id = ?1", params![notebook_id], |r| r.get(0))
+        .optional()
+        .map_err(|e| format!("failed to read the notebook: {}", e))?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, name FROM subjects
+             WHERE notebook_id = ?1 AND id <> ('tasks-' || ?1)
+             ORDER BY sort_order",
+        )
+        .map_err(|e| format!("failed to prepare subjects query: {}", e))?;
+    input.subjects = stmt
+        .query_map(params![notebook_id], |r| Ok(rag::RouterSubject { id: r.get(0)?, name: r.get(1)? }))
+        .map_err(|e| format!("subjects query failed: {}", e))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("invalid row: {}", e))?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT n.id, n.title, n.subject_id, t.name,
+                    CASE WHEN n.date IS NOT NULL AND n.date <> '' THEN substr(n.date, 1, 10)
+                         WHEN trim(n.title) GLOB '[0-3][0-9]/[0-1][0-9]/[0-9][0-9][0-9][0-9]'
+                           THEN substr(trim(n.title), 7, 4) || '-' || substr(trim(n.title), 4, 2) || '-' || substr(trim(n.title), 1, 2)
+                         ELSE date(n.created_at / 1000, 'unixepoch', 'localtime') END,
+                    date(n.archived_at / 1000, 'unixepoch', 'localtime'),
+                    n.updated_at, n.type_id, n.properties
+             FROM notes n LEFT JOIN note_types t ON t.id = n.type_id
+             WHERE n.notebook_id = ?1
+               AND n.subject_id IS NOT ('tasks-' || ?1)
+               AND (?2 IS NULL OR n.id <> ?2)",
+        )
+        .map_err(|e| format!("failed to prepare notes query: {}", e))?;
+    let defs = note_defs(conn)?;
+    input.notes = stmt
+        .query_map(params![notebook_id, exclude_note_id], |r| {
+            let type_id: Option<String> = r.get(7)?;
+            let properties: Option<String> = r.get(8)?;
+            Ok(rag::RouterNote {
+                id: r.get(0)?,
+                title: r.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                subject_id: r.get(2)?,
+                note_type: r.get(3)?,
+                properties: type_id
+                    .and_then(|t| defs.get(&t))
+                    .map(|d| properties_for_ai(d, properties.as_deref()))
+                    .unwrap_or_default(),
+                date: r.get(4)?,
+                archived: r.get(5)?,
+                updated_at: r.get(6)?,
+            })
+        })
+        .map_err(|e| format!("notes query failed: {}", e))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("invalid row: {}", e))?;
+    Ok(input)
+}
+
+// Caderno padrão do `route`: o com mais notas (fora corpos de task), sem o
+// Calendar e sem os de indexação desligada.
+fn default_route_notebook(conn: &Connection) -> Result<String, String> {
+    conn.query_row(
+        "SELECT n.notebook_id FROM notes n JOIN notebooks b ON b.id = n.notebook_id
+         WHERE n.notebook_id <> 'calendar'
+           AND n.notebook_id NOT IN (SELECT notebook_id FROM notebook_notes_index_disabled)
+           AND n.subject_id IS NOT ('tasks-' || n.notebook_id)
+         GROUP BY n.notebook_id
+         ORDER BY COUNT(*) DESC, n.notebook_id
+         LIMIT 1",
+        [],
+        |r| r.get(0),
+    )
+    .map_err(|e| format!("no notebook with notes for `route`: {}", e))
+}
+
+// Uma mensagem pelo roteador: rota resolvida (falha = `kb`, como o app),
+// rota do modelo (None = falhou) e o tempo da chamada.
+fn route_once(
+    key: &str,
+    model: &str,
+    history: &[rag::RagTurn],
+    message: &str,
+    current_date: &str,
+    tree: &rag::RouterTree,
+    has_attachment: bool,
+) -> (rag::ResolvedRoute, Option<&'static str>, u128) {
+    let started = Instant::now();
+    let route = tauri::async_runtime::block_on(rag::route_query(
+        key,
+        model,
+        history,
+        message.trim(),
+        current_date,
+        &tree.text,
+        has_attachment,
+    ));
+    let ms = started.elapsed().as_millis();
+    match route {
+        Some(r) => (rag::resolve_route(&r, tree), Some(r.kind.as_str()), ms),
+        None => (
+            rag::ResolvedRoute { kind: rag::RouteKind::Kb, notes: vec![], ignored: vec![] },
+            None,
+            ms,
+        ),
+    }
+}
+
+// `route`: perguntas do golden set, mensagens de conversa e pedidos por nome
+// pelo roteador do chat do caderno. Só imprime (ids, rotas, contagens e
+// tempos, nunca títulos nem perguntas); nenhum golden pode cair em `none`.
+fn route(paths: &DevPaths, args: &[String]) -> Result<(), String> {
+    let model = arg_value(args, "--rewrite-model").unwrap_or_else(|| rag::DEFAULT_REWRITE_MODEL.to_string());
+    let named_n = match arg_value(args, "--named") {
+        Some(v) => v.parse::<usize>().map_err(|_| format!("invalid --named: {}", v))?,
+        None => ROUTE_NAMED_DEFAULT,
+    };
+    let gs = paths.load_goldenset()?;
+    let doc_conn = paths.open_doc_db()?;
+    let today = rag::local_today(&doc_conn)?;
+    let key = paths.read_key()?;
+    let notebook = match arg_value(args, "--notebook") {
+        Some(nb) => nb,
+        None => default_route_notebook(&doc_conn)?,
+    };
+    let kinds = ["none", "notes", "list", "kb", "both"];
+
+    // Golden set.
+    println!("== golden · model {}", model);
+    let mut by_route: HashMap<&str, usize> = HashMap::new();
+    let mut by_route_class: std::collections::BTreeMap<(String, &str), usize> = std::collections::BTreeMap::new();
+    let (mut failed, mut picked, mut picked_expected) = (0usize, 0usize, 0usize);
+    let mut none_ids: Vec<&str> = Vec::new();
+    // `list` também pula a KB: acompanhado como o `none`, sem reprovar.
+    let mut list_ids: Vec<&str> = Vec::new();
+    let (mut route_ms, mut rewrite_ms): (Vec<u128>, Vec<u128>) = (vec![], vec![]);
+    for q in gs.questions.iter().filter(|q| q.confirmed) {
+        let notebook_id = q.scope.notebook_id.as_deref().unwrap_or("");
+        let input = router_input(&doc_conn, notebook_id, q.scope.exclude_note_id.as_deref())?;
+        let tree = rag::build_tree(&input);
+        let history: Vec<rag::RagTurn> = q
+            .history
+            .iter()
+            .map(|t| rag::RagTurn { role: t.role.clone(), content: t.content.clone() })
+            .collect();
+        let date = q.current_date.clone().unwrap_or_else(|| today.clone());
+        let (resolved, model_route, ms) = route_once(&key, &model, &history, &q.question, &date, &tree, false);
+        let started = Instant::now();
+        let _ = tauri::async_runtime::block_on(rag::rewrite_query(&key, &model, &history, q.question.trim(), &date));
+        let rw_ms = started.elapsed().as_millis();
+        let expected: HashSet<String> = q.expected.iter().map(|e| e.document_id.clone()).collect();
+        let hits = resolved.notes.iter().filter(|e| expected.contains(&format!("note:{}", e.note_id))).count();
+        let kind = resolved.kind.as_str();
+        println!(
+            "{} {} route={} model={} notes={} expectedPicked={}/{} route_ms={} rewrite_ms={}",
+            q.id,
+            q.class,
+            kind,
+            model_route.unwrap_or("failed"),
+            resolved.notes.len(),
+            hits,
+            resolved.notes.len(),
+            ms,
+            rw_ms
+        );
+        *by_route.entry(kind).or_default() += 1;
+        *by_route_class.entry((q.class.clone(), kind)).or_default() += 1;
+        failed += model_route.is_none() as usize;
+        picked += resolved.notes.len();
+        picked_expected += hits;
+        if resolved.kind == rag::RouteKind::None {
+            none_ids.push(&q.id);
+        }
+        if resolved.kind == rag::RouteKind::List {
+            list_ids.push(&q.id);
+        }
+        route_ms.push(ms);
+        rewrite_ms.push(rw_ms);
+    }
+    let golden_n = route_ms.len();
+    println!("\n-- golden summary ({} questions)", golden_n);
+    println!(
+        "routes: {}",
+        kinds.iter().map(|k| format!("{}={}", k, by_route.get(k).copied().unwrap_or(0))).collect::<Vec<_>>().join(" ")
+    );
+    for class in CLASSES {
+        let counts: Vec<String> = kinds
+            .iter()
+            .filter_map(|k| by_route_class.get(&(class.to_string(), *k)).map(|n| format!("{}={}", k, n)))
+            .collect();
+        if !counts.is_empty() {
+            println!("  {:<12} {}", class, counts.join(" "));
+        }
+    }
+    println!("router failed: {}", failed);
+    println!("routed to none: {}", if none_ids.is_empty() { "none".to_string() } else { none_ids.join(", ") });
+    println!("routed to list: {}", if list_ids.is_empty() { "none".to_string() } else { list_ids.join(", ") });
+    println!("expectedPicked: {}/{} picked notes are expected documents", picked_expected, picked);
+    let stats = |v: &[u128]| (v.iter().sum::<u128>() as f64 / v.len().max(1) as f64, v.iter().copied().max().unwrap_or(0));
+    let ((route_avg, route_max), (rewrite_avg, rewrite_max)) = (stats(&route_ms), stats(&rewrite_ms));
+    println!(
+        "latency: router avg {:.0} ms, max {} ms · rewrite avg {:.0} ms, max {} ms",
+        route_avg, route_max, rewrite_avg, rewrite_max
+    );
+
+    // Conversa (esperado `none`), com a árvore do caderno.
+    let input = router_input(&doc_conn, &notebook, None)?;
+    let tree = rag::build_tree(&input);
+    let chat_history: Vec<rag::RagTurn> = ROUTE_CHAT_HISTORY
+        .iter()
+        .map(|(role, content)| rag::RagTurn { role: role.to_string(), content: content.to_string() })
+        .collect();
+    println!("\n== chat · notebook {} · tree {} notes, {} chars", notebook, tree.entries.len(), tree.text.chars().count());
+    let mut chat_routes: Vec<String> = Vec::new();
+    for (i, (message, attachment, with_history)) in ROUTE_CHAT_MESSAGES.iter().enumerate() {
+        let history: &[rag::RagTurn] = if *with_history { &chat_history } else { &[] };
+        let (resolved, model_route, ms) = route_once(&key, &model, history, message, &today, &tree, *attachment);
+        println!(
+            "chat#{} route={} model={} notes={} route_ms={}",
+            i + 1,
+            resolved.kind.as_str(),
+            model_route.unwrap_or("failed"),
+            resolved.notes.len(),
+            ms
+        );
+        chat_routes.push(format!("#{}={}", i + 1, resolved.kind.as_str()));
+    }
+    let chat_none = chat_routes.iter().filter(|r| r.ends_with("=none")).count();
+    println!("-- chat summary: none {}/{} ({})", chat_none, ROUTE_CHAT_MESSAGES.len(), chat_routes.join(" "));
+
+    // Pedidos por nome: as notas editadas mais recentemente com título único
+    // no caderno (sem diferenciar maiúsculas).
+    let mut title_counts: HashMap<String, usize> = HashMap::new();
+    for n in &input.notes {
+        *title_counts.entry(n.title.trim().to_lowercase()).or_default() += 1;
+    }
+    let mut named: Vec<&rag::RouterNote> = input
+        .notes
+        .iter()
+        .filter(|n| !n.title.trim().is_empty() && title_counts.get(&n.title.trim().to_lowercase()) == Some(&1))
+        .collect();
+    named.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then_with(|| a.id.cmp(&b.id)));
+    named.truncate(named_n);
+    println!("\n== named · notebook {} · tree {} notes, {} chars", notebook, tree.entries.len(), tree.text.chars().count());
+    let (mut named_hits, mut named_routes) = (0usize, Vec::new());
+    for (i, n) in named.iter().enumerate() {
+        let title = n.title.trim();
+        let message = if i % 2 == 0 {
+            format!("resuma a nota {}", title)
+        } else {
+            format!("o que eu escrevi em \"{}\"?", title)
+        };
+        let (resolved, model_route, ms) = route_once(&key, &model, &[], &message, &today, &tree, false);
+        let hit = resolved.notes.iter().any(|e| e.note_id == n.id);
+        named_hits += hit as usize;
+        println!(
+            "named#{} route={} model={} notes={} hit={} route_ms={}",
+            i + 1,
+            resolved.kind.as_str(),
+            model_route.unwrap_or("failed"),
+            resolved.notes.len(),
+            hit as u8,
+            ms
+        );
+        named_routes.push(format!("#{}={}", i + 1, resolved.kind.as_str()));
+    }
+    println!(
+        "-- named summary: notebook {} · tree {} notes, {} chars · hits {}/{} ({})",
+        notebook,
+        tree.entries.len(),
+        tree.text.chars().count(),
+        named_hits,
+        named.len(),
+        named_routes.join(" ")
+    );
+
+    // Pedidos de lista: os tipos do caderno com mais notas com propriedade
+    // (empate: nome), nas frases-modelo com o par propriedade/valor mais comum
+    // do tipo (empate: o primeiro visto). Acerto = rota final `list`. Só
+    // imprime índices, nunca o tipo nem a propriedade.
+    let mut typed: Vec<(&str, Vec<&rag::RouterNote>)> = Vec::new();
+    for n in input.notes.iter().filter(|n| !n.properties.is_empty()) {
+        let Some(t) = n.note_type.as_deref().map(str::trim).filter(|t| !t.is_empty()) else { continue };
+        match typed.iter_mut().find(|(name, _)| *name == t) {
+            Some((_, notes)) => notes.push(n),
+            None => typed.push((t, vec![n])),
+        }
+    }
+    typed.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then_with(|| a.0.cmp(b.0)));
+    typed.truncate(ROUTE_LIST_TYPES);
+    println!("\n== list · notebook {} · {} type(s) with properties", notebook, typed.len());
+    let mut list_by_route: HashMap<&str, usize> = HashMap::new();
+    let (mut list_hits, mut list_total) = (0usize, 0usize);
+    for (ti, (note_type, notes)) in typed.iter().enumerate() {
+        let mut pairs: Vec<((&str, &str), usize)> = Vec::new();
+        for p in notes.iter().flat_map(|n| n.properties.iter()) {
+            let pair = (p.name.trim(), p.value.trim());
+            if pair.0.is_empty() || pair.1.is_empty() {
+                continue;
+            }
+            match pairs.iter_mut().find(|(k, _)| *k == pair) {
+                Some((_, count)) => *count += 1,
+                None => pairs.push((pair, 1)),
+            }
+        }
+        let Some(((property, value), _)) = pairs.iter().rev().max_by_key(|(_, count)| *count) else { continue };
+        for (k, message) in list_messages(note_type, property, value).iter().enumerate() {
+            let (resolved, model_route, ms) = route_once(&key, &model, &[], message, &today, &tree, false);
+            let kind = resolved.kind.as_str();
+            let hit = resolved.kind == rag::RouteKind::List;
+            list_hits += hit as usize;
+            list_total += 1;
+            *list_by_route.entry(kind).or_default() += 1;
+            println!(
+                "list#{}.{} route={} model={} notes={} hit={} route_ms={}",
+                ti + 1,
+                k + 1,
+                kind,
+                model_route.unwrap_or("failed"),
+                resolved.notes.len(),
+                hit as u8,
+                ms
+            );
+        }
+    }
+    println!(
+        "-- list summary: notebook {} · list {}/{} · routes: {}",
+        notebook,
+        list_hits,
+        list_total,
+        kinds.iter().map(|k| format!("{}={}", k, list_by_route.get(k).copied().unwrap_or(0))).collect::<Vec<_>>().join(" ")
+    );
+
+    if !none_ids.is_empty() {
+        println!("\nFAIL: {} golden question(s) routed to none: {}", none_ids.len(), none_ids.join(", "));
+        return Err("golden questions routed to none".into());
+    }
+    Ok(())
+}
+
 fn usage() {
     eprintln!(
         "usage (from src-tauri/):\n  \
@@ -1126,7 +1602,8 @@ fn usage() {
          cargo run --example rag_eval -- candidates\n  \
          cargo run --example rag_eval -- run [--label <name>] [--pipeline baseline|hybrid|full]\n    \
          full only: [--no-rewrite] [--no-fts] [--no-rerank] [--threshold <f>] [--rewrite-model <id>]\n  \
-         cargo run --example rag_eval -- compare-rerank --models <id,id,...>"
+         cargo run --example rag_eval -- compare-rerank --models <id,id,...>\n  \
+         cargo run --example rag_eval -- route [--rewrite-model <id>] [--notebook <id>] [--named <n>]"
     );
 }
 
@@ -1137,6 +1614,7 @@ fn main() {
         Some("candidates") => candidates(&paths),
         Some("run") => run(&paths, &args[1..]),
         Some("compare-rerank") => compare_rerank(&paths, &args[1..]),
+        Some("route") => route(&paths, &args[1..]),
         _ => {
             usage();
             Err("missing or unknown subcommand".into())
