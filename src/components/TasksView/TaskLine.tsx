@@ -27,12 +27,25 @@ interface TaskLineProps {
   projectName?: string
   // Progresso do checklist da nota-corpo (`2/5`).
   checklist?: ChecklistProgress | null
+  // TODOS numa linha acima do título, em laranja (lista de tasks da coluna de
+  // notas); senão, chip na linha de metadados.
+  todosAbove?: boolean
   onSelect: () => void
   onToggle: (done: boolean) => void
 }
 
-export function TaskLine({ task, todayKey, projectName, checklist = null, onSelect, onToggle }: TaskLineProps) {
+export function TaskLine({
+  task,
+  todayKey,
+  projectName,
+  checklist = null,
+  todosAbove = false,
+  onSelect,
+  onToggle,
+}: TaskLineProps) {
+  const { todosById } = useTasksEnv()
   const closed = !isOpen(task)
+  const todos = todosAbove ? todosTitleOf(task, todosById) : null
   return (
     <div
       className={styles.line}
@@ -46,19 +59,45 @@ export function TaskLine({ task, todayKey, projectName, checklist = null, onSele
     >
       <input
         type="checkbox"
-        className={styles.checkbox}
+        className={todos ? `${styles.checkbox} ${styles.checkboxBelowTodos}` : styles.checkbox}
         checked={isDone(task)}
         onClick={(e) => e.stopPropagation()}
         onChange={(e) => onToggle(e.target.checked)}
         aria-label="done"
       />
       <div className={styles.body}>
+        {todos && <TodosLink task={task} todos={todos} className={styles.todosAbove} />}
         <span className={`${styles.title} ${closed ? styles.titleClosed : ''}`} title={task.title}>
           {task.title}
         </span>
-        <TaskMeta task={task} todayKey={todayKey} projectName={projectName} checklist={checklist} />
+        <TaskMeta
+          task={task}
+          todayKey={todayKey}
+          projectName={projectName}
+          checklist={checklist}
+          showTodos={!todosAbove}
+        />
       </div>
     </div>
+  )
+}
+
+// Nome da TODOS da task; o clique abre a nota TODOS, não a task.
+function TodosLink({ task, todos, className }: { task: Task; todos: string; className: string }) {
+  const { onOpenNote } = useTasksEnv()
+  return (
+    <span
+      className={className}
+      title={`Open TODOS: ${todos}`}
+      role="link"
+      onClick={(e) => {
+        e.stopPropagation()
+        onOpenNote(task.parentNoteId!)
+      }}
+    >
+      <Checks size={11} aria-hidden />
+      <span>{todos}</span>
+    </span>
   )
 }
 
@@ -67,10 +106,12 @@ interface TaskMetaProps {
   todayKey: string
   projectName?: string
   checklist: ChecklistProgress | null
+  // false = a TODOS já aparece acima do título.
+  showTodos: boolean
 }
 
-function TaskMeta({ task, todayKey, projectName, checklist }: TaskMetaProps) {
-  const { statuses, todosById, onOpenNote } = useTasksEnv()
+function TaskMeta({ task, todayKey, projectName, checklist, showTodos }: TaskMetaProps) {
+  const { statuses, todosById } = useTasksEnv()
   const plan = planDate(task)
   const late = overdueKind(task, todayKey)
   const date = plan
@@ -78,7 +119,7 @@ function TaskMeta({ task, todayKey, projectName, checklist }: TaskMetaProps) {
   const deadline = task.dueDate !== null && task.dueDate !== plan ? task.dueDate : null
   const postponed = task.rescheduleCount
   const doing = isInProgress(task)
-  const todos = todosTitleOf(task, todosById)
+  const todos = showTodos ? todosTitleOf(task, todosById) : null
   if (
     !date &&
     !deadline &&
@@ -135,20 +176,7 @@ function TaskMeta({ task, todayKey, projectName, checklist }: TaskMetaProps) {
         </span>
       )}
       {projectName && <span className={`${styles.chip} ${styles.project}`}>{projectName}</span>}
-      {todos && (
-        <span
-          className={`${styles.chip} ${styles.todos}`}
-          title={`Open TODOS: ${todos}`}
-          role="link"
-          onClick={(e) => {
-            e.stopPropagation()
-            onOpenNote(task.parentNoteId!)
-          }}
-        >
-          <Checks size={11} aria-hidden />
-          <span>{todos}</span>
-        </span>
-      )}
+      {todos && <TodosLink task={task} todos={todos} className={`${styles.chip} ${styles.todos}`} />}
       {task.important && (
         <span className={`${styles.chip} ${styles.important}`} title="Important">
           <Flag size={11} weight="fill" aria-hidden />

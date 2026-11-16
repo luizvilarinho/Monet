@@ -345,6 +345,8 @@ export interface NotebookListProps {
   onRename: (id: string, name: string) => void
   onOpenDocuments: (id: string) => void
   onOpenKnowledgeBase: () => void
+  // Pastas monitoradas em erro: ponto no ícone da KB.
+  kbFolderErrors: number
   notebooksWithDocs: Set<string>
   // Quick Notes (caderno fixo `inbox`): notas sem as notas-corpo de task e sem
   // as arquivadas, a criação da mais antiga (selo de idade) e a nota nova
@@ -406,6 +408,7 @@ export function NotebookList({
   onRename,
   onOpenDocuments,
   onOpenKnowledgeBase,
+  kbFolderErrors,
   notebooksWithDocs,
   quickNotesCount,
   quickNotesOldestAt,
@@ -825,6 +828,11 @@ export function NotebookList({
     )
   }
 
+  const kbTitle =
+    kbFolderErrors > 0
+      ? `Knowledge Base · ${kbFolderErrors} folder${kbFolderErrors === 1 ? ' needs' : 's need'} attention`
+      : 'Knowledge Base'
+
   return (
     <aside className={`${styles.notebooks} ${collapsed ? styles.collapsed : ''}`} style={{ width }}>
       {modal}
@@ -1146,13 +1154,14 @@ export function NotebookList({
       <div className={`${styles.footer} ${collapsed ? styles.footerCollapsed : ''}`}>
         {!collapsed && <span className={styles.version}>v1.5.0</span>}
         <button
-          className={styles.settings}
+          className={`${styles.settings} ${styles.kbButton}`}
           onClick={onOpenKnowledgeBase}
-          aria-label="knowledge base"
+          aria-label={kbTitle}
           type="button"
-          title="Knowledge Base"
+          title={kbTitle}
         >
           <Books size={16} aria-hidden />
+          {kbFolderErrors > 0 && <span className={styles.kbErrorDot} aria-hidden />}
         </button>
         <button
           className={styles.settings}

@@ -218,6 +218,7 @@ export function NotebookTasksSection({
                 task={t}
                 todayKey={todayKey}
                 checklist={checklist.get(t.id) ?? null}
+                todosAbove
                 onSelect={() => onOpenTask(t)}
                 onToggle={(done) => onToggleTask(t.id, done)}
               />

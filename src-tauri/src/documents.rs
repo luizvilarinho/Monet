@@ -3,9 +3,10 @@
 // por este módulo (DocDb / rusqlite). O frontend só lê documentos via
 // `documents_list_global` — não escreve direto. Manter este invariante evita
 // conflito de locks com o backend e estados inconsistentes entre frontend/backend.
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
@@ -1943,7 +1944,7 @@ pub async fn documents_add_watched_folder(
     let app_clone = app.clone();
     let id_clone = id.clone();
     tauri::async_runtime::spawn(async move {
-        scan_watched_folder_async(app_clone, id_clone).await;
+        scan_watched_folder(&app_clone, &id_clone).await;
     });
 
     Ok(id)
@@ -2152,13 +2153,17 @@ fn delete_folder_child(app: &AppHandle, doc_id: &str) -> Result<(), String> {
     })
 }
 
-fn collect_files_recursive(dir: &Path) -> Vec<(PathBuf, i64)> {
-    let mut result = Vec::new();
+// Lista os arquivos da pasta (recursivo). O que não deu para ler (pasta,
+// entrada ou metadados) vai para `unreadable`: o scan não apaga os órfãos
+// desse trecho, que a listagem não viu. Devolve false se a própria `dir` não
+// pôde ser listada.
+fn collect_files_recursive(dir: &Path, files: &mut Vec<(PathBuf, i64)>, unreadable: &mut Vec<PathBuf>) -> bool {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(e) => {
             eprintln!("scan_watched_folder: cannot read dir {:?}: {}", dir, e);
-            return result;
+            unreadable.push(dir.to_path_buf());
+            return false;
         }
     };
     for entry in entries {
@@ -2166,6 +2171,7 @@ fn collect_files_recursive(dir: &Path) -> Vec<(PathBuf, i64)> {
             Ok(e) => e,
             Err(e) => {
                 eprintln!("scan_watched_folder: entry error: {}", e);
+                unreadable.push(dir.to_path_buf());
                 continue;
             }
         };
@@ -2174,6 +2180,7 @@ fn collect_files_recursive(dir: &Path) -> Vec<(PathBuf, i64)> {
             Ok(m) => m,
             Err(e) => {
                 eprintln!("scan_watched_folder: cannot stat {:?}: {}", path, e);
+                unreadable.push(path);
                 continue;
             }
         };
@@ -2181,7 +2188,7 @@ fn collect_files_recursive(dir: &Path) -> Vec<(PathBuf, i64)> {
             continue;
         }
         if meta.is_dir() {
-            result.extend(collect_files_recursive(&path));
+            collect_files_recursive(&path, files, unreadable);
         } else if meta.is_file() {
             if detect_mime(&path).is_none() {
                 continue;
@@ -2192,20 +2199,263 @@ fn collect_files_recursive(dir: &Path) -> Vec<(PathBuf, i64)> {
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map(|d| d.as_millis() as i64)
                 .unwrap_or(0);
-            result.push((path, last_modified_ms));
+            files.push((path, last_modified_ms));
         }
     }
-    result
+    true
 }
 
-async fn scan_watched_folder_async(app: AppHandle, folder_id: String) {
-    // 7a. Read folder from DB
+// Pastas em varredura. O valor diz se chegou outro pedido durante a rodada.
+// Esse pedido não é descartado: o librarian grava o arquivo e pede o scan logo
+// depois, e o arquivo novo ficaria de fora.
+static FOLDER_SCANS: Mutex<BTreeMap<String, bool>> = Mutex::new(BTreeMap::new());
+
+fn folder_scans() -> std::sync::MutexGuard<'static, BTreeMap<String, bool>> {
+    FOLDER_SCANS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+struct FolderScan {
+    folder_id: String,
+    active: bool,
+}
+
+impl FolderScan {
+    // None = a pasta já está em varredura; o pedido fica anotado como pendente.
+    fn begin(folder_id: &str) -> Option<FolderScan> {
+        let mut scans = folder_scans();
+        if let Some(pending) = scans.get_mut(folder_id) {
+            *pending = true;
+            return None;
+        }
+        scans.insert(folder_id.to_string(), false);
+        Some(FolderScan { folder_id: folder_id.to_string(), active: true })
+    }
+
+    // true = chegou pedido durante a rodada e ela deve rodar de novo. Senão,
+    // libera a pasta.
+    fn finish(&mut self) -> bool {
+        let mut scans = folder_scans();
+        if let Some(pending) = scans.get_mut(&self.folder_id) {
+            if *pending {
+                *pending = false;
+                return true;
+            }
+        }
+        scans.remove(&self.folder_id);
+        self.active = false;
+        false
+    }
+}
+
+// Libera a pasta se a rodada parou no meio (pânico).
+impl Drop for FolderScan {
+    fn drop(&mut self) {
+        if self.active {
+            folder_scans().remove(&self.folder_id);
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum FolderJob {
+    New { path: PathBuf, disk_ms: i64, mime: &'static str },
+    Modified { id: String, path: PathBuf, disk_ms: i64, mime: &'static str },
+}
+
+// Compara o disco com o índice da pasta só por last_modified_ms. Devolve os
+// arquivos a indexar, os ids das linhas cujo arquivo sumiu do disco e os
+// trechos ilegíveis que seguraram linhas do índice, sem repetição. A linha de
+// um trecho ilegível (subpasta ou item em `unreadable`) não conta como órfã:
+// a listagem não viu esse trecho.
+fn plan_folder_jobs(
+    files_on_disk: Vec<(PathBuf, i64)>,
+    existing: Vec<(String, String, Option<i64>)>,
+    unreadable: &[PathBuf],
+) -> (Vec<FolderJob>, Vec<String>, Vec<PathBuf>) {
+    // Map: original_path -> (id, last_modified_ms)
+    let mut indexed_map: std::collections::HashMap<String, (String, Option<i64>)> =
+        existing.into_iter().map(|(id, path, ms)| (path, (id, ms))).collect();
+    let mut jobs = Vec::new();
+    for (path, disk_ms) in files_on_disk {
+        let mime = match detect_mime(&path) {
+            Some(m) => m,
+            None => continue,
+        };
+        let path_str = path.to_string_lossy().to_string();
+        match indexed_map.remove(&path_str) {
+            Some((id, existing_ms)) => {
+                if existing_ms != Some(disk_ms) {
+                    jobs.push(FolderJob::Modified { id, path, disk_ms, mime });
+                }
+            }
+            None => jobs.push(FolderJob::New { path, disk_ms, mime }),
+        }
+    }
+    let mut orphans = Vec::new();
+    let mut held = BTreeSet::new();
+    for (path, (id, _)) in indexed_map {
+        match unreadable.iter().find(|u| Path::new(&path).starts_with(u)) {
+            Some(part) => {
+                held.insert(part.clone());
+            }
+            None => orphans.push(id),
+        }
+    }
+    (jobs, orphans, held.into_iter().collect())
+}
+
+// Status final da pasta depois da varredura. Só a raiz que não pôde ser
+// listada é erro. O trecho ilegível que segurou linhas do índice vira aviso:
+// a pasta segue 'available', com a mensagem, porque o resto dela foi
+// conferido. Sem linha embaixo dele (System Volume Information, symlink
+// quebrado de tipo não indexado), não há aviso.
+fn folder_scan_status(root_listed: bool, held: &[PathBuf]) -> (&'static str, Option<String>) {
+    if !root_listed {
+        return ("error", Some("Could not read the folder on disk".to_string()));
+    }
+    let message = match held {
+        [] => None,
+        [only] => Some(format!(
+            "1 item could not be read: {}. Fix or remove it so Monet can clean up deleted files.",
+            only.display()
+        )),
+        [first, ..] => Some(format!(
+            "{} items could not be read, e.g. {}. Fix or remove them so Monet can clean up deleted files.",
+            held.len(),
+            first.display()
+        )),
+    };
+    ("available", message)
+}
+
+// Resultado de uma pasta: resumo do Rescan all e aviso do "rescan" da pasta.
+#[derive(Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderScanReport {
+    added: u32,
+    updated: u32,
+    removed: u32,
+    // Erro da pasta: raiz ausente ou ilegível, índice ilegível.
+    error: Option<String>,
+    // A pasta já estava em varredura: o pedido roda ao fim da rodada em curso,
+    // e o resultado fica com quem a iniciou.
+    queued: bool,
+}
+
+const FOLDER_NOT_FOUND: &str = "Folder not found on disk";
+
+// Grava e emite o status da pasta só quando ele muda: sem isso, cada rodada
+// sem mudança (a do foco) emitiria 'available', e o front recarregaria a KB.
+fn set_folder_status(
+    app: &AppHandle,
+    folder_id: &str,
+    current: &mut (String, Option<String>),
+    status: &str,
+    message: Option<&str>,
+) {
+    if current.0 == status && current.1.as_deref() == message {
+        return;
+    }
+    let _ = update_document_status(app, folder_id, status, message);
+    emit_status(app, folder_id, status, message);
+    *current = (status.to_string(), message.map(|m| m.to_string()));
+}
+
+fn file_name_or_path(path: &Path) -> String {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| path.to_string_lossy().to_string())
+}
+
+// Indexa um arquivo da varredura e espera terminar. O arquivo novo só ganha
+// linha na vez dele: fechar o app no meio deixa os que faltam sem linha, e o
+// próximo scan os encontra. Devolve false se a pasta foi removida no meio.
+async fn index_folder_job(app: &AppHandle, folder_id: &str, job: FolderJob) -> bool {
     let state = app.state::<DocDb>();
-    let folder_path: Option<String> = match with_doc_db(&app, &state, |conn| {
+    // Em erro de banco, segue como se a pasta existisse.
+    if !with_doc_db(app, &state, |conn| document_exists(conn, folder_id)).unwrap_or(true) {
+        return false;
+    }
+    let now = now_ms();
+    match job {
+        FolderJob::Modified { id, path, disk_ms, mime } => {
+            // Já indexando (Update index, retry): fica para o próximo scan, que
+            // ainda vê o last_modified_ms antigo.
+            let claimed = with_doc_db(app, &state, |conn| {
+                let changed = conn
+                    .execute(
+                        "UPDATE documents SET last_modified_ms = ?1, status = 'indexing',
+                                              updated_at = ?2
+                         WHERE id = ?3 AND status != 'indexing'",
+                        params![disk_ms, now, id],
+                    )
+                    .map_err(|e| format!("update failed: {}", e))?;
+                Ok(changed > 0)
+            });
+            // Em erro de banco também fica para o próximo scan: indexar sem
+            // gravar a data nova re-embedaria o arquivo de novo na rodada
+            // seguinte.
+            match claimed {
+                Ok(true) => {}
+                Ok(false) => return true,
+                Err(e) => {
+                    eprintln!("scan_watched_folder update: {}", e);
+                    return true;
+                }
+            }
+            // Os chunks antigos ficam até run_indexing trocá-los.
+            let name = file_name_or_path(&path);
+            run_indexing(app.clone(), id, name, path, mime.to_string()).await;
+        }
+        FolderJob::New { path, disk_ms, mime } => {
+            // Sumiu do disco desde a varredura.
+            let size = match fs::metadata(&path) {
+                Ok(m) => m.len() as i64,
+                Err(_) => return true,
+            };
+            let new_id = Uuid::new_v4().to_string();
+            let name = file_name_or_path(&path);
+            let path_str = path.to_string_lossy().to_string();
+            // Só entra com a pasta existindo, na mesma instrução: a remoção da
+            // pasta no meio não deixa linha filha órfã.
+            let insert_result = with_doc_db(app, &state, |conn| {
+                conn.execute(
+                    "INSERT INTO documents (id, name, original_path, mime, size, status,
+                                            error_message, created_at, updated_at, type,
+                                            parent_folder_id, last_modified_ms, is_external)
+                     SELECT ?1, ?2, ?3, ?4, ?5, 'indexing', NULL,
+                            ?6, ?6, 'file', ?7, ?8, 1
+                     WHERE EXISTS (SELECT 1 FROM documents WHERE id = ?7 AND type = 'folder')",
+                    params![new_id, name, path_str, mime, size, now, folder_id, disk_ms],
+                )
+                .map_err(|e| format!("insert failed: {}", e))
+            });
+            match insert_result {
+                Ok(0) => return false,
+                Ok(_) => {}
+                Err(e) => {
+                    eprintln!("scan_watched_folder insert: {}", e);
+                    return true;
+                }
+            }
+            run_indexing(app.clone(), new_id, name, path, mime.to_string()).await;
+        }
+    }
+    true
+}
+
+// Uma rodada da pasta: varre, compara e indexa em sequência. Só com algo a
+// indexar ou a remover a pasta fica 'indexing' (até a fila acabar): a rodada
+// sem mudança, como a do foco, não mexe no status.
+async fn scan_folder_once(app: &AppHandle, folder_id: &str) -> FolderScanReport {
+    let state = app.state::<DocDb>();
+    let mut report = FolderScanReport::default();
+    let folder = match with_doc_db(app, &state, |conn| {
         match conn.query_row(
-            "SELECT original_path FROM documents WHERE id = ?1 AND type = 'folder'",
+            "SELECT original_path, status, error_message FROM documents WHERE id = ?1 AND type = 'folder'",
             params![folder_id],
-            |r| r.get::<_, String>(0),
+            |r| Ok((r.get::<_, String>(0)?, (r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?))),
         ) {
             Ok(p) => Ok(Some(p)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -2214,40 +2464,34 @@ async fn scan_watched_folder_async(app: AppHandle, folder_id: String) {
     }) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("scan_watched_folder_async: {}", e);
-            return;
+            eprintln!("scan_watched_folder: {}", e);
+            report.error = Some(e);
+            return report;
         }
     };
 
-    let folder_path = match folder_path {
-        Some(p) => p,
-        None => return,
-    };
+    let Some((folder_path, mut current)) = folder else { return report };
 
-    // 7a-2. Emit indexing status so the frontend can show scanning feedback
-    let _ = update_document_status(&app, &folder_id, "indexing", None);
-    emit_status(&app, &folder_id, "indexing", None);
-
-    // 7b. Verify folder exists on disk
-    let folder_meta = fs::metadata(&folder_path);
-    let folder_ok = folder_meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
-    if !folder_ok {
-        let msg = "Folder not found on disk";
-        let _ = update_document_status(&app, &folder_id, "error", Some(msg));
-        emit_status(&app, &folder_id, "error", Some(msg));
-        return;
+    // Verify folder exists on disk
+    if !Path::new(&folder_path).is_dir() {
+        set_folder_status(app, folder_id, &mut current, "error", Some(FOLDER_NOT_FOUND));
+        report.error = Some(FOLDER_NOT_FOUND.to_string());
+        return report;
     }
 
-    // 7c. Collect files on disk (recursive, blocking)
-    let folder_path_clone = folder_path.clone();
-    let files_on_disk = spawn_blocking(move || {
-        collect_files_recursive(Path::new(&folder_path_clone))
+    // Collect files on disk (recursive, blocking)
+    let root = PathBuf::from(&folder_path);
+    let (files_on_disk, unreadable, root_listed) = spawn_blocking(move || {
+        let mut files = Vec::new();
+        let mut unreadable = Vec::new();
+        let listed = collect_files_recursive(&root, &mut files, &mut unreadable);
+        (files, unreadable, listed)
     })
     .await
-    .unwrap_or_default();
+    .unwrap_or_else(|_| (Vec::new(), vec![PathBuf::from(&folder_path)], false));
 
-    // 7d. Fetch already-indexed children from DB
-    let existing: Vec<(String, String, Option<i64>)> = match with_doc_db(&app, &state, |conn| {
+    // Fetch already-indexed children from DB
+    let existing: Vec<(String, String, Option<i64>)> = match with_doc_db(app, &state, |conn| {
         let mut stmt = conn
             .prepare(
                 "SELECT id, original_path, last_modified_ms FROM documents
@@ -2271,125 +2515,278 @@ async fn scan_watched_folder_async(app: AppHandle, folder_id: String) {
     }) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("scan_watched_folder_async fetch existing: {}", e);
-            return;
+            let msg = format!("Failed to read the index: {}", e);
+            set_folder_status(app, folder_id, &mut current, "error", Some(&msg));
+            report.error = Some(msg);
+            return report;
         }
     };
 
-    // Map: original_path -> (id, last_modified_ms)
-    let mut indexed_map: std::collections::HashMap<String, (String, Option<i64>)> =
-        existing.into_iter().map(|(id, path, ms)| (path, (id, ms))).collect();
+    let (jobs, orphans, held) = plan_folder_jobs(files_on_disk, existing, &unreadable);
+    let (final_status, final_message) = folder_scan_status(root_listed, &held);
 
-    let now = now_ms();
+    if !jobs.is_empty() || !orphans.is_empty() {
+        set_folder_status(app, folder_id, &mut current, "indexing", None);
+    }
 
-    // 7e. Detect changes and act
-    for (file_path, disk_ms) in &files_on_disk {
-        let path_str = file_path.to_string_lossy().to_string();
-        let mime = match detect_mime(file_path) {
-            Some(m) => m,
-            None => continue,
-        };
-
-        if let Some((existing_id, existing_ms)) = indexed_map.remove(&path_str) {
-            // File already indexed
-            let changed = existing_ms.map(|m| m != *disk_ms).unwrap_or(true);
-            if changed {
-                // Modified — update last_modified_ms and reindex. Já indexando
-                // (Update index, retry): fica para o próximo scan, que ainda
-                // vê o last_modified_ms antigo.
-                let claimed = with_doc_db(&app, &state, |conn| {
-                    let changed = conn
-                        .execute(
-                            "UPDATE documents SET last_modified_ms = ?1, status = 'indexing',
-                                                  updated_at = ?2
-                             WHERE id = ?3 AND status != 'indexing'",
-                            params![disk_ms, now, existing_id],
-                        )
-                        .map_err(|e| format!("update failed: {}", e))?;
-                    Ok(changed > 0)
-                });
-                match claimed {
-                    Ok(true) => {}
-                    Ok(false) => continue,
-                    Err(e) => eprintln!("scan_watched_folder_async update: {}", e),
-                }
-                // Os chunks antigos ficam até run_indexing trocá-los.
-                let name = file_path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| path_str.clone());
-                let app_clone = app.clone();
-                let id_clone = existing_id.clone();
-                let path_clone = file_path.clone();
-                let mime_str = mime.to_string();
-                tauri::async_runtime::spawn(async move {
-                    run_indexing(app_clone, id_clone, name, path_clone, mime_str).await;
-                });
-            }
-            // else: unchanged — skip
-        } else {
-            // New file — insert and index
-            let new_id = Uuid::new_v4().to_string();
-            let name = file_path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| path_str.clone());
-            let size = fs::metadata(file_path).map(|m| m.len() as i64).unwrap_or(0);
-
-            let folder_id_clone = folder_id.clone();
-            let new_id_clone = new_id.clone();
-            let insert_result = with_doc_db(&app, &state, |conn| {
-                conn.execute(
-                    "INSERT INTO documents (id, name, original_path, mime, size, status,
-                                            error_message, created_at, updated_at, type,
-                                            parent_folder_id, last_modified_ms, is_external)
-                     VALUES (?1, ?2, ?3, ?4, ?5, 'indexing', NULL,
-                             ?6, ?6, 'file', ?7, ?8, 1)",
-                    params![new_id_clone, name, path_str, mime, size, now, folder_id_clone, disk_ms],
-                )
-                .map_err(|e| format!("insert failed: {}", e))?;
-                Ok(())
-            });
-            if let Err(e) = insert_result {
-                eprintln!("scan_watched_folder_async insert: {}", e);
-                continue;
-            }
-            let app_clone = app.clone();
-            let id_clone = new_id.clone();
-            let path_clone = file_path.clone();
-            let mime_str = mime.to_string();
-            tauri::async_runtime::spawn(async move {
-                run_indexing(app_clone, id_clone, name, path_clone, mime_str).await;
-            });
+    // Só apaga as linhas dos arquivos que sumiram, nunca o arquivo. Os de um
+    // trecho ilegível já ficaram fora dos órfãos.
+    for orphan_id in &orphans {
+        match delete_folder_child(app, orphan_id) {
+            Ok(()) => report.removed += 1,
+            Err(e) => eprintln!("scan_watched_folder delete orphan {}: {}", orphan_id, e),
         }
     }
 
-    // 7f. Delete files removed from disk (remaining entries in indexed_map)
-    for (_, (orphan_id, _)) in &indexed_map {
-        if let Err(e) = delete_folder_child(&app, orphan_id) {
-            eprintln!("scan_watched_folder_async delete orphan {}: {}", orphan_id, e);
+    for job in jobs {
+        // Drive desconectado ou pasta renomeada no meio da fila: para aqui, e
+        // os que faltam ficam com a data antiga para a próxima rodada.
+        if !Path::new(&folder_path).is_dir() {
+            set_folder_status(app, folder_id, &mut current, "error", Some(FOLDER_NOT_FOUND));
+            report.error = Some(FOLDER_NOT_FOUND.to_string());
+            return report;
+        }
+        match &job {
+            FolderJob::New { .. } => report.added += 1,
+            FolderJob::Modified { .. } => report.updated += 1,
+        }
+        if !index_folder_job(app, folder_id, job).await {
+            // Pasta removida no meio: não há status a gravar.
+            return report;
         }
     }
 
-    // 7g. Update folder status to available
-    let _ = update_document_status(&app, &folder_id, "available", None);
-    emit_status(&app, &folder_id, "available", None);
+    set_folder_status(app, folder_id, &mut current, final_status, final_message.as_deref());
+    if final_status == "error" {
+        report.error = final_message;
+    }
+    report
 }
 
+// Entrada única do scan de uma pasta. Com a pasta já em varredura, o pedido
+// fica anotado e a rodada em curso roda de novo ao terminar (o resultado dela
+// soma as rodadas).
+async fn scan_watched_folder(app: &AppHandle, folder_id: &str) -> FolderScanReport {
+    let Some(mut scan) = FolderScan::begin(folder_id) else {
+        return FolderScanReport { queued: true, ..Default::default() };
+    };
+    let mut report = FolderScanReport::default();
+    loop {
+        let round = scan_folder_once(app, folder_id).await;
+        report.added += round.added;
+        report.updated += round.updated;
+        report.removed += round.removed;
+        report.error = round.error;
+        if !scan.finish() {
+            return report;
+        }
+    }
+}
+
+static RESCAN_ALL_RUNNING: AtomicBool = AtomicBool::new(false);
+// Início e, depois, fim da última rodada do Rescan all (clique, foco ou boot).
+// 0 = o rescan do boot ainda não começou.
+static LAST_RESCAN_ALL_MS: AtomicI64 = AtomicI64::new(0);
+
+// Uma rodada do Rescan all. No fim, inclusive em erro ou pânico, grava a hora,
+// libera o single-flight e só então emite o `finished`, pelo qual o front
+// destrava o botão: um clique logo depois já encontra a rodada livre.
+struct RescanAllGuard {
+    app: AppHandle,
+    automatic: bool,
+    done: u32,
+    total: u32,
+    // None = a rodada não chegou ao fim (lista das pastas ilegível, pânico).
+    summary: Option<RescanSummary>,
+}
+
+impl Drop for RescanAllGuard {
+    fn drop(&mut self) {
+        LAST_RESCAN_ALL_MS.store(now_ms(), Ordering::SeqCst);
+        RESCAN_ALL_RUNNING.store(false, Ordering::SeqCst);
+        let summary = self.summary.take();
+        emit_rescan_progress(
+            &self.app,
+            RescanProgressEvent {
+                done: self.done,
+                total: self.total,
+                failed: summary.as_ref().map_or(0, |s| s.failures.len() as u32),
+                current_name: None,
+                finished: true,
+                automatic: self.automatic,
+                summary,
+            },
+        );
+    }
+}
+
+// Pastas monitoradas (id, rótulo), fora as de notas. Inclui as pastas 'ai'.
+fn watched_folders(app: &AppHandle) -> Result<Vec<(String, String)>, String> {
+    let state = app.state::<DocDb>();
+    with_doc_db(app, &state, |conn| {
+        let mut stmt = conn
+            .prepare(
+                "SELECT d.id, COALESCE(a.alias, d.name) FROM documents d
+                 LEFT JOIN folder_aliases a ON a.folder_id = d.id
+                 WHERE d.type = 'folder' AND d.origin != 'notes'
+                 ORDER BY d.created_at",
+            )
+            .map_err(|e| format!("prepare failed: {}", e))?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(|e| format!("query failed: {}", e))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| format!("row error: {}", e))?);
+        }
+        Ok(out)
+    })
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RescanFailure {
+    name: String,
+    error: String,
+}
+
+// O que a rodada mudou no índice, somado entre as pastas.
+#[derive(Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RescanSummary {
+    added: u32,
+    updated: u32,
+    removed: u32,
+    failures: Vec<RescanFailure>,
+    // Pastas que outro caminho já varria: o resultado delas fica com ele.
+    still_scanning: u32,
+}
+
+// Progresso do Rescan all no formato do Update index, mais a origem (foco e
+// boot são automáticos) e, no evento final, o resumo.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RescanProgressEvent {
+    done: u32,
+    total: u32,
+    failed: u32,
+    current_name: Option<String>,
+    finished: bool,
+    automatic: bool,
+    summary: Option<RescanSummary>,
+}
+
+fn emit_rescan_progress(app: &AppHandle, event: RescanProgressEvent) {
+    let _ = app.emit("documents://rescan-progress", event);
+}
+
+// Reescaneia as pastas em sequência. Uma pasta ausente conta como falha e a
+// rodada segue para a próxima. O `finished` sai do drop do guard.
+async fn run_rescan_all(round: &mut RescanAllGuard) {
+    let folders = match watched_folders(&round.app) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("run_rescan_all: {}", e);
+            return;
+        }
+    };
+    round.total = folders.len() as u32;
+    let mut summary = RescanSummary::default();
+    for (id, label) in folders {
+        emit_rescan_progress(
+            &round.app,
+            RescanProgressEvent {
+                done: round.done,
+                total: round.total,
+                failed: summary.failures.len() as u32,
+                current_name: Some(label.clone()),
+                finished: false,
+                automatic: round.automatic,
+                summary: None,
+            },
+        );
+        // Pasta já em varredura volta na hora: a rodada dela roda de novo.
+        let report = scan_watched_folder(&round.app, &id).await;
+        round.done += 1;
+        summary.added += report.added;
+        summary.updated += report.updated;
+        summary.removed += report.removed;
+        if report.queued {
+            summary.still_scanning += 1;
+        }
+        if let Some(error) = report.error {
+            summary.failures.push(RescanFailure { name: label, error });
+        }
+    }
+    round.summary = Some(summary);
+}
+
+// Dispara o Rescan all em background. Já rodando, não faz nada.
+fn start_rescan_all(app: &AppHandle, automatic: bool) {
+    if RESCAN_ALL_RUNNING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    LAST_RESCAN_ALL_MS.store(now_ms(), Ordering::SeqCst);
+    let mut round = RescanAllGuard { app: app.clone(), automatic, done: 0, total: 0, summary: None };
+    tauri::async_runtime::spawn(async move {
+        run_rescan_all(&mut round).await;
+    });
+}
+
+const AUTO_RESCAN_MIN_INTERVAL_MS: i64 = 60 * 1000;
+
+fn auto_rescan_due(last_ms: i64, now: i64) -> bool {
+    last_ms != 0 && now - last_ms >= AUTO_RESCAN_MIN_INTERVAL_MS
+}
+
+// Foco numa janela do Monet: Rescan all silencioso, só por data de
+// modificação, sem watcher e sem timer. Mudanças feitas com o Monet já focado
+// entram no foco seguinte. O intervalo vem antes da chave (leitura de arquivo):
+// o handler roda na thread da janela.
+pub fn rescan_on_focus(app: &AppHandle) {
+    if !auto_rescan_due(LAST_RESCAN_ALL_MS.load(Ordering::SeqCst), now_ms()) {
+        return;
+    }
+    if crate::read_key(app, "openrouter_key").is_none() {
+        return;
+    }
+    start_rescan_all(app, true);
+}
+
+// Rescan all pedido pelo usuário. Já rodando (clique, foco ou boot), não faz
+// nada: o progresso da rodada em curso chega pelo mesmo evento.
+#[tauri::command]
+pub async fn documents_rescan_all_watched_folders(app: AppHandle) -> Result<(), String> {
+    if crate::read_key(&app, "openrouter_key").is_none() {
+        return Err("Add your OpenRouter key in Settings to rescan folders.".into());
+    }
+    start_rescan_all(&app, false);
+    Ok(())
+}
+
+// Fim do último Rescan all (clique, foco ou boot), para o "Last checked" da
+// KB. None antes do primeiro e durante uma rodada.
+#[tauri::command]
+pub fn documents_last_folders_check() -> Option<i64> {
+    if RESCAN_ALL_RUNNING.load(Ordering::SeqCst) {
+        return None;
+    }
+    match LAST_RESCAN_ALL_MS.load(Ordering::SeqCst) {
+        0 => None,
+        ms => Some(ms),
+    }
+}
+
+// "rescan" de uma pasta: espera a rodada e devolve o que mudou, para o aviso
+// da KB (a rodada sem mudança não passa por 'indexing').
 #[tauri::command]
 pub async fn documents_scan_watched_folder(
     app: AppHandle,
     state: State<'_, DocDb>,
     folder_id: String,
-) -> Result<(), String> {
+) -> Result<FolderScanReport, String> {
     with_doc_db(&app, &state, |conn| reject_notes_origin(conn, &folder_id))?;
-
-    tauri::async_runtime::spawn(async move {
-        scan_watched_folder_async(app, folder_id).await;
-    });
-    Ok(())
+    Ok(scan_watched_folder(&app, &folder_id).await)
 }
 
 #[tauri::command]
@@ -2428,6 +2825,35 @@ pub async fn documents_delete_watched_folder(
 // Remove do banco os filhos (chunks, visibilidade e linha), a visibilidade e a
 // linha da pasta. Não mexe em disco. Idempotente.
 fn remove_folder_rows(app: &AppHandle, folder_id: &str) -> Result<(), String> {
+    delete_folder_children(app, folder_id)?;
+
+    let state = app.state::<DocDb>();
+    with_doc_db(app, &state, |conn| {
+        conn.execute(
+            "DELETE FROM notebook_document_visibility WHERE document_id = ?1",
+            params![folder_id],
+        )
+        .map_err(|e| format!("failed to clear visibility: {}", e))?;
+        conn.execute(
+            "DELETE FROM folder_aliases WHERE folder_id = ?1",
+            params![folder_id],
+        )
+        .map_err(|e| format!("failed to clear alias: {}", e))?;
+        conn.execute(
+            "DELETE FROM documents WHERE id = ?1",
+            params![folder_id],
+        )
+        .map_err(|e| format!("failed to delete folder: {}", e))?;
+        Ok(())
+    })?;
+
+    // De novo sem a linha da pasta: pega o arquivo novo que o scan inseriu
+    // durante a remoção. Daqui em diante o INSERT do scan não entra mais.
+    delete_folder_children(app, folder_id)
+}
+
+// Remove os filhos da pasta (chunks, visibilidade e linha).
+fn delete_folder_children(app: &AppHandle, folder_id: &str) -> Result<(), String> {
     let state = app.state::<DocDb>();
     let children: Vec<String> = with_doc_db(app, &state, |conn| {
         let mut stmt = conn
@@ -2448,25 +2874,7 @@ fn remove_folder_rows(app: &AppHandle, folder_id: &str) -> Result<(), String> {
             eprintln!("documents_delete_watched_folder child {}: {}", child_id, e);
         }
     }
-
-    with_doc_db(app, &state, |conn| {
-        conn.execute(
-            "DELETE FROM notebook_document_visibility WHERE document_id = ?1",
-            params![folder_id],
-        )
-        .map_err(|e| format!("failed to clear visibility: {}", e))?;
-        conn.execute(
-            "DELETE FROM folder_aliases WHERE folder_id = ?1",
-            params![folder_id],
-        )
-        .map_err(|e| format!("failed to clear alias: {}", e))?;
-        conn.execute(
-            "DELETE FROM documents WHERE id = ?1",
-            params![folder_id],
-        )
-        .map_err(|e| format!("failed to delete folder: {}", e))?;
-        Ok(())
-    })
+    Ok(())
 }
 
 // Remove o documento de uma nota (chunks, visibilidade, linha) e seu arquivo.
@@ -2837,7 +3245,8 @@ pub async fn notes_index_list_state(
     Ok(result)
 }
 
-pub async fn scan_all_watched_folders_on_startup(app: AppHandle) {
+// Boot: o mesmo Rescan all (pastas em sequência), sem exigir a chave.
+pub async fn rescan_watched_folders_on_startup(app: AppHandle) {
     // Wait for DB file to exist (mirrors cleanup_stuck_indexing pattern)
     for _ in 0..30 {
         if doc_db_path(&app).map(|p| p.exists()).unwrap_or(false) {
@@ -2845,34 +3254,7 @@ pub async fn scan_all_watched_folders_on_startup(app: AppHandle) {
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
-
-    let state = app.state::<DocDb>();
-    let folder_ids: Vec<String> = match with_doc_db(&app, &state, |conn| {
-        let mut stmt = conn
-            .prepare("SELECT id FROM documents WHERE type = 'folder' AND origin != 'notes'")
-            .map_err(|e| format!("prepare failed: {}", e))?;
-        let rows = stmt
-            .query_map([], |r| r.get::<_, String>(0))
-            .map_err(|e| format!("query failed: {}", e))?;
-        let mut out = Vec::new();
-        for r in rows {
-            out.push(r.map_err(|e| format!("row error: {}", e))?);
-        }
-        Ok(out)
-    }) {
-        Ok(ids) => ids,
-        Err(e) => {
-            eprintln!("scan_all_watched_folders_on_startup: {}", e);
-            return;
-        }
-    };
-
-    for folder_id in folder_ids {
-        let app_clone = app.clone();
-        tauri::async_runtime::spawn(async move {
-            scan_watched_folder_async(app_clone, folder_id).await;
-        });
-    }
+    start_rescan_all(&app, true);
 }
 
 pub async fn cleanup_stuck_indexing(app: AppHandle) {
@@ -2884,9 +3266,12 @@ pub async fn cleanup_stuck_indexing(app: AppHandle) {
     }
 
     let state = app.state::<DocDb>();
+    if let Err(e) = with_doc_db(&app, &state, |conn| release_stuck_folders(conn)) {
+        eprintln!("cleanup_stuck_indexing folders: {}", e);
+    }
     let stuck: Vec<String> = match with_doc_db(&app, &state, |conn| {
         let mut stmt = conn
-            .prepare("SELECT id FROM documents WHERE status = 'indexing'")
+            .prepare("SELECT id FROM documents WHERE status = 'indexing' AND type != 'folder'")
             .map_err(|e| format!("prepare failed: {}", e))?;
         let rows = stmt
             .query_map([], |r| r.get::<_, String>(0))
@@ -2915,6 +3300,17 @@ pub async fn cleanup_stuck_indexing(app: AppHandle) {
             Err(e) => eprintln!("cleanup_stuck_indexing {}: {}", id, e),
         }
     }
+}
+
+// Pasta que o app fechou no meio da fila: volta a 'available', sem erro (nada
+// dela se perdeu). A rodada do boot confere a pasta de novo e grava o status.
+fn release_stuck_folders(conn: &Connection) -> Result<usize, String> {
+    conn.execute(
+        "UPDATE documents SET status = 'available', error_message = NULL, updated_at = ?1
+         WHERE type = 'folder' AND status = 'indexing'",
+        params![now_ms()],
+    )
+    .map_err(|e| format!("failed to release folders: {}", e))
 }
 
 // Tira um documento de 'indexing' se ele ainda estiver assim. Devolve se mudou.
@@ -3105,5 +3501,237 @@ mod tests {
     fn truncate_chars_respects_char_boundaries() {
         assert_eq!(truncate_chars("ééé".to_string(), 2), "éé");
         assert_eq!(truncate_chars("ab".to_string(), 5), "ab");
+    }
+
+    #[test]
+    fn folder_scan_guard_reruns_request_made_mid_scan() {
+        let id = Uuid::new_v4().to_string();
+        let mut scan = FolderScan::begin(&id).expect("first scan starts");
+        // Pedido no meio da rodada: fica pendente.
+        assert!(FolderScan::begin(&id).is_none());
+        assert!(scan.finish());
+        assert!(!scan.finish());
+        assert!(FolderScan::begin(&id).is_some());
+    }
+
+    #[test]
+    fn folder_scan_guard_released_on_drop() {
+        let id = Uuid::new_v4().to_string();
+        drop(FolderScan::begin(&id).expect("first scan starts"));
+        assert!(FolderScan::begin(&id).is_some());
+    }
+
+    #[test]
+    fn plan_folder_jobs_detects_new_modified_and_orphans() {
+        let on_disk = vec![
+            (PathBuf::from("C:\\kb\\same.md"), 100),
+            (PathBuf::from("C:\\kb\\changed.md"), 200),
+            (PathBuf::from("C:\\kb\\no-date.txt"), 300),
+            (PathBuf::from("C:\\kb\\new.pdf"), 400),
+            (PathBuf::from("C:\\kb\\ignored.xyz"), 500),
+        ];
+        let existing = vec![
+            ("id-same".to_string(), "C:\\kb\\same.md".to_string(), Some(100)),
+            ("id-changed".to_string(), "C:\\kb\\changed.md".to_string(), Some(150)),
+            ("id-no-date".to_string(), "C:\\kb\\no-date.txt".to_string(), None),
+            ("id-gone".to_string(), "C:\\kb\\gone.md".to_string(), Some(1)),
+        ];
+        let (jobs, orphans, held) = plan_folder_jobs(on_disk, existing, &[]);
+        assert!(held.is_empty());
+        assert_eq!(
+            jobs,
+            vec![
+                FolderJob::Modified {
+                    id: "id-changed".into(),
+                    path: PathBuf::from("C:\\kb\\changed.md"),
+                    disk_ms: 200,
+                    mime: "text/markdown",
+                },
+                FolderJob::Modified {
+                    id: "id-no-date".into(),
+                    path: PathBuf::from("C:\\kb\\no-date.txt"),
+                    disk_ms: 300,
+                    mime: "text/plain",
+                },
+                FolderJob::New {
+                    path: PathBuf::from("C:\\kb\\new.pdf"),
+                    disk_ms: 400,
+                    mime: "application/pdf",
+                },
+            ]
+        );
+        assert_eq!(orphans, vec!["id-gone".to_string()]);
+    }
+
+    // Linha do índice (id, caminho) para os testes de órfãos.
+    fn row(id: &str, path: &Path) -> (String, String, Option<i64>) {
+        (id.to_string(), path.to_string_lossy().to_string(), Some(1))
+    }
+
+    fn sorted(mut ids: Vec<String>) -> Vec<String> {
+        ids.sort();
+        ids
+    }
+
+    #[test]
+    fn unreadable_subfolder_keeps_only_its_orphans() {
+        let kb = PathBuf::from("kb");
+        let sub = kb.join("sub");
+        let existing = vec![
+            row("id-same", &kb.join("same.md")),
+            row("id-sub", &sub.join("x.md")),
+            row("id-sub-deep", &sub.join("deep").join("y.md")),
+            // Mesmo prefixo de texto, outra pasta: sai.
+            row("id-subway", &kb.join("subway.md")),
+            row("id-gone", &kb.join("gone.md")),
+        ];
+        let on_disk = vec![(kb.join("same.md"), 1)];
+        let (jobs, orphans, held) = plan_folder_jobs(on_disk, existing, &[sub.clone()]);
+        assert!(jobs.is_empty());
+        assert_eq!(sorted(orphans), vec!["id-gone".to_string(), "id-subway".to_string()]);
+        assert_eq!(held, vec![sub]);
+        // A pasta segue 'available', com aviso.
+        let (status, message) = folder_scan_status(true, &held);
+        assert_eq!(status, "available");
+        assert!(message.unwrap().starts_with("1 item could not be read"));
+    }
+
+    #[test]
+    fn unreadable_item_keeps_only_itself() {
+        let kb = PathBuf::from("kb");
+        // Symlink quebrado: o metadata falha só nele.
+        let broken = kb.join("broken.md");
+        let existing = vec![
+            row("id-broken", &broken),
+            row("id-gone", &kb.join("gone.md")),
+            row("id-gone-sub", &kb.join("sub").join("gone.txt")),
+            row("id-ok", &kb.join("ok.md")),
+        ];
+        let on_disk = vec![(kb.join("ok.md"), 1)];
+        let (jobs, orphans, held) = plan_folder_jobs(on_disk, existing, &[broken.clone()]);
+        assert!(jobs.is_empty());
+        assert_eq!(sorted(orphans), vec!["id-gone".to_string(), "id-gone-sub".to_string()]);
+        assert_eq!(held, vec![broken]);
+        let (status, message) = folder_scan_status(true, &held);
+        assert_eq!(status, "available");
+        assert!(message.unwrap().contains("broken.md"));
+        assert_eq!(folder_scan_status(true, &[]), ("available", None));
+    }
+
+    #[test]
+    fn unreadable_part_without_index_rows_gives_no_warning() {
+        let kb = PathBuf::from("kb");
+        // Pasta do sistema que não lista sem admin e symlink quebrado de tipo
+        // não indexado: nenhuma linha do índice embaixo deles.
+        let unreadable = vec![kb.join("System Volume Information"), kb.join("link.xyz")];
+        let existing = vec![row("id-a", &kb.join("a.md")), row("id-gone", &kb.join("gone.md"))];
+        let on_disk = vec![(kb.join("a.md"), 1)];
+        let (_, orphans, held) = plan_folder_jobs(on_disk, existing, &unreadable);
+        assert_eq!(orphans, vec!["id-gone".to_string()]);
+        assert!(held.is_empty());
+        assert_eq!(folder_scan_status(true, &held), ("available", None));
+    }
+
+    #[test]
+    fn repeated_unreadable_part_warns_once() {
+        let kb = PathBuf::from("kb");
+        let sub = kb.join("sub");
+        // Cada entrada com erro empilha a mesma pasta.
+        let unreadable = vec![sub.clone(), sub.clone(), sub.clone()];
+        let existing = vec![row("id-x", &sub.join("x.md")), row("id-y", &sub.join("y.md"))];
+        let (_, orphans, held) = plan_folder_jobs(Vec::new(), existing, &unreadable);
+        assert!(orphans.is_empty());
+        assert_eq!(held, vec![sub]);
+        assert!(folder_scan_status(true, &held).1.unwrap().starts_with("1 item could not be read"));
+    }
+
+    #[test]
+    fn entry_error_at_root_is_only_a_warning() {
+        // A raiz foi listada, mas uma entrada dela falhou: nenhum órfão sai, e
+        // a pasta segue 'available', com aviso.
+        let kb = PathBuf::from("kb");
+        let existing = vec![row("id-a", &kb.join("a.md")), row("id-gone", &kb.join("gone.md"))];
+        let on_disk = vec![(kb.join("a.md"), 1)];
+        let (_, orphans, held) = plan_folder_jobs(on_disk, existing, &[kb.clone()]);
+        assert!(orphans.is_empty());
+        assert_eq!(held, vec![kb]);
+        assert_eq!(folder_scan_status(true, &held).0, "available");
+    }
+
+    #[test]
+    fn unreadable_root_is_an_error() {
+        let missing = std::env::temp_dir().join(format!("monet-test-{}", Uuid::new_v4()));
+        let mut files = Vec::new();
+        let mut unreadable = Vec::new();
+        let listed = collect_files_recursive(&missing, &mut files, &mut unreadable);
+        assert!(!listed);
+        // Nada é órfão: a listagem não viu nada da pasta.
+        let existing = vec![row("id-a", &missing.join("a.md"))];
+        let (_, orphans, held) = plan_folder_jobs(files, existing, &unreadable);
+        assert!(orphans.is_empty());
+        let (status, message) = folder_scan_status(listed, &held);
+        assert_eq!(status, "error");
+        assert!(message.is_some());
+    }
+
+    #[test]
+    fn collect_files_reports_unreadable_dirs() {
+        let root = std::env::temp_dir().join(format!("monet-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join("sub")).unwrap();
+        fs::write(root.join("a.md"), "a").unwrap();
+        fs::write(root.join("sub").join("b.txt"), "b").unwrap();
+        fs::write(root.join("c.xyz"), "c").unwrap();
+
+        let mut files = Vec::new();
+        let mut unreadable = Vec::new();
+        let listed = collect_files_recursive(&root, &mut files, &mut unreadable);
+        let _ = fs::remove_dir_all(&root);
+        assert!(listed);
+        assert_eq!(files.len(), 2);
+        assert!(unreadable.is_empty());
+
+        let missing = root.join("missing");
+        let mut files = Vec::new();
+        let mut unreadable = Vec::new();
+        assert!(!collect_files_recursive(&missing, &mut files, &mut unreadable));
+        assert!(files.is_empty());
+        assert_eq!(unreadable, vec![missing]);
+    }
+
+    #[test]
+    fn cleanup_releases_stuck_folders_without_error() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE documents (
+                 id TEXT PRIMARY KEY, type TEXT NOT NULL DEFAULT 'file', status TEXT NOT NULL,
+                 error_message TEXT, updated_at INTEGER
+             );
+             INSERT INTO documents (id, type, status, error_message) VALUES
+                 ('folder:a', 'folder', 'indexing', NULL),
+                 ('folder:b', 'folder', 'error', 'Folder not found on disk'),
+                 ('file:a', 'file', 'indexing', NULL);",
+        )
+        .unwrap();
+        assert_eq!(release_stuck_folders(&conn).unwrap(), 1);
+        let status = |id: &str| -> (String, Option<String>) {
+            conn.query_row(
+                "SELECT status, error_message FROM documents WHERE id = ?1",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap()
+        };
+        assert_eq!(status("folder:a"), ("available".into(), None));
+        assert_eq!(status("folder:b"), ("error".into(), Some("Folder not found on disk".into())));
+        // O arquivo segue para o release_stuck de sempre.
+        assert_eq!(status("file:a"), ("indexing".into(), None));
+    }
+
+    #[test]
+    fn auto_rescan_due_waits_for_boot_and_interval() {
+        let now = 1_000_000_000;
+        assert!(!auto_rescan_due(0, now));
+        assert!(!auto_rescan_due(now - 59 * 1000, now));
+        assert!(auto_rescan_due(now - 60 * 1000, now));
     }
 }

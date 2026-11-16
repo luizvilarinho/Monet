@@ -1661,6 +1661,13 @@ pub fn run() {
         .manage(RequestRegistry(Mutex::new(HashMap::new())))
         .manage(mincer::MincerJobs::default())
         .manage(mincer::MincerRecording::default())
+        // Foco em qualquer janela (main, assistant, keep): rescan das pastas
+        // monitoradas, no máximo a cada 60 s.
+        .on_window_event(|window, event| {
+            if let WindowEvent::Focused(true) = event {
+                documents::rescan_on_focus(window.app_handle());
+            }
+        })
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
                 if let Some(icon) = app.default_window_icon() {
@@ -1727,7 +1734,7 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 documents::cleanup_stuck_indexing(startup_handle.clone()).await;
                 mincer::on_startup(startup_handle.clone()).await;
-                documents::scan_all_watched_folders_on_startup(startup_handle).await;
+                documents::rescan_watched_folders_on_startup(startup_handle).await;
             });
 
             // ─── Atalho global Ctrl+M → toggle da janela assistant ─────────
@@ -1837,6 +1844,8 @@ pub fn run() {
             documents::documents_pick_folder,
             documents::documents_add_watched_folder,
             documents::documents_scan_watched_folder,
+            documents::documents_rescan_all_watched_folders,
+            documents::documents_last_folders_check,
             documents::documents_delete_watched_folder,
             documents::documents_ensure_ai_folder,
             documents::documents_write_ai_source_file,

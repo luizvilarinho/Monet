@@ -9,7 +9,7 @@ import { createNodeFromContent, type Editor as TiptapEditor } from '@tiptap/core
 import { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import './App.css'
 import { AiPanel, type RightTab } from './components/AiPanel/AiPanel'
-import { OpenNotesPanel, type OpenNoteCard } from './components/OpenNotes/OpenNotesPanel'
+import { OpenNotesPanel, type OpenCard } from './components/OpenNotes/OpenNotesPanel'
 import { SideNotePanel } from './components/OpenNotes/SideNotePanel'
 import { CalendarView } from './components/CalendarView/CalendarView'
 import { ChatPanel } from './components/ChatPanel/ChatPanel'
@@ -523,6 +523,8 @@ function App() {
   const [documentsModalNotebookId, setDocumentsModalNotebookId] = useState<string | null>(null)
   const [notebooksWithDocs, setNotebooksWithDocs] = useState<Set<string>>(new Set())
   const [kbOpen, setKbOpen] = useState(false)
+  // Pastas monitoradas em erro, para o ponto no ícone da KB.
+  const [kbFolderErrors, setKbFolderErrors] = useState(0)
   const [hasApiKey, setHasApiKey] = useState<boolean>(false)
   const [apiKeyChecked, setApiKeyChecked] = useState<boolean>(false)
   const [onboardingActive, setOnboardingActive] = useState<boolean>(
@@ -1075,6 +1077,13 @@ function App() {
   const noteBoardOpen = activeBoard !== null
   const fullAreaOpen = tasksBoardOpen || noteBoardOpen
 
+  // Task aberta pelo Opened today ou pelo Related content: modal sobre a nota
+  // atual; nas visões em quadro (o editor já está num modal), a área Tasks.
+  const openTaskFromPanel = useCallback(
+    (id: string) => (fullAreaOpen ? openTask(id) : openTaskModalInPlace(id)),
+    [fullAreaOpen, openTask, openTaskModalInPlace]
+  )
+
   // Tipo apagado, board desligado ou coluna apagada (inclusive por outra
   // janela) com o board aberto: volta para as notas.
   const noteBoardGone = mainArea.kind === 'noteBoard' && !boards.some((b) => b.type.id === mainArea.typeId)
@@ -1586,29 +1595,41 @@ function App() {
     }
   }, [autoOpenedId, activeId])
 
-  // Aba Open: notas abertas hoje, a mais recente primeiro. Ficam fora a
-  // nota-corpo de task (abre pela task), a Quick Note em branco, a nota sem
-  // caderno e a nota apagada.
-  const { entries: openNoteEntries, record: recordOpenNoteId, remove: removeOpenNote } = useOpenNotes(
+  // Aba Open: notas e tasks abertas hoje, a mais recente primeiro. Ficam fora
+  // a nota-corpo de task (entra como a task), a Quick Note em branco, a nota
+  // sem caderno e a nota ou task apagada.
+  const {
+    entries: openEntries,
+    record: recordOpen,
+    remove: removeOpen,
+    clear: clearOpen,
+    canUndoClear: canUndoClearOpen,
+    undoClear: undoClearOpen,
+  } = useOpenNotes(
     activeNote && !isTaskBodyNote(activeNote) && activeNote.id !== autoOpenedId ? activeNote.id : null,
     today,
   )
-  const openNoteCards = useMemo<OpenNoteCard[]>(() => {
+  const openCards = useMemo<OpenCard[]>(() => {
     const byId = new Map(notes.map((n) => [n.id, n]))
-    return openNoteEntries.flatMap((entry) => {
-      const note = byId.get(entry.noteId)
+    const notebookNameOf = (id: string | null) => notebooks.find((nb) => nb.id === id)?.name ?? ''
+    return openEntries.flatMap((entry): OpenCard[] => {
+      if (entry.kind === 'task') {
+        const task = tasksById.get(entry.id)
+        if (!task) return []
+        return [{ kind: 'task', task, notebookName: notebookNameOf(task.notebookId), openedAt: entry.openedAt }]
+      }
+      const note = byId.get(entry.id)
       if (!note || !note.notebookId || isTaskBodyNote(note) || isBlankQuickNote(note)) return []
-      const notebookName = notebooks.find((nb) => nb.id === note.notebookId)?.name ?? ''
       const type = note.typeId ? noteTypes.types.find((t) => t.id === note.typeId) : undefined
-      return [{ note, notebookName, type, openedAt: entry.openedAt }]
+      return [{ kind: 'note', note, notebookName: notebookNameOf(note.notebookId), type, openedAt: entry.openedAt }]
     })
-  }, [openNoteEntries, notes, notebooks, noteTypes.types])
+  }, [openEntries, notes, notebooks, noteTypes.types, tasksById])
 
-  // Alt+←: a última nota aberta antes da atual.
+  // Alt+←: a última nota aberta antes da atual (só notas).
   previousNoteRef.current = () => {
     if (activeMode !== 'notebook') return
-    const previous = openNoteCards.find((c) => c.note.id !== activeId)
-    if (previous) handleNoteLinkNavigation(previous.note.id)
+    const previous = openCards.find((c) => c.kind === 'note' && c.note.id !== activeId)
+    if (previous?.kind === 'note') handleNoteLinkNavigation(previous.note.id)
   }
 
   // Nota lateral da aba Open: a segunda nota aberta, editável ao lado da
@@ -1623,8 +1644,8 @@ function App() {
   // A nota aberta na lateral também entra na aba Open (reabre depois de
   // fechar a lateral).
   useEffect(() => {
-    if (sideNoteId) recordOpenNoteId(sideNoteId)
-  }, [sideNoteId, recordOpenNoteId])
+    if (sideNoteId) recordOpen('note', sideNoteId)
+  }, [sideNoteId, recordOpen])
 
   // A mesma nota nunca fica nos dois lados: quando a principal vira a nota da
   // lateral (card, Alt+←, lista, link), a lateral fica com a principal
@@ -1876,6 +1897,29 @@ function App() {
   const activeTask = useMemo(
     () => (activeId ? tasks.find((t) => t.noteId === activeId) ?? null : null),
     [tasks, activeId]
+  )
+
+  // Toda abertura de task entra no Opened today: nota-corpo no editor (lista do
+  // caderno, área Tasks, Ctrl+P, quadros) ou modal aberto de dentro de uma nota.
+  const openedTaskId = activeTask && activeTask.noteId !== autoOpenedId ? activeTask.id : null
+  useEffect(() => {
+    if (openedTaskId) recordOpen('task', openedTaskId)
+  }, [openedTaskId, recordOpen])
+  useEffect(() => {
+    if (noteTaskModalId) recordOpen('task', noteTaskModalId)
+  }, [noteTaskModalId, recordOpen])
+
+  // Clear all do Opened today: fica o item aberto no clique, a task (modal ou
+  // nota-corpo no editor) ou, sem task, a nota ativa. Sem outro card na lista,
+  // o botão some.
+  const openTaskId = noteTaskModalId ?? activeTask?.id ?? null
+  const openKeep = openTaskId
+    ? { kind: 'task' as const, id: openTaskId }
+    : activeId
+      ? { kind: 'note' as const, id: activeId }
+      : null
+  const canClearOpen = openCards.some(
+    (c) => c.kind !== openKeep?.kind || (c.kind === 'task' ? c.task.id : c.note.id) !== openKeep.id
   )
 
   // Tipo da nota aberta: só nota de caderno (D4); id órfão = sem tipo.
@@ -3749,6 +3793,7 @@ function App() {
           notes={notes}
           notebooks={notebooks}
           noteTypes={noteTypes.types}
+          tasks={tasks}
           termsOnly={activeNote.notebookId === calendarNotebookId}
           // Como no Ctrl+P: troca caderno e assunto, não só a nota ativa (a
           // coluna de notas ficava no caderno anterior).
@@ -3756,6 +3801,7 @@ function App() {
             const note = notes.find((n) => n.id === id)
             if (note?.notebookId) handleNavigateToNote(note.notebookId, id, note.subjectId)
           }}
+          onSelectTask={openTaskFromPanel}
         />
       }
       isCalendarNote={activeNote.notebookId === calendarNotebookId}
@@ -3922,12 +3968,18 @@ function App() {
     </SideNotePanel>
   ) : (
     <OpenNotesPanel
-      cards={openNoteCards}
+      cards={openCards}
       activeNoteId={activeId}
+      activeTaskId={activeTask?.id ?? null}
       sideNoteId={sideNoteId}
       onOpen={handleNoteLinkNavigation}
+      onOpenTask={openTaskFromPanel}
       onOpenOnSide={openNoteOnSideFromList}
-      onRemove={removeOpenNote}
+      onRemove={removeOpen}
+      canClearAll={canClearOpen}
+      onClearAll={() => clearOpen(openKeep)}
+      canUndoClear={canUndoClearOpen}
+      onUndoClear={undoClearOpen}
     />
   )
 
@@ -4038,6 +4090,7 @@ function App() {
             setDocumentsModalNotebookId(id)
           }}
           onOpenKnowledgeBase={() => setKbOpen(true)}
+          kbFolderErrors={kbFolderErrors}
           notebooksWithDocs={notebooksWithDocs}
           quickNotesCount={quickNotesStats.count}
           quickNotesOldestAt={quickNotesStats.oldestAt}
@@ -4382,7 +4435,12 @@ function App() {
           if (documentsModalNotebookId) await setNotebookIndexEnabled(documentsModalNotebookId, enabled)
         }}
       />
-      <KnowledgeBaseModal open={kbOpen} onClose={() => setKbOpen(false)} />
+      <KnowledgeBaseModal
+        open={kbOpen}
+        onClose={() => setKbOpen(false)}
+        onFolderErrorsChange={setKbFolderErrors}
+        hasApiKey={hasApiKey}
+      />
       {onboardingActive && (
         <Onboarding
           onComplete={handleCompleteOnboarding}

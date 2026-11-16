@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { PencilSimple } from '@phosphor-icons/react'
 import type { Document } from '../../types'
@@ -9,20 +9,30 @@ import {
   documentMatchesFilter,
   documentsDeleteWatchedFolder,
   documentsIndexOutdatedCount,
+  documentsLastFoldersCheck,
   documentsReindexOutdated,
+  documentsRescanAllWatchedFolders,
   documentsSetFolderAlias,
   onReindexProgress,
+  onRescanProgress,
   pickDocumentFile,
   pickDocumentFolder,
   webFolderChatFolderId,
+  type FolderScanReport,
   type IndexOutdatedCount,
   type ReindexProgressEvent,
+  type RescanProgressEvent,
+  type RescanSummary,
 } from '../../lib/documents'
 import styles from './KnowledgeBaseModal.module.css'
 
 export interface KnowledgeBaseModalProps {
   open: boolean
   onClose: () => void
+  // Pastas monitoradas em erro (raiz ausente ou ilegível), para o ícone da KB.
+  onFolderErrorsChange: (count: number) => void
+  // Sem a chave da OpenRouter, o foco não confere as pastas.
+  hasApiKey: boolean
 }
 
 function statusLabel(status: Document['status']): string {
@@ -56,7 +66,40 @@ function outdatedLabel({ files, notes }: IndexOutdatedCount): string {
   return `Search index needs an update: ${docs} (${auto}).`
 }
 
-export function KnowledgeBaseModal({ open, onClose }: KnowledgeBaseModalProps) {
+// O que mudou no índice ("2 new, 1 updated") ou "no changes found".
+function changesText({ added, updated, removed }: { added: number; updated: number; removed: number }): string {
+  const changes = [
+    added > 0 ? `${added} new` : null,
+    updated > 0 ? `${updated} updated` : null,
+    removed > 0 ? `${removed} removed` : null,
+  ].filter(Boolean)
+  return changes.length > 0 ? changes.join(', ') : 'no changes found'
+}
+
+// Resumo do Rescan all clicado: o que mudou no índice e as pastas que falharam.
+function rescanNotice(summary: RescanSummary | null): string {
+  if (!summary) return 'Rescan all could not finish.'
+  const stillScanning =
+    summary.stillScanning > 0
+      ? ` ${summary.stillScanning} folder${summary.stillScanning === 1 ? ' was' : 's were'} still being scanned.`
+      : ''
+  const result = `Folders rescanned: ${changesText(summary)}.${stillScanning}`
+  if (summary.failures.length === 0) return result
+  return `${result} Failed: ${summary.failures.map((f) => `${f.name} (${f.error})`).join('; ')}.`
+}
+
+// Resultado do "rescan" de uma pasta.
+function folderRescanNotice(label: string, report: FolderScanReport): string {
+  if (report.queued) return `${label} is already being scanned. It will be checked again right after.`
+  if (report.error) return `${label}: ${report.error}.`
+  return `${label} rescanned: ${changesText(report)}.`
+}
+
+function checkedTime(ms: number): string {
+  return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+export function KnowledgeBaseModal({ open, onClose, onFolderErrorsChange, hasApiKey }: KnowledgeBaseModalProps) {
   const { documents, loading, error, refresh, upload, reindex, remove, addFolder, rescanFolder, removeFolder } = useKnowledgeBase()
   const { confirm, modal: confirmModal } = useConfirm()
   const [uploading, setUploading] = useState(false)
@@ -66,6 +109,17 @@ export function KnowledgeBaseModal({ open, onClose }: KnowledgeBaseModalProps) {
   const [aliasDraft, setAliasDraft] = useState('')
   const [outdated, setOutdated] = useState<IndexOutdatedCount | null>(null)
   const [reindexProgress, setReindexProgress] = useState<ReindexProgressEvent | null>(null)
+  const [rescanProgress, setRescanProgress] = useState<RescanProgressEvent | null>(null)
+  // O aviso de conclusão sai só do Rescan all clicado; o do foco e o do boot
+  // são silenciosos.
+  const manualRescanRef = useRef(false)
+  // Erro do Rescan all, no rodapé ao lado do botão.
+  const [rescanError, setRescanError] = useState<string | null>(null)
+  // Fim do último Rescan all (clique, foco ou boot).
+  const [lastChecked, setLastChecked] = useState<number | null>(null)
+  // Pastas com "rescan" clicado ainda em curso: a rodada sem mudança não passa
+  // por 'indexing'.
+  const [scanningIds, setScanningIds] = useState<ReadonlySet<string>>(() => new Set())
   const [indexNotice, setIndexNotice] = useState<string | null>(null)
 
   const recountOutdated = useCallback(() => {
@@ -98,6 +152,34 @@ export function KnowledgeBaseModal({ open, onClose }: KnowledgeBaseModalProps) {
     }
   }, [recountOutdated])
 
+  // Rescan all (clique, foco ou boot), ouvido também com o modal fechado.
+  useEffect(() => {
+    let unlisten: (() => void) | null = null
+    let cancelled = false
+    onRescanProgress((p) => {
+      if (p.finished) {
+        setRescanProgress(null)
+        setLastChecked(Date.now())
+        if (manualRescanRef.current) {
+          manualRescanRef.current = false
+          setIndexNotice(rescanNotice(p.summary))
+        }
+        recountOutdated()
+      } else {
+        setRescanProgress(p)
+      }
+    })
+      .then((un) => {
+        if (cancelled) un()
+        else unlisten = un
+      })
+      .catch((e) => console.error('failed to listen documents://rescan-progress', e))
+    return () => {
+      cancelled = true
+      if (unlisten) unlisten()
+    }
+  }, [recountOutdated])
+
   // Recontagem periódica enquanto há pendentes: as notas saem da contagem à
   // medida que a fila do useNotesIndexSync avança.
   const hasOutdated = !!outdated && outdated.files + outdated.notes > 0
@@ -121,12 +203,31 @@ export function KnowledgeBaseModal({ open, onClose }: KnowledgeBaseModalProps) {
   useEffect(() => {
     if (!open) {
       setUploadError(null)
+      setRescanError(null)
       setUploading(false)
       setFilter('')
       setEditingAliasId(null)
       setIndexNotice(null)
     }
   }, [open])
+
+  // "Last checked" ao abrir; depois, o fim de cada rodada pelo evento.
+  useEffect(() => {
+    if (!open) return
+    documentsLastFoldersCheck()
+      .then((ms) => {
+        if (ms !== null) setLastChecked(ms)
+      })
+      .catch((e) => console.warn('documents_last_folders_check failed', e))
+  }, [open])
+
+  const watchedFolders = documents.filter((d) => d.docType === 'folder' && d.origin !== 'notes')
+  // Pasta monitorada em erro acende o ícone da KB (o aviso de item ilegível
+  // não conta: a pasta segue 'available').
+  const folderErrorCount = watchedFolders.filter((f) => f.status === 'error').length
+  useEffect(() => {
+    onFolderErrorsChange(folderErrorCount)
+  }, [folderErrorCount, onFolderErrorsChange])
 
   if (!open) return null
 
@@ -201,12 +302,44 @@ export function KnowledgeBaseModal({ open, onClose }: KnowledgeBaseModalProps) {
     }
   }
 
+  async function handleRescanAll() {
+    setRescanError(null)
+    setIndexNotice(null)
+    manualRescanRef.current = true
+    // Trava o duplo clique antes do 1º evento de progresso.
+    setRescanProgress({
+      done: 0,
+      total: watchedFolders.length,
+      failed: 0,
+      currentName: null,
+      finished: false,
+      automatic: false,
+      summary: null,
+    })
+    try {
+      await documentsRescanAllWatchedFolders()
+    } catch (e) {
+      manualRescanRef.current = false
+      setRescanProgress(null)
+      setRescanError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
   async function handleRescanFolder(folder: Document) {
     setUploadError(null)
+    setIndexNotice(null)
+    setScanningIds((prev) => new Set(prev).add(folder.id))
     try {
-      await rescanFolder(folder.id)
+      const report = await rescanFolder(folder.id)
+      setIndexNotice(folderRescanNotice(folder.alias ?? folder.name, report))
     } catch (e) {
       setUploadError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setScanningIds((prev) => {
+        const next = new Set(prev)
+        next.delete(folder.id)
+        return next
+      })
     }
   }
 
@@ -269,6 +402,12 @@ export function KnowledgeBaseModal({ open, onClose }: KnowledgeBaseModalProps) {
     : []
   const orphanIds = new Set(orphanFolders.map((d) => d.id))
   const folders = documents.filter((d) => d.docType === 'folder' && documentMatchesFilter(d, filter))
+  // Por que o "rescan" e o "Rescan all" estão travados.
+  const rescanBusyTitle = rescanProgress
+    ? rescanProgress.automatic
+      ? 'Automatic check in progress'
+      : 'Rescan all in progress'
+    : undefined
   const standaloneFiles = documents.filter(
     (d) => d.docType === 'file' && !d.parentFolderId && documentMatchesFilter(d, filter),
   )
@@ -299,6 +438,30 @@ export function KnowledgeBaseModal({ open, onClose }: KnowledgeBaseModalProps) {
           </header>
 
           <div className={styles.body}>
+            {rescanProgress && (
+              <div className={styles.indexBanner} role="status">
+                <div className={styles.indexBannerRow}>
+                  <span>
+                    {rescanProgress.automatic ? 'Checking folders for changes' : 'Rescanning folders'}:{' '}
+                    {rescanProgress.done}/{rescanProgress.total}
+                    {rescanProgress.failed > 0 && ` (${rescanProgress.failed} failed)`}
+                  </span>
+                  {rescanProgress.currentName && (
+                    <span className={styles.indexCurrent} title={rescanProgress.currentName}>
+                      {rescanProgress.currentName}
+                    </span>
+                  )}
+                </div>
+                <div className={styles.progressTrack}>
+                  <div
+                    className={styles.progressFill}
+                    style={{
+                      width: `${rescanProgress.total > 0 ? (rescanProgress.done / rescanProgress.total) * 100 : 100}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            )}
             {reindexProgress ? (
               <div className={styles.indexBanner} role="status">
                 <div className={styles.indexBannerRow}>
@@ -400,6 +563,7 @@ export function KnowledgeBaseModal({ open, onClose }: KnowledgeBaseModalProps) {
                 <tbody>
                   {folders.map((folder) => {
                     const childCount = documents.filter((d) => d.parentFolderId === folder.id).length
+                    const scanning = folder.status === 'indexing' || scanningIds.has(folder.id)
                     return (
                       <tr key={folder.id} className={styles.folderRow}>
                         <td className={styles.cellName} title={folder.originalPath ?? folder.name}>
@@ -454,6 +618,12 @@ export function KnowledgeBaseModal({ open, onClose }: KnowledgeBaseModalProps) {
                           {folder.status === 'error' && folder.errorMessage && (
                             <span className={styles.errorMsg}>{folder.errorMessage}</span>
                           )}
+                          {/* Item ilegível na pasta: aviso, a pasta segue disponível. */}
+                          {folder.status === 'available' && folder.errorMessage && (
+                            <span className={styles.warnMsg} title={folder.errorMessage}>
+                              {folder.errorMessage}
+                            </span>
+                          )}
                         </td>
                         <td className={styles.cellCount}>{childCount}</td>
                         <td className={styles.cellActions}>
@@ -463,9 +633,10 @@ export function KnowledgeBaseModal({ open, onClose }: KnowledgeBaseModalProps) {
                                 className={styles.secondary}
                                 type="button"
                                 onClick={() => handleRescanFolder(folder)}
-                                disabled={folder.status === 'indexing'}
+                                disabled={scanning || rescanProgress !== null}
+                                title={rescanBusyTitle}
                               >
-                                {folder.status === 'indexing' ? 'scanning…' : 'rescan'}
+                                {scanning ? 'scanning…' : 'rescan'}
                               </button>
                               <button
                                 className={styles.danger}
@@ -522,14 +693,37 @@ export function KnowledgeBaseModal({ open, onClose }: KnowledgeBaseModalProps) {
           </div>
 
           <footer className={styles.footer}>
-            <p className={styles.footerHint}>
-              Indexing requires an internet connection.
-            </p>
+            {rescanError ? (
+              <p className={styles.errorText} role="alert">
+                {rescanError}
+              </p>
+            ) : (
+              <p className={styles.footerHint}>
+                {watchedFolders.length > 0
+                  ? `${
+                      hasApiKey
+                        ? 'Watched folders are checked when you return to Monet'
+                        : 'Add your OpenRouter key in Settings to check watched folders'
+                    }${lastChecked !== null ? ` · Last checked ${checkedTime(lastChecked)}` : ''}`
+                  : 'Indexing requires an internet connection.'}
+              </p>
+            )}
             {documents.length > 0 && (
               <div className={styles.footerActions}>
                 {orphanFolders.length > 0 && (
                   <button className={styles.secondary} type="button" onClick={handleRemoveOrphans}>
                     Remove orphan web folders ({orphanFolders.length})
+                  </button>
+                )}
+                {watchedFolders.length > 0 && (
+                  <button
+                    className={styles.secondary}
+                    type="button"
+                    onClick={handleRescanAll}
+                    disabled={rescanProgress !== null}
+                    title={rescanBusyTitle}
+                  >
+                    {rescanProgress && !rescanProgress.automatic ? 'Rescanning…' : 'Rescan all'}
                   </button>
                 )}
                 <button

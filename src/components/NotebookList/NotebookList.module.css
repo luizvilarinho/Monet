@@ -602,6 +602,21 @@
   background: var(--surface-1, #1e1e22);
 }
 
+/* Ponto no canto do ícone da KB: alguma pasta monitorada em erro. */
+.kbButton {
+  position: relative;
+}
+
+.kbErrorDot {
+  position: absolute;
+  top: var(--space-1);
+  right: var(--space-1);
+  width: var(--space-1h);
+  height: var(--space-1h);
+  border-radius: 50%;
+  background: var(--accent-danger);
+}
+
 .version {
   font-size: 11px;
   /* alinha o texto com os ícones de 28px do rodapé */

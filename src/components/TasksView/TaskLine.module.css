@@ -28,6 +28,39 @@
   gap: var(--space-0);
 }
 
+/* TODOS acima do título (lista de tasks da coluna de notas): laranja das
+   tasks, uma linha com reticências, clicável (abre a nota). Só o ícone e o
+   nome são o link (flex-start): o vazio à direita abre a task. */
+.todosAbove {
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 100%;
+  font-size: 11px;
+  line-height: var(--space-4);
+  color: var(--accent-task);
+  cursor: pointer;
+}
+
+.todosAbove > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.todosAbove:hover {
+  text-decoration: underline;
+}
+
+/* Com a linha da TODOS, o checkbox desce para seguir alinhado ao título
+   (a margem dele, a linha de 16px e o gap do .body). */
+.checkboxBelowTodos {
+  margin-top: calc(var(--space-4) + 2 * var(--space-0));
+}
+
 .title {
   font-size: 13px;
   line-height: 1.35;

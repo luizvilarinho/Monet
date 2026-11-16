@@ -157,6 +157,8 @@ export function NoteMarkMenu({ editor, scrollEl, labels, onAskAi, onShowInList }
       <BubbleMenu
         editor={editor}
         pluginKey={PLUGIN_KEY}
+        className={styles.bubbleMenu}
+        data-editor-bubble=""
         shouldShow={shouldShow}
         getReferencedVirtualElement={anchor}
         options={options}

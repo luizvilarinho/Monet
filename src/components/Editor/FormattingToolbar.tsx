@@ -163,6 +163,8 @@ export function FormattingToolbar({ editor, scrollEl, onAskAi, onAddToTasks, mar
     <BubbleMenu
       editor={editor}
       pluginKey={PLUGIN_KEY}
+      className={styles.bubbleMenu}
+      data-editor-bubble=""
       shouldShow={({ editor: ed, from: f, to: t }) => {
         if (hiddenByEscape || searchOpenRef.current) return false
         if (ed.isActive('linkedNoteBlock')) return false

@@ -1,3 +1,10 @@
+/* Elemento flutuante da régua e do menu da marca: acima do gutter do bloco
+   (z-index 5). Os dois ficam dentro do .editor; os popovers que vão ao body
+   continuam acima de 1000. */
+.bubbleMenu {
+  z-index: 10;
+}
+
 /* Em coluna mais estreita que a régua (coluna da IA aberta), os grupos
    quebram em mais linhas em vez de a régua passar da borda do editor
    (100cqw = largura do .editor, que é o container). */

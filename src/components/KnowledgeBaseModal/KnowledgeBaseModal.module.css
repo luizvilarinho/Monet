@@ -400,6 +400,21 @@
   white-space: nowrap;
 }
 
+/* Aviso de item ilegível numa pasta disponível: âmbar, até 3 linhas (o
+   caminho e o que fazer); o texto inteiro fica no title. */
+.warnMsg {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  max-width: 220px;
+  margin-top: var(--space-1);
+  font-size: 11px;
+  line-height: var(--lh-ui);
+  color: var(--accent-warn);
+  overflow-wrap: anywhere;
+}
+
 .footer {
   display: flex;
   align-items: center;

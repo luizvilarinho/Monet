@@ -121,7 +121,7 @@ export function useKnowledgeBase() {
   )
 
   const rescanFolder = useCallback(async (folderId: string) => {
-    await documentsScanWatchedFolder(folderId)
+    return documentsScanWatchedFolder(folderId)
   }, [])
 
   const removeFolder = useCallback(

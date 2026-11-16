@@ -58,6 +58,41 @@ export function onReindexProgress(
   return listen<ReindexProgressEvent>('documents://reindex-progress', (e) => handler(e.payload))
 }
 
+// Reescaneia em sequência as pastas monitoradas (fora as de notas) e volta na
+// hora; o andamento chega por onRescanProgress. Já rodando (clique, foco ou
+// boot), não faz nada. Sem chave, rejeita.
+export async function documentsRescanAllWatchedFolders(): Promise<void> {
+  await invoke('documents_rescan_all_watched_folders')
+}
+
+// Hora (ms) do fim do último Rescan all; null antes do primeiro e durante uma
+// rodada.
+export async function documentsLastFoldersCheck(): Promise<number | null> {
+  return invoke<number | null>('documents_last_folders_check')
+}
+
+export interface RescanSummary {
+  added: number
+  updated: number
+  removed: number
+  failures: { name: string; error: string }[]
+  // Pastas que outro caminho já varria: o resultado delas fica com ele.
+  stillScanning: number
+}
+
+export interface RescanProgressEvent extends ReindexProgressEvent {
+  // Foco ou boot; false = Rescan all clicado.
+  automatic: boolean
+  // Só no evento final; null quando a rodada não chegou ao fim.
+  summary: RescanSummary | null
+}
+
+export function onRescanProgress(
+  handler: (event: RescanProgressEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<RescanProgressEvent>('documents://rescan-progress', (e) => handler(e.payload))
+}
+
 export async function documentsDelete(documentId: string): Promise<void> {
   await invoke('documents_delete', { documentId })
 }
@@ -218,8 +253,20 @@ export async function documentsWriteAiSourceFile(
   await invoke('documents_write_ai_source_file', { folderId, filename, content })
 }
 
-export async function documentsScanWatchedFolder(folderId: string): Promise<void> {
-  await invoke('documents_scan_watched_folder', { folderId })
+// Resultado do "rescan" de uma pasta.
+export interface FolderScanReport {
+  added: number
+  updated: number
+  removed: number
+  // Raiz ausente ou ilegível, índice ilegível.
+  error: string | null
+  // A pasta já estava em varredura: o pedido roda ao fim da rodada em curso.
+  queued: boolean
+}
+
+// Espera a varredura da pasta terminar.
+export async function documentsScanWatchedFolder(folderId: string): Promise<FolderScanReport> {
+  return invoke<FolderScanReport>('documents_scan_watched_folder', { folderId })
 }
 
 export async function documentsDeleteWatchedFolder(folderId: string): Promise<void> {

@@ -13,7 +13,8 @@ import styles from './Editor.module.css'
 // Gutter flutuante à esquerda do bloco sob o mouse: "+" insere uma linha
 // abaixo (Shift: acima) e o handle (⠿) arrasta o bloco ou, no clique, abre o
 // menu do bloco (Delete). Um par de botões só, reposicionado no mousemove —
-// sem widget por bloco, nada roda enquanto se digita.
+// sem widget por bloco, nada roda enquanto se digita. Some sob a régua e
+// durante a seleção com o mouse.
 
 interface BlockGutterProps {
   editor: TiptapEditor | null
@@ -182,7 +183,14 @@ export function BlockGutter({ editor, scrollEl, disabled, blockHandles, onRemove
       const target = e.target instanceof Element ? e.target : null
       // Sobre os próprios botões: mantém a unidade.
       if (target && wrapRef.current?.contains(target)) return
-      if (disabled || !editor.isEditable || target?.closest('td, th')) {
+      // Sobre a régua ou o menu da marca, ou com seleção pelo mouse em curso:
+      // o gutter não aparece embaixo deles.
+      if (
+        disabled ||
+        !editor.isEditable ||
+        target?.closest('td, th, [data-editor-bubble]') ||
+        e.buttons !== 0
+      ) {
         hide()
         return
       }
