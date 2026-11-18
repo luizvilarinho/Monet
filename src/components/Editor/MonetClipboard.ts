@@ -4,7 +4,7 @@ import { Fragment, Slice, type Node as ProseMirrorNode, type Schema } from '@tip
 import { CellSelection } from '@tiptap/pm/tables'
 import { isBlankParagraph } from './blankParagraph'
 import type { TasksQueryBlockStorage } from './TasksQueryBlock'
-import { stripRelatedTermTags } from '../../lib/noteFileText'
+import { COLWIDTHS_RE, stripRelatedTermTags } from '../../lib/noteFileText'
 
 // Texto copiado (text/plain) do editor. Substitui o serializer do
 // tiptap-markdown, que vazava `<br>` no texto: marcador de linha em branco do
@@ -87,6 +87,8 @@ function serializeBlocks(editor: Editor, fragment: Fragment): string {
     .replace(TASKS_QUERY_RE, (match, filter: string) =>
       tasksQuery?.resolveText ? tasksQuery.resolveText(decodeAttr(filter)) : match
     )
+    // Largura das colunas de tabela dentro de lista ou citação.
+    .replace(COLWIDTHS_RE, '')
     // Marcador de linha em branco (`<br>` numa linha só, também dentro de
     // blockquote `> <br>`) vira linha vazia. Texto digitado `<br>` sai
     // escapado (&lt;br&gt;), então não colide.

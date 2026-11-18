@@ -17,6 +17,9 @@ import {
 export const COMMAND_LINE_RE = /^\/[a-zA-Z]/
 export const EMBED_BLOCK_RE = /<!--monet-embed:[a-zA-Z0-9_-]+-->[\s\S]*?<!--monet-embed-end:[a-zA-Z0-9_-]+-->/g
 export const MARKER_RE = /<!--monet:[a-zA-Z0-9_-]+-->/g
+// Largura das colunas gravada acima da tabela (TableWithWidths). Sozinho na
+// linha (também em lista ou citação `> `), sai a linha inteira.
+export const COLWIDTHS_RE = /^[ \t>]*<!--\s*monet:colwidths[^>]*-->[ \t]*\n|<!--\s*monet:colwidths[^>]*-->/gm
 
 const MD_DATA_IMAGE_RE = /!\[[^\]]*\]\((data:[^)]*)\)/g
 const HTML_DATA_IMAGE_RE = /<img\b[^>]*\bsrc=["'](data:[^"']*)["'][^>]*>/gi
@@ -168,6 +171,7 @@ export function cleanNoteContentForAi(content: string, opts: NoteAiTextOptions):
     markTagsToAiText(stripRelatedTermTags(content))
       .replace(EMBED_BLOCK_RE, '')
       .replace(MARKER_RE, '')
+      .replace(COLWIDTHS_RE, '')
       .replace(MD_DATA_IMAGE_RE, (_, url: string) => imageText(url))
       .replace(HTML_DATA_IMAGE_RE, (_, url: string) => imageText(url))
       .replace(DATA_URL_RE, (url) => imageText(url)),

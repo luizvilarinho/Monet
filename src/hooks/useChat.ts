@@ -162,6 +162,13 @@ can edit it, removing parts you judge to be less important or condensing
 the information further. Don't be afraid to make mistakes.`
 // ─────────────────────────────────────────────────────────────────────────────
 
+// O Monet desenha blocos ```mermaid das respostas. Mensagem system própria,
+// enviada em todo turno: vale para o General, os agentes, os prompts de pasta
+// (inclusive em `replace`) e os prompts já gravados nas pastas do Reader e do
+// Mincer.
+const DIAGRAM_SYSTEM_PROMPT =
+  'Monet draws Mermaid diagrams: a ```mermaid code block in your reply is shown to the user as a rendered diagram. Use one only when the user asks for a diagram (flowchart, sequence, mind map, timeline and similar). Do not add diagrams on your own.'
+
 // Mensagem system da 1ª rodada sempre que o turno tem tools: o texto escrito
 // antes de uma tool call sai do balão (a rodada seguinte responde sozinha).
 const TOOLS_FIRST_SYSTEM_PROMPT =
@@ -3452,6 +3459,7 @@ export function useChat(
               : 'Current folder memory: (empty — nothing recorded yet for this folder).',
         })
       }
+      systemMessages.push({ role: 'system', content: DIAGRAM_SYSTEM_PROMPT })
       systemMessages.push({
         role: 'system',
         content: `Current date: ${currentDate} (${getWeekdayName(new Date())})`,

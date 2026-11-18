@@ -148,6 +148,7 @@ import { getAiBlockTitle, getToggleTitle, isPotentialCommandLine } from './compo
 import {
   cleanNoteContentForAi,
   collectEmbedIds,
+  COLWIDTHS_RE,
   loadEmbedResponses,
   stripRelatedTermTags,
 } from './lib/noteFileText'
@@ -2127,7 +2128,7 @@ function App() {
   const handleExport = useCallback(async () => {
     if (!activeNote) return
     const expanded = expandEmbedBlocks(activeNote.content, responses)
-    const content = stripRelatedTermTags(stripCommandLines(expanded))
+    const content = stripRelatedTermTags(stripCommandLines(expanded)).replace(COLWIDTHS_RE, '')
     const defaultName = activeNote.title.trim()
       ? `${activeNote.title.trim()}.md`
       : 'untitled-note.md'

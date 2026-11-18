@@ -1,7 +1,8 @@
 import { NodeViewWrapper, type NodeViewProps } from '@tiptap/react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowSquareOut, LinkBreak } from '@phosphor-icons/react'
 import { renderNoteContent } from '../../lib/markdown'
+import { useMermaidDiagrams } from '../MermaidDiagram/useMermaidDiagrams'
 import { storage } from '../../storage'
 import type { Note } from '../../types'
 import { useEditorNotes } from './EditorNotesContext'
@@ -17,6 +18,8 @@ export function LinkedNoteBlockView({ node, updateAttributes, deleteNode }: Node
   const [renderedHtml, setRenderedHtml] = useState('')
   // React 19 regrava o innerHTML se o objeto muda a cada render (perde a seleção).
   const inner = useMemo(() => ({ __html: renderedHtml }), [renderedHtml])
+  const bodyRef = useRef<HTMLDivElement>(null)
+  useMermaidDiagrams(bodyRef, renderedHtml)
 
   useEffect(() => {
     if (!noteId) return
@@ -72,6 +75,7 @@ export function LinkedNoteBlockView({ node, updateAttributes, deleteNode }: Node
       </div>
       {!collapsed && (
         <div
+          ref={bodyRef}
           className={styles.body}
           contentEditable={false}
           dangerouslySetInnerHTML={inner}

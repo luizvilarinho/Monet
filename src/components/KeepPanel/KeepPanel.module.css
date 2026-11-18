@@ -125,3 +125,9 @@
 .proseEditor :global(img.ProseMirror-selectednode:not(a img)) {
   cursor: zoom-in;
 }
+
+/* Tabela larga rola sozinha, sem levar o corpo da nota (mesmo padrão do
+   editor da main). */
+.proseEditor :global(.tableWrapper) {
+  overflow-x: auto;
+}

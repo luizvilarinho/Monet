@@ -61,7 +61,8 @@ import { BlockGutter } from './BlockGutter'
 import { BlockHandle } from './BlockHandle'
 import { HighlightPicker } from './HighlightPicker'
 import { getCommandSuggestions } from './commandParser'
-import { findCommand } from '../../lib/commands'
+import { DIAGRAM_COMMAND, TASKS_COMMAND } from '../../lib/commands'
+import { MERMAID_LANGUAGE } from './MermaidCodeBlock'
 import type {
   AiResponse,
   CommandExecutionRequest,
@@ -432,9 +433,24 @@ export function Editor({
 
           if (info.status === 'idle') return false
 
+          // Comando local `/diagram`: bloco Mermaid vazio com o cursor dentro,
+          // pronto para colar o código. O parágrafo depois dele é onde seguir
+          // escrevendo com o desenho na tela.
+          if (info.status === 'valid' && info.cmd === DIAGRAM_COMMAND.name) {
+            const { codeBlock, paragraph } = view.state.schema.nodes
+            if (!codeBlock) return false
+            const tr = view.state.tr.replaceWith(info.paragraphPos, info.paragraphEnd, [
+              codeBlock.create({ language: MERMAID_LANGUAGE }),
+              paragraph.create(),
+            ])
+            tr.setSelection(TextSelection.create(tr.doc, info.paragraphPos + 1))
+            view.dispatch(tr.scrollIntoView())
+            return true
+          }
+
           // Comando local `/tasks [filtro]`: a linha vira um bloco vivo de
           // tasks (só o filtro vai para o conteúdo) e a IA não é chamada.
-          if (info.status === 'valid' && findCommand(info.cmd)?.local) {
+          if (info.status === 'valid' && info.cmd === TASKS_COMMAND.name) {
             const { tasksQueryBlock, paragraph } = view.state.schema.nodes
             if (!tasksQueryBlock) return false
             const tr = view.state.tr.replaceWith(info.paragraphPos, info.paragraphEnd, [

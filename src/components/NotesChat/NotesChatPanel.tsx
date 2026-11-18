@@ -33,6 +33,7 @@ import { parseAgentShortcut } from '../../lib/agents/chat'
 import { ChatToolsMenu } from '../ChatPanel/ChatToolsMenu'
 import { ClearAllChatsButton, ClearChatButton } from '../ChatPanel/ChatClearActions'
 import { clickedImage, useImageViewer } from '../ImageViewer/ImageViewer'
+import { useMermaidDiagrams } from '../MermaidDiagram/useMermaidDiagrams'
 import { FolderSystemPromptModal } from '../ChatPanel/FolderSystemPromptModal'
 import { FolderDocumentSelectorModal } from '../ChatPanel/FolderDocumentSelectorModal'
 import { FolderMemoryModal } from '../ChatPanel/FolderMemoryModal'
@@ -1002,9 +1003,12 @@ function NotesChatBubble({
 // Markdown da IA renderizado pelo pipeline seguro (sanitize + bloqueio de URLs).
 // O objeto `__html` é memoizado: o React 19 compara por identidade e, com um
 // objeto novo a cada render, reescreve o DOM e desfaz a seleção do usuário.
-function MarkdownHtml({ markdown, className }: { markdown: string; className?: string }) {
+// `pending`: bloco ainda em streaming (diagrama Mermaid só desenha fechado).
+function MarkdownHtml({ markdown, className, pending = false }: { markdown: string; className?: string; pending?: boolean }) {
   const [html, setHtml] = useState('')
   const inner = useMemo(() => ({ __html: html }), [html])
+  const bodyRef = useRef<HTMLDivElement>(null)
+  useMermaidDiagrams(bodyRef, html, pending)
 
   useEffect(() => {
     let cancelled = false
@@ -1016,7 +1020,7 @@ function MarkdownHtml({ markdown, className }: { markdown: string; className?: s
     }
   }, [markdown])
 
-  return <div className={className} dangerouslySetInnerHTML={inner} />
+  return <div ref={bodyRef} className={className} dangerouslySetInnerHTML={inner} />
 }
 
 interface BlockCardProps {
@@ -1057,7 +1061,7 @@ function BlockCard({ label, markdown, copyText, pending, canInsert, onInsert }: 
         <span>{label}</span>
         {pending && <span className={styles.blockCardStatus}>Writing…</span>}
       </div>
-      <MarkdownHtml className={styles.blockCardBody} markdown={markdown} />
+      <MarkdownHtml className={styles.blockCardBody} markdown={markdown} pending={pending} />
       <div className={styles.blockCardActions} data-chat-ui>
         <button
           type="button"

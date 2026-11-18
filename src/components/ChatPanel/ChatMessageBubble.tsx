@@ -1,6 +1,6 @@
 import { CalendarPlus, IdentificationCard } from '@phosphor-icons/react'
 import { openUrl } from '@tauri-apps/plugin-opener'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { ChatMessage } from '../../hooks/useChat'
 import { agentNoteDraft, type AgentNoteDraft } from '../../lib/agentNotes'
 import { CHAT_AGENTS } from '../../lib/agents/chat'
@@ -8,6 +8,7 @@ import { dateKeyFromMs } from '../../lib/calendar'
 import { renderMarkdown } from '../../lib/markdown'
 import { linkNoteMarks } from '../../lib/noteMarks'
 import { clickedImage, useImageViewer } from '../ImageViewer/ImageViewer'
+import { useMermaidDiagrams } from '../MermaidDiagram/useMermaidDiagrams'
 import styles from './ChatMessageBubble.module.css'
 
 // Respostas que levam o rótulo do agente: com agentId diferente do da resposta
@@ -103,6 +104,8 @@ export function ChatMessageBubble({
   // Objeto estável: o React 19 reescreve o innerHTML quando a identidade do
   // { __html } muda, e isso desfaz a seleção do usuário na resposta.
   const bodyHtml = useMemo(() => ({ __html: html }), [html])
+  const bodyRef = useRef<HTMLDivElement>(null)
+  useMermaidDiagrams(bodyRef, html, isStreaming)
 
   function handleCopy() {
     if (isUser) return
@@ -157,6 +160,7 @@ export function ChatMessageBubble({
             </details>
           )}
           <div
+            ref={bodyRef}
             className={`${styles.assistantBody} ${onOpenMark ? styles.markClickable : ''}`}
             dangerouslySetInnerHTML={bodyHtml}
             onClick={(e) => {

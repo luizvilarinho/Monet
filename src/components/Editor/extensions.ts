@@ -1,6 +1,6 @@
 import { Placeholder } from '@tiptap/extensions'
 import TaskList from '@tiptap/extension-task-list'
-import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table'
+import { TableCell, TableHeader, TableRow } from '@tiptap/extension-table'
 import Image from '@tiptap/extension-image'
 import Code from '@tiptap/extension-code'
 import Paragraph from '@tiptap/extension-paragraph'
@@ -23,6 +23,8 @@ import { isBlankParagraph } from './blankParagraph'
 import { HighlightMark } from './HighlightMark'
 import { NoteMark } from './NoteMark'
 import { RelatedTerm } from './RelatedTerm'
+import { MermaidCodeBlock } from './MermaidCodeBlock'
+import { TableWithWidths } from './TableWithWidths'
 
 // Custom inline-code mark — força serialização com um único backtick
 // (defaultMarkdownSerializer.marks.code usa `backticksFor` que adiciona mais
@@ -134,8 +136,12 @@ export function buildBaseExtensions(placeholder: string): AnyExtension[] {
       link: { openOnClick: true, autolink: false },
       code: false,
       paragraph: false,
+      codeBlock: false,
     }),
     InlineCode,
+    // Code block com desenho dos blocos ```mermaid — no conjunto base para a
+    // janela keep e o Reader também desenharem.
+    MermaidCodeBlock,
     // Mark de destaque com cor (R1) — precisa entrar no conjunto base para
     // que o editor principal e a janela keep gravem o mesmo markdown.
     HighlightMark,
@@ -149,7 +155,8 @@ export function buildBaseExtensions(placeholder: string): AnyExtension[] {
     ParagraphWithBlankLines,
     TaskList,
     LinkedTaskItem.configure({ nested: true }),
-    Table.configure({ resizable: true }),
+    // Tabela com a largura das colunas gravada no Markdown (resizable).
+    TableWithWidths,
     TableRow,
     TableHeader,
     TableCell,

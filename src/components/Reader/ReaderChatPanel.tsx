@@ -20,6 +20,7 @@ import { ModelSelector } from '../AiPanel/ModelSelector'
 import { ChatToolsMenu } from '../ChatPanel/ChatToolsMenu'
 import { ClearAllChatsButton, ClearChatButton } from '../ChatPanel/ChatClearActions'
 import { clickedImage, useImageViewer } from '../ImageViewer/ImageViewer'
+import { useMermaidDiagrams } from '../MermaidDiagram/useMermaidDiagrams'
 import { FolderSystemPromptModal } from '../ChatPanel/FolderSystemPromptModal'
 import { FolderDocumentSelectorModal } from '../ChatPanel/FolderDocumentSelectorModal'
 import { FolderMemoryModal } from '../ChatPanel/FolderMemoryModal'
@@ -602,6 +603,8 @@ function ReaderChatBubble({ message, isStreaming, trace, timings }: ReaderChatBu
   // Memoizado: o React 19 compara `__html` por identidade e um objeto novo a
   // cada render reescreveria o DOM, desfazendo a seleção do usuário.
   const inner = useMemo(() => ({ __html: html }), [html])
+  const bodyRef = useRef<HTMLDivElement>(null)
+  useMermaidDiagrams(bodyRef, html, isStreaming)
   const imageViewer = useImageViewer()
 
   if (isUser) {
@@ -621,6 +624,7 @@ function ReaderChatBubble({ message, isStreaming, trace, timings }: ReaderChatBu
   return (
     <>
       <div
+        ref={bodyRef}
         className={styles.bubbleAssistant}
         data-streaming={isStreaming || undefined}
         dangerouslySetInnerHTML={inner}
