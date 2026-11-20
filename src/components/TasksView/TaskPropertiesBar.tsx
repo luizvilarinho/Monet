@@ -12,9 +12,9 @@
 // controle à direita); com duas, elas dividem a largura em duas colunas.
 // Metadados personalizados (`task.metadata`, definições em `metadataDefs`) são uma
 // lista dinâmica abaixo: uma linha por definição anexada, com controle conforme o
-// tipo, e "+ Add property" para anexar ou criar definições.
+// tipo, e "Add property" para anexar ou criar definições.
 import { useRef, useState } from 'react'
-import { ArrowSquareOut, ListChecks, Trash } from '@phosphor-icons/react'
+import { ArrowSquareOut, ListChecks, Plus, Trash } from '@phosphor-icons/react'
 import { useConfirm } from '../../hooks/useConfirm'
 import { MAX_METADATA_NAME } from '../../hooks/useMetadataDefs'
 import { defaultMetadataValue, METADATA_TYPE_LABEL, METADATA_TYPES } from '../../lib/metadata'
@@ -124,7 +124,7 @@ export function TaskPropertiesBar({
   )
 }
 
-// "+ Add property": popover com as definições ainda não anexadas, criação de
+// "Add property": popover com as definições ainda não anexadas, criação de
 // uma nova (nome + tipo) e atalho para "Manage properties…".
 function AddPropertyControl({
   defs,
@@ -181,7 +181,8 @@ function AddPropertyControl({
           aria-expanded={open}
           onClick={() => (open ? close() : setOpen(true))}
         >
-          + Add property
+          <Plus size={12} aria-hidden />
+          Add property
         </button>
         {open && (
           <div className={styles.addMenu} role="dialog" aria-label="Add property">

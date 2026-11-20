@@ -188,8 +188,17 @@
   vertical-align: middle;
 }
 
-.table tbody tr:last-child td {
+.table tbody:last-child tr:last-child td {
   border-bottom: none;
+}
+
+/* Cabeçalho de grupo: "Your files and folders", "Web sources"… */
+.groupRow th {
+  padding: var(--space-3) var(--space-2) var(--space-1);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary, #a0a0b8);
+  border-bottom: 1px solid var(--border, #333340);
 }
 
 .colName {
@@ -389,5 +398,84 @@
 }
 
 .alwaysOn {
+  flex-shrink: 0;
   color: var(--text-muted, #606070);
+}
+
+.useInAiHelp {
+  margin: 0;
+  font-size: 12px;
+  line-height: var(--lh-ui);
+  color: var(--text-secondary, #a0a0b8);
+}
+
+.filterInput {
+  flex-shrink: 0;
+  width: 100%;
+  height: var(--control-md);
+  padding: 0 var(--space-2);
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text-primary, #e8e8f0);
+  background: var(--surface-1, #1e1e22);
+  border: 1px solid var(--border, #333340);
+  border-radius: var(--radius-sm);
+  outline: none;
+  box-sizing: border-box;
+}
+
+.filterInput:focus {
+  border-color: var(--accent-ai, #5dcaa5);
+}
+
+.nameWrap {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+  min-width: 0;
+}
+
+.nameText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.type {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-secondary, #a0a0b8);
+}
+
+.aiBadge,
+.orphanBadge,
+.notesBadge {
+  flex-shrink: 0;
+  display: inline-block;
+  font-size: 11px;
+  padding: 1px var(--space-1h);
+  border-radius: 999px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.aiBadge {
+  background: rgba(93, 202, 165, 0.12);
+  color: var(--accent-ai, #5dcaa5);
+  border: 1px solid rgba(93, 202, 165, 0.3);
+}
+
+.orphanBadge {
+  background: rgba(239, 159, 39, 0.12);
+  color: var(--accent-warn, #ef9f27);
+  border: 1px solid rgba(239, 159, 39, 0.3);
+  cursor: help;
+}
+
+.notesBadge {
+  background: rgba(160, 160, 184, 0.12);
+  color: var(--text-secondary, #a0a0b8);
+  border: 1px solid rgba(160, 160, 184, 0.3);
 }

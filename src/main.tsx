@@ -3,18 +3,21 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import { AssistantPanel } from "./components/AssistantPanel/AssistantPanel";
+import { ErrorBoundary } from "./components/ErrorBoundary/ErrorBoundary";
 import { KeepPanel } from "./components/KeepPanel/KeepPanel";
 
 const windowLabel = getCurrentWindow().label;
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    {windowLabel === "assistant" ? (
-      <AssistantPanel />
-    ) : windowLabel === "keep" ? (
-      <KeepPanel />
-    ) : (
-      <App />
-    )}
+    <ErrorBoundary>
+      {windowLabel === "assistant" ? (
+        <AssistantPanel />
+      ) : windowLabel === "keep" ? (
+        <KeepPanel />
+      ) : (
+        <App />
+      )}
+    </ErrorBoundary>
   </React.StrictMode>,
 );

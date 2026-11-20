@@ -29,6 +29,8 @@ pub(crate) const EVENT_DONE: &str = "mincer://done";
 pub(crate) const EVENT_ERROR: &str = "mincer://error";
 pub(crate) const EVENT_RECORD: &str = "mincer://record";
 pub(crate) const EVENT_LEVEL: &str = "mincer://level";
+// A lista mudou fora de um job (itens recuperados no boot): a UI relê.
+pub(crate) const EVENT_CHANGED: &str = "mincer://changed";
 
 const MEDIA_EXTS: [&str; 12] = [
     "mp4", "mp3", "m4a", "wav", "ogg", "opus", "webm", "flac", "aac", "mkv", "mov", "avi",
@@ -50,6 +52,8 @@ pub struct MincerItemSummary {
     error: Option<String>,
     created_at: i64,
     updated_at: i64,
+    // Ordem da fila (posição do item enfileirado).
+    queued_at: i64,
     unseen: bool,
     sent_to_notebook_at: Option<i64>,
 }
@@ -112,6 +116,16 @@ pub struct MincerRecordStatus {
     // Regras da gravação em curso (0 = desligada); o teto já inclui os "+30 min".
     silence_stop_minutes: u32,
     max_minutes: u32,
+    title: Option<String>,
+    devices: MincerRecordDevices,
+}
+
+// Nome dos dispositivos de saída (loopback) e de microfone.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MincerRecordDevices {
+    system: Option<String>,
+    mic: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -229,10 +243,11 @@ async fn stop_recording(
     keep_secs: Option<u64>,
 ) -> Result<String, String> {
     let handle = take_recording(app, expected_start)?;
+    let title = record::handle_title(&handle);
     let errors = tokio::task::spawn_blocking(move || record::stop_handle(handle))
         .await
         .map_err(|e| e.to_string())?;
-    let result = record::finalize_into_item(app, &errors, keep_secs);
+    let result = record::finalize_into_item(app, &errors, keep_secs, &title);
     record_ended(app);
     let id = result?;
     jobs::start_next(app);
@@ -652,10 +667,26 @@ pub async fn mincer_record_start(
     state: State<'_, MincerRecording>,
     options: MincerJobOptions,
     limits: RecordLimits,
+    title: Option<String>,
 ) -> Result<(), String> {
-    let started_at = record::start(&app, &state, &options, limits)?;
+    let started_at = record::start(&app, &state, &options, limits, title)?;
     record_started(&app, started_at);
     Ok(())
+}
+
+#[tauri::command]
+pub async fn mincer_record_set_title(
+    state: State<'_, MincerRecording>,
+    title: Option<String>,
+) -> Result<(), String> {
+    record::set_title(&state, title)
+}
+
+#[tauri::command]
+pub async fn mincer_record_devices() -> Result<MincerRecordDevices, String> {
+    tokio::task::spawn_blocking(record::default_devices)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

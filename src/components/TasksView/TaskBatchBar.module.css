@@ -19,8 +19,15 @@
   font-weight: 600;
 }
 
+.message {
+  color: var(--text-primary);
+}
+
 .action,
 .clear {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   background: transparent;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -40,6 +47,31 @@
 .clear {
   margin-left: auto;
   border-color: transparent;
+}
+
+.danger:hover {
+  color: var(--accent-danger);
+  border-color: var(--accent-danger);
+}
+
+/* Área de clique de 24×24 com o glifo de 12px. */
+.dismiss {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-sm);
+  height: var(--control-sm);
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.dismiss:hover {
+  color: var(--text-primary);
 }
 
 .popover {

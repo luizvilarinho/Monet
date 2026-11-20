@@ -19,6 +19,13 @@
   letter-spacing: 0.02em;
 }
 
+/* Próximo prazo: o `Target` das Tasks (o Flag lá é Important). */
+.deadline {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-0);
+}
+
 /* Deadline estourado numa task aberta. */
 .overdue {
   color: var(--accent-danger);

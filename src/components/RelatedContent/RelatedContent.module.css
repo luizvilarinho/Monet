@@ -29,8 +29,8 @@
 }
 
 .chevron {
-  display: inline-block;
-  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
   color: var(--text-muted, #606070);
   transition: transform 0.15s ease;
   line-height: 1;

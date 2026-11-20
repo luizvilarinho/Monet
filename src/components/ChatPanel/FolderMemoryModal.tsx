@@ -1,6 +1,9 @@
+import { X } from '@phosphor-icons/react'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useConfirm } from '../../hooks/useConfirm'
 import type { ChatFolder } from '../../hooks/useChat'
+import { DISCARD_CHANGES_CONFIRM } from './discardChanges'
 import styles from './FolderMemoryModal.module.css'
 
 export interface FolderMemoryModalProps {
@@ -18,6 +21,7 @@ export function FolderMemoryModal({
 }: FolderMemoryModalProps) {
   const [text, setText] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const { confirm, modal: confirmModal } = useConfirm()
 
   useEffect(() => {
     if (!open || !folder) return
@@ -32,14 +36,28 @@ export function FolderMemoryModal({
     return () => window.clearTimeout(id)
   }, [open])
 
+  // Edição não salva: fechar sem o Save pede confirmação.
+  const dirty = !!folder && text !== (folder.memory ?? '')
+  const requestCloseRef = useRef<() => void>(() => {})
+  requestCloseRef.current = () => {
+    if (!dirty) {
+      onClose()
+      return
+    }
+    void confirm('Your changes to this memory will be lost.', DISCARD_CHANGES_CONFIRM).then((ok) => {
+      if (ok) onClose()
+    })
+  }
+
+  // Fecha com ESC (o modal de confirmação, aberto, fica com o ESC)
   useEffect(() => {
     if (!open) return
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') requestCloseRef.current()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
+  }, [open])
 
   if (!open || !folder) return null
   const folderId = folder.id
@@ -56,9 +74,10 @@ export function FolderMemoryModal({
       aria-modal="true"
       aria-label="Folder memory"
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose()
+        if (e.target === e.currentTarget) requestCloseRef.current()
       }}
     >
+      {confirmModal}
       <div className={styles.modal}>
         <header className={styles.header}>
           <h2 className={styles.title}>
@@ -67,10 +86,11 @@ export function FolderMemoryModal({
           <button
             type="button"
             className={styles.close}
-            onClick={onClose}
-            aria-label="close"
+            onClick={() => requestCloseRef.current()}
+            aria-label="Close"
+            title="Close"
           >
-            ×
+            <X size={14} aria-hidden />
           </button>
         </header>
 
@@ -100,16 +120,16 @@ export function FolderMemoryModal({
             <button
               type="button"
               className={styles.btnSecondary}
-              onClick={onClose}
+              onClick={() => requestCloseRef.current()}
             >
-              cancel
+              Cancel
             </button>
             <button
               type="button"
               className={styles.btnPrimary}
               onClick={handleConfirm}
             >
-              save
+              Save
             </button>
           </div>
         </div>

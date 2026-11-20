@@ -127,6 +127,14 @@
   background: var(--surface-2);
 }
 
+/* Caderno de destino do "New" com "All notebooks". */
+.newTarget {
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Rodapé do modal "Edit note" (NoteBoardModalNav). */
 .modalNav {
   display: flex;

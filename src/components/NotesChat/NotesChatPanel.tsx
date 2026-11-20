@@ -1,9 +1,11 @@
 import { openUrl } from '@tauri-apps/plugin-opener'
-import { Stop, FileText, Brain, CalendarPlus, IdentificationCard } from '@phosphor-icons/react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Stop, FileText, Brain, CalendarPlus, IdentificationCard, GearSix, Plus, X } from '@phosphor-icons/react'
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import {
   useChat,
   folderConversationIds,
+  getLinkedChatConversationId,
+  linkResponseToChatConversation,
   type ChatMessage,
   type ChatConversation,
   type ChatTimings,
@@ -29,7 +31,7 @@ import { ModelSelector } from '../AiPanel/ModelSelector'
 import { useTasksEnv } from '../TasksView/TasksEnv'
 import { SystemPromptIcon } from '../ChatPanel/SystemPromptIcon'
 import { AgentPicker, AgentSuggestions, useAgentShortcut } from '../ChatPanel/AgentPicker'
-import { parseAgentShortcut } from '../../lib/agents/chat'
+import { chatAgentComposerHint, parseAgentShortcut } from '../../lib/agents/chat'
 import { ChatToolsMenu } from '../ChatPanel/ChatToolsMenu'
 import { ClearAllChatsButton, ClearChatButton } from '../ChatPanel/ChatClearActions'
 import { clickedImage, useImageViewer } from '../ImageViewer/ImageViewer'
@@ -43,7 +45,7 @@ import { AgentReplyLabel, agentLabelIds } from '../ChatPanel/ChatMessageBubble'
 import { ScrollToBottomButton } from '../ChatPanel/ScrollToBottomButton'
 import { SaveAgentNoteModal } from '../ChatPanel/SaveAgentNoteModal'
 import type { RagResponse } from '../../lib/rag'
-import { buildNotesContext, type NoteMetaForAi } from './notesContext'
+import { buildNotesContext, NOTE_TEXT_BUDGET, noteTruncatedForAi, type NoteMetaForAi } from './notesContext'
 import { codeFence, messageToMarkdown, splitMessageBlocks, type NoteInsert } from './noteBlocks'
 import styles from './NotesChatPanel.module.css'
 
@@ -57,6 +59,15 @@ import styles from './NotesChatPanel.module.css'
 // EFÊMERO (nunca persistido), e a nota atual é excluída do RAG.
 
 const ASK_AI_QUOTE_BUDGET = 600
+
+// "Chat" de um card da aba AI: a pergunta e a resposta abrem numa conversa
+// da pasta do caderno (IA-03).
+export interface NotesChatExchange {
+  responseId: string
+  title: string
+  userMessage: string
+  assistantMessage: string
+}
 
 interface NotesChatPanelProps {
   // Caderno existente (null = sem caderno: estado vazio)
@@ -79,6 +90,11 @@ interface NotesChatPanelProps {
   // Trecho vindo do "Ask AI" da toolbar de seleção do editor.
   pendingQuote: string | null
   onPendingQuoteConsumed: () => void
+  // Resposta da aba AI a continuar aqui; consumida assim que abre.
+  pendingExchange?: NotesChatExchange | null
+  onPendingExchangeConsumed?: () => void
+  // Botão "Settings" do seletor de modelo e da faixa sem chave.
+  onOpenSettings: () => void
   canInsert: boolean
   onInsertIntoNote: (content: NoteInsert, where: 'cursor' | 'end') => void
   // Clique numa NoteMark (`==texto==`) citada na resposta: abre a nota no
@@ -108,6 +124,9 @@ export function NotesChatPanel({
   visible,
   pendingQuote,
   onPendingQuoteConsumed,
+  pendingExchange = null,
+  onPendingExchangeConsumed,
+  onOpenSettings,
   canInsert,
   onInsertIntoNote,
   onOpenMark,
@@ -163,6 +182,7 @@ export function NotesChatPanel({
     startAssistantConversation,
     selectConversation,
     ensureScopedFolder,
+    openConversationWithExchange,
     clearConversations,
     deleteFolderConversations,
     setFolderSystemPrompt,
@@ -335,6 +355,52 @@ export function NotesChatPanel({
     startAssistantConversation(folderId)
   }, [activeId, notebook, ensureScopedFolder, startAssistantConversation])
 
+  // "Chat" de um card da aba AI: reabre a conversa já ligada à resposta, se
+  // ela está na pasta do caderno; senão cria uma nova com a pergunta e a
+  // resposta. Roda depois do bind (efeito acima), que fixa a pasta.
+  const handledExchangeRef = useRef<NotesChatExchange | null>(null)
+  useEffect(() => {
+    if (!pendingExchange || !notebook || !visible) return
+    if (boundNotebookIdRef.current !== notebook.id) return
+    if (handledExchangeRef.current === pendingExchange) return
+    handledExchangeRef.current = pendingExchange
+    const folderId = ensureScopedFolder({
+      kind: 'notebook',
+      id: notebook.id,
+      title: notebook.name,
+    })
+    setNotebookFolderId(folderId)
+    const linkedId = getLinkedChatConversationId(pendingExchange.responseId)
+    const folder = folders.find((f) => f.id === folderId)
+    if (
+      linkedId &&
+      folder?.conversationIds.includes(linkedId) &&
+      conversations.some((c) => c.id === linkedId)
+    ) {
+      selectConversation(linkedId)
+    } else {
+      const convId = openConversationWithExchange({
+        folderId,
+        title: pendingExchange.title,
+        userMessage: pendingExchange.userMessage,
+        assistantMessage: pendingExchange.assistantMessage,
+      })
+      linkResponseToChatConversation(pendingExchange.responseId, convId)
+    }
+    onPendingExchangeConsumed?.()
+    inputRef.current?.focus()
+  }, [
+    pendingExchange,
+    notebook,
+    visible,
+    folders,
+    conversations,
+    ensureScopedFolder,
+    selectConversation,
+    openConversationWithExchange,
+    onPendingExchangeConsumed,
+  ])
+
   // Seleciona um modelo padrão quando a lista carregar.
   useEffect(() => {
     if (models.length === 0) return
@@ -414,33 +480,55 @@ export function NotesChatPanel({
     return null
   }, [isStreaming, messages])
 
-  const canSend =
+  // Placeholder, estado vazio e mensagem padrão do agente ativo (IA-19).
+  const agentHint = chatAgentComposerHint(activeAgentId)
+
+  const ready =
     !!notebook &&
     !isStreaming &&
     hasApiKey &&
-    draft.trim().length > 0 &&
     !!model &&
     models.length > 0 &&
     !!activeId
+  // Coach e Plan week enviam com o rascunho vazio (a mensagem padrão).
+  const canSend = ready && (draft.trim().length > 0 || !!agentHint?.defaultMessage)
 
   const selectedModel = models.find((m) => m.id === model)
 
   const noteIncluded = !!activeNote && excludedNoteId !== activeNote.id
   const selectionIncluded = !!selection && selection !== removedSelection
 
+  // A IA só vê o começo da nota longa (IA-17). Estimativa sem as respostas
+  // embutidas e o OCR, que só se resolvem no envio.
+  const deferredNoteContent = useDeferredValue(
+    visible && noteIncluded ? (activeNote?.content ?? '') : ''
+  )
+  const noteTruncated = useMemo(
+    () =>
+      noteTruncatedForAi(deferredNoteContent, {
+        resolveNoteTitle,
+        resolveLinkedNoteContent: resolveNoteContent,
+      }),
+    [deferredNoteContent, resolveNoteTitle, resolveNoteContent]
+  )
+
   async function handleSend() {
-    // Atalho "/agente": sem texto, só liga o seletor (também durante o streaming).
     const parsed = agentsAvailable ? parseAgentShortcut(draft) : null
-    if (parsed && !parsed.rest) {
+    // Agente que não pede pergunta: sem texto, vai a mensagem padrão dele.
+    const fallback = chatAgentComposerHint(parsed ? parsed.agent.id : activeAgentId)?.defaultMessage ?? ''
+    // Atalho "/agente" sem texto e sem mensagem padrão: só liga o seletor
+    // (também durante o streaming).
+    if (parsed && !parsed.rest && (!fallback || !ready)) {
       setConversationAgent(parsed.agent.id)
       setDraft('')
       return
     }
-    if (!canSend || !notebook) return
+    const typed = parsed ? parsed.rest : draft
+    const text = typed.trim() ? typed : fallback
+    if (!ready || !text || !notebook) return
     // Idempotente; recria a pasta (e refresca o ref usado pelo fallback do
     // send) caso ela tenha sido apagada em outra janela durante a sessão.
     ensureScopedFolder({ kind: 'notebook', id: notebook.id, title: notebook.name })
-    const text = parsed ? parsed.rest : draft
     setDraft('')
     // Contexto montado NO MOMENTO do envio: trocar de nota depois não afeta
     // a resposta em streaming.
@@ -479,7 +567,6 @@ export function NotesChatPanel({
         ? {
             noteId: attachedNote.id,
             noteTitle: attachedNote.title,
-            hadSelection: !!selectionText,
           }
         : undefined,
     })
@@ -574,7 +661,7 @@ export function NotesChatPanel({
                 models={models}
                 selectedId={model}
                 onSelect={setModel}
-                onOpenSettings={() => {}}
+                onOpenSettings={onOpenSettings}
               />
             </div>
           </div>
@@ -627,7 +714,11 @@ export function NotesChatPanel({
 
           {apiKeyChecked && !hasApiKey && (
             <div className={styles.keyBanner} role="alert">
-              Add your OpenRouter key in Settings to chat about your notes.
+              <span>Add your OpenRouter key in Settings to chat about your notes.</span>
+              <button type="button" className={styles.keyBannerBtn} onClick={onOpenSettings}>
+                <GearSix size={12} aria-hidden />
+                Open Settings
+              </button>
             </div>
           )}
 
@@ -635,8 +726,8 @@ export function NotesChatPanel({
             <div className={styles.history} ref={historyRef} onScroll={onScroll}>
               {messages.length === 0 ? (
                 <p className={styles.empty}>
-                  Ask about this notebook — the AI sees the open note, your selection
-                  and the notebook's indexed notes.
+                  {agentHint?.empty ??
+                    "Ask about this notebook — the AI sees the open note, your selection and the notebook's indexed notes."}
                 </p>
               ) : (
                 messages.map((m) => (
@@ -661,7 +752,7 @@ export function NotesChatPanel({
                   // Não deixa o clique desfazer a seleção antes do onClick.
                   onMouseDown={(e) => e.preventDefault()}
                 >
-                  <span className={styles.selectionInsertLabel}>Insert selection</span>
+                  <span className={styles.selectionInsertLabel}>Insert into note</span>
                   <button
                     type="button"
                     className={styles.messageActionBtn}
@@ -676,7 +767,7 @@ export function NotesChatPanel({
                     disabled={!canInsert}
                     onClick={() => onInsertIntoNote(selectionInsert.content, 'end')}
                   >
-                    Append
+                    At end
                   </button>
                 </div>
               )}
@@ -701,6 +792,14 @@ export function NotesChatPanel({
                     <span className={styles.contextChipText} title={activeNote.title || 'Untitled'}>
                       {activeNote.title.trim() || 'Untitled'}
                     </span>
+                    {noteTruncated && (
+                      <span
+                        className={styles.contextChipNote}
+                        title={`This note is long: the AI sees only its first ${NOTE_TEXT_BUDGET.toLocaleString('en-US')} characters. Select a passage to send it too.`}
+                      >
+                        · first {Math.round(NOTE_TEXT_BUDGET / 1000)}k chars
+                      </span>
+                    )}
                     <button
                       type="button"
                       className={styles.contextChipBtn}
@@ -708,7 +807,7 @@ export function NotesChatPanel({
                       title="Remove this note from the context"
                       onClick={() => setExcludedNoteId(activeNote.id)}
                     >
-                      ×
+                      <X size={10} aria-hidden />
                     </button>
                   </span>
                 ) : (
@@ -721,7 +820,7 @@ export function NotesChatPanel({
                       title="Add this note back to the context"
                       onClick={() => setExcludedNoteId(null)}
                     >
-                      +
+                      <Plus size={10} aria-hidden />
                     </button>
                   </span>
                 )}
@@ -737,7 +836,7 @@ export function NotesChatPanel({
                       title="Remove the selection from the context"
                       onClick={() => setRemovedSelection(selection)}
                     >
-                      ×
+                      <X size={10} aria-hidden />
                     </button>
                   </span>
                 )}
@@ -762,7 +861,7 @@ export function NotesChatPanel({
               }}
               placeholder={
                 hasApiKey
-                  ? 'Ask about your notes...'
+                  ? (agentHint?.placeholder ?? 'Ask about your notes…')
                   : 'Configure your OpenRouter key first.'
               }
               rows={3}
@@ -926,7 +1025,8 @@ function NotesChatBubble({
         }}
       >
         {segments.map((seg, i) => {
-          if (seg.kind === 'text') return <MarkdownHtml key={i} markdown={seg.markdown} />
+          if (seg.kind === 'text')
+            return <MarkdownHtml key={i} markdown={seg.markdown} allowedImageUrls={message.allowedImageUrls} />
           // Bloco ainda aberto só conta como "em construção" enquanto a
           // mensagem está em streaming (um Stop deixa a fence aberta). No
           // streaming, o último bloco também segue em construção: o "fechamento"
@@ -938,6 +1038,7 @@ function NotesChatBubble({
               key={i}
               label="Note"
               markdown={seg.body}
+              allowedImageUrls={message.allowedImageUrls}
               copyText={seg.body}
               pending={pending}
               canInsert={canInsert}
@@ -982,16 +1083,18 @@ function NotesChatBubble({
           className={styles.messageActionBtn}
           disabled={insertDisabled}
           onClick={() => onInsert({ markdown: messageToMarkdown(segments) }, 'cursor')}
+          title="Insert at the cursor in the open note"
         >
-          Insert at cursor
+          Insert into note
         </button>
         <button
           type="button"
           className={styles.messageActionBtn}
           disabled={insertDisabled}
           onClick={() => onInsert({ markdown: messageToMarkdown(segments) }, 'end')}
+          title="Insert at the end of the open note"
         >
-          Append to note
+          Insert at end
         </button>
       </div>
       <MessageSources message={message} trace={trace} timings={timings} />
@@ -1004,7 +1107,18 @@ function NotesChatBubble({
 // O objeto `__html` é memoizado: o React 19 compara por identidade e, com um
 // objeto novo a cada render, reescreve o DOM e desfaz a seleção do usuário.
 // `pending`: bloco ainda em streaming (diagrama Mermaid só desenha fechado).
-function MarkdownHtml({ markdown, className, pending = false }: { markdown: string; className?: string; pending?: boolean }) {
+// `allowedImageUrls`: imagens da busca do turno, que carregam sem clique.
+function MarkdownHtml({
+  markdown,
+  className,
+  pending = false,
+  allowedImageUrls,
+}: {
+  markdown: string
+  className?: string
+  pending?: boolean
+  allowedImageUrls?: readonly string[]
+}) {
   const [html, setHtml] = useState('')
   const inner = useMemo(() => ({ __html: html }), [html])
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -1012,13 +1126,13 @@ function MarkdownHtml({ markdown, className, pending = false }: { markdown: stri
 
   useEffect(() => {
     let cancelled = false
-    renderMarkdown(markdown).then((out) => {
+    renderMarkdown(markdown, { allowedImageUrls }).then((out) => {
       if (!cancelled) setHtml(linkNoteMarks(out))
     })
     return () => {
       cancelled = true
     }
-  }, [markdown])
+  }, [markdown, allowedImageUrls?.join('\n')])
 
   return <div ref={bodyRef} className={className} dangerouslySetInnerHTML={inner} />
 }
@@ -1026,6 +1140,7 @@ function MarkdownHtml({ markdown, className, pending = false }: { markdown: stri
 interface BlockCardProps {
   label: string
   markdown: string
+  allowedImageUrls?: readonly string[]
   copyText: string
   pending: boolean
   canInsert: boolean
@@ -1034,7 +1149,7 @@ interface BlockCardProps {
 
 // Cartão de um bloco `note` ou de código. O cabeçalho e as ações levam
 // `data-chat-ui` para ficarem fora do "Insert selection".
-function BlockCard({ label, markdown, copyText, pending, canInsert, onInsert }: BlockCardProps) {
+function BlockCard({ label, markdown, allowedImageUrls, copyText, pending, canInsert, onInsert }: BlockCardProps) {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
 
   useEffect(() => {
@@ -1061,23 +1176,30 @@ function BlockCard({ label, markdown, copyText, pending, canInsert, onInsert }: 
         <span>{label}</span>
         {pending && <span className={styles.blockCardStatus}>Writing…</span>}
       </div>
-      <MarkdownHtml className={styles.blockCardBody} markdown={markdown} pending={pending} />
+      <MarkdownHtml
+        className={styles.blockCardBody}
+        markdown={markdown}
+        pending={pending}
+        allowedImageUrls={allowedImageUrls}
+      />
       <div className={styles.blockCardActions} data-chat-ui>
         <button
           type="button"
           className={styles.messageActionBtn}
           disabled={insertDisabled}
           onClick={() => onInsert('cursor')}
+          title="Insert at the cursor in the open note"
         >
-          Insert at cursor
+          Insert into note
         </button>
         <button
           type="button"
           className={styles.messageActionBtn}
           disabled={insertDisabled}
           onClick={() => onInsert('end')}
+          title="Insert at the end of the open note"
         >
-          Append to note
+          Insert at end
         </button>
         <button
           type="button"
@@ -1099,7 +1221,8 @@ const SELECTION_WRAP_TAGS = new Set(['STRONG', 'EM', 'B', 'I', 'A', 'CODE', 'DEL
 // Clona a seleção (dentro de `root`) como HTML, reconstruindo os ancestrais
 // que dão estrutura ao trecho: inline/código sempre, e a lista quando a
 // seleção atravessa itens (ancestral comum é o próprio <ul>/<ol>). Remove a
-// UI dos cartões (`data-chat-ui`).
+// UI dos cartões (`data-chat-ui`) e troca a imagem bloqueada (gate do "Load
+// image") por um link: a nota guarda a URL sem carregar a imagem sozinha.
 function selectionToHtml(range: Range, root: Element): { html: string; text: string } {
   let node: Node = range.cloneContents()
   let anc: Node | null = range.commonAncestorContainer
@@ -1118,5 +1241,12 @@ function selectionToHtml(range: Range, root: Element): { html: string; text: str
   const wrapper = document.createElement('div')
   wrapper.appendChild(node)
   wrapper.querySelectorAll('[data-chat-ui]').forEach((el) => el.remove())
+  wrapper.querySelectorAll('[data-img-gate]').forEach((gate) => {
+    const src = gate.getAttribute('data-src') ?? ''
+    const link = document.createElement('a')
+    link.href = src
+    link.textContent = gate.getAttribute('data-alt') || src
+    gate.replaceWith(link)
+  })
   return { html: wrapper.innerHTML, text: (wrapper.textContent ?? '').trim() }
 }

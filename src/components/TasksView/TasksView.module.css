@@ -66,8 +66,8 @@
   color: var(--accent-danger);
 }
 
-.caret {
-  font-size: 11px;
+.groupLate {
+  color: var(--accent-late);
 }
 
 .count {
@@ -116,7 +116,8 @@
   justify-content: space-between;
 }
 
-.clearDone {
+.headerAction,
+.showOlder {
   background: transparent;
   border: none;
   padding: var(--space-0) var(--space-1);
@@ -126,6 +127,22 @@
   cursor: pointer;
 }
 
-.clearDone:hover {
-  color: var(--accent-danger);
+.showOlder {
+  align-self: flex-start;
+  margin-top: var(--space-1);
+}
+
+.headerAction:hover,
+.showOlder:hover {
+  color: var(--accent-task);
+}
+
+.emptyState {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-0) var(--space-1);
+  font-size: 12px;
+  color: var(--text-muted);
 }

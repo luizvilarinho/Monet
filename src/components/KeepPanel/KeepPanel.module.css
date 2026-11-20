@@ -55,6 +55,9 @@
 }
 
 .iconBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: transparent;
   border: none;
   color: var(--text-muted, #8a8a94);
@@ -70,6 +73,38 @@
 .iconBtn:hover {
   background: rgba(255, 255, 255, 0.06);
   color: var(--text-primary, #e8e8f0);
+}
+
+/* Falha ao gravar a nota: faixa sob a barra de título, com Retry. */
+.saveError {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1h) var(--space-4);
+  background: rgba(239, 159, 39, 0.08);
+  border-bottom: 1px solid rgba(239, 159, 39, 0.3);
+  color: var(--accent-warn, #ef9f27);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.saveError span {
+  flex: 1;
+  min-width: 0;
+}
+
+.retryBtn {
+  background: transparent;
+  border: 1px solid var(--border, #333340);
+  color: var(--text-primary, #e8e8f0);
+  border-radius: var(--radius-sm);
+  padding: var(--space-0) var(--space-2);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.retryBtn:hover {
+  border-color: rgba(124, 106, 245, 0.6);
 }
 
 /* Calendário (coluna fixa) à esquerda, corpo da nota à direita. */

@@ -14,7 +14,6 @@ const DEFAULT_HEIGHT = 240
 const MIN_HEIGHT = 90
 // Altura mínima que a lista de notas mantém acima da divisória.
 const NOTES_MIN_HEIGHT = 100
-const VISIBLE_LIMIT = 6
 
 const NO_SET = new Set<string>()
 
@@ -72,6 +71,10 @@ export function NotebookTasksSection({
   const todosList = useMemo(() => [...todosById.values()], [todosById])
   const [draft, setDraft] = useState('')
   const sectionRef = useRef<HTMLDivElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  // A lista mostra as linhas que cabem na altura da seção; o resto rola, e o
+  // "Show all (N)" aparece quando sobra.
+  const [overflowing, setOverflowing] = useState(false)
   const dragRef = useRef<{ startY: number; startHeight: number; max: number } | null>(null)
   const heightRef = useRef(height)
   heightRef.current = height
@@ -81,6 +84,19 @@ export function NotebookTasksSection({
     [tasks, notebookId]
   )
   const late = open.map((t) => overdueKind(t, todayKey)).filter((k) => k !== null)
+
+  useEffect(() => {
+    const list = listRef.current
+    if (!list) {
+      setOverflowing(false)
+      return
+    }
+    const check = () => setOverflowing(list.scrollHeight > list.clientHeight + 1)
+    check()
+    const observer = new ResizeObserver(check)
+    observer.observe(list)
+    return () => observer.disconnect()
+  }, [open.length, collapsed, height])
   const lateTone = late.includes('deadline') ? styles.lateDeadline : styles.latePlan
 
   const parsed = useMemo(
@@ -211,8 +227,8 @@ export function NotebookTasksSection({
       </button>
       {!collapsed && (
         <>
-          <div className={styles.list}>
-            {open.slice(0, VISIBLE_LIMIT).map((t) => (
+          <div className={styles.list} ref={listRef}>
+            {open.map((t) => (
               <TaskLine
                 key={t.id}
                 task={t}
@@ -223,12 +239,12 @@ export function NotebookTasksSection({
                 onToggle={(done) => onToggleTask(t.id, done)}
               />
             ))}
-            {open.length > VISIBLE_LIMIT && (
-              <button type="button" className={styles.showAll} onClick={onShowAll}>
-                Show all ({open.length})
-              </button>
-            )}
           </div>
+          {overflowing && (
+            <button type="button" className={styles.showAll} onClick={onShowAll}>
+              Show all ({open.length})
+            </button>
+          )}
           {addRow}
         </>
       )}

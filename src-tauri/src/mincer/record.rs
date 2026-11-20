@@ -11,10 +11,12 @@ use std::time::{Duration, Instant};
 use serde::Deserialize;
 use tauri::{AppHandle, Emitter};
 
+use chrono::TimeZone;
+
 use super::sidecar::{self, JobCtx, JobError};
 use super::{
     auto_stop, db, item_dir, mincer_root, toast, AutoStop, MincerJobOptions, MincerLevelEvent,
-    MincerRecordStatus, MincerRecording, EVENT_LEVEL,
+    MincerRecordDevices, MincerRecordStatus, MincerRecording, EVENT_LEVEL,
 };
 use crate::documents::now_ms;
 
@@ -22,7 +24,7 @@ const SAMPLE_RATE: usize = 48000;
 const CAPTURE_BITS: usize = 32;
 const LOOPBACK_WAV: &str = "loopback.wav";
 const MIC_WAV: &str = "mic.wav";
-const OPTIONS_FILE: &str = "options.json";
+pub(crate) const OPTIONS_FILE: &str = "options.json";
 const KEEP_FILE: &str = "keep_secs.txt";
 // ~4 eventos de nível por segundo.
 const LEVEL_INTERVAL: Duration = Duration::from_millis(250);
@@ -34,8 +36,38 @@ const KEEP_MARGIN: Duration = Duration::from_secs(30);
 const MINUTE: Duration = Duration::from_secs(60);
 // Cada "+30 min" estende o teto da gravação em curso.
 pub(crate) const EXTEND_MINUTES: u32 = 30;
+// Teto de 6 h: o loopback grava 192 kB/s (48 kHz, 2 canais, 16 bits), e o
+// hound conta os bytes do WAV em u32, que estoura em cerca de 6h12.
+pub(crate) const MAX_RECORD_MINUTES: u32 = 360;
+// Backstop no capture_stream, abaixo do limite de u32 do WAV. O watchdog para
+// antes, em MAX_RECORD_MINUTES (~4,15 GB no loopback).
+const MAX_WAV_DATA_BYTES: u64 = 4_290_000_000;
+// Bytes por segundo de cada arquivo de áudio, para estimar a duração de uma
+// gravação recuperada: WAV de 16 bits a 48 kHz (estéreo e mono) e MP3 de 64k.
+const LOOPBACK_BYTES_PER_SEC: u64 = 192_000;
+const MIC_BYTES_PER_SEC: u64 = 96_000;
+const MIXED_MP3_BYTES_PER_SEC: u64 = 8_000;
+const WAV_HEADER_BYTES: u64 = 44;
+const MAX_TITLE_CHARS: usize = 200;
 
-// Parada automática (Settings › Mincer); 0 desliga a regra.
+// 0 (sem limite, de um Settings antigo) ou acima do máximo viram o máximo.
+fn capped_max_minutes(requested: u32) -> u32 {
+    if requested == 0 || requested > MAX_RECORD_MINUTES {
+        MAX_RECORD_MINUTES
+    } else {
+        requested
+    }
+}
+
+fn extended_max_minutes(current: u32) -> Result<u32, String> {
+    if current >= MAX_RECORD_MINUTES {
+        return Err("Recordings are limited to 6 hours.".to_string());
+    }
+    Ok((current + EXTEND_MINUTES).min(MAX_RECORD_MINUTES))
+}
+
+// Parada automática (Settings › Mincer). silence_stop_minutes 0 desliga a
+// regra; max_minutes passa por capped_max_minutes.
 #[derive(Deserialize, Clone, Copy, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordLimits {
@@ -137,24 +169,25 @@ impl AutoStopWatch {
             self.seen_max_minutes = max_minutes;
             self.max_warned = false;
         }
-        if max_minutes > 0 {
-            let limit = MINUTE * max_minutes;
-            let elapsed = now - self.started;
-            if !self.max_warned && limit > 10 * MINUTE && elapsed >= limit - 5 * MINUTE {
-                self.max_warned = true;
-                toast(
-                    app,
-                    "Mincer: recording stops in 5 min",
-                    &format!(
-                        "It reaches the {} limit. To keep recording, open Mincer and click +30 min.",
-                        minutes_label(limit)
-                    ),
-                );
-            }
-            if elapsed >= limit {
-                self.fired = true;
-                auto_stop(app.clone(), started_at, AutoStop::Limit { label: minutes_label(limit) });
-            }
+        // O teto é sempre > 0 (capped_max_minutes).
+        let limit = MINUTE * max_minutes;
+        let elapsed = now - self.started;
+        if !self.max_warned && limit > 10 * MINUTE && elapsed >= limit - 5 * MINUTE {
+            self.max_warned = true;
+            // No máximo não há +30 min.
+            let body = if max_minutes >= MAX_RECORD_MINUTES {
+                format!("It reaches the {} maximum recording length.", minutes_label(limit))
+            } else {
+                format!(
+                    "It reaches the {} limit. To keep recording, open Mincer and click +30 min.",
+                    minutes_label(limit)
+                )
+            };
+            toast(app, "Mincer: recording stops in 5 min", &body);
+        }
+        if elapsed >= limit {
+            self.fired = true;
+            auto_stop(app.clone(), started_at, AutoStop::Limit { label: minutes_label(limit) });
         }
     }
 }
@@ -167,6 +200,11 @@ pub(crate) struct RecordingHandle {
     silence_stop_minutes: u32,
     // Teto atual (Settings + extensões); lido pela thread a cada leitura de nível.
     max_minutes: Arc<AtomicU32>,
+    // Título digitado na aba Record (antes ou durante a gravação).
+    title: Option<String>,
+    // Nome dos dispositivos abertos por cada faixa.
+    system_device: Arc<Mutex<Option<String>>>,
+    mic_device: Arc<Mutex<Option<String>>>,
 }
 
 struct StreamConfig {
@@ -176,6 +214,7 @@ struct StreamConfig {
     // Pico desde a última leitura, em bits de f32 (>= 0, então a ordem dos
     // bits é a ordem numérica e fetch_max funciona).
     peak: Arc<AtomicU32>,
+    device_name: Arc<Mutex<Option<String>>>,
 }
 
 fn capture_stream(config: StreamConfig, stop_flag: Arc<AtomicBool>) -> Result<(), String> {
@@ -185,6 +224,9 @@ fn capture_stream(config: StreamConfig, stop_flag: Arc<AtomicBool>) -> Result<()
 
     let device = wasapi::get_default_device(&config.direction)
         .map_err(|e| format!("default device unavailable: {}", e))?;
+    if let (Ok(name), Ok(mut slot)) = (device.get_friendlyname(), config.device_name.lock()) {
+        *slot = Some(name);
+    }
 
     let mut audio_client = device
         .get_iaudioclient()
@@ -232,12 +274,13 @@ fn capture_stream(config: StreamConfig, stop_flag: Arc<AtomicBool>) -> Result<()
         .map_err(|e| format!("could not create the WAV file: {}", e))?;
 
     let mut sample_queue: VecDeque<u8> = VecDeque::with_capacity(16384);
+    let mut data_bytes: u64 = 0;
 
     audio_client
         .start_stream()
         .map_err(|e| format!("could not start the stream: {}", e))?;
 
-    while !stop_flag.load(Ordering::Relaxed) {
+    'capture: while !stop_flag.load(Ordering::Relaxed) {
         capture_client
             .read_from_device_to_deque(&mut sample_queue)
             .map_err(|e| format!("could not read from the device: {}", e))?;
@@ -251,10 +294,16 @@ fn capture_stream(config: StreamConfig, stop_flag: Arc<AtomicBool>) -> Result<()
             }
             let sample = f32::from_le_bytes(buf);
             chunk_peak = chunk_peak.max(sample.abs().min(1.0));
+            if data_bytes >= MAX_WAV_DATA_BYTES {
+                // Fecha o WAV válido em vez de estourar o tamanho em u32.
+                eprintln!("mincer: {:?} reached the WAV size limit", config.path);
+                break 'capture;
+            }
             let pcm = (sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
             writer
                 .write_sample(pcm)
                 .map_err(|e| format!("could not write the WAV file: {}", e))?;
+            data_bytes += 2;
         }
         config.peak.fetch_max(chunk_peak.to_bits(), Ordering::Relaxed);
 
@@ -297,6 +346,68 @@ fn usable(path: &Path) -> bool {
     fs::metadata(path).map(|m| m.len() > 1024).unwrap_or(false)
 }
 
+// Pasta de item com áudio para transcrever: as faixas gravadas, o MP3 mixado
+// ou o primeiro pedaço.
+pub(crate) fn has_audio(dir: &Path) -> bool {
+    [LOOPBACK_WAV, MIC_WAV, "audio.mp3", "chunk_000.mp3"]
+        .into_iter()
+        .any(|name| usable(&dir.join(name)))
+}
+
+// Duração estimada pelo tamanho do maior arquivo de áudio da pasta (o
+// cabeçalho do WAV de uma gravação cortada por crash pode estar errado).
+pub(crate) fn audio_duration_secs(dir: &Path) -> Option<u64> {
+    let len = |name: &str| fs::metadata(dir.join(name)).ok().map(|m| m.len());
+    [
+        (LOOPBACK_WAV, LOOPBACK_BYTES_PER_SEC, WAV_HEADER_BYTES),
+        (MIC_WAV, MIC_BYTES_PER_SEC, WAV_HEADER_BYTES),
+        ("audio.mp3", MIXED_MP3_BYTES_PER_SEC, 0),
+    ]
+    .into_iter()
+    .filter_map(|(name, rate, header)| len(name).map(|l| l.saturating_sub(header) / rate))
+    .filter(|secs| *secs > 0)
+    .max()
+}
+
+pub(crate) fn duration_label(secs: u64) -> String {
+    minutes_label(Duration::from_secs(secs.max(60)))
+}
+
+fn clean_title(title: Option<&str>) -> Option<String> {
+    title
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(|t| t.chars().take(MAX_TITLE_CHARS).collect())
+}
+
+// Sem título digitado, a hora em que a gravação começou.
+fn recording_title(title: Option<&str>, started_at: chrono::DateTime<chrono::Local>) -> String {
+    clean_title(title).unwrap_or_else(|| format!("Recording {}", started_at.format("%Y-%m-%d %H:%M")))
+}
+
+pub(crate) fn handle_title(handle: &RecordingHandle) -> String {
+    let started = chrono::Local
+        .timestamp_millis_opt(handle.started_at)
+        .single()
+        .unwrap_or_else(chrono::Local::now);
+    recording_title(handle.title.as_deref(), started)
+}
+
+// Gravação cortada por crash: o WAV foi criado no Start.
+pub(crate) fn pending_recording_title(app: &AppHandle) -> String {
+    let started = recording_dir(app)
+        .ok()
+        .and_then(|dir| {
+            [LOOPBACK_WAV, MIC_WAV]
+                .into_iter()
+                .filter_map(|name| fs::metadata(dir.join(name)).and_then(|m| m.created()).ok())
+                .min()
+        })
+        .map(chrono::DateTime::<chrono::Local>::from)
+        .unwrap_or_else(chrono::Local::now);
+    recording_title(None, started)
+}
+
 pub(crate) fn has_pending_recording(app: &AppHandle) -> bool {
     mincer_root(app)
         .map(|root| {
@@ -306,11 +417,29 @@ pub(crate) fn has_pending_recording(app: &AppHandle) -> bool {
         .unwrap_or(false)
 }
 
+// Dispositivos padrão que a gravação usaria agora (tela Record antes do Start).
+// COM numa thread própria, como na gravação.
+pub(crate) fn default_devices() -> MincerRecordDevices {
+    let names = std::thread::spawn(|| {
+        let _ = wasapi::initialize_mta().ok();
+        let name = |direction: &wasapi::Direction| {
+            wasapi::get_default_device(direction)
+                .and_then(|d| d.get_friendlyname())
+                .ok()
+        };
+        (name(&wasapi::Direction::Render), name(&wasapi::Direction::Capture))
+    })
+    .join()
+    .unwrap_or((None, None));
+    MincerRecordDevices { system: names.0, mic: names.1 }
+}
+
 pub(crate) fn start(
     app: &AppHandle,
     state: &MincerRecording,
     options: &MincerJobOptions,
     limits: RecordLimits,
+    title: Option<String>,
 ) -> Result<i64, String> {
     let mut guard = state.0.lock().map_err(|e| e.to_string())?;
     if guard.is_some() {
@@ -332,8 +461,12 @@ pub(crate) fn start(
     let errors_thread = errors.clone();
     let app_thread = app.clone();
     let started_at = now_ms();
-    let max_minutes = Arc::new(AtomicU32::new(limits.max_minutes));
+    let max_minutes = Arc::new(AtomicU32::new(capped_max_minutes(limits.max_minutes)));
     let max_thread = max_minutes.clone();
+    let system_device = Arc::new(Mutex::new(None));
+    let mic_device = Arc::new(Mutex::new(None));
+    let system_device_thread = system_device.clone();
+    let mic_device_thread = mic_device.clone();
 
     // COM inicializado nesta thread própria, não numa worker do tokio.
     let thread = std::thread::spawn(move || {
@@ -349,6 +482,7 @@ pub(crate) fn start(
                 channels: 2,
                 path: loopback_path,
                 peak: system_peak.clone(),
+                device_name: system_device_thread,
             },
             stop_thread.clone(),
             errors_thread.clone(),
@@ -361,6 +495,7 @@ pub(crate) fn start(
                     channels: 1,
                     path: mic_path,
                     peak: mic_peak.clone(),
+                    device_name: mic_device_thread,
                 },
                 stop_thread.clone(),
                 errors_thread.clone(),
@@ -391,18 +526,29 @@ pub(crate) fn start(
         errors,
         silence_stop_minutes: limits.silence_stop_minutes,
         max_minutes,
+        title: clean_title(title.as_deref()),
+        system_device,
+        mic_device,
     });
     Ok(started_at)
 }
 
-// "+30 min": estende o teto da gravação em curso; devolve o teto novo.
+// Título digitado durante a gravação; vazio volta ao padrão (hora de início).
+pub(crate) fn set_title(state: &MincerRecording, title: Option<String>) -> Result<(), String> {
+    let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+    let handle = guard.as_mut().ok_or_else(|| "No recording in progress.".to_string())?;
+    handle.title = clean_title(title.as_deref());
+    Ok(())
+}
+
+// "+30 min": estende o teto da gravação em curso, até MAX_RECORD_MINUTES;
+// devolve o teto novo. Só o extend escreve o teto, sempre com o lock tomado.
 pub(crate) fn extend(state: &MincerRecording) -> Result<u32, String> {
     let guard = state.0.lock().map_err(|e| e.to_string())?;
     let handle = guard.as_ref().ok_or_else(|| "No recording in progress.".to_string())?;
-    if handle.max_minutes.load(Ordering::Relaxed) == 0 {
-        return Err("This recording has no length limit.".to_string());
-    }
-    Ok(handle.max_minutes.fetch_add(EXTEND_MINUTES, Ordering::Relaxed) + EXTEND_MINUTES)
+    let next = extended_max_minutes(handle.max_minutes.load(Ordering::Relaxed))?;
+    handle.max_minutes.store(next, Ordering::Relaxed);
+    Ok(next)
 }
 
 pub(crate) fn started_at(handle: &RecordingHandle) -> i64 {
@@ -419,6 +565,7 @@ pub(crate) fn stop_handle(mut handle: RecordingHandle) -> Vec<String> {
 
 pub(crate) fn status(state: &MincerRecording) -> MincerRecordStatus {
     let guard = state.0.lock();
+    let device = |slot: &Arc<Mutex<Option<String>>>| slot.lock().ok().and_then(|n| n.clone());
     match guard.as_ref().ok().and_then(|g| g.as_ref()) {
         Some(h) => MincerRecordStatus {
             active: true,
@@ -426,6 +573,11 @@ pub(crate) fn status(state: &MincerRecording) -> MincerRecordStatus {
             errors: h.errors.lock().map(|e| e.clone()).unwrap_or_default(),
             silence_stop_minutes: h.silence_stop_minutes,
             max_minutes: h.max_minutes.load(Ordering::Relaxed),
+            title: h.title.clone(),
+            devices: MincerRecordDevices {
+                system: device(&h.system_device),
+                mic: device(&h.mic_device),
+            },
         },
         None => MincerRecordStatus {
             active: false,
@@ -433,6 +585,8 @@ pub(crate) fn status(state: &MincerRecording) -> MincerRecordStatus {
             errors: Vec::new(),
             silence_stop_minutes: 0,
             max_minutes: 0,
+            title: None,
+            devices: MincerRecordDevices { system: None, mic: None },
         },
     }
 }
@@ -461,6 +615,7 @@ pub(crate) fn finalize_into_item(
     app: &AppHandle,
     errors: &[String],
     keep_secs: Option<u64>,
+    title: &str,
 ) -> Result<String, String> {
     let dir = recording_dir(app)?;
     let options_path = dir.join(OPTIONS_FILE);
@@ -490,12 +645,23 @@ pub(crate) fn finalize_into_item(
     for name in &wavs {
         move_file(&dir.join(name), &target.join(name))?;
     }
+    // As opções vão junto com o áudio: se o item não entrar no banco, o boot
+    // seguinte recupera a pasta com elas (jobs::on_startup).
+    let options_json = serde_json::to_string(&options).map_err(|e| e.to_string())?;
+    fs::write(target.join(OPTIONS_FILE), options_json)
+        .map_err(|e| format!("Could not save the recording: {}", e))?;
     if let Some(secs) = keep_secs {
         fs::write(target.join(KEEP_FILE), secs.to_string())
             .map_err(|e| format!("Could not save the recording: {}", e))?;
     }
-    let title = format!("Recording {}", chrono::Local::now().format("%Y-%m-%d %H:%M"));
-    db::insert_queued(app, &id, "record", &title, None, None, &options)?;
+    if let Err(e) = db::insert_queued(app, &id, "record", title, None, None, &options) {
+        let _ = fs::remove_file(&options_path);
+        return Err(format!(
+            "Could not add the recording to the list ({}). The audio was kept and will appear in Mincer the next time Monet starts.",
+            e
+        ));
+    }
+    let _ = fs::remove_file(target.join(OPTIONS_FILE));
     let _ = fs::remove_file(dir.join(LOOPBACK_WAV));
     let _ = fs::remove_file(dir.join(MIC_WAV));
     let _ = fs::remove_file(&options_path);
@@ -538,4 +704,48 @@ pub(crate) async fn mix(ctx: &JobCtx, dir: &Path) -> Result<(), JobError> {
     let _ = fs::remove_file(&mic);
     let _ = fs::remove_file(dir.join(KEEP_FILE));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn max_minutes_is_capped_at_six_hours() {
+        assert_eq!(capped_max_minutes(0), MAX_RECORD_MINUTES);
+        assert_eq!(capped_max_minutes(180), 180);
+        assert_eq!(capped_max_minutes(360), 360);
+        assert_eq!(capped_max_minutes(400), MAX_RECORD_MINUTES);
+    }
+
+    #[test]
+    fn recording_title_uses_the_start_time_when_empty() {
+        let started = chrono::Local.with_ymd_and_hms(2026, 11, 19, 14, 5, 0).single().unwrap();
+        assert_eq!(recording_title(None, started), "Recording 2026-11-19 14:05");
+        assert_eq!(recording_title(Some("   "), started), "Recording 2026-11-19 14:05");
+        assert_eq!(recording_title(Some("  Weekly sync "), started), "Weekly sync");
+    }
+
+    #[test]
+    fn audio_duration_uses_the_largest_track() {
+        let dir = std::env::temp_dir().join(format!("monet-record-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        assert_eq!(audio_duration_secs(&dir), None);
+        // 90 s de loopback e 30 s de microfone.
+        fs::write(dir.join(LOOPBACK_WAV), vec![0u8; (WAV_HEADER_BYTES + 90 * LOOPBACK_BYTES_PER_SEC) as usize]).unwrap();
+        fs::write(dir.join(MIC_WAV), vec![0u8; (WAV_HEADER_BYTES + 30 * MIC_BYTES_PER_SEC) as usize]).unwrap();
+        let secs = audio_duration_secs(&dir);
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(secs, Some(90));
+        assert_eq!(duration_label(90), "2 min");
+        assert_eq!(duration_label(4380), "1 h 13 min");
+    }
+
+    #[test]
+    fn extend_stops_at_six_hours() {
+        assert_eq!(extended_max_minutes(180), Ok(210));
+        assert_eq!(extended_max_minutes(330), Ok(360));
+        assert_eq!(extended_max_minutes(345), Ok(360));
+        assert!(extended_max_minutes(360).is_err());
+    }
 }

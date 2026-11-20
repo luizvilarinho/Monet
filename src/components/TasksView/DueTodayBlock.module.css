@@ -19,27 +19,42 @@
   align-items: baseline;
   gap: var(--space-1h);
   min-width: 0;
-  background: transparent;
-  border: none;
   padding: var(--space-0) 0;
-  font-family: inherit;
   font-size: 13px;
   color: var(--text-primary);
+}
+
+.checkbox {
+  flex-shrink: 0;
+  margin: 0;
+  accent-color: var(--accent-task);
+  cursor: pointer;
+}
+
+.titleBtn,
+.todos {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-family: inherit;
   text-align: left;
   cursor: pointer;
 }
 
-.item:hover .title {
-  text-decoration: underline;
-}
-
-.title {
+.titleBtn {
   min-width: 0;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
   overflow-wrap: anywhere;
+  font-size: 13px;
+  color: inherit;
+}
+
+.titleBtn:hover,
+.todos:hover {
+  text-decoration: underline;
 }
 
 .todos,
@@ -49,14 +64,15 @@
   color: var(--text-muted);
 }
 
-.todos:hover {
-  text-decoration: underline;
-}
-
-.lateDeadline .title {
+.lateDeadline .titleBtn {
   color: var(--accent-danger);
 }
 
-.latePlan .title {
+.latePlan .titleBtn {
   color: var(--accent-late);
+}
+
+.done .titleBtn {
+  color: var(--text-muted);
+  text-decoration: line-through;
 }

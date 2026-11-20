@@ -63,7 +63,7 @@ export function TodosBoard(props: TodosBoardProps) {
     (id: string, key: string, tasksById: Map<string, Task>) => {
       const task = tasksById.get(id)
       const parentNoteId = key === NO_TODOS_KEY ? null : key
-      if (!task || task.parentNoteId === parentNoteId) return
+      if (!task || task.parentNoteId === parentNoteId) return false
       onUpdateTasks([{ id, patch: { parentNoteId } }])
     },
     [onUpdateTasks]

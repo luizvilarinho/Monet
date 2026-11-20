@@ -17,17 +17,16 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { DotsSixVertical, Trash, X } from '@phosphor-icons/react'
+import { DotsSixVertical, Trash } from '@phosphor-icons/react'
 import { useConfirm } from '../../hooks/useConfirm'
 import {
   MAX_PROPERTY_NAME,
   MAX_TYPE_NAME,
-  newSelectOption,
+  validOptionName,
   type NoteTypesRegistry,
 } from '../../hooks/useNoteTypes'
 import { hasMetadataValue, METADATA_TYPE_LABEL, NOTE_PROPERTY_TYPES } from '../../lib/metadata'
 import { MAX_LIST_PROPERTIES, typeDefs } from '../../lib/noteTypes'
-import { normalizeName } from '../../lib/tasks'
 import type { MetadataDef, MetadataType, Note, NoteType, SelectOption } from '../../types'
 import { ColorDots } from '../TasksView/ColorDots'
 import { NoteTypeBoardSection } from './NoteTypeBoardSection'
@@ -290,19 +289,18 @@ export function NoteTypesModal({
   }
 
   // Opções do select: nome obrigatório e único na propriedade (a troca de tipo
-  // casa as opções pelo nome).
+  // casa as opções pelo nome; validOptionName).
   function saveOptions(d: MetadataDef, options: SelectOption[]) {
     return registry.updateDef(d.id, { options })
   }
 
-  function validOptionName(d: MetadataDef, name: string, exceptId: string | null): string {
-    const trimmed = name.trim().slice(0, MAX_PROPERTY_NAME)
-    if (!trimmed) throw new Error('Option name is required.')
-    const wanted = normalizeName(trimmed)
-    if ((d.options ?? []).some((o) => o.id !== exceptId && normalizeName(o.name) === wanted)) {
-      throw new Error('This property already has an option with this name.')
-    }
-    return trimmed
+  // "New option…": grava no Enter (o foco fica, para a próxima) e no blur com
+  // texto; Esc descarta. Em erro, o texto fica no campo com a mensagem.
+  function addOption(d: MetadataDef, input: HTMLInputElement) {
+    if (!input.value.trim()) return
+    void run(() => registry.createOption(d.id, input.value)).then((ok) => {
+      if (ok) input.value = ''
+    })
   }
 
   function handleOptionDragEnd(d: MetadataDef, event: DragEndEvent) {
@@ -362,7 +360,7 @@ export function NoteTypesModal({
                   aria-label={`delete option ${o.name}`}
                   title="Delete option"
                 >
-                  <X size={13} aria-hidden />
+                  <Trash size={13} aria-hidden />
                 </button>
               </SortableOptionRow>
             ))}
@@ -373,14 +371,13 @@ export function NoteTypesModal({
           maxLength={MAX_PROPERTY_NAME}
           placeholder="New option… (Enter)"
           aria-label={`new option of ${d.name}`}
+          onBlur={(e) => addOption(d, e.currentTarget)}
           onKeyDown={(e) => {
-            if (e.key !== 'Enter') return
-            const input = e.currentTarget
-            void run(() =>
-              saveOptions(d, [...options, newSelectOption(validOptionName(d, input.value, null), null)])
-            ).then((ok) => {
-              if (ok) input.value = ''
-            })
+            if (e.key === 'Enter') addOption(d, e.currentTarget)
+            if (e.key === 'Escape') {
+              e.currentTarget.value = ''
+              e.currentTarget.blur()
+            }
           }}
         />
       </div>
@@ -405,17 +402,6 @@ export function NoteTypesModal({
               onBlur={(e) => commitText(e.currentTarget, t.name, (v) => registry.updateType(t.id, { name: v }))}
               onKeyDown={onDraftKeys}
             />
-          )}
-          {!t.builtin && (
-            <button
-              type="button"
-              className={styles.delete}
-              onClick={() => void handleRemoveType(t)}
-              aria-label={`delete type ${t.name}`}
-              title="Delete type"
-            >
-              <Trash size={13} aria-hidden />
-            </button>
           )}
         </div>
         <div className={`${own.field} ${own.iconField}`}>
@@ -571,6 +557,17 @@ export function NoteTypesModal({
             )
           }
         />
+
+        {/* Excluir o tipo com rótulo, no fim do detalhe (a lixeira ao lado do
+            nome parecia apagar só o nome). */}
+        {!t.builtin && (
+          <div className={own.dangerRow}>
+            <button type="button" className={own.deleteType} onClick={() => void handleRemoveType(t)}>
+              <Trash size={13} aria-hidden />
+              Delete type
+            </button>
+          </div>
+        )}
       </div>
     )
   }

@@ -71,6 +71,9 @@
 
 .colType {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   font-size: 11px;
   color: var(--text-muted, #606070);
   white-space: nowrap;

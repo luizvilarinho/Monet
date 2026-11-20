@@ -1,12 +1,11 @@
 import { invoke } from '@tauri-apps/api/core'
-import { Brain, Monitor, Paperclip, Stop } from '@phosphor-icons/react'
-import deepGrayIcon from '../../assets/icons/deep-gray.svg'
-import deepGreenIcon from '../../assets/icons/deep-green.svg'
+import { Brain, GearSix, MagnifyingGlassPlus, Monitor, Paperclip, Stop, X } from '@phosphor-icons/react'
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import type { ChatFolder, ChatTools } from '../../hooks/useChat'
 import type { DeepResearchPhase } from '../../lib/deepResearch'
+import { hasTavilyKey, TAVILY_KEY_CHANGED_EVENT } from '../../lib/search'
 import type { AiModel } from '../../types'
-import { parseAgentShortcut } from '../../lib/agents/chat'
+import { chatAgentComposerHint, findChatAgent, parseAgentShortcut } from '../../lib/agents/chat'
 import { AgentPicker, AgentSuggestions, useAgentShortcut } from './AgentPicker'
 import { ChatToolsMenu } from './ChatToolsMenu'
 import { RagSearchStatus } from './RagSearchStatus'
@@ -14,6 +13,8 @@ import { useImageViewer } from '../ImageViewer/ImageViewer'
 import styles from './ChatComposer.module.css'
 
 type DraftDoc = { name: string; type: string; data: string }
+
+const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
 
 interface ChatComposerProps {
   hasApiKey: boolean
@@ -40,11 +41,23 @@ interface ChatComposerProps {
   agentsAvailable: boolean
   onSelectAgent: (id: string) => void
   // `agentId` vem do atalho "/agente texto".
-  onSend: (text: string, image?: string, docs?: DraftDoc[], agentId?: string) => void
+  onSend: (text: string, images?: string[], docs?: DraftDoc[], agentId?: string) => void
   onStop: () => void
   inputRef: RefObject<HTMLTextAreaElement | null>
   // So no Assistant: print da tela (data URL), anexado como imagem colada.
   onCaptureScreen?: () => Promise<string>
+  // Abre o Settings na seção que resolve o aviso (chave do Tavily). Ausente:
+  // o aviso fica só com o texto.
+  onOpenSettings?: (section: 'search') => void
+}
+
+function readAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
 }
 
 export function ChatComposer({
@@ -72,10 +85,11 @@ export function ChatComposer({
   onStop,
   inputRef,
   onCaptureScreen,
+  onOpenSettings,
 }: ChatComposerProps) {
   const [draft, setDraft] = useState('')
   const shortcut = useAgentShortcut(draft, setDraft, agentsAvailable)
-  const [draftImage, setDraftImage] = useState<string | null>(null)
+  const [draftImages, setDraftImages] = useState<string[]>([])
   const [imageError, setImageError] = useState<string | null>(null)
   const [draftDocs, setDraftDocs] = useState<DraftDoc[]>([])
   const [docError, setDocError] = useState<string | null>(null)
@@ -90,40 +104,100 @@ export function ChatComposer({
   useEffect(() => {
     resetKeyRef.current = resetKey
     setDraft('')
-    setDraftImage(null)
+    setDraftImages([])
     setImageError(null)
     setDraftDocs([])
+    setDocError(null)
   }, [resetKey])
 
+  // Estado efetivo dos toggles pelo agente da conversa: o agente que não usa
+  // web search ou deep research os desliga no turno (o toggle fica guardado).
+  const agent = findChatAgent(agentsAvailable ? agentId : undefined)
+  // Placeholder e mensagem padrão do agente ativo: Coach e Plan week enviam
+  // com o rascunho vazio (o app monta o contexto).
+  const agentHint = agentsAvailable ? chatAgentComposerHint(agentId) : null
+  const deepResearchOffByAgent = !agent.context.deepResearch
+  const effectiveDeepResearch = tools.deepResearch && !deepResearchOffByAgent
+  const effectiveWebSearch = tools.webSearch && agent.context.web
+  const needsTavily = effectiveDeepResearch || effectiveWebSearch
+
+  // Web search ou deep research sem a chave do Tavily: o envio fica parado (o
+  // rascunho não se perde) e o aviso leva ao Settings. Checado ao ligar, na
+  // montagem, ao focar a caixa, quando a chave muda no Settings desta janela
+  // e na volta à janela (chave salva na outra).
+  const [tavilyMissing, setTavilyMissing] = useState(false)
+  const tavilyCheckRef = useRef(0)
+  const checkTavily = () => {
+    if (!needsTavily) {
+      setTavilyMissing(false)
+      return
+    }
+    const check = ++tavilyCheckRef.current
+    void hasTavilyKey().then((ok) => {
+      if (check === tavilyCheckRef.current) setTavilyMissing(!ok)
+    })
+  }
+  useEffect(() => {
+    checkTavily()
+    if (!needsTavily) return
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') checkTavily()
+    }
+    window.addEventListener(TAVILY_KEY_CHANGED_EVENT, checkTavily)
+    window.addEventListener('focus', checkTavily)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      window.removeEventListener(TAVILY_KEY_CHANGED_EVENT, checkTavily)
+      window.removeEventListener('focus', checkTavily)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+    // checkTavily só depende de needsTavily.
+  }, [needsTavily])
+
   const modelSupportsVision = selectedModel?.supportsVision ?? false
-  const visionWarning = !!draftImage && !modelSupportsVision
+  const visionWarning = draftImages.length > 0 && !modelSupportsVision
+  const hasDraft = draft.trim().length > 0 || draftImages.length > 0 || draftDocs.length > 0
+  const tavilyBlocked = needsTavily && tavilyMissing
 
   const canSend =
     !isStreaming &&
     !isPdfProcessing &&
     hasApiKey &&
-    (draft.trim().length > 0 || !!draftImage || draftDocs.length > 0) &&
+    (hasDraft || !!agentHint?.defaultMessage) &&
     !!selectedModel &&
-    !visionWarning
+    !visionWarning &&
+    !tavilyBlocked
+
+  const sendTitle = !selectedModel
+    ? 'Select a model first'
+    : tavilyBlocked
+      ? 'Add a Tavily key in Settings, or turn off web search'
+      : undefined
 
   function handleSend() {
     const parsed = agentsAvailable ? parseAgentShortcut(draft) : null
-    const hasAttachments = !!draftImage || draftDocs.length > 0
-    if (parsed && !parsed.rest && !hasAttachments) {
+    const hasAttachments = draftImages.length > 0 || draftDocs.length > 0
+    // Sem texto, o agente que não pede pergunta manda a mensagem padrão dele.
+    const fallback = agentsAvailable
+      ? (chatAgentComposerHint(parsed ? parsed.agent.id : agentId)?.defaultMessage ?? '')
+      : ''
+    if (parsed && !parsed.rest && !hasAttachments && (!fallback || !canSend)) {
       // Só o comando: liga o seletor (vale também durante o streaming).
       onSelectAgent(parsed.agent.id)
       setDraft('')
       return
     }
     if (!canSend) return
-    const text = parsed ? parsed.rest : draft
-    const img = draftImage
+    const typed = parsed ? parsed.rest : draft
+    const text = typed.trim() ? typed : fallback || typed
+    const images = draftImages
     const docs = draftDocs
     setDraft('')
-    setDraftImage(null)
+    setDraftImages([])
     setImageError(null)
     setDraftDocs([])
-    onSend(text, img ?? undefined, docs.length > 0 ? docs : undefined, parsed?.agent.id)
+    setDocError(null)
+    onSend(text, images.length > 0 ? images : undefined, docs.length > 0 ? docs : undefined, parsed?.agent.id)
   }
 
   async function handleCaptureScreen() {
@@ -135,7 +209,7 @@ export function ChatComposer({
       const image = await onCaptureScreen()
       // A conversa mudou durante a captura: o print era da anterior.
       if (resetKeyRef.current !== key) return
-      setDraftImage(image)
+      setDraftImages((prev) => [...prev, image])
       inputRef.current?.focus()
     } catch (err) {
       if (resetKeyRef.current !== key) return
@@ -143,6 +217,27 @@ export function ChatComposer({
     } finally {
       setIsCapturing(false)
     }
+  }
+
+  // Imagens coladas ou escolhidas: todas entram (cada uma lida à parte, na
+  // ordem); acima de 5 MB fica de fora com aviso.
+  function addImageFiles(files: File[]) {
+    const tooBig = files.filter((f) => f.size > MAX_ATTACHMENT_BYTES)
+    const ok = files.filter((f) => f.size <= MAX_ATTACHMENT_BYTES)
+    if (tooBig.length > 0) {
+      setImageError(
+        tooBig.length === 1
+          ? `Image exceeds the 5 MB limit${tooBig[0].name ? `: ${tooBig[0].name}` : ''}.`
+          : `${tooBig.length} images exceed the 5 MB limit and were not attached.`
+      )
+    }
+    if (ok.length === 0) return
+    const key = resetKeyRef.current
+    void Promise.all(ok.map((f) => readAsDataUrl(f).catch(() => null))).then((urls) => {
+      if (resetKeyRef.current !== key) return
+      const read = urls.filter((u): u is string => !!u)
+      if (read.length > 0) setDraftImages((prev) => [...prev, ...read])
+    })
   }
 
   function resolveFileType(file: File): string {
@@ -164,6 +259,7 @@ export function ChatComposer({
       setDocError(null)
       setImageError(null)
       const errors: string[] = []
+      const images: File[] = []
       for (const file of files) {
         const mime = resolveFileType(file)
         const isImage = mime.startsWith('image/')
@@ -178,14 +274,12 @@ export function ChatComposer({
           errors.push(`File type not supported: ${file.name}`)
           continue
         }
-        if (file.size > 5 * 1024 * 1024) {
+        if (file.size > MAX_ATTACHMENT_BYTES) {
           errors.push(`File exceeds the 5 MB limit: ${file.name}`)
           continue
         }
         if (isImage) {
-          const reader = new FileReader()
-          reader.onload = () => setDraftImage(reader.result as string)
-          reader.readAsDataURL(file)
+          images.push(file)
         } else if (isText) {
           // Text files are sent inline as message text — works with all models
           const reader = new FileReader()
@@ -216,6 +310,7 @@ export function ChatComposer({
           reader.readAsArrayBuffer(file)
         }
       }
+      if (images.length > 0) addImageFiles(images)
       if (errors.length > 0) {
         setDocError(errors.join(' '))
       }
@@ -226,27 +321,28 @@ export function ChatComposer({
   return (
     <footer className={styles.composer}>
       <div className={styles.composerInner}>
-        {(draftImage || draftDocs.length > 0) && (
+        {(draftImages.length > 0 || draftDocs.length > 0) && (
           <div className={styles.attachmentPreviews}>
-            {draftImage && (
-              <div className={styles.imagePreview}>
+            {draftImages.map((url, i) => (
+              <div key={i} className={styles.imagePreview}>
                 <img
-                  src={draftImage}
-                  alt="attachment preview"
+                  src={url}
+                  alt={`attachment preview ${i + 1}`}
                   className={styles.imagePreviewThumb}
                   title="Open image"
-                  onClick={() => imageViewer.open(draftImage)}
+                  onClick={() => imageViewer.open(url)}
                 />
                 <button
                   type="button"
                   className={styles.imagePreviewRemove}
-                  onClick={() => setDraftImage(null)}
-                  aria-label="Remove image"
+                  onClick={() => setDraftImages((prev) => prev.filter((_, idx) => idx !== i))}
+                  aria-label={`Remove image ${i + 1}`}
+                  title="Remove image"
                 >
-                  ×
+                  <X size={10} weight="bold" aria-hidden />
                 </button>
               </div>
-            )}
+            ))}
             {draftDocs.map((doc, i) => (
               <div key={i} className={styles.docPill}>
                 <span className={styles.docPillName}>{doc.name}</span>
@@ -255,8 +351,9 @@ export function ChatComposer({
                   className={styles.docPillRemove}
                   onClick={() => setDraftDocs((prev) => prev.filter((_, idx) => idx !== i))}
                   aria-label={`Remove ${doc.name}`}
+                  title="Remove file"
                 >
-                  ×
+                  <X size={12} aria-hidden />
                 </button>
               </div>
             ))}
@@ -298,6 +395,29 @@ export function ChatComposer({
               : `${webSourcesToast.count} sources saved to the knowledge base`}
           </div>
         )}
+        {tavilyBlocked && (
+          <div className={styles.noticeWithActions} role="alert">
+            <span>
+              {effectiveDeepResearch ? 'Deep Research' : 'Web Search'} needs a Tavily key. Add it in Settings, or turn
+              it off to send.
+            </span>
+            <div className={styles.noticeActions}>
+              {onOpenSettings && (
+                <button type="button" className={styles.noticeBtn} onClick={() => onOpenSettings('search')}>
+                  <GearSix size={12} aria-hidden />
+                  Open Settings
+                </button>
+              )}
+              <button
+                type="button"
+                className={styles.noticeBtn}
+                onClick={() => setTool(effectiveDeepResearch ? 'deepResearch' : 'webSearch', false)}
+              >
+                Turn off
+              </button>
+            </div>
+          </div>
+        )}
         {visionWarning && (
           <div className={styles.visionWarning} role="alert">
             This model does not support images. Switch to a vision-capable model or remove the image.
@@ -313,6 +433,11 @@ export function ChatComposer({
             {docError}
           </div>
         )}
+        {hasApiKey && !selectedModel && hasDraft && (
+          <div className={styles.visionWarning} role="status">
+            Select a model to send this message.
+          </div>
+        )}
         <AgentSuggestions
           items={shortcut.suggestions}
           highlighted={shortcut.highlighted}
@@ -323,6 +448,7 @@ export function ChatComposer({
           className={styles.input}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
+          onFocus={checkTavily}
           onKeyDown={(e) => {
             if (shortcut.onKeyDown(e)) return
             if (e.key === 'Enter' && !e.ctrlKey && !e.shiftKey) {
@@ -331,21 +457,18 @@ export function ChatComposer({
             }
           }}
           onPaste={(e) => {
-            const items = Array.from(e.clipboardData.items)
-            const imageItem = items.find((item) => item.type.startsWith('image/'))
-            if (!imageItem) return
+            const files = Array.from(e.clipboardData.items)
+              .filter((item) => item.type.startsWith('image/'))
+              .map((item) => item.getAsFile())
+              .filter((f): f is File => !!f)
+            if (files.length === 0) return
             e.preventDefault()
             setImageError(null)
-            const file = imageItem.getAsFile()
-            if (!file) return
-            if (file.size > 5 * 1024 * 1024) return
-            const reader = new FileReader()
-            reader.onload = () => setDraftImage(reader.result as string)
-            reader.readAsDataURL(file)
+            addImageFiles(files)
           }}
           placeholder={
             hasApiKey
-              ? 'Write a message...'
+              ? (agentHint?.placeholder ?? 'Write a message...')
               : 'Configure your OpenRouter key to get started.'
           }
           rows={rows}
@@ -369,12 +492,27 @@ export function ChatComposer({
           )}
           <button
             type="button"
-            className={tools.deepResearch ? styles.deepResearchBtnOn : styles.deepResearchBtn}
-            onClick={() => setTool('deepResearch', !tools.deepResearch)}
-            title={tools.deepResearch ? 'Deep Research enabled — click to disable' : 'Enable Deep Research'}
-            aria-pressed={tools.deepResearch}
+            className={effectiveDeepResearch ? styles.deepResearchBtnOn : styles.deepResearchBtn}
+            onClick={() => {
+              if (deepResearchOffByAgent) return
+              setTool('deepResearch', !tools.deepResearch)
+            }}
+            title={
+              deepResearchOffByAgent
+                ? `${agent.label} doesn't use Deep Research`
+                : tools.deepResearch
+                  ? 'Deep Research enabled — click to disable'
+                  : 'Enable Deep Research'
+            }
+            aria-pressed={effectiveDeepResearch}
+            aria-disabled={deepResearchOffByAgent || undefined}
           >
-            <img src={tools.deepResearch ? deepGreenIcon : deepGrayIcon} alt="" aria-hidden="true" className={styles.deepResearchIcon} />
+            <MagnifyingGlassPlus
+              size={15}
+              weight={effectiveDeepResearch ? 'bold' : 'regular'}
+              aria-hidden
+              className={styles.deepResearchIcon}
+            />
             <span className={styles.deepResearchLabel}>Deep Research</span>
           </button>
           <button
@@ -382,6 +520,7 @@ export function ChatComposer({
             className={thinkingEnabled ? styles.thinkingBtnOn : styles.thinkingBtn}
             onClick={toggleThinking}
             title={thinkingEnabled ? 'Thinking enabled — click to disable' : 'Enable thinking'}
+            aria-label="Thinking"
             aria-pressed={thinkingEnabled}
           >
             <Brain size={15} weight={thinkingEnabled ? 'fill' : 'regular'} />
@@ -406,6 +545,7 @@ export function ChatComposer({
             tasksTool={{ supported: selectedModel?.supportsTools ?? false }}
             dailyNotesTool={{ supported: selectedModel?.supportsTools ?? false }}
             notesTool={{ supported: selectedModel?.supportsTools ?? false }}
+            agent={agent}
           />
           {isStreaming ? (
             <button
@@ -422,6 +562,7 @@ export function ChatComposer({
               className={styles.sendBtn}
               onClick={handleSend}
               disabled={!canSend}
+              title={sendTitle}
             >
               Send
             </button>

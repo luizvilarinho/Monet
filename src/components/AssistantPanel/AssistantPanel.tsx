@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { emitTo, listen } from '@tauri-apps/api/event'
-import { FileText, Brain } from '@phosphor-icons/react'
+import { ArrowCounterClockwise, Brain, FileText, GearSix, X } from '@phosphor-icons/react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { notesFolderDocId, notesIndexGetDisabledNotebooks } from '../../lib/documents'
 import {
@@ -44,6 +44,10 @@ import styles from './AssistantPanel.module.css'
 // Pasta escolhida no seletor do cabeçalho (ausente = pasta `assistant`). É
 // preferência só desta janela: o sync entre janelas do useChat ignora a chave.
 const ASSISTANT_FOLDER_KEY = 'monet:assistant-folder-id'
+
+// Reexibir a janela até este tempo depois da última atividade volta na mesma
+// conversa; depois disso, abre uma nova (com o atalho para a anterior).
+const RESUME_WINDOW_MS = 15 * 60_000
 
 // Snapshot da tool "Tasks", lido do storage: esta janela não tem o estado de
 // tasks da main. O checklist vem das notas-corpo das tasks e só é lido quando
@@ -131,6 +135,7 @@ export function AssistantPanel() {
     setConversationAgent,
     cancel,
     startAssistantConversation,
+    selectConversation,
     activeConversation,
     conversations,
     folders,
@@ -218,11 +223,24 @@ export function AssistantPanel() {
     }
   }, [])
 
-  // Cria uma conversa NOVA e zerada na pasta efetiva a cada exibicao da
-  // janela. A janela e escondida/mostrada (nao remontada), entao o disparo nao
-  // pode ser so no mount: o Rust emite `assistant-shown` ao MOSTRAR a janela e
-  // escutamos esse evento aqui. No primeiro mount (janela ja visivel), o
-  // rascunho vem do efeito "sem conversa ativa" abaixo.
+  // Conversa anterior, oferecida no estado vazio quando a janela reabre numa
+  // conversa nova.
+  const [previousConversationId, setPreviousConversationId] = useState<string | null>(null)
+  // Lido pelo listener de `assistant-shown` (registrado uma vez).
+  const shownStateRef = useRef({ activeId, isStreaming, messageCount: messages.length, updatedAt: '' })
+  shownStateRef.current = {
+    activeId,
+    isStreaming,
+    messageCount: messages.length,
+    updatedAt: activeConversation?.updatedAt ?? '',
+  }
+
+  // A janela e escondida/mostrada (nao remontada): o Rust emite
+  // `assistant-shown` ao MOSTRAR a janela. Fica na mesma conversa (e no
+  // rascunho do composer) se ela esta vazia, em streaming ou teve atividade
+  // nos ultimos 15 minutos; senao abre uma conversa nova na pasta efetiva. No
+  // primeiro mount (janela ja visivel), o rascunho vem do efeito "sem conversa
+  // ativa" abaixo.
   const startedRef = useRef(false)
   useEffect(() => {
     if (!startedRef.current) {
@@ -232,7 +250,13 @@ export function AssistantPanel() {
     let unlisten: (() => void) | undefined
     let cancelled = false
     void listen('assistant-shown', () => {
-      startAssistantConversation(folderIdRef.current)
+      const shown = shownStateRef.current
+      const lastActivity = Date.parse(shown.updatedAt)
+      const recent = Number.isFinite(lastActivity) && Date.now() - lastActivity < RESUME_WINDOW_MS
+      if (!shown.activeId || (shown.messageCount > 0 && !shown.isStreaming && !recent)) {
+        setPreviousConversationId(shown.messageCount > 0 ? shown.activeId : null)
+        startAssistantConversation(folderIdRef.current)
+      }
       ensureAssistantFolder()
       inputRef.current?.focus()
     }).then((fn) => {
@@ -265,17 +289,43 @@ export function AssistantPanel() {
     }
   }, [chosenFolderId, chosenFolder, conversations, activeId, assistantFolder, startAssistantConversation])
 
+  // O composer limpa o que foi digitado quando a chave muda (troca de
+  // conversa). Trocar de pasta abre um rascunho novo, mas mantém o texto e o
+  // anexo do composer.
+  const keepComposerRef = useRef(false)
+  const [composerKey, setComposerKey] = useState(activeId)
+  useEffect(() => {
+    if (keepComposerRef.current) {
+      keepComposerRef.current = false
+      return
+    }
+    setComposerKey(activeId)
+  }, [activeId])
+
   // Trocar de pasta vale para as PRÓXIMAS conversas: abre um rascunho novo na
-  // pasta escolhida. O rascunho anterior (só em memória) é descartado; uma
-  // conversa já iniciada continua na pasta dela.
+  // pasta escolhida. O rascunho anterior (só em memória) é descartado, mas o
+  // texto do composer fica; uma conversa já iniciada continua na pasta dela.
   function handleChooseFolder(folderId: string) {
     const next = folderId && folderId !== assistantFolder?.id ? folderId : null
     setChosenFolderId(next)
     if (next) localStorage.setItem(ASSISTANT_FOLDER_KEY, next)
     else localStorage.removeItem(ASSISTANT_FOLDER_KEY)
+    keepComposerRef.current = true
     startAssistantConversation(folderId || undefined)
     inputRef.current?.focus()
   }
+
+  // Settings fica na janela principal: ela aparece com o Settings aberto e o
+  // Assistant se esconde para não cobri-lo.
+  function openSettingsInMain() {
+    void emitTo('main', 'assistant-open-settings')
+      .then(() => getCurrentWindow().hide())
+      .catch((err) => console.warn('open settings in main failed', err))
+  }
+
+  const previousConversation = previousConversationId
+    ? conversations.find((c) => c.id === previousConversationId) ?? null
+    : null
 
   useEffect(() => {
     if (hasApiKey) inputRef.current?.focus()
@@ -402,7 +452,7 @@ export function AssistantPanel() {
             models={models}
             selectedId={model}
             onSelect={setModel}
-            onOpenSettings={() => {}}
+            onOpenSettings={openSettingsInMain}
           />
           <button
             type="button"
@@ -413,21 +463,60 @@ export function AssistantPanel() {
               void getCurrentWindow().hide()
             }}
           >
-            ×
+            <X size={14} aria-hidden />
           </button>
         </div>
       </div>
 
       {apiKeyChecked && !hasApiKey && (
         <div className={styles.keyBanner} role="alert">
-          Add your OpenRouter key in the main window Settings to use the assistant.
+          <span>Add your OpenRouter key in Settings to use the assistant.</span>
+          <button type="button" className={styles.keyBannerBtn} onClick={openSettingsInMain}>
+            <GearSix size={12} aria-hidden />
+            Open Settings
+          </button>
         </div>
       )}
 
       <div className={styles.historyWrap}>
         <div className={styles.history} ref={historyRef} onScroll={onScroll}>
           {messages.length === 0 ? (
-            <p className={styles.empty}>Ask anything — press Enter to send.</p>
+            <div className={styles.empty}>
+              <p className={styles.emptyText}>
+                Ask about your notes, this folder's documents, or what is on your screen
+                (attach a screenshot below). Enter sends.
+              </p>
+              <div className={styles.emptyActions}>
+                {previousConversation && previousConversation.messages.length > 0 && (
+                  <button
+                    type="button"
+                    className={styles.emptyAction}
+                    title={previousConversation.title}
+                    onClick={() => {
+                      selectConversation(previousConversation.id)
+                      setPreviousConversationId(null)
+                      inputRef.current?.focus()
+                    }}
+                  >
+                    <ArrowCounterClockwise size={12} aria-hidden />
+                    Continue last conversation
+                  </button>
+                )}
+                {folderDocCount === 0 && (
+                  <button
+                    type="button"
+                    className={styles.emptyAction}
+                    onClick={() => {
+                      ensureAssistantFolder()
+                      setDocsOpen(true)
+                    }}
+                  >
+                    <FileText size={12} aria-hidden />
+                    Choose documents
+                  </button>
+                )}
+              </div>
+            </div>
           ) : (
             messages.map((m) => (
               <ChatMessageBubble
@@ -470,7 +559,7 @@ export function AssistantPanel() {
         ragSearching={ragSearching}
         memoryToastVisible={memoryToastVisible}
         webSourcesToast={webSourcesToast}
-        resetKey={activeId}
+        resetKey={composerKey}
         rows={2}
         agentId={activeAgentId}
         agentsAvailable={agentsAvailable}

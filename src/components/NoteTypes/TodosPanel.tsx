@@ -1,3 +1,4 @@
+import { Target } from '@phosphor-icons/react'
 import { formatDueShort, statusColor, statusName, type TodosProgress } from '../../lib/tasks'
 import type { Task, TaskStatusDef } from '../../types'
 import styles from './TodosPanel.module.css'
@@ -27,7 +28,12 @@ export function TodosPanel({ progress, outside, statuses, onOpenTask, onInsert, 
         <span>
           {done}/{total}
         </span>
-        {progress?.nextDeadline && <span title="Next deadline">⚑ {formatDueShort(progress.nextDeadline)}</span>}
+        {progress?.nextDeadline && (
+          <span className={styles.deadline} title="Next deadline">
+            <Target size={12} aria-hidden />
+            {formatDueShort(progress.nextDeadline)}
+          </span>
+        )}
         {onArchive && total > 0 && done === total && (
           <span className={styles.allDone}>
             All done ·{' '}

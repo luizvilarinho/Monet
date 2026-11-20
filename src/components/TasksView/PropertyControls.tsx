@@ -153,16 +153,125 @@ function NumberControl({
   )
 }
 
-// Controle conforme o tipo de dado da definição (metadado de task ou
-// propriedade de tipo de nota).
-export function MetadataValueControl({
+const NEW_OPTION = '__new_option__'
+
+// Select de opções. Com `onCreateOption`, o último item "New option…" troca o
+// select por um campo: Enter ou blur com texto cria a opção e já a aplica;
+// Esc ou campo vazio voltam ao select. Erro (nome repetido) fica no campo.
+function SelectControl({
   def,
   value,
   onChange,
+  onCreateOption,
 }: {
   def: MetadataDef
   value: MetadataValue
   onChange: (value: MetadataValue) => void
+  onCreateOption?: (name: string) => Promise<string>
+}) {
+  const [creating, setCreating] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const cancelRef = useRef(false)
+  const busyRef = useRef(false)
+  // Opção apagada (ou de outra janela) aparece como vazio.
+  const options = def.options ?? []
+  const current = options.find((o) => o.id === value)
+
+  function close() {
+    setCreating(false)
+    setDraft('')
+    setError(null)
+  }
+
+  async function commit() {
+    if (cancelRef.current || !draft.trim() || !onCreateOption) {
+      cancelRef.current = false
+      close()
+      return
+    }
+    if (busyRef.current) return
+    busyRef.current = true
+    try {
+      const id = await onCreateOption(draft)
+      close()
+      onChange(id)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      busyRef.current = false
+    }
+  }
+
+  if (creating) {
+    return (
+      <span className={styles.selectControl}>
+        <input
+          autoFocus
+          className={styles.textInput}
+          value={draft}
+          placeholder="New option…"
+          onChange={(e) => {
+            setDraft(e.target.value)
+            setError(null)
+          }}
+          onBlur={() => void commit()}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void commit()
+            if (e.key === 'Escape') {
+              e.stopPropagation()
+              cancelRef.current = true
+              e.currentTarget.blur()
+            }
+          }}
+          aria-label={`New ${def.name} option`}
+          aria-invalid={error ? true : undefined}
+        />
+        {error && (
+          <span className={`${styles.note} ${styles.warning}`} role="alert">
+            {error}
+          </span>
+        )}
+      </span>
+    )
+  }
+
+  return (
+    <span className={styles.selectControl}>
+      {current?.color && <span className={styles.optionDot} style={{ background: current.color }} aria-hidden />}
+      <select
+        className={styles.select}
+        value={current?.id ?? ''}
+        onChange={(e) => {
+          if (e.target.value === NEW_OPTION) setCreating(true)
+          else onChange(e.target.value || null)
+        }}
+        aria-label={def.name}
+      >
+        <option value="">Empty</option>
+        {options.map((o) => (
+          <option key={o.id} value={o.id}>
+            {o.name}
+          </option>
+        ))}
+        {onCreateOption && <option value={NEW_OPTION}>New option…</option>}
+      </select>
+    </span>
+  )
+}
+
+// Controle conforme o tipo de dado da definição (metadado de task ou
+// propriedade de tipo de nota). `onCreateOption`: "New option…" no select.
+export function MetadataValueControl({
+  def,
+  value,
+  onChange,
+  onCreateOption,
+}: {
+  def: MetadataDef
+  value: MetadataValue
+  onChange: (value: MetadataValue) => void
+  onCreateOption?: (name: string) => Promise<string>
 }) {
   switch (def.type) {
     case 'text':
@@ -202,30 +311,7 @@ export function MetadataValueControl({
           aria-label={def.name}
         />
       )
-    case 'select': {
-      // Opção apagada (ou de outra janela) aparece como vazio.
-      const options = def.options ?? []
-      const current = options.find((o) => o.id === value)
-      return (
-        <span className={styles.selectControl}>
-          {current?.color && (
-            <span className={styles.optionDot} style={{ background: current.color }} aria-hidden />
-          )}
-          <select
-            className={styles.select}
-            value={current?.id ?? ''}
-            onChange={(e) => onChange(e.target.value || null)}
-            aria-label={def.name}
-          >
-            <option value="">Empty</option>
-            {options.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.name}
-              </option>
-            ))}
-          </select>
-        </span>
-      )
-    }
+    case 'select':
+      return <SelectControl def={def} value={value} onChange={onChange} onCreateOption={onCreateOption} />
   }
 }

@@ -1,6 +1,33 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { BookHighlight } from '../types'
 import { storage } from '../storage'
+
+// Última cor usada para grifar, comum aos dois leitores (o atalho `H` grifa
+// com ela).
+const LAST_COLOR_KEY = 'monet:reader-highlight-color'
+
+export function loadHighlightColor(palette: string[]): string {
+  try {
+    const saved = localStorage.getItem(LAST_COLOR_KEY)
+    if (saved && palette.includes(saved)) return saved
+  } catch {
+    /* ignore */
+  }
+  return palette[0]
+}
+
+export function saveHighlightColor(color: string): void {
+  try {
+    localStorage.setItem(LAST_COLOR_KEY, color)
+  } catch (err) {
+    console.error('failed to persist highlight color', err)
+  }
+}
+
+// Busca nos grifos sem caixa e sem acento.
+function foldText(s: string): string {
+  return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+}
 
 // CRUD de grifos de um livro. Reaproveitável entre formatos: nada aqui olha
 // para `rects` nem para a página renderizada — o posicionamento visual do
@@ -10,9 +37,17 @@ import { storage } from '../storage'
 // crescente (1..N): é por ele que `orderedHighlights` ordena. No PDF é o
 // número da página; no EPUB será o índice de location. Se esse contrato
 // mudar, o comparador muda junto.
-export function useHighlights(bookId: string) {
+//
+// Gravar e apagar são otimistas: na falha, o estado volta ao que era e
+// `onError` recebe a mensagem para o usuário.
+export function useHighlights(bookId: string, onError?: (message: string) => void) {
   const [highlights, setHighlights] = useState<BookHighlight[]>([])
   const [colorFilter, setColorFilter] = useState<string | null>(null)
+  const [textFilter, setTextFilter] = useState('')
+  const highlightsRef = useRef(highlights)
+  highlightsRef.current = highlights
+  const onErrorRef = useRef(onError)
+  onErrorRef.current = onError
 
   // Carga dos grifos ao abrir; limpa ao trocar de livro (id diferente não
   // ocorre no leitor de PDF — ele é desmontado/remontado pelo Library — mas a
@@ -21,6 +56,7 @@ export function useHighlights(bookId: string) {
     let cancelled = false
     setHighlights([])
     setColorFilter(null)
+    setTextFilter('')
     void storage
       .getHighlights(bookId)
       .then((list) => {
@@ -33,6 +69,7 @@ export function useHighlights(bookId: string) {
   }, [bookId])
 
   const persistHighlight = useCallback(async (h: BookHighlight) => {
+    const previous = highlightsRef.current.find((x) => x.id === h.id)
     setHighlights((prev) => {
       const i = prev.findIndex((x) => x.id === h.id)
       if (i >= 0) {
@@ -46,15 +83,27 @@ export function useHighlights(bookId: string) {
       await storage.saveHighlight(h)
     } catch (err) {
       console.error('failed to save highlight', err)
+      // Grifo novo sai da tela; troca de cor volta à cor anterior.
+      setHighlights((prev) =>
+        previous
+          ? prev.map((x) => (x.id === h.id ? previous : x))
+          : prev.filter((x) => x.id !== h.id),
+      )
+      onErrorRef.current?.("Couldn't save this highlight. Try again.")
     }
   }, [])
 
   const removeHighlight = useCallback(async (id: string) => {
+    const removed = highlightsRef.current.find((h) => h.id === id)
     setHighlights((prev) => prev.filter((h) => h.id !== id))
     try {
       await storage.deleteHighlight(id)
     } catch (err) {
       console.error('failed to delete highlight', err)
+      if (removed) {
+        setHighlights((prev) => (prev.some((h) => h.id === id) ? prev : [...prev, removed]))
+      }
+      onErrorRef.current?.("Couldn't delete this highlight. Try again.")
     }
   }, [])
 
@@ -74,10 +123,14 @@ export function useHighlights(bookId: string) {
     })
   }, [highlights])
 
-  const filteredHighlights = useMemo(
-    () => (colorFilter ? orderedHighlights.filter((h) => h.color === colorFilter) : orderedHighlights),
-    [orderedHighlights, colorFilter],
-  )
+  const filteredHighlights = useMemo(() => {
+    const query = foldText(textFilter.trim())
+    return orderedHighlights.filter(
+      (h) =>
+        (!colorFilter || h.color === colorFilter) &&
+        (!query || foldText(h.text).includes(query)),
+    )
+  }, [orderedHighlights, colorFilter, textFilter])
 
   return {
     highlights,
@@ -85,6 +138,8 @@ export function useHighlights(bookId: string) {
     filteredHighlights,
     colorFilter,
     setColorFilter,
+    textFilter,
+    setTextFilter,
     persistHighlight,
     removeHighlight,
     changeColor,

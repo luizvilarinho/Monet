@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
+import { X } from '@phosphor-icons/react'
+import { invoke } from '@tauri-apps/api/core'
 import type { Update } from '@tauri-apps/plugin-updater'
 import { relaunch } from '@tauri-apps/plugin-process'
+import { mincerActiveJob, mincerRecordStatus } from '../../lib/mincer'
 import styles from './UpdaterDialog.module.css'
 
-type Phase = 'prompt' | 'downloading' | 'ready' | 'error'
+type Phase = 'prompt' | 'downloading' | 'ready' | 'confirmMincer' | 'error'
 
 interface Props {
   update: Update
@@ -18,7 +21,12 @@ export function UpdaterDialog({ update, mandatory, autoStart, onLater, onSkip, o
   const [phase, setPhase] = useState<Phase>(() => (autoStart ? 'downloading' : 'prompt'))
   const [progress, setProgress] = useState(0)
   const [errorMsg, setErrorMsg] = useState('')
+  const [blockedMsg, setBlockedMsg] = useState<string | null>(null)
+  // Download fechado pelo usuário: o diálogo some, o download continua e ele
+  // volta sozinho quando termina (ready) ou falha.
+  const [hidden, setHidden] = useState(false)
   const startedRef = useRef(false)
+  const mincerStoppedRef = useRef(false)
 
   useEffect(() => {
     if (autoStart) triggerDownload()
@@ -45,19 +53,53 @@ export function UpdaterDialog({ update, mandatory, autoStart, onLater, onSkip, o
         }
       })
       setPhase('ready')
+      setHidden(false)
     } catch (err) {
       startedRef.current = false
       setErrorMsg(err instanceof Error ? err.message : 'Download failed.')
       setPhase('error')
+      setHidden(false)
     }
   }
 
+  // O install sai do processo sem passar pelo shutdown normal: com gravação do
+  // Mincer em curso, bloqueia; com job em processamento, pede confirmação.
   async function handleInstallAndRestart() {
+    setBlockedMsg(null)
+    let recording = false
+    let activeJob: string | null = null
     try {
+      const [status, job] = await Promise.all([mincerRecordStatus(), mincerActiveJob()])
+      recording = status.active
+      activeJob = job
+    } catch (err) {
+      // Sem o status do Mincer, segue como ocioso para não travar a atualização.
+      console.warn('updater: failed to read Mincer status', err)
+    }
+    if (recording) {
+      setBlockedMsg('Mincer is recording. Stop the recording in Mincer before installing the update.')
+      return
+    }
+    if (activeJob) {
+      setPhase('confirmMincer')
+      return
+    }
+    await install(false)
+  }
+
+  async function install(stopMincer: boolean) {
+    try {
+      if (stopMincer) {
+        await invoke('mincer_prepare_update')
+        mincerStoppedRef.current = true
+      }
       await update.install()
       await relaunch()
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Failed to install update.')
+      const msg = err instanceof Error ? err.message : 'Failed to install update.'
+      setErrorMsg(
+        mincerStoppedRef.current ? `${msg} Restart Monet to resume Mincer processing.` : msg,
+      )
       setPhase('error')
     }
   }
@@ -73,16 +115,21 @@ export function UpdaterDialog({ update, mandatory, autoStart, onLater, onSkip, o
   }
 
   useEffect(() => {
-    if (mandatory) return
+    if (mandatory || hidden) return
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape' && phase === 'prompt') {
+      if (e.key !== 'Escape') return
+      if (phase === 'prompt') {
         onLater()
         onClose()
+      } else if (phase === 'downloading') {
+        setHidden(true)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [phase, mandatory, onLater, onClose])
+  }, [phase, mandatory, hidden, onLater, onClose])
+
+  if (hidden) return null
 
   const canDismissOverlay = !mandatory && phase === 'prompt'
   const releaseNotes = update.body?.trim() || null
@@ -101,14 +148,15 @@ export function UpdaterDialog({ update, mandatory, autoStart, onLater, onSkip, o
           <h2 className={styles.title}>
             {mandatory ? 'Required Update' : 'Update Available'}
           </h2>
-          {!mandatory && phase === 'prompt' && (
+          {!mandatory && (phase === 'prompt' || phase === 'downloading') && (
             <button
               className={styles.close}
-              onClick={handleLater}
-              aria-label="close"
+              onClick={phase === 'downloading' ? () => setHidden(true) : handleLater}
+              aria-label={phase === 'downloading' ? 'Continue the download in the background' : 'Close'}
+              title={phase === 'downloading' ? 'Continue in the background' : 'Close'}
               type="button"
             >
-              ×
+              <X size={16} aria-hidden />
             </button>
           )}
         </header>
@@ -141,7 +189,10 @@ export function UpdaterDialog({ update, mandatory, autoStart, onLater, onSkip, o
 
               {phase === 'downloading' && (
                 <div className={styles.progressArea}>
-                  <p className={styles.downloadingText}>Downloading update…</p>
+                  <p className={styles.downloadingText}>
+                    Downloading update…
+                    {!mandatory && ' You can keep working: this window comes back when the update is ready.'}
+                  </p>
                   <div className={styles.progressBar}>
                     <div className={styles.progressFill} style={{ width: `${progress}%` }} />
                   </div>
@@ -152,8 +203,21 @@ export function UpdaterDialog({ update, mandatory, autoStart, onLater, onSkip, o
           )}
 
           {phase === 'ready' && (
-            <p className={styles.readyText}>
-              Update downloaded. Restart the app to apply version {update.version}.
+            <>
+              <p className={styles.readyText}>
+                Update downloaded. Restart the app to apply version {update.version}.
+              </p>
+              {blockedMsg && (
+                <p className={styles.errorText} role="alert">
+                  {blockedMsg}
+                </p>
+              )}
+            </>
+          )}
+
+          {phase === 'confirmMincer' && (
+            <p className={styles.confirmText}>
+              Mincer is processing an item. Installing now pauses it; it resumes after the restart.
             </p>
           )}
 
@@ -182,9 +246,16 @@ export function UpdaterDialog({ update, mandatory, autoStart, onLater, onSkip, o
           )}
 
           {phase === 'downloading' && (
-            <button className={styles.primary} type="button" disabled>
-              Downloading…
-            </button>
+            <>
+              <button className={styles.primary} type="button" disabled>
+                Downloading…
+              </button>
+              {!mandatory && (
+                <button className={styles.secondary} type="button" onClick={() => setHidden(true)}>
+                  Continue in background
+                </button>
+              )}
+            </>
           )}
 
           {phase === 'ready' && (
@@ -194,6 +265,17 @@ export function UpdaterDialog({ update, mandatory, autoStart, onLater, onSkip, o
               </button>
               <button className={styles.secondary} type="button" onClick={onClose}>
                 Restart later
+              </button>
+            </>
+          )}
+
+          {phase === 'confirmMincer' && (
+            <>
+              <button className={styles.primary} type="button" onClick={() => install(true)}>
+                Install and restart
+              </button>
+              <button className={styles.secondary} type="button" onClick={() => setPhase('ready')}>
+                Cancel
               </button>
             </>
           )}

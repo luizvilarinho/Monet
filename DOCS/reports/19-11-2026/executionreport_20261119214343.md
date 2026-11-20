@@ -1,0 +1,1254 @@
+# Execution Report
+
+## Documents
+- Task report: DOCS/reports/19-11-2026/taskreport_20261119214343.md
+- Execution report: DOCS/reports/19-11-2026/executionreport_20261119214343.md
+- Debt report (entrada): DOCS/reports/19-11-2026/debtreport_20261119145321.md
+- Explorer report: não gerado
+- Plan report: DOCS/reports/19-11-2026/planreport_20261119221333.md
+- Review report (Fase A): DOCS/reports/19-11-2026/reviewreport_20261119225102.md
+- UX plan (Fase B): DOCS/reports/19-11-2026/uxplan_20261119214504.md
+- UX reports (Fase B): DOCS/reports/19-11-2026/uxreport_20261119224729_shell.md, uxreport_20261119224634_editor.md, uxreport_20261119224616_organizacao.md, uxreport_20261119224632_tasks.md, uxreport_20261119224531_chat.md, uxreport_20261119224839_ia-contextual.md, uxreport_20261119224432_reader.md, uxreport_20261119224705_mincer-config.md
+- UX triage (Fase B): DOCS/reports/19-11-2026/uxtriage_20261119224845.md
+- Review reports (Fase B): DOCS/reports/19-11-2026/reviewreport_20261120025145_shell-org.md, reviewreport_20261120030434_editor-ia.md, reviewreport_20261120025229_tasks-chat.md, reviewreport_20261120025347_reader-mincer.md
+
+## Sessions
+### Orchestrator — abertura — 20261119214343
+- Summary: o Coordenador pediu a correção dos pontos do relatório de dívida (menos os itens 1 e 10), um code review e uma varredura de UX na aplicação inteira com o uxAgent. Pediu execução contínua e vai testar só no final. Branch `fix/divida-tecnica` criada a partir de `feat/mincer` (b138fc7).
+- Inputs:
+  - DOCS/reports/19-11-2026/taskreport_20261119214343.md
+  - DOCS/reports/19-11-2026/debtreport_20261119145321.md
+- Decision: a ordem do Coordenador vale como aprovação do Task Report e substitui o teste intermediário da Etapa 1. A Fase A (dívida) passa por plannerAgent → codeAgent → codereviewAgent → codeAgent. A Fase B (UX) passa por fatiamento → uxAgent por fatia → triagem → codeAgent → codereviewAgent → codeAgent.
+- Next step: plannerAgent da Fase A.
+
+### PlannerAgent — 20261119221333
+- Summary: plano da Fase A com 23 etapas em 5 lotes de arquivos disjuntos: A (notas, keep e App), B (editor, testes JS e dependências), C (chat e render de markdown), D (Rust do app e updater) e E (Mincer, documentos e Settings), mais a verificação integrada. Todos os itens (2, 3, 4, 5, 6, 7, 8, 9, 11, 12, abaixo do corte e defaults) foram confirmados no código atual. Investigações:
+  - Item 4: formato novo do toggle (tag sozinha e conteúdo em markdown) mais uma regra de leitura das notas antigas no markdown-it. Validado com scripts no scratchpad; o bug foi reproduzido com a regra desligada.
+  - Item 5: a tabela passa a ser conferida em todo `with_doc_db`.
+  - Item 11: allowlist por turno com os 4 pontos de busca do `useChat`.
+  - Item 9: comando novo `mincer_prepare_update`, com o status do Mincer consultado no clique.
+  - Item 6: a pasta órfã com áudio vira item `interrupted` recuperável.
+
+  Os pontos que pedem decisão ou confirmação do Coordenador estão no fim do plano.
+- Output: DOCS/reports/19-11-2026/planreport_20261119221333.md
+
+### CodeAgent — implementação inicial (Lote D) — 20261119222915
+- Summary: etapas 14 a 17 do plano.
+  - **Etapa 14 (item 8):** novo `sse.rs` com o `SseLineBuffer`, que acumula bytes e só decodifica linha completa. O `run_openrouter_stream` usa o `push`/`next_line`, e o resto do laço ficou igual. 6 testes: "ç" cortado, emoji de 4 bytes em 3 pacotes, várias linhas num pacote, linha sem `\n` esperando o resto, `\r\n` e JSON com "ã" cortado.
+  - **Etapa 15 (timeouts):** as 4 chamadas curtas (`openrouter_list_models`, `deep_research_generate_sub_queries`, `librarian_decide` e `web_search_route`) usam `documents::http_client()` (connect 10 s e total 60 s). O stream usa o novo `stream_http_client()`, que só tem connect timeout de 10 s. A inatividade continua coberta pelo `STREAM_CHUNK_TIMEOUT` de 30 s por pacote, então uma resposta longa não morre. Não sobrou nenhum `reqwest::Client::new()` direto em `lib.rs`, só o fallback do builder.
+  - **Etapa 16 (item 9):** novo comando `mincer_prepare_update`, que chama `mincer::shutdown(&app)` e está registrado no `invoke_handler`. No `UpdaterDialog`, o clique em "Restart now" consulta `mincerRecordStatus()` e `mincerActiveJob()`:
+    - gravando: bloqueia com mensagem `role="alert"` na fase `ready`;
+    - com job ativo: abre a fase `confirmMincer` ("Install and restart" chama `prepare` e depois instala; "Cancel" volta a `ready`);
+    - ocioso, ou se a consulta falhar: instala direto.
+    - Se o install falhar depois do `prepare`, o erro ganha "Restart Monet to resume Mincer processing.". Estilo novo `.confirmText` no CSS; o bloqueio reusa o `.errorText`.
+  - **Etapa 17:** `vec_db_smoke_test` removido do `vec_db.rs` (com os imports `State` e `zerocopy::AsBytes`, que só ele usava) e do `invoke_handler`. `Cargo.toml` passou a 1.5.0, e o `cargo` atualizou o `Cargo.lock` (só a versão do pacote `monet`).
+  - **Verificação:**
+    - `cargo check` limpo nos meus arquivos;
+    - `cargo test` na última rodada: 72 passed, 0 failed e 3 ignored, incluindo os 6 do `sse` (`cargo test sse`: 6 passed) e os testes que o Lote E já adicionou;
+    - `npx tsc --noEmit` limpo na última rodada;
+    - `grep vec_db_smoke_test` em `src` e `src-tauri/src` sem resultado.
+  - **Avisos transitórios de outros lotes:** durante a execução, o `cargo` avisou que `has_audio` e `insert_recovered` (Lote E) estavam sem uso, e o `tsc` acusou erros em `NotesChatPanel.tsx` e `useChat.ts` (Lote C). Na última rodada, nenhum deles apareceu.
+- Files changed:
+  - src-tauri/src/lib.rs
+  - src-tauri/src/vec_db.rs
+  - src-tauri/Cargo.toml
+  - src-tauri/Cargo.lock
+  - src/components/UpdaterDialog/UpdaterDialog.tsx
+  - src/components/UpdaterDialog/UpdaterDialog.module.css
+- Files created:
+  - src-tauri/src/sse.rs
+- Files removed:
+  - nenhum
+- Left behind:
+  - Teste manual do install com o Mincer (exige uma release publicada acima da instalada) e de uma resposta longa (mais de 60 s) no chat: ficam com o Coordenador.
+  - O botão de fechar do `UpdaterDialog` usa o glifo `×` em vez de um ícone Phosphor. Já era assim antes e está fora do plano, então não mexi.
+  - O Lote E não precisou de registro de comando no `lib.rs`; o plano não prevê nenhum.
+
+### CodeAgent — implementação inicial (Lote E) — 20261119223107
+- Summary: etapas 18 a 22 do plano.
+  - **Etapa 18 (item 5):** a detecção e recriação da `notebook_document_visibility` virou `ensure_visibility_table(conn)`. O `open_doc_db` a chama no mesmo ponto, e o `with_doc_db` a chama antes de todo `f(conn)`. O custo é um `SELECT` no `sqlite_master`. O comentário explica por que a tabela é conferida a cada uso: a v7 (`DROP TABLE`) pode rodar depois da abertura em cache, e não pode ser editada. Há 4 testes `visibility_*`: tabela criada sem FK, tabela da v6 com FK recriada, linha mantida com chamadas repetidas (idempotente) e tabela recriada depois do `DROP`.
+  - **Etapa 19:** o `collect_files_recursive` usa `symlink_metadata`, e o `is_symlink()` (que inclui junction no Windows) passou a pular o link.
+  - **Etapa 20 (item 6):**
+    - O `finalize_into_item` grava o `options.json` na pasta do item logo depois de mover os WAVs. Se o `insert_queued` falha, apaga o `options.json` da `recording` e devolve "Could not add the recording to the list (...). The audio was kept and will appear in Mincer the next time Monet starts.". No sucesso, apaga o `options.json` do item.
+    - Novos `record::has_audio` e `OPTIONS_FILE` `pub(crate)`.
+    - Novo `db::insert_recovered`: `INSERT OR IGNORE`, `kind 'record'`, `interrupted`, `unseen = 1`.
+    - No `on_startup`, `orphan_action` (Recover/Keep/Remove) decide o que fazer com cada pasta sem id no banco:
+      - Remove: apaga como antes;
+      - Keep: loga;
+      - Recover: o `recover_orphan` lê o `options.json` (ou usa as opções padrão) e registra o item "Recovered recording <data da pasta>" com a mensagem de Resume.
+    - O laço continua no `spawn_blocking`, com o `AppHandle` clonado para dentro.
+    - Teste `orphan_folders_with_audio_are_not_removed` com 5 casos: UUID com `mic.wav`, UUID com `audio.mp3`, nome fora do padrão com áudio, UUID só com `chunk_000.txt` e WAV de 100 bytes.
+  - **Etapa 21 (teto do WAV):**
+    - Novos `MAX_RECORD_MINUTES = 360`, `capped_max_minutes` e `extended_max_minutes`. O `start` aplica o teto, e o `extend` faz `load`/`store` com o lock já tomado. O ramo "no length limit" saiu, e o `if max_minutes > 0` do `AutoStopWatch` também, porque ficaram inalcançáveis.
+    - No teto máximo, o aviso de 5 min diz "It reaches the 6 h maximum recording length." e não sugere "+30 min".
+    - Backstop no `capture_stream`: `MAX_WAV_DATA_BYTES = 4_290_000_000`, contado de 2 em 2 bytes. Ao atingir, sai do laço, finaliza o WAV e loga.
+    - Testes `max_minutes_is_capped_at_six_hours` e `extend_stops_at_six_hours`.
+    - `mincer.ts`: `MAX_RECORD_HOURS = 6` e `getMaxRecordHours()` (0 ou mais de 6 vira 6, mínimo 1). O `getRecordLimits` passa a usá-lo.
+    - Settings: as opções são `[1, 2, 3, 4, 6]`, a leitura inicial usa `getMaxRecordHours()`, e a nota de rodapé ganhou "Recordings can last up to 6 hours.".
+    - `mincerActiveJob` e `mincerRecordStatus` não mudaram.
+  - **Etapa 22:** "Key saved securely." virou "Key saved on this device.".
+  - **Verificação:**
+    - `cargo check` sem warnings;
+    - `cargo test --no-run` sem warnings;
+    - `cargo test`: 72 passed, 0 failed e 3 ignored, incluindo os 4 `visibility_*`, os 2 de `mincer::record` e o de `mincer::jobs`;
+    - `npx tsc --noEmit`: nenhum erro nos arquivos do Lote E. Os erros restantes ficaram em `App.tsx` e `AiPanel.tsx` (Lote A) e em `markdownRoundTrip.test.ts` (Lote B), ainda em andamento;
+    - `grep securely src` sem resultado.
+- Files changed:
+  - src-tauri/src/documents.rs
+  - src-tauri/src/mincer/record.rs
+  - src-tauri/src/mincer/jobs.rs
+  - src-tauri/src/mincer/db.rs
+  - src/lib/mincer.ts
+  - src/components/Settings/SettingsModal.tsx
+- Files created:
+  - nenhum
+- Files removed:
+  - nenhum
+- Left behind:
+  - Testes manuais: a recuperação de pasta órfã em `tauri:dev` (criar `mincer/<uuid>/audio.mp3` com o app fechado), a junction numa pasta monitorada e a instalação nova com appData limpo (item 5). Ficam com o Coordenador.
+  - `DOCS/specs/mincer.md` ficou desatualizado em dois pontos, fora dos arquivos do lote: em §8, o teto continua como "1–8 h" (agora é 1–6 h, com o "+30 min" parando em 6 h); em §3, "pastas órfãs são limpas no boot" (agora a pasta com áudio vira item `interrupted` ou é preservada).
+  - Fora do lote, sem mudança necessária: o comentário do `MincerRecordStatus.max_minutes` em `mincer/mod.rs` ("0 = desligada") e o `maxMinutes > 0` do `MincerNew.tsx` continuam corretos, porque o teto agora é sempre maior que 0 durante a gravação.
+
+### CodeAgent — implementação inicial (Lote C) — 20261119223246
+- Summary: Lote C (chat e render de markdown), Etapas 10 a 13.
+  - **Etapa 10 (item 11, gate de imagem):**
+    - `renderMarkdown(md, opts = {})` com `RenderMarkdownOptions` (`allowedImageUrls`, `allowRemoteImages`), passado ao plugin por `file.data.monetImages`. O `AiCard` (Lote A) continua chamando sem opções.
+    - Novo plugin `rehypeGateRemoteImages`, só no `processor` e depois do `rehypeSanitize`: uma imagem http(s) que não está no allowlist nem foi aprovada na sessão vira `<span class="monet-img-gate" data-img-gate data-src data-alt>` com "Image from <host>" e o botão "Load image". As URLs são comparadas pelo `new URL(u).href`. O `embedProcessor` (nota do usuário) não tem gate.
+    - Clique no "Load image": handler em captura no `document`, instalado uma vez no primeiro `renderMarkdown` e com guarda de `document`. Ele aprova a URL na sessão (`approvedImageUrls`) e troca o gate por um `img` criado via DOM.
+    - O texto do bloqueio de rede local virou `Image blocked: local network address`.
+    - Novo `src/lib/markdownImages.css`, importado pelo `markdown.ts`. Ele recebeu o `[data-img-blocked]`, apagado do `ChatMessageBubble.module.css`, e o estilo do gate.
+    - Novo `src/lib/markdown.test.ts` com 5 casos: gate, allowlist com normalização, `allowRemoteImages`, localhost bloqueado, e clique que mostra o `img` e aprova a URL.
+  - **Etapa 11 (allowlist por turno):**
+    - `ChatMessage.allowedImageUrls?: string[]`.
+    - No `send`, `turnImageUrls` e `allowTurnImages(urls)` só gravam na resposta quando entra URL nova. São chamados nos 4 pontos: deep research sem tools, web search sem tools, tool `deep_research` e tool `web_search`. Os 4 já estavam no escopo do `send`.
+    - `ChatMessageBubble`, `ReaderChatPanel` e o `MarkdownHtml` do `NotesChatPanel` passam `allowedImageUrls` ao `renderMarkdown`, com o `join('\n')` nas dependências do efeito. O `BlockCard` recebe a prop e a repassa no card "Note". O card de código fica sem ela, porque um fence não tem imagem.
+    - O `DocsReader` usa `allowRemoteImages: true`.
+    - Os `{ __html }` continuam memoizados como antes. `AiCard`, `EmbedBlockView`, `MincerItemView` e o system prompt não mudaram.
+  - **Etapa 12 (campos mortos):** saíram `noteId` e `hadSelection` do `ChatMessage` e `hadSelection` dos dois tipos de `noteContext`. O `userMsg` grava só `noteTitle`, e o `NotesChatPanel` não manda mais `hadSelection`.
+  - **Etapa 13 (desmontagem e cota):**
+    - Novo `unmountedRef`. O efeito de desmontagem zera a ref no corpo, por causa do StrictMode, e a marca no cleanup.
+    - Logo depois do `activeStreamRef.current = {...}` do `send`, se o hook já desmontou, o turno limpa os refs e sai antes do stream.
+    - O `writeChatKey` só atualiza o `lastKnownValues` depois do `setItem`. O `saveConversations` devolve `boolean`, e o efeito mostra "Chat history could not be saved: storage is full. Clear old conversations to free space." na falha.
+  - **Desvio do plano:** a segunda checagem do `unmountedRef`, depois da reatribuição da rodada de tools, não foi adicionada porque não teria efeito. O cleanup da desmontagem zera o `activeStreamRef`, então o `if (!isActive()) return` que já existe antes da 2ª rodada sai do turno, e entre esse `if` e o `startOpenRouterStreamMessages` não há `await`.
+  - **Verificação:**
+    - `npx vitest run src/lib/markdown.test.ts`: 5 de 5 passaram, com o `vitest.config.ts` do Lote B;
+    - `npx tsc --noEmit`: nenhum erro nos arquivos do Lote C. Os únicos erros restantes estão em `src/components/Editor/markdownRoundTrip.test.ts`, do Lote B e ainda em andamento (`.at()` com `lib` ES2020);
+    - `grep -rn hadSelection src`: sem resultado.
+- Files changed:
+  - src/lib/markdown.ts
+  - src/hooks/useChat.ts
+  - src/components/ChatPanel/ChatMessageBubble.tsx
+  - src/components/ChatPanel/ChatMessageBubble.module.css
+  - src/components/NotesChat/NotesChatPanel.tsx
+  - src/components/Reader/ReaderChatPanel.tsx
+  - src/components/Library/DocsReader.tsx
+- Files created:
+  - src/lib/markdownImages.css
+  - src/lib/markdown.test.ts
+- Files removed:
+  - nenhum
+- Left behind:
+  - Testes manuais com o Coordenador:
+    - imagens do Web Search carregam sem clique;
+    - uma imagem fora da busca mostra "Load image" e carrega no clique;
+    - trocar de modo durante "Searching the web" não abre stream novo para o `requestId`.
+  - O "Insert selection" do chat do caderno copia o texto do gate ("Image from <host> Load image") se a seleção pegar uma imagem bloqueada. Fica fora do plano.
+  - Os status das Etapas 10 a 13 no planreport não foram alterados, para não disputar o arquivo com os outros lotes.
+
+### CodeAgent — implementação inicial (Lote A) — 20261119223402
+- Summary: Lote A (notas, keep e App), Etapas 1 a 6.
+  - **Etapa 1 (item 2):**
+    - Novas constantes `NOTE_COLUMNS`, `NOTEBOOK_COLUMNS`, `TASK_COLUMNS` (20 campos, sem `description` e `task_group`) e `METADATA_DEF_COLUMNS` no `tauri.ts`.
+    - Os 9 `SELECT *` de `notes`, `notebooks`, `notebook_tasks` e `metadata_defs` usam essas listas.
+    - O `ensureNotesColumns` roda antes de `getNotes`, `getNote`, `findNoteByTitle`, da query do `runDailyCleanup`, de `getMarkedNotes` e de `getNoteSummaries` (achado extra). O `ensureNotebookColorColumn` roda antes de `getNotebooks`.
+    - Os comentários dos dois ensures e da `NoteRow` foram reescritos.
+    - Os `SELECT *` que sobraram (`subjects`, `task_statuses`, `task_views`, `books`, `book_highlights` e `ai_responses`) ficam fora do escopo, como o plano define.
+  - **Etapa 2 (item 7):**
+    - `subjectConvertError` virou `structureError` e vem primeiro no banner.
+    - "Merge notes" só apaga a origem se o `saveNote` do destino e a mudança das tasks (`updateTasks` ou `detachTodosChildren`) derem certo. Na falha, avisa e relê as notas.
+    - "Move notebook" avisa quando as tasks falham. Quando alguma nota falha (`results.includes(false)`), avisa, relê e sai antes da visibilidade e do `removeNotebook`.
+    - O `relocateTask` devolve o retorno do `updateTask`.
+    - O `createTaskNote` lança erro se o `saveNote` falhar. O `selectTask` e o `addBodyNoteToModalTask` ganharam `try/catch`.
+    - Na conversão subject → caderno, o laço usa o `saveNote` e confere o retorno. O `Promise.all` duplicado saiu, a falha relê as notas, e o comentário errado foi corrigido.
+    - Os 3 wrappers `onSaveNote` lançam erro na falha, e o `ReaderNotesPanel` loga com `.catch`.
+  - **Etapa 3 (item 3):**
+    - O `useNotes.save` emite `calendar-note-updated` depois de gravar uma nota do Calendar. Saíram os 3 emits avulsos do `App.tsx` e o import de `emit`, e os comentários foram ajustados.
+    - Na keep:
+      - `persistNote` com contador de gravações pendentes, flag de falha e sequência (só a última gravação decide o erro);
+      - `reloadOpenNote` no `loadChainRef`, chamado no `calendar-note-updated` e no ganho de foco. Ele não mexe com edição pendente ou falhada nem com erro de leitura. Com a nota apagada, recarrega o dia. Fora isso, troca o conteúdo fora do histórico e mantém o cursor (`setTextSelection`);
+      - o `doLoadOrCreateDayNote` mantém a versão local quando a mesma nota tem edição pendente ou falhada, o que cobre o `keep-shown`;
+      - banner `role="alert"` com ícone `Warning` (Phosphor), a mensagem e o botão "Retry", entre a barra de título e o corpo, com estilos `.saveError` e `.retryBtn`.
+  - **Etapa 4 (código morto):**
+    - Saíram `navigateToCard` (App e AiPanel), o efeito, `forceOpenIndex`, `contentRef`, `execIndex`, `forceOpen` e `data-exec-index` (AiPanel e AiCard), e o efeito `forceOpen` do AiCard.
+    - Saiu o `readerLinkedNoteIds` do `readerNoteLink.ts`.
+  - **Etapa 5:** o rodapé do NotebookList mostra `v{getVersion()}` e nada enquanto a versão não chega.
+  - **Etapa 6:**
+    - Novo `ErrorBoundary` (classe) com `WarningCircle`, "Something went wrong", a mensagem do erro e o botão "Reload" (`ArrowClockwise`). O estilo é centralizado, com fundo explícito.
+    - O `main.tsx` envolve as três janelas no `ErrorBoundary`, dentro do `StrictMode`.
+    - O `saveOrder` ganhou `try/catch` com `console.warn`.
+  - **Desvio do plano:** na conversão subject → caderno, o array `moved` ficou, porque o caminho de sucesso o usa para escolher a nota ativa no destino. Ele agora só recebe as notas gravadas com sucesso. O `Promise.all` duplicado saiu, como o plano pede.
+  - **Verificação:**
+    - `npx tsc --noEmit` limpo no projeto inteiro (exit 0) na última rodada;
+    - `grep -rn "navigateToCard\|forceOpen\|data-exec-index\|readerLinkedNoteIds\|subjectConvertError" src` sem resultado;
+    - `grep -n "SELECT \*" src/storage/tauri.ts` só lista as tabelas fora do escopo.
+- Files changed:
+  - src/storage/tauri.ts
+  - src/hooks/useNotes.ts
+  - src/App.tsx
+  - src/components/KeepPanel/KeepPanel.tsx
+  - src/components/KeepPanel/KeepPanel.module.css
+  - src/components/Reader/ReaderNotesPanel.tsx
+  - src/components/AiPanel/AiPanel.tsx
+  - src/components/AiPanel/AiCard.tsx
+  - src/lib/readerNoteLink.ts
+  - src/components/NotebookList/NotebookList.tsx
+  - src/main.tsx
+  - src/lib/noteOrder.ts
+- Files created:
+  - src/components/ErrorBoundary/ErrorBoundary.tsx
+  - src/components/ErrorBoundary/ErrorBoundary.module.css
+- Files removed:
+  - nenhum
+- Left behind:
+  - Testes manuais em `tauri:dev` com o Coordenador:
+    - Etapa 1: notas, nota do dia, Marks, tasks e board;
+    - Etapa 2: caminho feliz de Move notebook, Merge notes e Turn subject into notebook;
+    - Etapa 3: casos (a), (b) e (c);
+    - Etapa 4: cards de IA abrem, fecham e arrastam;
+    - Etapa 5: rodapé mostra v1.5.0.
+  - Na keep, se a gravação falha e o usuário troca de dia, o banner e o bloqueio da recarga continuam até uma gravação dar certo. Um "Retry" grava a nota do dia novo e limpa o estado. O texto não gravado do dia anterior já se perdia na troca de dia antes desta mudança.
+  - O botão de fechar da keep usa o glifo `×`. Já era assim e está fora do plano.
+  - Os status das Etapas 1 a 6 no planreport não foram alterados, para não disputar o arquivo com os outros lotes.
+
+### CodeAgent — implementação inicial (Lote B) — 20261119223634
+- Summary: Lote B (editor, testes JS e dependências), Etapas 7 a 9.
+  - **Etapa 7 (dependências, versão e vitest):**
+    - O grep confirmou que não há import de `@anthropic-ai/*` nem de `@codemirror/*`. Os 7 pacotes saíram das `dependencies`, e o lock perdeu também as dependências transitivas deles (`@lezer/*`, `json-schema-to-ts` etc.).
+    - Foram declarados `@tiptap/core` ^3.23.4, `prosemirror-markdown` ^1.13.4 e `unist-util-visit` ^5.1.0, nas versões já instaladas.
+    - Novas devDependencies: `vitest` 5.1.0 e `happy-dom` 21.0.4. O peer do vitest aceita `vite ^6.4 || ^7 || ^8`. Escolhi a 5.1.0 (de 2026-11-02) em vez da 5.1.1, que saiu ontem.
+    - `"version": "1.5.0"` e os scripts `test` (`vitest run`) e `test:rust` (`cargo test --manifest-path src-tauri/Cargo.toml`). O `tauri:build` e os outros scripts não mudaram.
+    - Novo `vitest.config.ts` com o plugin do React, `environment: 'happy-dom'` e include `src/**/*.test.ts(x)`, sem o plugin do pdfjs.
+    - O `npm install` atualizou o `package-lock.json`.
+  - **Etapa 8 (item 4):**
+    - O `ToggleBlock` não usa mais o `DOMSerializer`. O `serialize` grava a tag sozinha na linha, `closeBlock`, o conteúdo em markdown (`renderContent`), `</div>` e `closeBlock`. O título usa o `escapeAttr`, com o mesmo escape de antes. Os tipos vêm de `prosemirror-markdown` e `@tiptap/pm/model`.
+    - O `parse.setup` registra a regra `monet_toggle_legacy` antes do `html_block`, uma vez por instância do markdown-it (`WeakSet`). É a regra validada pelo planejador.
+    - O `StateBlock` é derivado do parâmetro de `ruler.before`, porque o `@types/markdown-it` 13 não garante o caminho de subpacote com o `exports` do markdown-it 14.
+    - O `parseHTML` não mudou.
+  - **Etapa 9 (item 12, JS):** novo `markdownRoundTrip.test.ts`, com 13 testes nos casos (a) a (j). O formato antigo (h) tem 4 testes: código, Mermaid, toggle aninhado e toggle sem linha em branco. Os testes rodam num `Editor` desmontado com o `buildBaseExtensions('')`. Cada caso confere o conteúdo no `getJSON()` e a estabilidade: o doc e o markdown não mudam ao reabrir o que foi gravado. Não precisei de `vi.mock`, porque nenhum node view quebrou no happy-dom.
+  - **Desvio do plano:** no caso (d), o plano dizia `<mark data-mark="" data-label="todo">`. A marca v2 guarda o rótulo no próprio `data-mark` (`NoteMark.ts`), então o teste usa `<mark data-mark="todo">` e `<mark data-mark="">`. O `data-label` seria descartado no parse.
+  - **Verificação:**
+    - Os scripts do planejador passam: `toggle-md.mjs` (com a regra, 10 de 10; sem a regra, A, A2 e F falham) e `serializer.mjs` (6 de 6).
+    - Os testes falham sem a correção. Com a regra desligada, os 3 testes do formato antigo com linha em branco falham. Com o serializer antigo, (a), (g) e os testes que conferem o formato novo falham. Depois de cada experimento, o arquivo foi restaurado.
+    - `npm test`: 2 arquivos e 18 testes passaram (13 do round-trip e 5 do `markdown.test.ts` do Lote C).
+    - `npx tsc --noEmit` passou no projeto inteiro (exit 0).
+    - `npm run build` passou, e o Vite resolveu tudo sem os pacotes removidos.
+    - `npm ls @tiptap/core prosemirror-markdown unist-util-visit vitest happy-dom` passou sem erro.
+- Files changed:
+  - package.json
+  - package-lock.json
+  - src/components/Editor/ToggleBlock.ts
+- Files created:
+  - vitest.config.ts
+  - src/components/Editor/markdownRoundTrip.test.ts
+- Files removed:
+  - nenhum
+- Left behind:
+  - O `happy-dom` depende do `@types/node`, que agora está instalado e entra nos tipos globais. O `tsc --noEmit` do `src` continua limpo. Porém, `npx tsc -p tsconfig.node.json` passa a acusar "Unused '@ts-expect-error' directive" em `vite.config.ts:6`, porque o `process` agora é tipado. Nenhum script roda essa checagem (o `npm run build` usa o `tsc` sem `-b`), mas o editor de código pode mostrar o erro. A correção é apagar a linha `// @ts-expect-error process is a nodejs global` do `vite.config.ts`, que é configuração fora do lote: não mexi e deixo a decisão para o Orquestrador.
+  - Efeito do formato novo fora do lote: o `replaceToggleBlocks` do `noteFileText.ts` (texto para a IA e o RAG) acha o fim do toggle contando `<div`/`</div>` no texto cru. Agora o código dentro do toggle vai cru (antes ia escapado no HTML). Um código com `<div` ou `</div>` literal dentro de um toggle pode cortar o toggle no lugar errado nesse texto. Isso piora a formatação do texto da IA, sem perder conteúdo da nota. O editor não é afetado, porque o fence é lido antes da regra legada. Os outros efeitos já estão nos Pontos para o Coordenador (item 4).
+  - Os status das Etapas 7 a 9 no planreport não foram alterados, para não disputar o arquivo com os outros lotes.
+
+### Orchestrator — decisão — 20261119224000
+- Summary: os 5 lotes da Fase A terminaram. Verificação integrada: `tsc --noEmit` limpo (também no `tsconfig.node.json`, depois de remover o `@ts-expect-error` sem uso no `vite.config.ts`); `npm test` com 18 de 18; `cargo test` com 72 passed e 3 ignored; `npm run build` ok. O `DOCS/specs/mincer.md` foi atualizado (pastas órfãs com áudio recuperadas, teto de 6 h).
+- Inputs:
+  - DOCS/reports/19-11-2026/planreport_20261119221333.md
+- Decision: seguir para o codereviewAgent da Fase A. Pontos conhecidos passados ao revisor: o `replaceToggleBlocks` (`src/lib/noteFileText.ts`) conta `<div` no texto cru e não entende o formato novo do toggle; o "Insert selection" do chat do caderno leva o texto do botão "Load image" de uma imagem bloqueada. Os `×` de fechar da keep e do UpdaterDialog ficam para a Fase B. Em paralelo, os uxAgents das 8 fatias (somente leitura).
+- Next step: codereviewAgent → codeAgent final; uxAgents por fatia.
+
+### CodeReviewAgent — 20261119225102
+- Summary: review da Fase A (os 5 lotes, `git diff feat/mincer` mais os não rastreados). `tsc`, `npm test` (18/18) e `cargo test` (72 passed) passaram de novo. As costuras entre os lotes batem: `renderMarkdown` com opções, `useNotes.save` com os chamadores, `mincer_prepare_update` e `vec_db_smoke_test`, e o teto de 6 h. Achados:
+  - [crítico] o `replaceToggleBlocks` (`noteFileText.ts`) joga o markdown cru do toggle novo num `<template>`, e o texto da IA, do RAG e da busca perde o código com `<` (`Map<string, number>` vira `Map`). Um `<div` sem par junta o resto da nota. Reproduzido no vitest do scratchpad;
+  - [importante] na keep, a flag de falha de gravação vale para a janela, não para a nota. Depois de trocar de dia, o Retry ou o autosave sobrescrevem o que a main gravou;
+  - [nit] o "Insert selection" leva o texto do gate; `void refreshNotes()` sem `.catch`; "+30 min" visível no teto; premissa do gate no `AiCard` imprecisa.
+- Verdict: REPROVADO
+- Output: DOCS/reports/19-11-2026/reviewreport_20261119225102.md
+
+### CodeAgent — ajuste final — 20261119230331
+- Summary: ajustes do review da Fase A.
+  - **[crítico] `replaceToggleBlocks`** (`noteFileText.ts`): a função lê o texto linha a linha e pula as cercas de código (``` e ~~~, também com recuo de lista ou `> `).
+    - Formato novo: a linha da tag de abertura vira a linha do título (com o mesmo prefixo, título decodificado e linha omitida se o título é vazio). O `</div>` sozinho na linha que fecha um toggle aberto sai. O miolo segue como markdown, sem passar pelo `<template>`. Toggles aninhados são contados por um contador de abertos.
+    - Formato antigo (HTML colado na tag, achado na linha fora de cerca): continua no `<template>` + walker, com a mesma contagem de `<div`/`</div>` de antes.
+    - Os dois formatos convivem na mesma nota, o que pode acontecer depois de um "Merge notes".
+    - Novo `src/lib/noteFileText.test.ts` com 7 testes:
+      - `Map<string, number>`, `a<b && c>d` e `<div` sem par dentro de código;
+      - `` `<Component />` `` e `` `a<b` `` inline;
+      - `</div>` dentro de código, que não fecha o toggle;
+      - toggle aninhado, em item de lista e em citação;
+      - título com entidades;
+      - formato antigo;
+      - formato antigo depois de um novo.
+    - Com a versão anterior da função, 6 dos 7 falham. O do formato antigo passa nas duas.
+  - **[importante] Keep** (`KeepPanel.tsx`):
+    - O `saveFailedRef` virou `failedNoteIdRef`, com o id da nota cuja última gravação falhou. O `hasPendingLocalEdit` só considera a falha se ela é da nota aberta.
+    - No ramo `else` do `doLoadOrCreateDayNote`, quando o id muda, o código avança o `writeSeqRef`, zera o `failedNoteIdRef` e limpa o `saveError`. Assim, uma gravação da nota anterior ainda em voo não decide o estado da nova, e o banner e o Retry somem com o texto que não foi gravado.
+  - **[nit] "Insert selection"** (`NotesChatPanel.tsx`): o `selectionToHtml` troca cada `[data-img-gate]` por um `<a href="data-src">` com o alt (ou a URL), criado via DOM.
+  - **[nit] `refreshNotes`** (`App.tsx`): os 3 `void refreshNotes()` ganharam o `.catch(... 'failed to reload notes' ...)` do arquivo.
+  - **[nit] "+30 min"** (`MincerNew.tsx`): quando `maxMinutes >= MAX_RECORD_HOURS * 60`, o botão fica desabilitado, com o title "Maximum length (6 h) reached".
+  - **Bug extra, stream** (`lib.rs`): o `stream_http_client()` ganhou `read_timeout(STREAM_READ_TIMEOUT)` de 180 s.
+    - No reqwest 0.12.28, esse timeout cobre a espera pelos cabeçalhos desde o `send` (conferido na fonte, `PendingRequest`) e reinicia a cada leitura do corpo.
+    - Uma resposta longa não morre, porque o `STREAM_CHUNK_TIMEOUT` de 30 s por pacote dispara antes.
+  - **Bug extra, tasks** (`App.tsx`): o `createProjectTasks` guarda os ids das notas-corpo gravadas e, no `catch`, apaga-as com `removeNote`. O `catch` só roda antes de qualquer task existir, porque o `createTasks` não lança erro.
+  - **Verificação:**
+    - `npx tsc --noEmit`: exit 0. O `npx tsc -p tsconfig.node.json --noEmit` também deu exit 0;
+    - `npm test`: 3 arquivos e 25 testes passaram;
+    - `cargo test` (`src-tauri`): 72 passed, 0 failed e 3 ignored, sem warnings;
+    - `npm run build`: ok, só o aviso de chunk grande que já existia.
+- Files changed:
+  - src/lib/noteFileText.ts
+  - src/components/KeepPanel/KeepPanel.tsx
+  - src/components/NotesChat/NotesChatPanel.tsx
+  - src/components/Mincer/MincerNew.tsx
+  - src/App.tsx
+  - src-tauri/src/lib.rs
+- Files created:
+  - src/lib/noteFileText.test.ts
+- Files removed:
+  - nenhum
+- Left behind:
+  - O Stop durante a espera pelos cabeçalhos do stream continua sem efeito até o `read_timeout` (180 s), porque o `send().await` não está no `select!` do `cancel_rx`. Pôr o `send` no `select!` resolveria, mas não foi pedido.
+  - No `createProjectTasks`, a nota-corpo cuja gravação falhou continua na memória, porque o `useNotes.save` é otimista. Ela some na próxima releitura das notas. Esse comportamento vale para toda falha do `saveNote` e já existia.
+  - Na keep, o texto do dia anterior que não foi gravado continua se perdendo na troca de dia, agora sem banner. Avisar ou impedir a troca é o item opcional do review e não foi feito.
+  - O nit da premissa do gate no `AiCard` (slash com `policy.web`) é só registro para o Coordenador e não pede código.
+  - `DOCS/specs/mincer.md` §8 não diz que o "+30 min" fica desabilitado no teto. O spec está fora dos arquivos desta passada.
+  - O toggle dentro de célula de tabela HTML e o texto literal `<div data-type="toggle-block"` em código inline não mudaram. Já era assim antes.
+
+### Orchestrator — encerramento da Fase A — 20261119233000
+- Summary: o codereviewAgent reprovou a primeira versão, por causa do `replaceToggleBlocks` com o formato novo do toggle. O codeAgent final corrigiu o crítico, o importante (falha da keep agora vale por nota), os nits e dois bugs extras, e as verificações passaram: tsc, 25/25 no vitest, 72 no cargo test e build. O Orquestrador pôs o `send()` do stream no `select!` com o `cancel_rx`, para o Stop valer também na espera pelos cabeçalhos; `cargo check` limpo. Spec do Mincer atualizado (o +30 min fica desabilitado no teto).
+- Inputs:
+  - DOCS/reports/19-11-2026/reviewreport_20261119225102.md
+- Decision: a Fase A está concluída. A Fase B começa com 8 codeAgents, um por fatia, conforme `DOCS/reports/19-11-2026/uxtriage_20261119224845.md`.
+- Next step: codeAgents da Fase B.
+
+### CodeAgent — implementação inicial (Fase B, Fatia 1) — 20261119233346
+- Summary: Fatia 1 (casca e navegação), só os itens "Entra" da triagem, mais O26 e IA-08.
+  - **S1**: a posição (`monet:last-location`: caderno, subject e nota) é gravada a cada troca e retomada uma vez, depois do 1º load. Só volta o que ainda existe (nota não arquivada, não nota-corpo de task, do mesmo caderno; subject só se ainda tem nota). Sem posição salva, abre a 1ª nota do Opened today. Se a pessoa já navegou antes do load, nada muda.
+  - **S2**: criar caderno e subject é um campo inline na lista (Enter ou blur confirma, Esc cancela, vazio é recusado). O `window.prompt` saiu. O subject criado fica selecionado. Nome reservado (Quick Notes) abre o Quick Notes com aviso.
+  - **S3 (parte da lista)**: lista de cadernos vazia mostra a linha "New notebook".
+  - **S4**: o cabeçalho da coluna de notas diz de onde elas vêm ("All notes", "Caderno" ou "Caderno / Subject").
+  - **S5**: "Move notebook" virou "Merge into another notebook…" (ícone ArrowsMerge). O picker explica a fusão (vira subject, subject de mesmo nome é mesclado, o caderno de origem some) e o botão é "Merge notebook", vermelho.
+  - **S6**: apagar subject pergunta pelo `choose`: "Keep notes in notebook" (as notas são gravadas sem subject antes do delete em cascata; nota-corpo de task volta ao subject Tasks; falha aborta com banner) ou "Delete N notes". Sem notas, confirmação simples "Delete subject".
+  - **S7**: o merge de notas põe a origem sob um `## <título>` e soma as tags (sem repetir, por `tagKey`). O `MergeNoteModal` ganhou busca, teclado (↑↓, Enter), duplo clique e o texto que explica o que acontece.
+  - **S8**: `ConfirmModal` foca Cancel quando é destrutivo (Confirm quando não é), Esc cancela (captura, sem vazar para a página), rótulos padrão "Delete"/"Cancel", aria-labelledby/describedby. O `useConfirm` resolve como cancel se o dono desmonta com a confirmação aberta.
+  - **S9**: ações de apagar com rótulo e verbo ("Delete note…", "Delete notebook…", "Delete subject…", ícone Trash). Confirmações com botão "Delete note"/"Delete notebook" e "This can't be undone"; a de nota sugere arquivar (menos na lista de arquivadas).
+  - **S10**: mover nota mostra o aviso "Moved to X" com "Open" (novo `ShellToast`, some em 6 s). O `NotebookPickerModal` foi refeito: busca com foco, ↑↓/Enter, duplo clique, Quick Notes sempre em 1º, "No notebook matches".
+  - **S11 (bug)**: em All notes, o seletor de subject da linha carrega os subjects do caderno da própria nota (`subjectsFor`), e o `handleAssignNoteToSubject` recusa subject de outro caderno.
+  - **S12/S13**: o campo da Toolbar diz "Filter this list…" (title e aria-label explicam), ganhou ícone Phosphor e o botão "Search everything" com `Ctrl+P`. Trocar de caderno limpa o filtro. Com filtro ativo, a coluna mostra o chip "Filtered: “x”" com Clear e o vazio "No notes match “x”".
+  - **S14**: "IA" virou "Panel" (ícone SidebarSimple, title explica). O estado aberto/fechado que a pessoa escolhe fica em `monet:panel-open`. Rótulos em sentence case ("Export .md", "Saved", "Preview", "Focus").
+  - **S15**: o modo foco esconde o painel direito. No foco, "Panel", "Ask AI", abrir nota ao lado e erro de slash saem do foco e mostram o painel. Ctrl+Space só age no modo de notas.
+  - **S16**: Skip do onboarding fica gravado (`onboarding_completed`), o `handleSkipOnboarding` duplicado saiu. Next e Finish gravam a chave digitada e não salva antes de avançar. Status com ícones Phosphor no lugar dos glifos.
+  - **S17**: textos do Tavily dizem que ele serve Web search, Deep research, /search, /profile e /expand.
+  - **S18 (parte)**: o download automático do updater pode ser fechado (X Phosphor, Esc ou "Continue in background") e segue em segundo plano; o diálogo volta quando fica pronto ou dá erro.
+  - **S19**: o banner de erros mostra todos (sem repetir), tem "Dismiss" (limpa os erros de ação e esconde os de gravação até mudar o conjunto) e fica vermelho quando há falha de gravação.
+  - **S20**: o "+" em All notes cria uma nota no Quick Notes (o mesmo do Ctrl+N, com foco no título); title "New quick note (Ctrl+N)".
+  - **S21 (mínimo)**: linhas de cadernos, views, tags, marks, subjects, notas e dos pickers com tabIndex, Enter/Espaço e aria-current; outline no focus-visible.
+  - **S22**: `HeadingNavigator` não aparece sem títulos; z-index 1100; painel com `max-height` e rolagem; traços clicáveis; abre com foco de teclado.
+  - **S23**: `--text-muted` foi para `#8a8aa3` (4,82:1 em bg-app, 5,31 em bg-panel, 4,89 em surface-1).
+  - **S24 (parte)**: vermelhos das fatias 1 trocados por `--accent-danger`; glifos (⚑, ←, ✓/⚠ do onboarding) trocados por Phosphor. A escala de z-index ficou para depois, como na triagem.
+  - **S25**: janela principal com `minWidth` 960 e `minHeight` 600.
+  - **S27/S28/S29**: All notes com ícone Stack e cor normal (não parece desabilitado); Tags no rail abre um menu com as tags; renomear caderno para Quick Notes avisa pelo `ShellToast`.
+  - **S30/S31/S32**: seletor de subject da linha em portal (posição fixa, vira para cima perto do fim, Esc devolve o foco, ↑↓); cabeçalho da coluna em ordem fixa (filtro, sort, "+", menu de tipo, recolher), "+" com title; a seção de tasks mostra as linhas que cabem e "Show all (N)" só quando transborda.
+  - **O3**: overlay "Keyboard shortcuts" (`?` fora de campo de texto ou Ctrl+/), na fase de bolha e só se ninguém tratou a tecla. Ctrl+1…4 trocam para Notebook, Chat, Library e Mincer.
+  - **O26**: Tags vazio na lista de cadernos explica como criar uma tag.
+  - **IA-08**: o overlay lista Ctrl+K (janela de quick note) e Ctrl+M (Assistant), e Ctrl+Alt+R (parar gravação), em "From any app".
+  - **Verificação:**
+    - `npx tsc --noEmit`: sem erros nos arquivos da fatia 1. Sobram 20 erros de outras fatias em andamento: Editor (BlockGutter, Editor, NotePicker), Library, TasksView (BoardView, WeeklyReview) e, no App.tsx, a fiação delas (`viewsError` do TasksEnv, `onCreateTask`/`onSchedule` das views de tasks, `pendingChatExchange`/`handleContinueResponseInChat`/`handleChatExchangeConsumed` sem uso);
+    - `npm test`: 5 arquivos e 42 testes passaram.
+- Files changed:
+  - src/App.tsx
+  - src/App.css
+  - src/hooks/useConfirm.tsx
+  - src/components/ConfirmModal/ConfirmModal.tsx
+  - src/components/ConfirmModal/ConfirmModal.module.css
+  - src/components/HeadingNavigator/HeadingNavigator.tsx
+  - src/components/HeadingNavigator/HeadingNavigator.module.css
+  - src/components/Toolbar/Toolbar.tsx
+  - src/components/Toolbar/Toolbar.module.css
+  - src/components/NotebookPickerModal/NotebookPickerModal.tsx
+  - src/components/NotebookPickerModal/NotebookPickerModal.module.css
+  - src/components/Sidebar/Sidebar.tsx
+  - src/components/Sidebar/Sidebar.module.css
+  - src/components/Sidebar/MergeNoteModal.tsx
+  - src/components/Sidebar/MergeNoteModal.module.css
+  - src/components/Sidebar/NotebookTasksSection.tsx
+  - src/components/Sidebar/NotebookTasksSection.module.css
+  - src/components/NotebookList/NotebookList.tsx
+  - src/components/NotebookList/NotebookList.module.css
+  - src/components/OpenNotes/OpenNotesPanel.tsx
+  - src/components/OpenNotes/OpenNotes.module.css
+  - src/components/Onboarding/Onboarding.tsx
+  - src/components/Onboarding/Onboarding.module.css
+  - src/components/UpdaterDialog/UpdaterDialog.tsx
+  - src/components/UpdaterDialog/UpdaterDialog.module.css
+  - src-tauri/tauri.conf.json (só `minWidth`/`minHeight`)
+- Files created:
+  - src/components/ShortcutsOverlay/ShortcutsOverlay.tsx
+  - src/components/ShortcutsOverlay/ShortcutsOverlay.module.css
+  - src/components/ShellToast/ShellToast.tsx
+  - src/components/ShellToast/ShellToast.module.css
+- Files removed:
+  - nenhum
+- Left behind:
+  - **S3, parte do editor**: o `EmptyEditor` (`src/components/Editor/`, fatia 2) não tem botão sem caderno. Proposta: sem caderno, botão "New notebook" (ou, havendo cadernos, "Pick a notebook or press Ctrl+P"). Não editei por ser arquivo de outra fatia.
+  - **S8, rótulos**: o ChatPanel (fatia 5) ainda passa rótulos em minúsculas ao `confirm`/`choose` ('clear', 'delete all', 'delete', 'keep').
+  - **S8/T1**: a parte dos modais pais (Esc do modal de baixo) fica com a fatia 8. O `useConfirm` já resolve como cancel ao desmontar.
+  - **S23**: o `#8a8aa3` dá 4,0:1 sobre `--surface-2` (linha ativa, popovers). Passar de 4,5 ali pede clarear mais o muted ou escurecer o surface-2.
+  - **O3**: o `?` das Tasks (fatia 4) precisa chamar `preventDefault` para o overlay não abrir junto.
+  - **IA-08**: o menu da bandeja (`lib.rs`) não foi mexido; é das fatias 6/8.
+  - **S20**: em All notes, o "+" leva ao caderno Quick Notes (troca a coluna), como o Ctrl+N.
+  - Sem teste no app: a fatia não foi vista rodando (não subi o app).
+
+### CodeAgent — implementação inicial (Fase B, Fatia 3) — 20261119233700
+- Summary: Fatia 3 (organização de notas), só os itens "Entra" da triagem. O4 (fatia 2) e O26 (fatia 1) ficaram de fora, como pedido.
+  - **Ctrl+P:**
+    - **O1**: tira de sugestões para `#caderno`, `tag:`, `type:` e `mark:` (a palavra no cursor), com Tab que completa a 1ª e um aviso quando nada casa ("No notebook matches “x”" / "No tags yet"). No parse, um prefixo único resolve o filtro (o nome exato vence; o Calendar fica fora do `#`).
+    - **O2**: valores de propriedade (select, texto, data etc.; checkbox fica fora) entram na busca com peso 150, abaixo do título. O resultado mostra "Propriedade: valor".
+    - **O14**: "Recent" ordena pelas notas abertas hoje (log do Opened today); o resto, por edição.
+    - **O16**: o 2º `.itemMeta` virou `.itemAside` (TODOS da task e data no MarkNotePicker).
+    - **O17**: o input é `combobox` com `aria-label`, `aria-controls` e `aria-activedescendant`; a lista é `listbox`, os itens são `option` e os cabeçalhos são `presentation`.
+    - **Oportunidade**: sem resultado, a linha "Create note “…”" cria a nota no caderno do `#`, senão no caderno ativo, senão no Quick Notes. O `type:` aplica o tipo e o template. Como extensão, o `tag:` já põe a tag. Com `mark:`/`has:mark` ou `is:archived`, a linha não aparece.
+  - **Tipos:**
+    - **O3**: "New option…" no select da barra de propriedades vira um campo. Enter ou blur cria a opção no tipo (`registry.createOption`, com a validação do modal) e a aplica; Esc cancela; erro aparece inline.
+    - **O7**: o lixo ao lado do nome do tipo virou o botão "Delete type" (Trash + rótulo) no fim do detalhe. Apagar opção usa Trash (antes X), com title.
+    - **O8**: o "New option…" do modal grava também no blur.
+    - **O9**: menu do tipo com z-index 1100. Abre com o foco no tipo atual; ↑↓, Home e End navegam; Esc devolve o foco ao botão.
+    - **O10**: `Target` da Phosphor no prazo da faixa TODOS.
+  - **Board:**
+    - **O11**: com "All notebooks", o "New" mostra "· <caderno de destino>", que corta com reticências; o aria-label diz o caderno.
+    - **O13**: com caderno, chip ou busca ativos, a contagem vira "N of M notes".
+  - **Marks:**
+    - **O5**: select de caderno ("All notebooks" + os cadernos com marcas, na ordem da coluna), lembrado em `monet:marks-notebook`. Só aparece com 2+ cadernos. As contagens dos chips seguem o recorte.
+    - **O18**: Resolve mostra "Mark resolved · Undo" (`role="status"`, 6 s) e abre a marca seguinte da lista quando o Editor consome o resolve (nonce; na mesma nota o índice cai 1). O Undo restaura o conteúdo de antes só se a nota não mudou além da marca (`withoutNoteMarkTags`); se mudou, avisa "Couldn't undo…".
+    - **O19**: chips limitados a 3 linhas com rolagem.
+  - **Tags:**
+    - **O20**: o cabeçalho diz "#tag · N notes" (grafia mais usada; a contagem inclui arquivadas, como o chip).
+  - **Calendar:**
+    - **O21**: semana de segunda a domingo.
+    - **O22**: cada célula tem `title`/`aria-label` (ex. "Wed 19 Nov · today · note with open items · task deadline") e `aria-pressed`. Há uma legenda recolhível ("Legend") abaixo da grade.
+    - **O23**: subseções "Dated" e "Edited this day". A 2ª mostra 5 cards e "Show N more". A nota editada usa cor neutra (`--cal-edited`, no card e no ponto), não a da IA. "untitled" virou "Untitled".
+    - **O24**: "+ task" virou `Plus` + "Task".
+    - **Bordas**: os cards "Edited this day" e o ponto de atividade excluem as notas arquivadas e as sem caderno (vale também na keep). O ano aceita só 1900–2999 (`min`/`max` no input); fora disso volta ao ano exibido, e as setas param nas pontas.
+  - **Verificação:**
+    - `npx tsc --noEmit`: sem erros nos arquivos da fatia 3. Os 71 erros restantes são de outras fatias em andamento: Editor (BlockGutter, Editor, NotePicker), TasksView e, no App.tsx, a fiação delas (`viewsError`, `summaryFilter`, `onCreateTask`…);
+    - `npm test`: 5 arquivos e 42 testes passaram, com o novo `src/lib/noteSearch.test.ts` (11 testes: prefixo único/ambíguo, sugestões, busca por propriedade e "Recent").
+- Files changed:
+  - src/App.tsx (fiação: `onCreateOption` da barra de propriedades; `noteDefs`, `recentNoteIds`, `newNoteNotebookId` e `onCreateNote` do Ctrl+P com o `handleCreateNoteFromSearch`; `handleResolveMark(hit, next)`, `handleUndoResolveMark` e `handleNoteRevealConsumed` que abre a próxima marca)
+  - src/lib/noteSearch.ts
+  - src/lib/noteMarks.ts
+  - src/hooks/useNoteTypes.ts
+  - src/components/SearchPalette/SearchPalette.tsx
+  - src/components/SearchPalette/SearchPalette.module.css
+  - src/components/SearchPalette/MarkNotePicker.tsx
+  - src/components/NoteTypes/NotePropertiesBar.tsx
+  - src/components/NoteTypes/NoteTypePicker.tsx
+  - src/components/NoteTypes/NoteTypePicker.module.css
+  - src/components/NoteTypes/NoteTypesModal.tsx
+  - src/components/NoteTypes/NoteTypesModal.module.css
+  - src/components/NoteTypes/TodosPanel.tsx
+  - src/components/NoteTypes/TodosPanel.module.css
+  - src/components/TasksView/PropertyControls.tsx
+  - src/components/NoteBoard/NoteBoard.tsx
+  - src/components/NoteBoard/NoteBoard.module.css
+  - src/components/MarksView/MarksView.tsx
+  - src/components/MarksView/MarksView.module.css
+  - src/components/TagView/TagView.tsx
+  - src/components/TagView/TagView.module.css
+  - src/components/CalendarView/CalendarView.tsx
+  - src/components/CalendarView/CalendarView.module.css
+- Files created:
+  - src/lib/noteSearch.test.ts
+- Files removed:
+  - nenhum
+- Left behind:
+  - **O7, parcial**: só "Delete type" ganhou rótulo escrito. Apagar propriedade e opção seguem como ícone (Trash) com title, porque são ações de linha numa lista densa.
+  - **O18, limites do Undo**: vale só para o último Resolve e só enquanto a nota não muda além da marca. O Resolve que não acha a marca (nota editada desde a lista) ainda mostra "Mark resolved".
+  - **O14**: o log do Opened today é só de hoje; o "Clear" dele faz o "Recent" voltar à ordem por edição.
+  - **`--dot-activity`** (`src/App.css`): ficou sem uso, porque o Calendar agora usa `--cal-edited`. O App.css não é desta fatia; pode sair.
+  - Sem teste no app: a fatia não foi vista rodando (não subi o app). Pontos para o teste manual: Tab no Ctrl+P, Create note com `#`/`type:`/`tag:`, "New option…" na nota, Resolve → próxima → Undo (mesma nota e outra nota), legenda e semana do Calendar.
+
+### CodeAgent — implementação inicial (Fase B, Fatia 7) — 20261119233713
+- Summary: Fatia 7 (Library e Reader), só os itens "Entra" da triagem, no recorte dela. O contexto efêmero do chat do Reader (página + grifos) foi mantido; o E1 só amplia o trecho do EPUB, dentro do orçamento de 6000.
+  - **L1**: a confirmação de apagar livro conta os grifos (`storage.getHighlights`) e as conversas da pasta de chat do livro: `Delete "X"? This also deletes its N highlights and M chat conversations. Quotes already saved in your notes are kept.`, botão "Delete book", destrutiva.
+  - **L2**: progresso em % nos dois formatos (title "p. X of Y" no PDF). A coluna Pages do EPUB mostra "—".
+  - **L3**: lista ordenada pela última abertura (o livro nunca aberto entra pela data de importação, então o recém-importado fica no topo). Campo "Filter by title or author…" acima de 10 livros, sem acento e sem caixa. Os cabeçalhos clicáveis ficaram de fora.
+  - **L4**: botão "Open" na coluna de ações (coluna mais larga).
+  - **L5**: "Add docs folder" (ícone Plus), seção "Docs folders", "Docs folder name", alias padrão "Docs", confirmação "Remove docs folder". O painel do DocsReader virou "Files" ("Docs navigation"). O "Documents" da KB não mudou.
+  - **L6**: sentence case na Library (cabeçalhos, Edit/Delete/Save/Cancel/Rename/Remove e aria-labels) e no QuoteToNoteModal ("Cancel", "Create and save", "Back", "Step 1 of 2 · Choose a notebook").
+  - **P1**: trocar de página no PDF leva a área da página ao topo.
+  - **P2**: "Fit width" e "Fit page" ao lado do zoom. O modo fica por livro em `monet:reader-fit-mode` e é recalculado ao trocar de página e quando a área muda de tamanho (ResizeObserver). − e + voltam ao zoom manual.
+  - **P3**: página sem texto extraível mostra a faixa "This page has no selectable text (scanned PDF)…" sob a toolbar.
+  - **P4**: Ctrl+F abre ou foca a busca do PDF (na captura, para passar à frente do Ctrl+F do editor; não age com o foco na nota da aba Notes ou num modal). Esc fecha a toolbar de seleção e o popover, e `H` grifa a seleção com a última cor, nos dois leitores (no EPUB também dentro do iframe). A última cor fica em `monet:reader-highlight-color`, comum aos leitores.
+  - **P6**: a toolbar de seleção é medida depois de montada (`useLayoutEffect`) e posicionada por `placeSelectionToolbar`: acima da seleção, ou abaixo quando não cabe, sempre dentro da parte visível da área. PDF e EPUB.
+  - **P7**: a aba "Summary" do PDF virou "Contents" (também no trilho recolhido).
+  - **E1**: o `getPageText` do EPUB manda o texto do intervalo visível (`location.start.cfi` → `location.end.cfi`, as duas colunas no spread) via `getEpubRangeText`. O `readerContext` corta em 6000. Sem intervalo, cai na location atual.
+  - **E3**: fonte e margem com ícone (TextAa, ArrowsOutLineHorizontal), grupo com nome e tooltips ("Smaller text", "Wider margins"…), no EPUB e no DocsReader.
+  - **E4**: a toolbar do EPUB mostra "capítulo · 42%", com o nome inteiro no title.
+  - **H1**: gravar e apagar grifo voltam o estado quando falham e mostram toast de erro ("Couldn't save this highlight. Try again." / "Couldn't delete this highlight. Try again.").
+  - **H2**: "Copy citation" virou "Add to note" (toolbar, popover e painel), com o destino no title (`Add to "Caderno · Nota"`). Na nota vinculada: toast "Added to Caderno · Nota" com Open (mostra a nota na aba Notes) e Undo (tira o bloco da nota). No modal: título "Add quote to note" e, no sucesso, o checkbox "Send future quotes from this book here", que grava o vínculo ao fechar.
+  - **H5**: vazio "Select text on the page to highlight it." (EPUB: "in the book") e campo "Search highlights…" acima de 15 grifos (filtra junto com a cor, sem acento).
+  - **H7**: um termo só, "Delete highlight": popover com "Delete", confirmações iguais e destrutivas.
+  - **H8**: aria-label da toolbar de seleção com o nome da cor.
+  - **C1**: "Save to note" (NotePencil, com rótulo) e "Copy" nas respostas terminadas e sem erro, no padrão do `ChatMessageBubble` (sem editá-lo). Com nota vinculada, anexa direto o bloco `**AI · <livro> — <data>**` com toast Open e Undo. Sem vínculo, ou se a gravação falhar, abre o `SaveToNoteModal` (sem editá-lo, `plain`, mesmo bloco); o "Go to note" dele abre a nota na aba Notes.
+  - **C2**: `onOpenSettings` vai de App → Library → Reader/EpubReader → ReaderChatPanel → ModelSelector, e a faixa sem chave ganhou "Open Settings". No `App.tsx`, só a prop no `<Library>`.
+  - **C3 (só o chip)**: "AI sees: p. N · K highlights" acima do composer (K = até 10; no EPUB, a posição em %), com title explicando o que vai junto.
+  - **C4**: o "Ask AI" põe a citação antes do rascunho, sem apagá-lo.
+  - **C5 (só os rótulos)**: "Book memory" e "Book documents".
+  - **N1**: sem cadernos, a aba Notes mostra o campo e o botão "New notebook" (Plus), que cria e seleciona o caderno.
+  - **G1**: Phosphor no lugar de "← Library", "‹ ›", "− +", "×" e da lixeira desenhada à mão (ArrowLeft, CaretLeft/Right, MagnifyingGlassMinus/Plus no zoom, Minus/Plus, X, Trash, Plus).
+  - **G2**: as toolbars do PDF e do EPUB quebram linha.
+  - **Borda**: na tela de livro sem arquivo (PDF e EPUB), "Remove from Library" passa pela mesma confirmação do L1 e volta à lista. A Library passou a renderizar o modal de confirmação dela junto do leitor aberto.
+  - Um toast único nos leitores (`ReaderToast`, com ações) no lugar do `.saveToast`, que saiu dos dois CSS.
+- Files changed:
+  - src/App.tsx (só `onOpenSettings={handleOpenSettings}` no `<Library>`)
+  - src/components/Library/Library.tsx
+  - src/components/Library/Library.module.css
+  - src/components/Library/DocsReader.tsx
+  - src/components/Library/DocsReader.module.css
+  - src/components/Reader/Reader.tsx
+  - src/components/Reader/Reader.module.css
+  - src/components/Reader/EpubReader.tsx
+  - src/components/Reader/EpubReader.module.css
+  - src/components/Reader/ReaderChatPanel.tsx
+  - src/components/Reader/ReaderChatPanel.module.css
+  - src/components/Reader/ReaderNotesPanel.tsx
+  - src/components/Reader/ReaderNotesPanel.module.css
+  - src/components/Reader/QuoteToNoteModal.tsx
+  - src/components/Reader/QuoteToNoteModal.module.css
+  - src/components/Reader/readerContext.ts (só exporta `MAX_HIGHLIGHTS`)
+  - src/hooks/useHighlights.ts
+  - src/hooks/useBookQuotes.ts
+  - src/lib/bookQuotes.ts
+  - src/lib/epub.ts
+- Files created:
+  - src/components/Reader/ReaderToast.tsx
+  - src/components/Reader/ReaderToast.module.css
+  - src/components/Reader/toolbarPlacement.ts
+- Files removed:
+  - nenhum
+- Left behind:
+  - **L1, contagem de conversas**: a Library lê o localStorage do chat direto (`countReaderChatConversations`, local), porque o `useChat.ts` é da fatia 5. O certo é o `useChat` exportar essa contagem.
+  - **H2/C1, Undo**: tira a última ocorrência do bloco da versão atual da nota. Se o bloco foi editado ou apagado, mostra "Couldn't undo: the note was edited.". A linha do `book_quotes` (registro só de escrita, nunca lido) fica.
+  - **H2/C1, Open**: abrir a nota na aba Notes a vincula ao livro, porque a aba mostra a nota vinculada. No caminho do modal de citação, o toast continua simples, sem Open e Undo. O botão "Open note" no fim do modal, citado no relatório, não estava no recorte.
+  - **C1, origem**: o bloco leva `AI · <livro> — <data>`, sem a página. A posição por mensagem é o C3 adiado. Não precisou de prop nova no `SaveToNoteModal`.
+  - **E4**: mostra o nome do capítulo, não "Ch. 3". A regra registrada no `epubCitationLabel` é nunca gerar número de capítulo nosso. O nome é truncado na toolbar e vai inteiro no title.
+  - **E1**: a tela que cruza duas seções do spine cai na location atual (o range não junta dois documentos).
+  - **P2**: o modo fit fica em localStorage, sem coluna nova. Apagar o livro deixa a entrada órfã no mapa.
+  - **P3**: a faixa fica sob a toolbar, não sobre a página. Num PDF que mistura páginas escaneadas e páginas com texto, ela aparece e some entre páginas.
+  - **P4**: Ctrl+F só no PDF (a busca no EPUB é o E2, adiado).
+  - **P6**: só a toolbar de seleção. O popover do grifo segue com o posicionamento antigo.
+  - **Verificação**: `npx tsc --noEmit` com 19 erros, todos fora da fatia 7 (App.tsx nas props de Tasks, Editor, NotePicker, BlockGutter, WeeklyReview), nenhum nos arquivos desta fatia. `npm test`: 5 arquivos, 42 testes passando.
+  - Sem teste no app (não subi o app). Pontos para o teste manual: P1 com janela de notebook a 100%, Fit width/page abrindo e fechando as colunas, Ctrl+F com o foco na aba Notes, `H` e Esc dentro do iframe do EPUB, E1 em 2 colunas, Add to note com nota vinculada (Open e Undo), Save to note no chat com e sem vínculo, Remove from Library com arquivo ausente.
+
+### CodeAgent — implementação inicial (Fase B, Fatia 8) — 20261119233721
+- Summary: Fatia 8 (Mincer, conhecimento e configurações), só os itens "Entra" da triagem, mais o IA-08 da fatia 6.
+  - **Transversais:**
+    - **T1**: a parte do `ConfirmModal` (Esc com `stopImmediatePropagation`) veio da fatia 1. Na KB e no Documents, o `confirm` passa por um invólucro local: o Esc do pai é ignorado com uma confirmação aberta, e fechar o pai (ou trocar de caderno no Documents) resolve a promessa pendente como cancel. O `confirmModal` só é renderizado com a confirmação aberta, então ela não reaparece ao reabrir.
+    - **T2/T3**: `X` da Phosphor no fechar da KB, do Documents e do Settings; `Folder`/`FileText` no tipo do Documents; `Plus` em "Add documents"/"Add folder". Caixa de frase em todos os rótulos ("Rescan", "Remove", "Retry", "Uploading…", "Save key", "Manage Knowledge Base", status "Available/Indexing/Error"). Verbo do confirm igual ao da ação (K2).
+  - **Mincer:**
+    - **M1**: `mincer_record_devices` (COM numa thread própria) dá os nomes da saída e do microfone padrão antes do Start, relidos ao voltar à janela. Durante a gravação, cada thread de captura guarda o `get_friendlyname` do dispositivo que abriu, e o `mincer_record_status` devolve os nomes. Com o System mudo por 60 s e o Mic com sinal, aparece o aviso âmbar "No system audio detected. Is the meeting playing on another device?".
+    - **M2 (Copy)**: "Copy" na barra de abas do item copia o Markdown do resumo ou o texto da aba aberta e mostra "Copied" por 1,5 s.
+    - **M4**: campo "Title (optional)" na aba Record. O título vai no `mincer_record_start`; durante a gravação, `mincer_record_set_title` com debounce de 300 ms, e o Stop da tela grava o último antes de parar. Assim o título vale para tray, atalho, silêncio e teto. Sem título, o nome é "Recording AAAA-MM-DD HH:MM" pela hora de início, e o boot que recupera a gravação usa a criação dos WAVs. O histórico mostra a hora (com a data em Earlier) e agrupa em Today, Yesterday e Earlier.
+    - **M5**: `mark_running_interrupted` grava `unseen = 1`. O `on_startup` emite `mincer://changed` no fim, e o `useMincerJob` passa a contar `attentionCount`. A Toolbar mostra o title "Mincer: 1 item needs your attention" (só o title, como combinado), o histórico tem o selo âmbar "Resume?" e o item, o banner âmbar "Needs attention". A gravação recuperada diz hora e duração: "This recording (from 2026-11-19 14:05, about 12 min of audio) was recovered…".
+    - **M6**: a ajuda diz quando a gravação para ("… at 17:40 (in 25 min)"). O "+30 min" desabilitado no teto já vinha da Fase A.
+    - **M8**: preset por aba (`monet:mincer-preset:<aba>`, com fallback no último global).
+    - **M9**: com um item aberto, o `Mincer.tsx` ouve o drop, põe os arquivos no rascunho (`queueDroppedFiles`) e abre a tela New.
+    - **M10**: linha fixa "Recording · mm:ss" no topo do histórico, com relógio próprio. O clique remonta a New (`key`) na aba Record.
+    - **M11**: a linha de modelos mostra só o que a aba usa (sem transcrição em Paste e Web page; some em Capture text).
+    - **M12**: "Save to another folder…".
+    - **M13**: "2nd in queue — starts when the items ahead of it finish." (o 1º: "…the current item finishes."), pela lista ordenada por `queuedAt` (o `mincer_list` agora devolve `queued_at`).
+    - **Bordas**: apagar uma instrução salva pede confirmação (o `SummaryOptions` recebe `confirm`).
+  - **Knowledge Base:**
+    - **K1**: coluna "Used in" ("Not used", o nome do caderno ou "N notebooks"), que abre um popover com caixas por caderno (portal, z-index 1100; Esc e clique fora fecham). Os dados vêm do novo `documents_list_visibility`. Na pasta de notas, o caderno dono fica marcado e travado. Depois de adicionar documentos ou uma pasta, o caderno ativo é ligado na hora, e o aviso "Added. Use it in: [✓] <caderno>" desfaz pela caixa. Sem caderno ativo, o aviso aponta para a coluna. Ao fechar a KB, o App relê `notebooksWithDocs`.
+    - **K2**: "Remove from Knowledge Base" com "Your files on disk are not changed." (pasta monitorada), "Delete folder and files" (pasta da IA, cujo botão da linha virou "Delete"), "Remove document" com "Your original file is not changed." (o upload é uma cópia no appData) e "Delete folders and files" (órfãs). O "Turn off" está no Documents.
+    - **K3**: sem chave, banner âmbar no topo com "Open Settings". A prop `onOpenSettings` vem do App, que fecha a KB e abre o Settings na seção OpenRouter.
+    - **K5**: o alias grava no blur e no Enter, e o Esc descarta. Um ref impede gravar duas vezes, e o alias igual ao atual não chama o Rust.
+    - **K6**: "Last checked" em tempo relativo ("just now", "5 min ago", "today 14:32", "yesterday 14:32"), atualizado a cada minuto com o modal aberto.
+    - **K7 (sem drop)**: `documents_pick_files` (seleção múltipla, um upload por arquivo, os erros por arquivo). A dica "Documents: PDF, TXT or Markdown." fica no rodapé, no estado vazio e no title do botão.
+  - **Documents:**
+    - **D1**: coluna "Use in AI" e a linha "Use in AI: checked items are searched by this notebook's chat and /commands."
+    - **D2**: grupos "This notebook's notes", "Your files and folders", "Notes from other notebooks" e "Web sources", com os selos da KB (AI-generated, Orphan, Notes).
+    - **D3**: falha ao ligar ou desligar (documento, pasta, indexação de notas) aparece em linha (`role="alert"`).
+    - **D4**: filtro com o `documentMatchesFilter`.
+  - **Settings:**
+    - **S1**: comando `openrouter_key_info` no Rust (`GET /api/v1/key` com a chave salva). Devolve só `last4`, `ok`, `limitRemaining` e a frase de erro; a chave não volta ao frontend. A seção mostra "Key works · ending in …abcd · $X.XX left" ao abrir e depois de cada save. Falha de verificação vira frase legível (401/403, 402, 429, 5xx, rede).
+    - **S2**: confirmação em linha ao remover a chave ("Remove the key? AI features stop until you add one again.", e a variante do Tavily), e Enter salva a chave da OpenRouter.
+    - **S3**: os textos dizem o que cada chave liga, e "tavily.com" virou link com `openUrl`.
+    - **S5**: nova seção "Knowledge Base" (`SettingsSection` ganhou `'knowledge'`), com o modelo de reescrita (saiu da OpenRouter) e a regra da verificação das pastas (no início e ao voltar à janela, no máximo 1×/min).
+    - **S6**: "Go to OpenRouter Integration" sob o select de transcrição sem chave, e `aria-current="page"` na seção ativa.
+    - **S7**: "Saved" por 2 s ao lado do rótulo dos campos gravados sozinhos (modelos do Mincer, silêncio, teto, reescrita).
+    - **Borda**: um teto salvo fora das opções (ex.: 5 h) entra no select.
+  - **IA-08 (fatia 6)**: o tray lista "Daily note (Ctrl+K)" e "Assistant (Ctrl+M)" com as ações de abrir. O registro dos atalhos subiu para antes do tray, e o rótulo só mostra a tecla quando o registro deu certo.
+  - **Spec**: `DOCS/specs/mincer.md` cobre título opcional, Needs attention, `mincer://changed`, dispositivos e aviso de System mudo, posição na fila, preset por aba, grupos e hora do histórico, Copy, "Save to another folder…", drop com item aberto e a mensagem da gravação recuperada.
+  - **Verificação:**
+    - `npx tsc --noEmit`: sem erros nos arquivos da fatia 8. Os 19 restantes são de outras fatias (Editor, NotePicker, WeeklyReview e a fiação de Tasks no App.tsx);
+    - `npm test`: 5 arquivos, 42 testes, todos passaram;
+    - `cargo check`: limpo;
+    - `cargo test`: 75 passaram e 3 são ignorados. Entre eles estão os novos `recording_title_uses_the_start_time_when_empty`, `audio_duration_uses_the_largest_track` e `recovered_message_says_how_long_the_audio_is`.
+- Files changed:
+  - src-tauri/src/lib.rs (tray com Ctrl+K/Ctrl+M; `openrouter_key_info`; registro de `documents_list_visibility`, `documents_pick_files`, `mincer_record_set_title`, `mincer_record_devices`)
+  - src-tauri/src/documents.rs (`documents_pick_files`, `documents_list_visibility`)
+  - src-tauri/src/mincer/mod.rs
+  - src-tauri/src/mincer/record.rs
+  - src-tauri/src/mincer/jobs.rs
+  - src-tauri/src/mincer/db.rs
+  - src/lib/mincer.ts
+  - src/lib/documents.ts
+  - src/hooks/useMincerJob.ts
+  - src/components/Mincer/Mincer.tsx
+  - src/components/Mincer/MincerNew.tsx
+  - src/components/Mincer/MincerNew.module.css
+  - src/components/Mincer/MincerHistory.tsx
+  - src/components/Mincer/MincerHistory.module.css
+  - src/components/Mincer/MincerItemView.tsx
+  - src/components/Mincer/MincerItemView.module.css
+  - src/components/Mincer/SummaryOptions.tsx
+  - src/components/Mincer/presets.ts
+  - src/components/KnowledgeBaseModal/KnowledgeBaseModal.tsx
+  - src/components/KnowledgeBaseModal/KnowledgeBaseModal.module.css
+  - src/components/DocumentsModal/DocumentsModal.tsx
+  - src/components/DocumentsModal/DocumentsModal.module.css
+  - src/components/Settings/SettingsModal.tsx
+  - src/components/Settings/SettingsModal.module.css
+  - src/components/Toolbar/Toolbar.tsx (só o title do botão Mincer e a prop `mincerAttention`)
+  - src/App.tsx (só `mincerAttention` na Toolbar e as props `onOpenSettings`, `notebooks` e `activeNotebookId` da KB, além do refresh ao fechar)
+  - DOCS/specs/mincer.md
+- Files created:
+  - nenhum
+- Files removed:
+  - nenhum
+- Left behind:
+  - **K1, chat folders**: a coluna "Used in" conta só cadernos. A seleção das pastas de chat mora no localStorage do `useChat.ts`, que não é desta fatia, e nenhuma função exportada a lista. A pasta web da IA diz no title que a pasta de chat dela também a usa.
+  - **K1, ligar sozinho**: adicionar com um caderno aberto já liga o documento nele. É o "já marcado" da triagem, e o aviso desfaz.
+  - **M4, crash**: o título digitado vive na memória da gravação. Num crash, a gravação recuperada usa o nome pela hora de início.
+  - **M5**: o banner âmbar não tem "Discard" próprio. O Delete com confirmação segue nas ações do item.
+  - **IA-08**: o rótulo usa "Daily note", não "Quick note", para não confundir com o caderno Quick Notes.
+  - **S1**: o saldo é o `limit_remaining` da chave. Sem limite na chave, só aparece "Key works"; o saldo da conta (`/credits`) não foi consultado.
+  - Sem teste no app (não subi o app). Pontos para o teste manual: nomes dos dispositivos e o aviso de System mudo com headset; título editado e Stop pelo tray; Needs attention depois de matar o app no meio de um item; popover "Used in" e aviso depois de adicionar; "Key works" com chave válida e inválida.
+
+### CodeAgent — implementação inicial (Fase B, Fatia 6) — 20261119233900
+- Summary: Fatia 6 (IA contextual e janelas auxiliares), só os itens "Entra" da triagem. IA-08, IA-09, IA-10 e IA-11 ficaram com as fatias 1, 2 e 8, como pedido.
+  - **IA-01 (minha parte)**: o card nasce no Enter com o status `preparing` e a etapa ("Preparing…", "Reading images…", "Searching the web…", "Searching notebook sources…"). Todo erro do preparo vira card com o mesmo `commandId`, e um erro inesperado do `handleCommand` também (wrapper `runCommand`). Com a coluna direita fechada, um erro da nota aberta abre a coluna na aba AI (`onError` do `useAi`).
+  - **Contrato de status para a fatia 2** (comentário em `AiResponseStatus`, `src/types/index.ts`):
+    - o ciclo é `preparing` → `streaming` → `completed`, ou `error`, ou `interrupted`;
+    - o `id` do card é o `commandId` do Enter do editor;
+    - `preparing` só existe em memória e nunca é gravado. Nesse status, o `statusText` traz a etapa, e ele também não é gravado;
+    - `error`: o `response` é a mensagem;
+    - `interrupted` com `response` vazio = parado antes do 1º texto;
+    - o `query` só é gravado quando o comando aceita query.
+  - **IA-02**: apagar no card uma resposta inserida numa nota pede confirmação: "This response is inserted as an AI block in the note “X”. Deleting it here also empties that block." (botão "Delete response").
+  - **IA-03**: o "Chat" do card abre o chat do caderno na mesma coluna, na pasta do caderno, com a pergunta e a resposta. Usa o `openConversationWithExchange`, que a fatia 5 expôs no `useChat` (o `useChat.ts` não foi editado). Se a resposta já tem conversa ligada nessa pasta, ela é reaberta. Sem caderno, segue o modo Chat, como antes.
+  - **IA-04**: `/ask`, `/explain` e `/guide` passam a `web: 'withQuery'`, com uma linha de comportamento: com resultados da web, prefere e cita; sem eles, responde pelo conhecimento, sem links. `/search` e `/profile` seguem `required`. O selo "web" do autocomplete é da fatia 2 e lê `findAgent(cmd)?.context.web`.
+  - **IA-05**: a keep fornece o `EditorResponsesProvider` com as respostas dos blocos da nota. Elas são relidas quando os blocos mudam e a cada exibição.
+  - **IA-06**: o "Settings" do seletor de modelo e o novo "Open Settings" da faixa sem chave abrem o Settings. No chat do caderno, pelo `handleOpenSettings`. No Assistant, pelo evento `assistant-open-settings`: a main aparece com o Settings aberto, e o Assistant se esconde.
+  - **IA-07**: trocar de nota não cancela mais o slash. A resposta termina no card e é gravada.
+  - **IA-12**: ao reexibir, o Assistant fica na mesma conversa se ela está vazia, em streaming ou teve atividade há menos de 15 min. Senão abre uma nova, com "Continue last conversation" no estado vazio. Trocar de pasta mantém o texto e o anexo do composer.
+  - **IA-13 e O2**: o card de erro ou interrompido tem o "×" sempre visível e as ações Retry e, quando o erro é de chave, "Open Settings" na seção certa. O Retry roda o comando de novo com um `commandId` novo. O card ativo tem Stop.
+  - **IA-14 (P)**: no cabeçalho do chat do caderno, as ações descem de linha antes de o nome do caderno sumir.
+  - **IA-15**: no chat do caderno, a ponte vira "Insert into note" e "Insert at end", na resposta e nos blocos. Na seleção, "Insert into note" com "At cursor" e "At end".
+  - **IA-16**: o `/action` diz o que entrega: "Rewrites or transforms the note text; the result comes as an AI block to copy from".
+  - **IA-17**: quando a nota passa de 8 mil caracteres, o chip da nota mostra "· first 8k chars", com tooltip.
+  - **IA-18**: rodar um slash não troca a aba. A aba AI mostra a contagem de respostas novas, em vermelho quando há erro.
+  - **IA-19**: o placeholder e o estado vazio mudam com o agente (`chatAgentComposerHint`, em `chat.ts`). Com Coach e Plan week, `/coach` sozinho ou Enter com o rascunho vazio envia "Check my plans" / "Plan my week".
+  - **IA-20**: a keep cria a nota do dia só na primeira edição. Antes disso, ela é um rascunho em memória. Com um rascunho aberto, um `calendar-note-updated` faz a keep procurar a nota do dia pelo título.
+  - **IA-21**: "Open in Monet" abre a nota do dia exibido (`open_note_in_main`). Um rascunho é gravado antes.
+  - **IA-22**: na keep, o `@` só abre o seletor de horário no começo de palavra e fora de código, com a mesma regra do editor da main.
+  - **IA-23 a IA-26**:
+    - Phosphor no card, na alça, no expand/collapse (com rótulo), nos chips do chat do caderno e no fechar da keep e do Assistant;
+    - status só quando pedem atenção, em sentence case;
+    - z-index 1100 no ModelSelector;
+    - `{ __html }` memoizado no card;
+    - Esc e ↑/↓/Enter no ModelSelector;
+    - `KeyboardSensor` na reordenação dos cards.
+  - **IA-27**: o estado vazio do Assistant diz o que ele vê (notas, documentos da pasta, print da tela), com "Choose documents" quando a pasta não tem documentos.
+  - **O1 (selo)**: o card mostra "In note" quando o bloco está na nota aberta.
+  - **Fase A preservada**:
+    - keep: recarga no foco, `failedNoteIdRef`/`writeSeqRef` e o banner com Retry;
+    - chat do caderno: `allowedImageUrls` e a troca da imagem bloqueada por link no `selectionToHtml`.
+  - **Verificação:**
+    - `npx tsc --noEmit`: sem erros (na última rodada, também sem erros das outras fatias);
+    - `npm test`: 7 arquivos e 77 testes passaram.
+- Files changed:
+  - src/types/index.ts (contrato do status: `preparing` e `statusText`)
+  - src/hooks/useAi.ts
+  - src/App.tsx (edições pequenas: `prepare`/`setPrepareStatus`/`onError` no `useAi`, `commandId` nos cards de erro, `runCommand`, props novas do AiPanel e do NotesChatPanel, listener `assistant-open-settings`, `pendingChatExchange` e `handleContinueResponseInChat`)
+  - src/components/AiPanel/AiPanel.tsx
+  - src/components/AiPanel/AiCard.tsx
+  - src/components/AiPanel/ModelSelector.tsx
+  - src/components/AiPanel/AiPanel.module.css
+  - src/components/NotesChat/NotesChatPanel.tsx
+  - src/components/NotesChat/NotesChatPanel.module.css
+  - src/components/NotesChat/notesContext.ts
+  - src/components/AssistantPanel/AssistantPanel.tsx
+  - src/components/AssistantPanel/AssistantPanel.module.css
+  - src/components/KeepPanel/KeepPanel.tsx
+  - src/components/KeepPanel/KeepPanel.module.css
+  - src/lib/agents/legacy.ts
+  - src/lib/agents/core.ts (comentário da política de web)
+  - src/lib/agents/chat.ts
+- Files created:
+  - nenhum
+- Files removed:
+  - nenhum
+- Left behind:
+  - **Fatia 2**:
+    - a linha do `/comando` pode mostrar a etapa com `response.statusText ?? 'Preparing…'` (hoje é fixo "Preparing…");
+    - o selo "web" lê `context.web`: `required` = precisa da chave do Tavily; `withQuery` = usa a web se houver chave.
+  - **IA-07**: apagar a nota de origem não cancela o slash. A resposta termina e fica gravada sem nota (as "respostas órfãs" são decisão do autor).
+  - **IA-17**: a estimativa não conta as respostas embutidas nem o OCR das imagens, que só se resolvem no envio.
+  - **IA-19**: o ChatPanel e o Assistant (`ChatComposer`, fatia 5) podem usar o mesmo `chatAgentComposerHint`. A mensagem padrão com o rascunho vazio pede mudança no `ChatComposer`.
+  - **IA-03**: depende da assinatura de `openConversationWithExchange` (fatia 5). Se ela mudar, o efeito do NotesChatPanel precisa acompanhar.
+  - **IA-20**: abrir na main um dia sem nota grava a nota vazia (é preciso para a main achá-la).
+  - Sem teste no app: a fatia não foi vista rodando (não subi o app). Pontos para o teste manual:
+    - slash com a coluna fechada e sem chave do Tavily;
+    - Retry e Stop no card;
+    - "Chat" do card;
+    - Assistant escondido e reaberto, antes e depois de 15 min;
+    - navegar por dias na keep sem criar nota;
+    - `@` depois de letra na keep.
+
+### CodeAgent — implementação inicial (Fase B, Fatia 4 — Tasks) — 20261120022346
+- Summary: Fatia 4 (Tasks), só os itens "Entra" da triagem. Todos foram feitos; as ressalvas estão em "Left behind".
+  - **U1**:
+    - reagendar uma task aberta com deadline estourado para hoje em diante pergunta "Deadline passed", com "Move deadline too", "Keep deadline" e Cancel;
+    - vale para o arrasto no Week, o Snooze, `t`, `d`, `z`/`Z`, as datas do lote, o popover de data e o "Move to next Monday" do Review;
+    - a regra está em `useTaskActions.reschedule` + `reschedulePatch`/`deadlinePassedFor`, em `lib/tasks.ts`;
+    - `isOverdue`: deadline estourado com do date de hoje em diante já foi replanejado e vai para o dia do plano, com o deadline em vermelho no card;
+    - reagendar para outro dia tira a task do My Day de hoje.
+  - **U2**:
+    - saiu o "Clear done", da List e da coluna Done do Kanban (com `clearable`/`onClearColumn`/`.headerAction` do BoardColumns);
+    - o Done mostra os últimos 14 dias (`splitDoneWindow`) e "Show older (N)" / "Hide older";
+    - o limite de 50 (`DONE_LIMIT`) saiu.
+  - **U3**:
+    - depois de criar, saem a busca, o projeto e o chip de resumo que esconderiam a task;
+    - no My Day a task nasce com `plannedDay` (`NewTaskDraft.plannedDay` → `createProjectTasks` → `useTasks`);
+    - "Added “…”" por 5 s, com "Open" nos boards e no Review. A List já abre a task criada.
+  - **U4 (opção B)**:
+    - o sol virou "Add to My Day" / "Remove from My Day";
+    - `plannedDay` de hoje põe a task no grupo Today (`taskBucket`), na coluna de hoje do Week e no "Due today";
+    - o chip Today conta o mesmo que o grupo. Em andamento fica fora dos dois.
+  - **U5**:
+    - barra "Task marked done. Undo" por 6 s depois de concluir, drop, snooze, reagendar, arrasto nos boards, My Day, `s` e as ações do lote;
+    - o Undo restaura status, datas, My Day, TODOS, important e o contador de reagendamento. Se o projeto mudou, move a task de volta. Se a conclusão gerou a próxima ocorrência de uma recorrente, ela é apagada;
+    - no lote, "Drop" e, à parte, "Delete permanently…", com confirmação.
+  - **U6**: o cabeçalho de cada dia do Week mostra "N due" (Target), com os títulos no title.
+  - **U7**: a List separa "Overdue" (deadline, vermelho) de "Slipped" (plano, amarelo), e o Slipped tem "Move all to today".
+  - **U8**:
+    - `saveWeeklyReview` devolve `false` sem nota do dia ou quando o `saveNote` falha;
+    - o Review mantém a reflexão e mostra "Couldn't save the review. Your text is kept.".
+  - **U9**:
+    - `ter`, `dom`, `seg`, `sex`, `mon`, `wed`, `sat` e `sun`, e `dd/mm`, só viram data no fim do texto (a sequência final de tokens, como em "Reunião sex #Work"), com ponto ("ter.") ou com `!`;
+    - o nome completo do dia (terça, tuesday) vale em qualquer posição.
+  - **U11**:
+    - botão "Add" (Plus);
+    - dica de sintaxe visível com o campo em foco ou com texto;
+    - "Add a title…" quando o texto só tem tokens;
+    - placeholder com um exemplo.
+  - **U13 (P) e U16**:
+    - sem escolha salva, o Week recolhe o fim de semana quando Settings › Agenda não tem sábado nem domingo (`isWeekendOff`);
+    - colunas com `minmax(150px, 1fr)`.
+  - **U14**:
+    - ArrowClockwise no lugar de ↻, CaretRight/CaretDown no lugar de ▸▾, Flag no chip Important, Plus no "Add property";
+    - "After DL" e "Moved N×" no lugar de ⚠ e ↻;
+    - "New TODOS…" e "New notebook…" sem ＋/+.
+  - **U15**: datas relativas no TaskCard e no TaskLine ("Today", "Tomorrow", "Yesterday", "In 3 days", "2 days ago"; a partir de 7 dias, "Nov 26"), com a data completa no title.
+  - **U17**:
+    - "Copy" (Markdown) no Review, onde o ↻ virou "(postponed N×)";
+    - Slipped e Still open sem duplicata, e os dois selecionáveis;
+    - navegação ‹ This week › para semanas anteriores. Numa semana passada, o Done é o concluído nela, e o destino do "Move to…" é a segunda seguinte ou, se ela já passou, a próxima.
+  - **U18**:
+    - lista vazia: "No tasks yet. Type one above…";
+    - projeto vazio: "No tasks in X yet…";
+    - busca sem resultado: "No tasks match “x” in X." com "Clear search";
+    - resumo vazio: diz o chip e a busca.
+  - **U19**: na List, o selo de status só aparece fora de To do.
+  - **U20 (parte)**: `isInProgress` é só `doing`. Waiting e os outros status custom contam como abertos.
+  - **U21**: nos boards (Week, Kanban, Projects, TODOS, My Day), o chip de resumo filtra o próprio board. O Review continua levando para a List.
+  - **U22**: a barra diz "3 of 10 done this week". O denominador conta só o planejado nesta semana (mais o My Day de hoje), sem as atrasadas de semanas anteriores.
+  - **U23**:
+    - "Due today" com checkbox por item;
+    - inclui o My Day de hoje;
+    - as concluídas no dia ficam riscadas;
+    - a TODOS é um botão irmão do título.
+  - **U24**:
+    - a ocorrência nova de uma recorrente ganha uma cópia da nota-corpo, com o checklist desmarcado (`uncheckChecklist`; linhas `<task-ref` intactas);
+    - `useTasks({ onOccurrenceCreated })` + `copyBodyNoteRef` no App;
+    - corpo vazio não é copiado.
+  - **U25**: o Projects board mostra a cor só no botão de cor do cabeçalho.
+  - **U26**:
+    - falha ao salvar, renomear ou apagar uma visão aparece no cabeçalho (`useTaskViews.saveError` → `TasksEnv.viewsError`), e a lista relê o banco;
+    - falha ao criar uma TODOS aparece ao lado do seletor.
+  - **Bordas**:
+    - Enter no chip "Create #X?" só confirma o chip;
+    - modal da task sem nota-corpo com o título editável (blur/Enter);
+    - `KeyboardSensor` no StatusManagerModal.
+  - **O5**:
+    - popover "Keyboard shortcuts" com `?` (foco nas Tasks) e item no menu de visão;
+    - o `?` das Tasks faz `stopPropagation` + `preventDefault`, e o popover é `aria-modal`, para não abrir junto o `ShortcutsOverlay` da fatia 1;
+    - fora das Tasks, o `?` abre o overlay global.
+  - **Verificação:**
+    - `npx tsc --noEmit`: sem erros nos arquivos da fatia. Na última rodada sobram 2 erros alheios, em `src/components/Editor/SearchHighlight.ts:17/41` (`SEARCH_TITLE_SPEC` declarado duas vezes, edição em andamento de outra fatia). Numa rodada anterior, o único erro alheio era `ChatPanel.tsx:396`;
+    - `npm test`: 57 testes passaram. Dois arquivos alheios (`noteFileText.test.ts` e `Editor/markdownRoundTrip.test.ts`) falham na transformação pelo mesmo `SearchHighlight.ts`;
+    - antes desse erro, numa rodada anterior, 7 arquivos e 77 testes passaram;
+    - `npx vitest run src/lib/tasks.test.ts src/lib/taskQuickAdd.test.ts`: 2 arquivos e 35 testes passaram.
+- Files changed:
+  - src/lib/tasks.ts
+  - src/lib/taskQuickAdd.ts
+  - src/lib/workCapacity.ts (`isWeekendOff`)
+  - src/hooks/useTasks.ts
+  - src/hooks/useTaskViews.ts
+  - src/App.tsx (edições pequenas: `copyBodyNoteRef` + `useTasks({ onOccurrenceCreated })`, `saveError` do `useTaskViews` → `viewsError`, `createTaskNote(…, content)`, `plannedDay` em `createProjectTasks`/`createNewTask`, `saveWeeklyReview` → `Promise<boolean>`, `boardProps` com `summaryFilter`, Week sem `onSchedule`, `onCreateTask` devolvendo a task, `onDeleteTasks` no Review, `onToggleTask` no DueTodayBlock, import de `uncheckChecklist`)
+  - src/components/TasksView/: BoardColumns.tsx/.module.css, BoardView.tsx, DueTodayBlock.tsx/.module.css, KanbanBoard.tsx, ProjectPicker.tsx, ProjectsBoard.tsx, StatusManagerModal.tsx, TaskBatchBar.tsx/.module.css, TaskCard.tsx, TaskFields.tsx, TaskLine.tsx, TaskModalEditor.tsx/.module.css, TaskPropertiesBar.tsx/.module.css, TasksEnv.tsx, TasksHeader.tsx/.module.css, TasksView.tsx/.module.css, TodayBoard.tsx, TodosBoard.tsx, ViewMenu.tsx/.module.css, WeekBoard.tsx/.module.css, WeeklyReview.tsx/.module.css, useTaskKeyboard.ts
+- Files created:
+  - src/components/TasksView/useTaskActions.ts (Undo e reagendamento com a pergunta do deadline)
+  - src/components/TasksView/TaskShortcuts.tsx e TaskShortcuts.module.css (O5)
+  - src/lib/tasks.test.ts (Overdue × Slipped, My Day, barra da semana, janela de 14 dias, datas relativas, reagendar/desfazer, checklist da cópia)
+  - src/lib/taskQuickAdd.test.ts (U9)
+- Files removed:
+  - nenhum (código morto removido: "Clear done", `DONE_LIMIT`, `clearable`/`onClearColumn`/`.headerAction`/`.clearDone`, `.caret`, prop `onSchedule` do Week)
+- Left behind:
+  - **Mudança de regra fora da fatia** (via `lib/tasks.ts`, sem editar os arquivos):
+    - `isOverdue` replanejado também vale no CalendarView e no `agenda.ts` (a task vai para o dia do plano);
+    - `isInProgress` = só `doing` também no `agenda.ts`.
+    - O progresso dos cadernos e o período `overdue` da tool do chat seguem com o "atrasada" antigo (`overdueKind !== null`).
+  - **U20**:
+    - sem um campo no schema, não dá para distinguir Waiting dos outros status custom (ids `st_xxx`), então todos contam como abertos;
+    - o limite configurável continua adiado.
+  - **U1**:
+    - a decisão sai num modal (`useConfirm().choose`), não numa linha no rodapé;
+    - o aviso de drop sem efeito (task só com deadline → No date) não entrou na triagem.
+  - **U9**: o realce breve do chip novo não entrou. "segunda", "quarta" e "quinta" por extenso continuam valendo em qualquer posição, como propôs o relatório.
+  - **U3**: "o Week pula para a semana da task" não entrou na triagem.
+  - **U16**: o "primeiro dia de trabalho" no Review não entrou na triagem.
+  - **U24**: ocorrências geradas na keep (`useTasks()` sem opções) não copiam o corpo.
+  - **U5**: o Undo de uma recorrente concluída apaga a ocorrência gerada. Se a cópia do corpo terminar depois disso, a nota copiada fica sem task (janela de milissegundos).
+  - **U21**: o chip de resumo é o mesmo estado da List (`tasksSummaryFilter`). Trocar de visão mantém o filtro.
+  - Sem teste no app (não subi o app). Pontos para o teste manual:
+    - arrastar no Week uma task com deadline estourado (modal, Undo, card no dia);
+    - "Move all to today";
+    - "Show older";
+    - "Added … · Open";
+    - `?` dentro e fora das Tasks;
+    - Review numa semana passada, falha ao salvar e Copy;
+    - "Due today" com checkbox;
+    - recorrente com checklist concluída duas vezes.
+
+### CodeAgent — implementação inicial (Fase B, Fatia 5 — Chat principal) — 20261120023207
+- Summary: Fatia 5 (Chat principal), só os itens "Entra" da triagem, mais os pedidos extras do Coordenador (rótulos em caixa de frase, contagem de conversas por pasta, abertura de conversa com pergunta e resposta para o IA-03, hint do agente no composer). Todos foram feitos dentro do recorte; as ressalvas estão em "Left behind".
+  - **#1 (só a marca)**:
+    - a resposta cortada pela desmontagem (troca de modo) ganha a marca `interrupted: 'cut'` ("Interrupted") se já tinha texto; sem texto, vira "No response (interrupted)" com Retry, sem os três pontinhos eternos (os pontos só aparecem durante o streaming);
+    - a marca sobrevive ao remount no mesmo commit por um Set no módulo (`cutMessageIds` + `withCutMarks`), aplicado no initializer e no efeito de montagem;
+    - o cancelamento ao desmontar continua (Fase A).
+  - **#2**:
+    - `readableChatError(code, message)` em `src/lib/openrouter.ts` mapeia `OPENROUTER_KEY_MISSING`, `INVALID_MODEL`, `NETWORK_ERROR`, `STREAM_TIMEOUT`, `STREAM_ERROR` e o status HTTP que o Rust já devolve ("OpenRouter responded 402 Payment Required"): 401, 402, 429, 5xx e os outros status. 401/402/chave ausente pedem o Settings;
+    - o erro do turno fica no balão, como flag `failed: 'retry' | 'settings'` na mensagem (não mais pelo prefixo "Error:"), com Retry e, quando cabe, "Open Settings". `markTurnFailed` é idempotente (o evento de erro e a rejeição do invoke chegam os dois);
+    - a faixa global fica para o erro sem balão (chave, Tavily) e é limpa ao trocar, criar ou selecionar conversa;
+    - Retry (`takeTurnForRetry`) só na última resposta da conversa ativa: relê os documentos anexados, apaga o par e reenvia texto, imagens e documentos.
+  - **#3**: `webSearchFailed` / `kbSearchFailed` na mensagem; o MessageSources mostra "Web search failed — answered without web results." e "Couldn't search your documents — answered without them.", e o modelo recebe uma mensagem de sistema dizendo que a busca falhou.
+  - **#4**:
+    - o menu Tools e o botão Deep Research mostram o estado efetivo pelo agente da conversa: web desligada pelo agente vira "Off for <agente>" (tooltip), Tasks/Notes forçados viram "On for <agente>" travados; o contador conta o efetivo;
+    - Plan week: foi pela via "mostra que o usa" (Tasks travado em On), sem mexer no `planWeek.ts`.
+  - **#5 (versão leve)**:
+    - o cabeçalho mostra "Chat › <pasta>" e um botão com os documentos ("3 documents", "Notebook notes + 2 documents", "No documents") que abre o modal de documentos;
+    - estado vazio contextual: pasta do Mincer ("Answers use this item's summary and content."), agente (o `empty` do `chatAgentComposerHint`), pasta de caderno, pasta com documentos ("Answers use its N documents."), pasta sem documentos (com "Add documents") e conversa solta ("Answers here don't use your notes or documents…"). Saiu o "Hi! I am your assistant".
+  - **#6**:
+    - apagar uma conversa pela sidebar (`deleteConversationWithUndo`) mostra a linha "Deleted “…” · Undo" por 6 s; o Undo devolve a conversa à pasta (ou solta, se a pasta sumiu), à posição e à seleção. Anexos e respostas embutidas só saem no fim do prazo, num novo delete ou ao desmontar;
+    - "Clear all" virou "Delete all chats" (confirmação "Delete all").
+  - **#8**:
+    - `AbortController` por turno (`turnAbortRef`); o Stop aborta a web search e o deep research do pré-turno (`webSearch(…, signal)`, `runDeepResearch(…, signal)`, `throwIfAborted` entre as etapas);
+    - os status (deep research, web, RAG) são limpos no Stop e os setters ficam guardados pelo sinal, então não voltam;
+    - o Stop no pré-turno encerra o turno na UI na hora.
+  - **#9**: a resposta parada com texto ganha a marca "Stopped" (`interrupted: 'stopped'`), sem o tok/s.
+  - **#10 (parcial)**:
+    - SaveToNoteModal: busca na lista de notas (sem caixa e sem acento), notas arquivadas fora, prop opcional `onSaved`;
+    - balão: "Saved to <nota>" (título atual, clicável, abre a nota; some se a nota foi apagada), via `markMessageSavedToNote` / `savedToNote` na mensagem.
+  - **#11**: `makeNewFolder` nasce com `systemPromptMode: 'append'`. As pastas existentes, a do livro ('replace') e a do Mincer ficam como estão.
+  - **#13 (parcial)**: menu Tools em inglês (cabeçalho "Tools", aria-labels), Escape fecha o popover, e o Thinking persistido em `monet:chat-thinking`.
+  - **#14**: Phosphor no lugar dos glifos (×, ←, +, ▸), dos emoji 📁 📄 e dos SVG próprios (deep-gray/deep-green, ícones da sidebar, SystemPromptIcon → Sparkle, ScrollToBottom → CaretDown).
+  - **#15**: várias imagens coladas ficam todas (`draftImages: string[]`, `imageDataUrls` na mensagem), imagem acima de 5 MB avisa, e o erro de documento some no próximo envio e ao trocar de conversa.
+  - **#16 (parcial)**:
+    - Rename (PencilSimple) no menu da pasta e da conversa;
+    - "+" (New conversation) na coluna recolhida;
+    - cabeçalho da pasta expande com Enter/Espaço e tem `aria-expanded`;
+    - "New conversation" (solta ou na pasta) reaproveita uma conversa vazia em vez de acumular.
+  - **#17**: com web search ou deep research efetivos e sem a chave do Tavily, o Send fica parado (o rascunho não é consumido), e o aviso leva ao Settings › Web Search ou desliga o toggle. A checagem roda ao montar, ao ligar o toggle e ao focar a caixa. No `send`, a mesma falta sai antes de inserir as mensagens, na faixa com "Open Settings".
+  - **#18**: os modais de pasta (system prompt, memória e documentos) pedem "Discard changes" no Escape, no clique fora, no X e no Cancel quando há edição não salva (`DISCARD_CHANGES_CONFIRM`); botões em caixa de frase (Cancel/Save, Create notebook, Create and save, Back).
+  - **Bordas**: a faixa de erro aparece também na conversa vazia (sem duplicar a faixa da chave ausente), o Send desabilitado sem modelo diz "Select a model first" e "Select a model to send this message.", e o erro do balão é flag.
+  - **O1 (só o Retry)**: coberto em #1 e #2.
+  - **Pedidos extras**:
+    - confirmações do ChatPanel em caixa de frase: "Clear", "Delete all", "Delete", "Keep";
+    - contagem por pasta para a Library: `countChatFolderConversations(folderId: string): number` e `countReaderBookChatConversations(bookId: string): number`, exportadas de `src/hooks/useChat.ts` (leitura pura do localStorage, sem migração). A Library não foi editada;
+    - IA-03: `openConversationWithExchange(params: { folderId: string; title: string; userMessage: string; assistantMessage: string }): string` no resultado do `useChat` (cria a conversa na pasta, expande a pasta, limpa o rascunho e ativa a conversa; devolve o id). O `folderId` vem de `ensureScopedFolder({ kind: 'notebook', id, title })` na instância 'notes'. Assinatura mantida;
+    - hint do agente no composer principal (`chatAgentComposerHint`): placeholder e estado vazio; em Coach e Plan week, Enter (ou Send) com o rascunho vazio, ou só com o atalho "/coach", envia a mensagem padrão ("Check my plans" / "Plan my week").
+  - **Verificação:**
+    - `npx tsc --noEmit`: sem erros;
+    - `npm test`: 83 testes passaram e 4 falharam, todos em `src/components/Editor/formattingActions.test.ts` (arquivo novo, não rastreado, da fatia do Editor, em andamento);
+    - `npx vitest run src/lib/openrouter.test.ts`: 6 testes do mapeamento de erros passaram.
+- Files changed:
+  - src/hooks/useChat.ts
+  - src/lib/openrouter.ts (`readableChatError`)
+  - src/lib/search.ts (`signal`)
+  - src/lib/deepResearch.ts (`signal`)
+  - src/App.tsx (edição pequena: `onOpenSettings` do ChatPanel com a seção)
+  - src/components/ChatPanel/: ChatPanel.tsx/.module.css, ChatComposer.tsx/.module.css, ChatMessageBubble.tsx/.module.css, ChatSidebar.tsx/.module.css, ChatToolsMenu.tsx/.module.css, ChatClearActions.tsx, MessageSources.tsx/.module.css, SaveToNoteModal.tsx/.module.css, FolderSystemPromptModal.tsx, FolderMemoryModal.tsx, FolderDocumentSelectorModal.tsx/.module.css, ScrollToBottomButton.tsx, SystemPromptIcon.tsx
+- Files created:
+  - src/lib/openrouter.test.ts (mapeamento de erros legíveis)
+  - src/components/ChatPanel/discardChanges.ts (`DISCARD_CHANGES_CONFIRM`)
+- Files removed:
+  - src/assets/icons/deep-gray.svg
+  - src/assets/icons/deep-green.svg
+  - (código morto removido: `toolCancelledRef`, `imageDataUrl` da mensagem, componentes SVG da sidebar, `.plus`)
+- Left behind:
+  - **Fora do recorte (adiados pela triagem)**: #1 manter o turno vivo em segundo plano (O4), #7 streaming por conversa, #10 guardar a pergunta junto, #12 citações clicáveis, #13 chips de modo, #16/O6 busca nas conversas, O1 Edit & resend, O3 salvar seleção, toasts com link. Recusado: levar "Retrieval details" para o Settings.
+  - **Limites conhecidos**:
+    - os invokes do Rust (`ragRetrieve`, sub-queries, rerank) não são abortáveis; o Stop descarta o resultado (abortar no Rust é da fatia 8);
+    - as marcas de corte vivem em memória: se o app fechar antes da próxima montagem, a resposta cortada fica sem a marca;
+    - em outra janela, um balão vazio ainda em streaming aparece como "No response (interrupted)";
+    - resposta parcial com erro mostra a marca "Interrupted" no balão e o motivo na faixa;
+    - o conjunto de documentos do modal continua aplicado e salvo na hora (fora do recorte do #18);
+    - o Retry, o "Saved to" e o Undo de apagar estão ligados só no ChatPanel; o AssistantPanel não foi tocado;
+    - o Undo de apagar vale para o "Delete" da sidebar; "Delete all chats" e o delete da pasta continuam com confirmação.
+  - Sem teste no app (não subi o app). Pontos para o teste manual:
+    - trocar de modo durante uma resposta (marca e Retry);
+    - 401/402 com chave inválida ou sem crédito;
+    - Stop durante a web search e o deep research;
+    - web search ligada sem chave do Tavily;
+    - colar duas imagens, e uma acima de 5 MB;
+    - apagar uma conversa e desfazer;
+    - salvar resposta numa nota (busca, "Saved to");
+    - Escape com edição nos modais de pasta;
+    - Coach e Plan week com Enter no rascunho vazio.
+
+### CodeAgent — implementação inicial (Fase B, Fatia 2 — Editor) — 20261120023538
+- Summary: Fatia 2 (editor de notas), só os itens "Entra" da triagem, mais IA-09, IA-10, IA-11, O4, a parte da linha do IA-01 e o S3 do editor (pedido da fatia 1).
+  - **E1**: apagar o bloco de IA (menu do bloco ou "Delete" da linha do /comando) tira só a linha e o bloco da nota. A resposta fica no painel de IA, e o Ctrl+Z traz o bloco de volta. O `onRemoveResponse` saiu do `BlockGutter`, do `deleteBlockUnit` e do `CommandExtension`.
+  - **E2**: a régua da seleção perdeu Table, Image e Divider. O Toggle embrulha a seleção (`wrapSelectionInToggle`): o 1º bloco de texto vira o título e o resto vai para o corpo com a formatação. Dentro de lista, embrulha a lista inteira. Com o cursor num toggle, o mesmo botão desfaz o toggle e o título volta como parágrafo. Os testes de round-trip da Fase A seguem passando.
+  - **E3**: o botão direito abre o menu "Insert" (`InsertMenu`), com Paste e, abaixo, Link note, Date and time, Table, Image, Divider, Toggle, Diagram e Tasks block, todos com rótulo e ícone Phosphor. Os botões de formatação saíram do menu. Abre no ponto do clique (o cursor vai para lá), por portal com z-index 1100, e vira para cima perto da borda. Tem ↑↓, Enter e Esc. O bloco entra no lugar da linha vazia ou abaixo da linha do cursor (`insertBlock`). Com texto selecionado fica o menu nativo, por causa do corretor.
+  - **E4 (sem executar dentro de lista)**: a linha só fica roxa no topo da nota, onde o comando roda. Dentro de lista ou toggle aparece a dica "Commands run on their own line". Comando inválido mostra "Unknown command · type / to see the list". Sem query, aparece "<cmd> needs a query · e.g. <exemplo>". Comando de Calendar fora dele, "<cmd> works in Calendar notes". O autocomplete insere `nome␣` quando o comando pede query. Caminho e fração (`/usr/bin`, `1/2`, `/notas.md`) ficam texto comum (`isPotentialCommandLine`).
+  - **E5**: o `[[` não abre dentro de código (bloco, Mermaid ou inline), e cancelar devolve o `[[`. O `@` do Calendar só abre no começo de palavra e fora de código. O `NotePicker` foi refeito, sem o modo overlay, que não tinha uso: ↑↓ e Enter, busca sem caixa e sem acento, o caderno da nota primeiro e depois as mais recentes, nome do caderno ao lado, sem arquivadas, até 50 resultados, todos os cadernos. Ganhou portal com flip.
+  - **E6**: a popover do link (`LinkPopover`) substituiu o `window.prompt`. O clique num link mostra o endereço com Open, Edit e Remove. Ctrl+K e o botão Link da régua abrem o campo. O `https://` entra sozinho, e endereço inválido avisa "Enter a valid web address, like example.com". Ctrl+clique e Open abrem pelo `openUrl`. O editor principal usa `buildBaseExtensions(..., { linkOpenOnClick: false })`, e a Keep continua com o padrão.
+  - **E7**: Enter e ↓ no título levam ao começo do corpo. Enter no título do toggle abre o toggle e põe o cursor no corpo.
+  - **E8**: Ctrl+F sem caixa e sem acento, também quando a palavra atravessa negrito ou link. O título do toggle entra na busca (decoração de nó lida pelo `ToggleBlockView`). Ao chegar numa ocorrência dentro de toggle fechado, ele abre. No código de um Mermaid, a seleção troca o bloco para Code e a rolagem é refeita no quadro seguinte. Botões ↑ ↓ × viraram Phosphor, com atalho no title.
+  - **E9 (parcial)**: o menu do bloco tem "Turn into" (lista de tipos que abre logo abaixo: Text, Heading 1–3, Bulleted list, Numbered list, Checklist, Quote, Toggle), "Duplicate" e, por último, "Delete" (só ele em vermelho). O foco inicial fica no 1º item, ↑↓ navegam e o menu vira para cima perto da borda. "Turn into" não aparece em átomo, tabela, código, toggle nem linha de /comando. "Duplicate" não aparece no par /comando + resposta.
+  - **E10/E11/E12**: textos em inglês ("AI response", "Note title", "New tag" etc.). Glifos trocados por Phosphor: chevrons do toggle, do bloco de IA, da nota linkada e do Related content; ⏰ e ✓ do lembrete; SVGs da tag e do `EmptyEditor`; ícones da régua. Popovers do cursor com portal, z-index 1100 e flip (`useAnchoredPosition`): autocomplete, NotePicker, TimePicker (a Keep segue compatível), AddTaskPopover, Insert, link e menu do bloco. Os popovers do TaskRef subiram de 1000 para 1100.
+  - **E13**: o Related content lembra se estava aberto (`monet:related-open`). Ganhou o grupo "Linked" no topo, com o motivo ("linked in this note", "links to this note", "linked both ways"). O `scoreNotes` agora diz a direção do link.
+  - **E15 (só Expand)**: "Expand" no Mermaid abre o SVG no ImageViewer, com largura e altura tiradas do viewBox.
+  - **E16**: a data tem title explicando o Calendar e um botão X para limpar. Os placeholders são "Note title" e "New tag". Sair do campo da tag descarta o texto digitado: a tag só entra com Enter ou com o clique numa sugestão. Os botões da régua mostram o atalho no title (Ctrl+B, Ctrl+Alt+1 etc.).
+  - **Borda**: nota linkada apagada mostra "This note was deleted" com o botão "Unlink".
+  - **IA-09**: botões da linha do /comando em inglês, com rótulo e Phosphor: "Insert" (ArrowLineDown), "Remove block" (ArrowLineUp) e "Delete" (Trash). O status em andamento tem `role=status`, e o título padrão do bloco é "AI response".
+  - **IA-10**: o autocomplete vem agrupado (Understand, Review, Transform, Web, Calendar, Blocks, More). O item selecionado mostra o exemplo, e o selo "web" aparece em `required` e `withQuery`, com title diferente para cada um.
+  - **IA-11**: /planner, /coach, /tutor e /plan-week na nota mostram "<Agente> is a chat agent — open it in Chat".
+  - **IA-01 (parte da linha)**: segue o contrato da fatia 6 (`AiResponseStatus`, com `id` igual ao `commandId` do Enter). Durante `preparing` e `streaming` a linha fica roxa, com `statusText ?? 'Preparing…'` e depois "Responding…". Em `completed` fica verde, com Insert/Remove block. Em `error` usa o estilo de erro e mostra "Failed · <1ª linha>", com a mensagem inteira no title. Em `interrupted` fica cinza com "Stopped". Entre o Enter e a chegada do card aparece "Running…". O Enter roda de novo só quando a execução desta sessão falhou.
+  - **O4**: "Archive", com rótulo, no fim da linha das tags, para nota com ou sem tipo. Fica de fora a TODOS, que já tem o botão no painel dela.
+  - **S3 (parte do editor)**: sem caderno do usuário, o `EmptyEditor` oferece "New notebook" com nome digitado no lugar (Enter cria, Esc ou vazio cancela). Havendo cadernos, mostra "Pick a notebook or press Ctrl+P".
+  - **Verificação:**
+    - `npx tsc --noEmit`: sem erros;
+    - `npm test`: 8 arquivos e 87 testes passaram, inclusive o `formattingActions.test.ts` novo (toggle que embrulha a seleção, desfazer o toggle, Insert de divisória e tabela, Turn into, detecção de linha de comando e dicas, grupos do autocomplete) e o round-trip da Fase A.
+- Files changed:
+  - src/App.tsx (edições pequenas: `[[` com todas as notas, `notebooks` e `currentNotebookId`; `onArchive`; props do `EmptyEditor`; saíram o `onRemoveResponse` do editor e o `notebookNotes` sem uso)
+  - src/components/Editor/: Editor.tsx, Editor.module.css, CommandExtension.ts, commandParser.ts, PreviewMode.ts, formattingActions.ts, FormattingToolbar.tsx, HighlightPicker.tsx, BlockGutter.tsx, blockDrag.ts, extensions.ts, CommandAutocomplete.tsx/.module.css, NotePicker.tsx/.module.css, TimePicker.tsx/.module.css, AddTaskPopover.tsx/.module.css, SearchInNote.tsx, SearchHighlight.ts, ToggleBlockView.tsx, ToggleBlock.module.css, EmbedBlockView.tsx/.module.css, LinkedNoteBlockView.tsx, LinkedNoteBlock.module.css, ReminderChipView.tsx, MermaidBlockView.tsx, MermaidBlock.module.css, EmptyEditor.tsx/.module.css, TaskRef.module.css (só z-index)
+  - src/components/RelatedContent/: RelatedContent.tsx, RelatedContent.module.css, scoreNotes.ts
+- Files created:
+  - src/components/Editor/InsertMenu.tsx, InsertMenu.module.css
+  - src/components/Editor/LinkPopover.tsx, LinkPopover.module.css
+  - src/components/Editor/anchoredPosition.ts
+  - src/components/Editor/iconMarkup.ts (ícone Phosphor como HTML para os widgets do ProseMirror)
+  - src/components/Editor/formattingActions.test.ts
+- Files removed:
+  - src/components/Editor/ContextMenu.module.css
+  - (código morto removido: `insertNewFormattedLine`, `prepare`/`onPick` do HighlightPicker, modo overlay do NotePicker, `MENU_HEIGHT` e `onRemoveResponse` do BlockGutter, meta `clearMarks` e opção `onRemoveResponse` do CommandExtension, `notebookNotes` do App, uma segunda `SEARCH_TITLE_SPEC` duplicada no SearchHighlight)
+- Left behind:
+  - **TasksView (fatia 4)**: o `TaskModalEditor` ainda passa `onRemoveResponse` ao Editor. A prop ficou em `EditorProps` sem uso, com comentário, até a fatia 4 parar de passar.
+  - **NoteTypes (fatia 3)**: o `NoteTypePicker` mantém o Archive no menu dele. Com o botão novo no cabeçalho, nota com tipo tem os dois caminhos. A fatia 3 decide se tira o do menu.
+  - **Paste do menu Insert**: usa `navigator.clipboard`, porque não há plugin de clipboard do Tauri e não adicionei dependência. Se o WebView2 negar, o menu mostra "Clipboard blocked — press Ctrl+V".
+  - **Keep (KeepPanel)**: continua com `openOnClick` do Tiptap (`window.open`). A popover do link é só do editor principal.
+  - **Toggle que embrulha**: o título é texto puro (atributo do nó), então negrito ou link do 1º bloco não vão para o título.
+  - **Ctrl+F em toggle fechado**: abrir o toggle muda o `collapsed`, que é gravado no markdown (fora do desfazer), como o clique na seta.
+  - **Nota lateral (aba Open)**: o `[[` dela ainda lista só as notas do caderno dela, sem nome de caderno, porque o App passa só essas.
+  - **Fora do recorte (triagem)**: E9 mover bloco pelo teclado e "Add to Tasks" no menu do bloco; E15 alça de largura e imagem como arquivo (O5); E4 executar dentro de lista.
+  - **Teste**: nos testes (happy-dom) as node views React não montam. Com o cursor num toggle de corpo vazio, o PM relê o DOM e desfaz o toggle, por isso o teste de linha única confere a transação do wrap. No app isso não acontece, mas vale conferir no teste manual.
+  - Sem teste no app (não subi o app). Pontos para o teste manual:
+    - menu Insert: abrir perto do fim da tela, Paste com HTML, texto e imagem, Image, Tasks block, Link note;
+    - toggle que embrulha 1, 2 e N blocos, inclusive dentro de lista, e desfazer com o botão;
+    - popover do link: clique, Ctrl+K sem seleção, Ctrl+clique, endereço sem `https://` e endereço inválido;
+    - Ctrl+F com acento, com ocorrência em toggle fechado, no título do toggle e no código de um Mermaid;
+    - linha do /comando: preparing com etapa, erro, Stop, e Enter de novo depois de erro;
+    - "Turn into" em item de lista, em citação e em título;
+    - Enter e ↓ no título da nota e no título do toggle;
+    - nota linkada apagada; Expand no Mermaid; Related content com link nos dois sentidos;
+    - EmptyEditor sem nenhum caderno do usuário.
+
+### CodeReviewAgent — 20261120025145
+- Summary: revisão da Fase B, Fatias 1 (casca) e 3 (organização), mais os ajustes de integração do Orquestrador (`--text-muted`, `--dot-activity`, Archive fora do `NoteTypePicker`). tsc limpo e 87/87 no vitest. Sem crítico. Três importantes:
+  - o Dismiss do banner pode esconder uma falha de gravação que volta (`dismissedBannerKey` nunca é zerado);
+  - os modais "Merge notebook" e "Merge note" pré-selecionam o 1º item, e um Enter ao abrir funde (no Quick Notes, no caso do caderno);
+  - a TODOS ficou sem "Archive" no editor, a não ser com todas as tasks concluídas.
+
+  Mais 6 nits e 4 bugs extras.
+- Verdict: APROVADO COM RESSALVAS
+- Output: DOCS/reports/19-11-2026/reviewreport_20261120025145_shell-org.md
+
+### CodeReviewAgent — 20261120025229
+- Summary: revisão da Fase B, Fatias 4 (Tasks) e 5 (Chat principal). tsc limpo e 41/41 nos testes da fatia (`tasks`, `taskQuickAdd`, `openrouter`). Sem crítico. Dois importantes:
+  - o Retry tira a pergunta e apaga os anexos antes das checagens do `send()` (modelo, chave do OpenRouter, Tavily). Se uma delas falha, a pergunta se perde;
+  - o Undo das ações em lote nas Tasks não aparece enquanto a seleção (2 ou mais) continua, porque a barra de lote esconde o `TaskUndoBar`.
+
+  Mais 9 menores:
+  - mensagens antigas com "Error:" sem migração para `failed`;
+  - Retry numa resposta em streaming em outra janela;
+  - Waiting fora da agenda da IA e do bloco "this week";
+  - Calendar sem a regra do My Day;
+  - `wasLate` do "Due today";
+  - aviso do Tavily rechecado só no foco;
+  - Retry sem imagens depois de reabrir;
+  - nits.
+- Verdict: APROVADO COM RESSALVAS
+- Output: DOCS/reports/19-11-2026/reviewreport_20261120025229_tasks-chat.md
+
+### CodeReviewAgent — 20261120025347
+- Summary: revisão da Fase B, Fatias 7 (Library e Reader) e 8 (Mincer, Knowledge Base, Docs, Settings, com o Rust), mais o ajuste do Orquestrador no `Library.tsx` (`countReaderBookChatConversations`). tsc limpo e 87/87 no vitest. Não rodei cargo, pela regra do exe com integridade Baixa no sandbox. Os 5 comandos Rust novos estão corretos: não seguram lock longo no `monet.db` nem travam a thread async, e a chave não volta ao front. Sem crítico nem importante. 6 menores:
+  - a toolbar de seleção não tem limite de baixo e pode sair da área visível (P6);
+  - o balão do chat do Reader não usa `message.failed` e mostra pontinhos eternos numa resposta vazia parada;
+  - os dispositivos aparecem como "not found" no 1º poll da gravação;
+  - o título digitado nos últimos 300 ms se perde ao desmontar a tela;
+  - na KB, uma falha no meio de vários arquivos deixa o aviso "Use it in" errado;
+  - o "Open Settings" da KB não relê os cadernos com documentos.
+
+  Mais 1 observação: o Fit width pode oscilar com a barra de rolagem. Mais 1 bug extra: um item apagado do Mincer pode voltar como "Recovered recording" quando o `remove_dir_all` falha.
+- Verdict: APROVADO COM RESSALVAS
+- Output: DOCS/reports/19-11-2026/reviewreport_20261120025347_reader-mincer.md
+
+### CodeReviewAgent — 20261120030434
+- Summary: revisão da Fase B, Fatias 2 (editor) e 6 (IA contextual), com o ajuste do Orquestrador (saída do `onRemoveResponse` do `Editor` e do `TaskModalEditor`). O `tsc` passou, e o vitest passou com 87 de 87. Os casos de borda foram reproduzidos num vitest isolado no scratchpad. Achados:
+  - [crítico] quando o toggle embrulha um bloco de código com linha em branco, o código vira o título. O `data-title` é gravado com `\n\n`, e a nota reabre vazia, sem o que vinha depois do toggle. A correção é codificar a quebra de linha no `escapeAttr` e usar como título só parágrafo ou heading;
+  - [importante] o wrap descarta o link, a marca e os nós inline do 1º bloco;
+  - [importante] o "Turn into" num item com subitens converte os subitens e deixa o item como estava;
+  - [importante] o Ctrl+K do link não chega ao editor, porque é o atalho global da keep;
+  - [importante] na keep, a recarga ao exibir corre contra a gravação de cada tecla: pode criar uma 2ª nota do dia ou tirar da tela o texto digitado;
+  - 9 nits: o Ctrl+F abre e grava toggles enquanto se digita, código morto do card de erro sem `commandId`, o Retry com `commandId` novo, a query crua no card de erro, o Settings do Assistant e o onboarding, o Duplicate com o mesmo `commandId`, o Toggle dentro de toggle, o destaque do título e o `[[` da nota lateral.
+- Verdict: REPROVADO
+- Output: DOCS/reports/19-11-2026/reviewreport_20261120030434_editor-ia.md
+
+### CodeAgent — ajuste final (Fase B, App.tsx, casca e organização) — 20261120032120
+- Summary: rodada final dos achados do `reviewreport_20261120025145_shell-org.md` (menos I3 e N2, já corrigidos pelo Coordenador), dos itens em `App.tsx` do `reviewreport_20261120030434_editor-ia.md` e do achado 6 do `reviewreport_20261120025347_reader-mincer.md`.
+  - **I1 (banner)**: um efeito sobre `bannerKey` zera o `dismissedBannerKey` quando o banner fica sem erros. Uma falha nova com a mesma frase volta a aparecer.
+  - **I2 (modais de mesclar)**: no `NotebookPickerModal` com `destructive` e no `MergeNoteModal`, nada vem escolhido com a busca vazia. Vale o item clicado ou navegado com as setas, ou o único resultado de uma busca digitada. O botão fica desabilitado e o Enter não faz nada sem escolha. Motivo do resultado único: digitar até sobrar um nome é uma escolha explícita e mantém o fluxo "digita e Enter", enquanto o Enter logo ao abrir ou com vários resultados não funde nada. O "Move to another notebook…" segue com o 1º item pré-selecionado.
+  - **N1**: o texto de excluir caderno diz "All its tasks, including done ones, move to Quick Notes."
+  - **N3**: o `updateDef` devolve o boolean do `persist`. Se a gravação falha, o `createOption` tira a opção nova da memória e lança "Failed to save the option.". O "New option…" da nota e o do modal de tipos mostram o erro e não aplicam o id.
+  - **N4**: o `handleUndoResolveMark` devolve `'undone' | 'changed' | 'failed'` (tipo `UndoResolveResult`, exportado do `MarksView`). A linha mostra "Couldn't undo: the note changed since the mark was resolved." ou "Couldn't undo: the note could not be saved.".
+  - **N5**: o `ConfirmModal` usa `useId` nos ids do título e da mensagem. Uma pilha no módulo (`openConfirms`) faz só a última confirmação aberta tratar o Esc. As de baixo deixam a tecla passar.
+  - **N6**: o menu "Assign to subject" fecha ao rolar fora dele (escuta em captura no `document`; a rolagem do próprio menu não conta) e no `resize`. É mais simples que reposicionar e não deixa o menu solto da linha.
+  - **Ctrl+P**: não abre com um modal (`[aria-modal="true"]`) aberto. Com o palette aberto, fecha como antes.
+  - **Excluir caderno**: se mover as tasks para o Quick Notes falha, aparece "Failed to move the notebook's tasks to Quick Notes. The notebook was kept." e nada é excluído.
+  - **Mesclar notas**: se as tasks falham depois de o destino receber o texto, o destino volta ao conteúdo e às tags de antes, e uma nova tentativa não duplica o texto. Se essa volta também falha, a mensagem diz que o destino já tem o texto da origem, e as notas são relidas.
+  - **Retry do card de IA**: com texto parcial (card `interrupted` com resposta), pergunta antes ("Replace the partial response?", Replace/Cancel). O comando roda de novo com o mesmo id do card, que é o `commandId` da linha: o `prepare` troca o card no lugar e o `canRunAgain` acha a resposta, então o Enter na linha verde não roda de novo. Card parado ainda no preparo (`interrupted` sem `model`) é a exceção. O preparo antigo pode estar rodando e o `useAi` descarta esse id (`stoppedRef`), então o card sai e o Retry usa um id novo, como antes.
+  - **Card de erro**: `cardQuery` (`def.takesQuery ? query : ''`) vale no `prepare`, no `start` e nas 10 chamadas de `addErrorCard` do `handleCommand`. O `runCommand` normaliza do mesmo jeito no catch. A query do prompt (`buildUserMessage`, web e RAG) não mudou.
+  - **Settings pelo Assistant**: o evento `assistant-open-settings` chama o `handleOpenSettings` por ref (`openSettingsRef`), com a guarda do onboarding.
+  - **`[[` da nota lateral**: recebe todas as notas (menos a própria), `notebooks` e `currentNotebookId`, como o editor principal.
+  - **KB, "Open Settings"**: chama `refreshNotebooksWithDocs()` ao fechar a KB, como o fechar normal.
+  - **Verificação:**
+    - `npx tsc --noEmit`: nada nos arquivos deste recorte. Na 1ª rodada houve 3 erros em `KeepPanel.tsx` e, na 2ª, 3 erros em `ChatPanel.tsx` e `useChat.ts` (`takeTurnForRetry`, `retryDrop`), dos agentes em andamento.
+    - `npm test`: 9 arquivos e 93 testes passaram.
+    - O app não foi rodado.
+- Files changed:
+  - src/App.tsx
+  - src/components/NotebookPickerModal/NotebookPickerModal.tsx
+  - src/components/Sidebar/MergeNoteModal.tsx
+  - src/components/Sidebar/Sidebar.tsx
+  - src/components/NotebookList/NotebookList.tsx
+  - src/hooks/useNoteTypes.ts
+  - src/components/MarksView/MarksView.tsx
+  - src/components/ConfirmModal/ConfirmModal.tsx
+- Files created:
+  - nenhum
+- Files removed:
+  - nenhum
+- Left behind:
+  - **Retry de card parado no preparo**: o vínculo com a linha se perde só nesse caso, e o Enter na linha volta a rodar o comando. Fechar a lacuna pede mexer no `useAi.ts` (fora do recorte): liberar o id do `stoppedRef` quando o preparo antigo terminar. Só limpar o id no `prepare` não basta, porque o preparo antigo, se ainda estiver rodando, chamaria o `start` com o mesmo id.
+  - **Settings pelo Assistant**: abre na seção padrão, como o `handleOpenSettings`. O review sugeriu abrir na seção OpenRouter quando o clique vem da faixa da chave, mas o evento não diz de onde veio.
+  - **Respostas de IA da nota apagada no merge**: ficam como estão (decisão do autor).
+
+### CodeAgent — ajuste final (Fase B — Reader, Mincer, KB e keep) — 20261120032141
+- Summary: rodada final dos achados 1, 3, 4 e 5 e da observação do Fit width do `reviewreport_20261120025347_reader-mincer.md`, do bug extra do `jobs.rs`, do I4 da keep (`reviewreport_20261120030434_editor-ia.md`) e da pendência U24 na keep.
+  - **Achado 1 (toolbar de seleção)**: o `PlacementBounds` ganhou `bottom`. Quando a toolbar não cabe acima, ela vai para baixo da seleção, mas o `top` fica preso em `[top + 8, bottom − altura − 8]`. Isso cobre a seleção que começa acima do topo visível e termina colada na borda de baixo, e também a área menor que a toolbar, que fica no topo. No PDF, `bottom = areaRect.top + area.clientHeight − wrapRect.top`; no EPUB, `area.clientHeight`. Teste novo: `toolbarPlacement.test.ts` (6 casos).
+  - **Achado 3 (dispositivos logo depois do Start)**: ao entrar na gravação, a linha mostra "Detecting devices…" até o status trazer os dois nomes. Um nome ainda vazio só vira "no output device found"/"no microphone found" depois de 3 s do `startedAt` (`DEVICE_OPEN_GRACE_MS`, que cobre o 1º e o 2º poll). Resolvido só no front, sem mexer no `record.rs`.
+  - **Achado 4 (título no desmonte)**: o título que ainda está no debounce fica num ref (`pendingTitleRef`), e um cleanup que só roda no desmonte o envia na hora. O ref é zerado quando o timer dispara e quando a gravação acaba, então nenhum título antigo vai para uma gravação nova.
+  - **Achado 5 (KB, vários arquivos)**: o `setVisibilityEach` liga ou desliga cada documento sem parar na 1ª falha. O aviso guarda só os documentos ligados de fato (`docs`, com nome), e a caixa desfaz só esses. Na falha parcial, o rótulo diz "N could not be linked." e o erro lista os arquivos ("Could not use it in <caderno>:"), somado aos erros do upload em vez de substituí-los. Sem nenhum ligado, a caixa fica desmarcada e tenta de novo com todos. No toggle, uma falha parcial deixa a caixa desmarcada ("todos ligados" é falso), e o erro diz quais não mudaram. A tabela já reflete o banco, porque cada sucesso dispara o `NOTEBOOK_VISIBILITY_CHANGED_EVENT`, então não entrou o `loadVisibility` extra.
+  - **Fit width**: `scrollbar-gutter: stable` na `.pageArea` do PDF.
+  - **`jobs.rs` (delete)**: a pasta sai antes da linha. `NotFound` segue; outro erro do `remove_dir_all` retorna "Could not delete the item's files: … Try again in a moment." e mantém a linha, então nenhuma pasta com áudio fica sem item para voltar no boot como "Recovered recording". A política de órfãs da spec (`mincer.md`, Retomada) segue igual. O `MincerItemView` já mostra o erro do delete.
+  - **Keep (I4)**:
+    - o `doLoadOrCreateDayNote` e o `doReloadOpenNote` guardam o `writeSeqRef` antes da leitura. Se houve gravação daqui durante ela, ou se ainda há gravação pendente, a versão local fica e o editor não recebe `setContent`;
+    - a 1ª edição de um rascunho não grava na hora: ela entra no `doMaterializeDraft`, na mesma fila (`loadChainRef`), que procura no banco a nota do dia com o mesmo título;
+    - se a nota do dia já existe, o texto digitado vai para o fim dela, ela fica aberta (cursor no fim) e é gravada. Senão, o rascunho vira a nota. As teclas digitadas durante a checagem ficam no `materializingRef`, que também conta como edição pendente;
+    - o "Open in Monet" com rascunho usa o mesmo caminho e espera a fila antes de abrir.
+  - **U24 na keep**: o `useTasks` da keep recebe `onOccurrenceCreated`. Módulo novo `src/lib/taskBodyNote.ts`: `copyBodyNoteForOccurrence` lê a nota-corpo do banco e não copia corpo vazio. Ele cria a cópia com `uncheckChecklist` no subject "Tasks" (`ensureTasksSubject`, a mesma regra do App, só com `storage`) e devolve a nota. A keep liga o `noteId` com `updateTaskFresh`, e o `trackNoteWrite` avisa a main para reler as notas ao perder o foco. O `App.tsx` não foi tocado e pode migrar o `ensureTasksSubject`/`copyBodyNoteRef` para esse módulo depois.
+  - **Verificação:**
+    - `npx tsc --noEmit`: sem erros nos arquivos deste recorte. Ficaram 4 erros em `src/hooks/useChat.ts` e `src/components/ChatPanel/ChatPanel.tsx` (`takeTurnForRetry`, `RetryTurn`), do agente do chat em andamento;
+    - `npm test`: 9 arquivos e 93 testes passaram;
+    - `cargo check` (src-tauri): limpo.
+- Files changed:
+  - src/components/Reader/toolbarPlacement.ts
+  - src/components/Reader/Reader.tsx
+  - src/components/Reader/EpubReader.tsx
+  - src/components/Reader/Reader.module.css
+  - src/components/Mincer/MincerNew.tsx
+  - src/components/KnowledgeBaseModal/KnowledgeBaseModal.tsx
+  - src/components/KeepPanel/KeepPanel.tsx
+  - src-tauri/src/mincer/jobs.rs
+- Files created:
+  - src/components/Reader/toolbarPlacement.test.ts
+  - src/lib/taskBodyNote.ts
+- Files removed:
+  - nenhum
+- Left behind:
+  - a spec `DOCS/specs/mincer.md` (fora do recorte) pode ganhar 2 frases: "Detecting devices…" na linha de Dispositivos e, na Retomada, que o delete apaga a pasta antes da linha e mantém o item se a pasta não sai;
+  - o App pode migrar o `ensureTasksSubject`/`copyBodyNoteRef` para o `src/lib/taskBodyNote.ts`;
+  - uma 2ª nota do dia criada pela própria main (fora da keep) não é evitada aqui.
+
+### CodeAgent — ajuste final (Fase B, Editor) — 20261120032521
+- Summary: rodada final dos itens do Editor do `reviewreport_20261120030434_editor-ia.md` (C1, I1, I2, I3, N1, N2, N3, N7 e N8). Os do `App.tsx` e da keep ficaram com os outros agentes.
+  - **C1 (toggle com linha em branco no título)**: o `escapeAttr` do `ToggleBlock.ts` codifica `\n` como `&#10;` e `\r` como `&#13;`, e a tag de abertura fica numa linha só. O `parseHTML` lê o atributo pelo DOM, que decodifica as entidades. No wrap, o título só sai de paragraph ou heading. Com código, Mermaid, lista ou imagem no 1º bloco, o título fica vazio e tudo vai para o corpo.
+  - **I1 (wrap perde link, marca e nós inline)**: `toggleTitleFrom` no `formattingActions.ts`. Se o 1º bloco tem nó inline que não é `hardBreak` (task ref, lembrete, data…) ou as marcas `link`, `noteMark` ou `relatedTerm`, ele fica no corpo e o título fica vazio. Senão, o título é o texto, com o `hardBreak` virando espaço e os espaços repetidos juntados. Negrito e itálico se perdem no título. O `relatedTerm` entrou além do pedido: é dado (liga notas no Related content) e sumiria do mesmo jeito.
+  - **I2 (Turn into com subitens)**: o `turnBlockInto` converte só o parágrafo do item. O `liftItemContent` tira o conteúdo do item da lista, no lugar dele, e parte a lista em volta. Os subitens ficam logo depois do parágrafo, e a lista deles recebe o resto da lista quando é do mesmo tipo, porque senão o markdown juntaria as duas ao reabrir. Tudo é um passo só, e um Ctrl+Z desfaz a conversão inteira. Num item aninhado com subitens, o parágrafo fica dentro do item pai, depois do texto dele, e os subitens seguem logo abaixo. O `canTurnInto` só aceita citação com um parágrafo ou heading, e o menu esconde o Turn into nas outras.
+  - **I3 (link)**: o atalho passa para Ctrl+Shift+K. Antes, o grep em `src/` e `src-tauri/` mostrou que ele estava livre. Os atalhos globais são Ctrl+M, Ctrl+K e Ctrl+Alt+R, e o registro do Windows exige os mesmos modificadores. Nenhum handler do front nem keymap do Tiptap usa Shift+K. Mudaram os tooltips (`formattingActions.ts`, `LinkPopover.tsx`) e os comentários do `Editor.tsx`, do `LinkPopover.tsx` e do `FormattingToolbar.tsx`. Os do Ctrl+K da keep ficaram.
+  - **N1 (busca abre toggles)**: digitar não abre nem grava toggles. Se a ocorrência atual está num toggle fechado, a rolagem vai até o cabeçalho dele. O toggle só abre na navegação (Enter, Shift+Enter, setas) e ao fechar a busca com a ocorrência atual escondida, porque o foco volta para ela. O `revealMatch` também abre os toggles fechados em volta de uma ocorrência de título.
+  - **N2**: o `ToggleBlockView` marca o título como `current` quando uma das ocorrências dele é a atual.
+  - **N3 (código morto)**: cada remoção foi conferida com grep antes.
+    - No `CommandExtension.ts` saíram o `CommandRun.at` e o fallback do `runResponse`. As 12 chamadas de `addErrorCard` passam o `commandId`.
+    - No `Editor.tsx` saiu o `at: Date.now()`.
+    - No `useAi.ts`, o `commandId` do `addErrorCard` ficou obrigatório e saíram o fallback `nanoid()`, o import dele e o `hasActiveStream`, que ninguém lia.
+  - **N7 (Duplicate)**: o `duplicateBlockUnit` copia sem os blocos de IA (`withoutEmbeds`, recursivo). A linha do /comando fica na cópia como texto. Contêiner que fica vazio, como um toggle só com a resposta, ganha o parágrafo vazio que o schema pede. Assim nenhuma cópia leva o `commandId` da original. O par de topo continua sem Duplicate no menu.
+  - **N8**: o botão Toggle com a seleção num toggle tem o title "Unwrap toggle: the title becomes a paragraph" (`buttonTitle`).
+  - **Testes** (`formattingActions.test.ts`):
+    - wrap de código com linha em branco, com round-trip;
+    - 1º bloco com link, marca ou task ref;
+    - quebra de linha no título;
+    - round-trip de título com `\n\n`, aspas e `\r`;
+    - title do botão dentro do toggle;
+    - Turn into H1 em item com subitens, com um Ctrl+Z e o round-trip;
+    - checklist com subitens virando item numerado;
+    - citação com vários blocos;
+    - Duplicate de toggle com o par e de toggle só com o bloco de IA.
+  - **Verificação:**
+    - `npx tsc --noEmit`: sem erros;
+    - `npm test`: 9 arquivos e 101 testes passaram;
+    - o app não foi rodado.
+- Files changed:
+  - src/components/Editor/ToggleBlock.ts
+  - src/components/Editor/formattingActions.ts
+  - src/components/Editor/formattingActions.test.ts
+  - src/components/Editor/FormattingToolbar.tsx
+  - src/components/Editor/Editor.tsx
+  - src/components/Editor/LinkPopover.tsx
+  - src/components/Editor/CommandExtension.ts
+  - src/components/Editor/blockDrag.ts
+  - src/components/Editor/SearchInNote.tsx
+  - src/components/Editor/ToggleBlockView.tsx
+  - src/hooks/useAi.ts
+- Files created:
+  - nenhum
+- Files removed:
+  - nenhum
+- Left behind:
+  - **`src/lib/noteFileText.ts`** (fora do recorte): o `decodeEntities` não trata `&#10;` nem `&#13;`. Um título com quebra de linha sairia com a entidade no texto do RAG e da IA. O wrap não gera mais esse título, então o caso é raro: um título colado com quebra. A correção é decodificar os dois.
+  - **`ShortcutsOverlay`** (fora do recorte): pode ganhar "Ctrl+Shift+K — Link" na seção do editor.
+  - **Turn into em item aninhado**: com subitens, ao reabrir, a lista do item pai vira loose (linha em branco entre os itens). O texto e a hierarquia ficam. No item aninhado simples, o comportamento é o de antes e não mudou: o `clearNodes` do Tiptap leva o parágrafo e os itens irmãos de baixo para o topo da nota. Também ali nada se perde, mas a hierarquia muda.
+
+### CodeAgent — ajuste final (Fase B, Tasks e Chat) — 20261120033105
+- Summary: rodada final do `reviewreport_20261120025229_tasks-chat.md` inteiro e do achado 2 do `reviewreport_20261120025347_reader-mincer.md` (ReaderChatPanel), com as decisões do Coordenador.
+  - **Retry (achados 1 e 9)**:
+    - `takeTurnForRetry` virou `prepareRetry`, que só lê: devolve texto, imagens, documentos (relidos do disco) e um `RetryTurn` (`questionId`, `answerId`, `attachedDocs`);
+    - o `send()` recebe `opts.retry` e passa pelas mesmas checagens do Send (modelo, chave do OpenRouter, Tavily com web efetiva). Só depois tira o par antigo, junto com a inserção do novo, e limpa a linha de tempos dele. Se uma checagem falha, a conversa fica igual e o erro aparece na faixa, como no Send;
+    - os anexos não são apagados nem regravados: a pergunta nova reaproveita os `path` da original;
+    - o histórico, o `ragHistory` e o "reuse" do RAG leem a conversa sem o par antigo (`convMessages`);
+    - o `send()` confere que o par ainda é o fim da conversa ativa;
+    - `imageCount` gravado na pergunta. Se as imagens não estão mais em memória, o Retry pergunta "The images from the original message are no longer available. Retry without them?" (Cancel / Retry). Se a pergunta só tinha imagens, o Retry fica desabilitado com esse texto no title (`retryDisabledReason` no balão, `.saveBtn:disabled`).
+  - **Undo do lote (achado 2)**: depois de uma ação no lote, a barra do Undo toma o lugar da barra de lote pelo prazo dele. A seleção fica, então `s`, `z` etc. seguem valendo para ela, e a barra de lote volta com Undo, X ou o fim dos 6 s. Ctrl/Shift+clique e Shift+seta dispensam um Undo anterior, para ele não esconder a barra de uma seleção nova.
+  - **"Error:" antigo (achado 3)**: o `parseConversations` marca `failed: 'retry'` na resposta do assistant que começa com "Error:" e não tem `failed`, `model` nem `interrupted`. Toda resposta do modelo grava o `model`, então uma resposta legítima que começa com "Error:" não é pega. O content fica como o das falhas novas, e o balão tira o prefixo na exibição.
+  - **Streaming em outra janela (achado 4)**:
+    - quem corta grava a marca. Na desmontagem com turno em andamento (no stream ou na busca), a resposta ganha `interrupted: 'cut'`, também vazia. A marca vai direto para o localStorage e, pelo `cutMessageIds`, para a instância que monta no mesmo commit;
+    - `emptyAnswerState` no `ChatMessageBubble`: vazia e com a marca = "No response (interrupted)" com Retry. Vazia e sem a marca = "Responding in another window…", sem Retry;
+    - uma vazia sem a marca com mais de 15 min (app fechado no meio do turno) volta a "No response (interrupted)".
+  - **Waiting sem data (achado 5)**: `isStarted` (aberta e fora de To do) no `tasks.ts`. Ele substitui o `isInProgress` na agenda da IA (`selectAgenda`) e no bloco "this week" (`filterTasksForBlock`). O `isInProgress` das Tasks continua só `doing`. 3 testes novos no `tasks.test.ts`.
+  - **Calendar (achado 6)**:
+    - a task aberta no My Day de hoje sai do bloco Overdue e entra nas tasks de hoje, e o dia de hoje fica marcado no mês;
+    - a lista do dia usa a cor do atraso (vermelho/amarelo), como o card da List.
+  - **`wasLate` (achado 7)**: mesma regra do `isOverdue`. Deadline estourado só conta sem do date ou com do date antes de hoje.
+  - **Aviso do Tavily (achado 8)**: `saveTavilyKey`/`clearTavilyKey` emitem `TAVILY_KEY_CHANGED_EVENT` (`src/lib/search.ts`). O composer recheca nesse evento, no `focus` e no `visibilitychange` da janela, além do foco da caixa.
+  - **Nits**:
+    - `httpStatusOf` só aceita "OpenRouter responded NNN", "status NNN" e "HTTP NNN". 2 testes novos no `openrouter.test.ts`;
+    - `kbSearchFailed` só liga quando todas as buscas nos documentos do turno falharam (RAG automático e `search_knowledge_base`), e é desligado se uma busca seguinte dá certo. O `flagSearchFailed` virou `flagWebSearchFailed`;
+    - o `turnAbortRef` nasce antes do 1º await do `send()`, junto com o `assistantId`. O `send()` para antes de inserir se a desmontagem abortar durante as checagens. O ref sai no done, no erro, no tool call sem handler, no `failOnAssistant`, no fim só com memória e nas saídas por chave ausente;
+    - o título no `TaskModalEditor` (sem nota-corpo) virou controlado (`TaskTitleInput`) e acompanha uma renomeação feita por fora, a não ser que haja texto digitado.
+  - **ReaderChatPanel (achado 2 do reader-mincer)**: o balão usa o `emptyAnswerState` (pontinhos só com o turno rodando) e o `message.failed`. O erro aparece na caixa de erro do `ChatMessageBubble.module.css`, sem Save to note, Copy e Sources. Os estilos vêm por import do CSS do balão, sem editar o CSS do Reader.
+  - **Verificação:**
+    - `npx tsc --noEmit`: sem erros;
+    - `npm test`: 9 arquivos e 105 testes passaram;
+    - o app não foi rodado.
+- Files changed:
+  - src/hooks/useChat.ts
+  - src/lib/openrouter.ts
+  - src/lib/openrouter.test.ts
+  - src/lib/search.ts
+  - src/lib/tasks.ts
+  - src/lib/tasks.test.ts
+  - src/lib/agenda.ts
+  - src/components/ChatPanel/ChatPanel.tsx
+  - src/components/ChatPanel/ChatMessageBubble.tsx
+  - src/components/ChatPanel/ChatMessageBubble.module.css
+  - src/components/ChatPanel/ChatComposer.tsx
+  - src/components/TasksView/TaskBatchBar.tsx
+  - src/components/TasksView/useTaskKeyboard.ts
+  - src/components/TasksView/DueTodayBlock.tsx
+  - src/components/TasksView/TaskModalEditor.tsx
+  - src/components/CalendarView/CalendarView.tsx
+  - src/components/Reader/ReaderChatPanel.tsx
+- Files created:
+  - nenhum
+- Files removed:
+  - nenhum (código morto: o ramo `kbSearchFailed` do `flagSearchFailed` e o delete/regravação dos anexos no Retry)
+- Left behind:
+  - pergunta gravada antes do `imageCount` não sabe que tinha imagens. O Retry dela reenvia só o texto, sem aviso, como antes;
+  - o "Responding in another window…" vale por até 15 min para uma resposta vazia sem marca. Nesse prazo, depois de fechar o app no meio do turno, o Retry não aparece;
+  - várias instâncias do chat na mesma janela continuam sem sincronizar entre si (last-write-wins, como antes). A marca de corte gravada direto pode ser sobrescrita por uma instância que continua montada, e volta na próxima montagem pelo `cutMessageIds`;
+  - o `NotesChatPanel` (fora do recorte) mostra o content cru da resposta, então segue com "Error: …" nas falhas, como antes;
+  - o AssistantPanel continua sem Retry.
+
+### Orchestrator — encerramento — 20261120034500
+- Summary: as 8 fatias da Fase B foram implementadas. Integração do Orquestrador:
+  - a Library passou a usar `countReaderBookChatConversations`;
+  - `--text-muted` foi para `#9494ad` (≥ 4,5:1 em todos os fundos) e `--text-secondary` para `#a2a2ae` (mantém o degrau de ~1,17:1);
+  - `--dot-activity` saiu;
+  - o Archive saiu do `NoteTypePicker`, e o "Archive" do editor vale também na TODOS;
+  - a prop sem uso `onRemoveResponse` saiu.
+- Revisão da Fase B em 4 recortes: editor-ia REPROVADO (toggle com linha em branco esvaziava a nota); shell-org, tasks-chat e reader-mincer APROVADO COM RESSALVAS. Os 4 codeAgents de ajuste final corrigiram todos os achados.
+- Depois deles, o Orquestrador:
+  - decodificou `&#10;`/`&#13;` no `decodeEntities` do `noteFileText`;
+  - pôs o Ctrl+Shift+K (link) no `ShortcutsOverlay`;
+  - pôs no spec do Mincer o delete com a pasta primeiro e o "Detecting devices…".
+- Verificação final: `tsc --noEmit` limpo; `npm test` com 9 arquivos e 105 testes; `cargo test` com 75 passed e 3 ignored; `npm run build` ok. O exe de dev segue com integridade Média. O app não foi aberto.
+- Inputs:
+  - DOCS/reports/19-11-2026/uxtriage_20261119224845.md
+  - os 4 review reports da Fase B
+- Decision: trabalho concluído, sem commit, aguardando o teste do autor.
+- Decisões tomadas pelo Orquestrador na revisão:
+  - o link do editor vai para Ctrl+Shift+K, e o Ctrl+K global continua com a keep;
+  - Waiting sem data volta à agenda da IA e ao bloco "this week";
+  - o Calendar segue a regra do My Day;
+  - o Retry do card de IA pergunta antes de substituir o texto parcial;
+  - o "Responding in another window…" volta a "No response (interrupted)" depois de 15 min.
+- Pendências conhecidas:
+  - Retry de card de IA parado no preparo perde o vínculo com a linha (pede um token de execução entre App e `useAi`);
+  - o Settings aberto pelo Assistant abre na seção padrão;
+  - o `NotesChatPanel` ainda mostra "Error: …" nas falhas, e o AssistantPanel não tem Retry;
+  - "Used in" da KB conta só cadernos;
+  - progresso do caderno e o "overdue" do chat contam o deadline vencido já replanejado (proposital).
+- Decisões do autor ainda abertas: as do Task Report (respostas de IA órfãs, `is_external`, pipelines do RAG, custódia da chave do Tavily, BrowserStorage, política de erro parcial, retenção do Mincer).
+- Next step: teste do autor; depois, commit.

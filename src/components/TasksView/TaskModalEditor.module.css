@@ -6,6 +6,30 @@
   padding-top: var(--pad-modal);
 }
 
+.titleInput {
+  display: block;
+  box-sizing: border-box;
+  width: calc(100% - 2 * var(--pad-content-x));
+  margin: 0 var(--pad-content-x) var(--space-2);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: var(--space-1);
+  font-family: inherit;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  outline: none;
+}
+
+.titleInput:hover {
+  border-color: var(--border);
+}
+
+.titleInput:focus {
+  border-color: var(--accent-task);
+}
+
 .noBodyText {
   margin: 0 var(--pad-content-x);
   font-size: 12px;

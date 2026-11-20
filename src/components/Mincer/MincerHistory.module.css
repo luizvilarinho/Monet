@@ -21,13 +21,75 @@
 }
 
 .list {
-  list-style: none;
   margin: 0;
   padding: 0 var(--space-2) var(--pad-panel);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
+  gap: var(--space-3);
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.groupLabel {
+  margin: 0;
+  padding: 0 var(--space-2);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted, #7c7c93);
+}
+
+.groupList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
   gap: var(--space-0);
+}
+
+.recordingSlot {
+  padding: 0 var(--space-2) var(--space-2);
+}
+
+.recordingRow {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1h) var(--space-2);
+  border: 1px solid color-mix(in srgb, var(--accent-danger, #e05555) 40%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent-danger, #e05555) 8%, transparent);
+  color: var(--text-primary, #ddddf1);
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+  cursor: pointer;
+}
+
+.recordingRow:focus-visible {
+  outline: 2px solid var(--accent, #7b6ed4);
+  outline-offset: -2px;
+}
+
+.recordDot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-danger, #e05555);
+  animation: recordPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes recordPulse {
+  50% {
+    opacity: 0.3;
+  }
 }
 
 .row,
@@ -94,7 +156,8 @@
 
 .statusMuted,
 .statusError,
-.statusNew {
+.statusNew,
+.statusAttention {
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
@@ -116,4 +179,12 @@
 
 .statusError {
   color: var(--accent-danger, #e05555);
+}
+
+.statusAttention {
+  padding: 0 var(--space-1h);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent-warn, #ef9f27) 18%, transparent);
+  color: var(--accent-warn, #ef9f27);
+  font-weight: 500;
 }

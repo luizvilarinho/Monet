@@ -37,6 +37,25 @@
   flex-shrink: 0;
 }
 
+/* "#Física · 12 notes": o nome corta, a contagem fica. */
+.headerTitle {
+  display: flex;
+  min-width: 0;
+  white-space: nowrap;
+  gap: var(--space-1);
+}
+
+.headerTag {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary, #a0a0b8);
+}
+
+.headerCount {
+  flex-shrink: 0;
+}
+
 .headerBtn {
   background: transparent;
   border: none;

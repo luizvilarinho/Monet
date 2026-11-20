@@ -1,9 +1,10 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
-import { Tag, X } from '@phosphor-icons/react'
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
+import { Plus, Tag, X } from '@phosphor-icons/react'
 import { CALENDAR_NOTEBOOK_ID } from '../../lib/calendar'
 import { notesFolderDocId } from '../../lib/documents'
 import { clipContextStart, type NoteMarkEntry } from '../../lib/noteMarks'
 import {
+  filterSuggestions,
   markLabelToken,
   normalizeSearch,
   parseSearchQuery,
@@ -12,12 +13,14 @@ import {
   searchNotes,
   searchTasks,
   typeToken,
+  type FilterKind,
+  type FilterSuggestion,
   type MarkSearchResult,
   type NoteSearchResult,
 } from '../../lib/noteSearch'
 import { RAG_REWRITE_MODEL_KEY, ragRetrieve } from '../../lib/rag'
-import { isOpen, isTaskBodyNote, statusColor, statusName, todosTitleOf, type TodosInfo } from '../../lib/tasks'
-import type { Note, Notebook, NoteType, Task, TaskStatusDef } from '../../types'
+import { isOpen, isTaskBodyNote, QUICK_NOTES_NAME, statusColor, statusName, todosTitleOf, type TodosInfo } from '../../lib/tasks'
+import type { MetadataDef, Note, Notebook, NoteType, Task, TaskStatusDef } from '../../types'
 import { TypeIcon } from '../NoteTypes/TypeIcon'
 import { TypeEyebrow } from '../NoteTypes/TypeEyebrow'
 import styles from './SearchPalette.module.css'
@@ -36,6 +39,10 @@ interface SearchPaletteProps {
   notebooks?: Notebook[]
   notes: Note[]
   noteTypes: NoteType[]
+  // Propriedades dos tipos: os valores entram na busca.
+  noteDefs?: MetadataDef[]
+  // Notas abertas por último, a mais recente primeiro ("Recent").
+  recentNoteIds?: string[]
   // Tags e rótulos de marca existentes (filtros `tag:` e `mark:`), os mais
   // usados primeiro nos rótulos.
   tags?: string[]
@@ -46,6 +53,11 @@ interface SearchPaletteProps {
   // "Search by meaning" (RAG): só com chave e fora dos cadernos com IA desligada.
   hasApiKey: boolean
   disabledNotebookIds: Set<string>
+  // "Create note" quando nada casa: no caderno do `#`, senão no
+  // `newNoteNotebookId` (o caderno ativo ou o Quick Notes), com o tipo do
+  // `type:` e a tag do `tag:`.
+  newNoteNotebookId?: string
+  onCreateNote?: (title: string, scope: { notebookId: string; typeId: string | null; tag: string | null }) => void
 }
 
 interface MeaningHit {
@@ -60,6 +72,7 @@ type SearchResult =
   | { kind: 'task'; task: Task }
   | { kind: 'meaning' }
   | ({ kind: 'meaningNote' } & MeaningHit)
+  | { kind: 'create' }
 
 // Resultado do RAG da consulta `key` (filtros + texto); outra consulta descarta.
 interface MeaningState {
@@ -75,6 +88,22 @@ const MEANING_EXCERPT_CHARS = 120
 // Rótulos clicáveis na linha de chips quando o filtro de marcas está ligado.
 const MAX_LABEL_CHIPS = 6
 const NO_STRINGS: string[] = []
+const NO_DEFS: MetadataDef[] = []
+
+const FILTER_KIND_NAME: Record<FilterKind, string> = {
+  notebook: 'notebook',
+  tag: 'tag',
+  type: 'type',
+  markLabel: 'mark label',
+}
+
+// Palavra da consulta onde está o cursor (o autocomplete dos filtros age nela).
+function wordAt(query: string, caret: number): { start: number; end: number; word: string } {
+  const start = query.lastIndexOf(' ', caret - 1) + 1
+  const next = query.indexOf(' ', caret)
+  const end = next === -1 ? query.length : next
+  return { start, end, word: query.slice(start, end) }
+}
 
 function noteLabel(note: Note): string | null {
   if (note.archivedAt) return 'archived'
@@ -102,6 +131,8 @@ export function SearchPalette({
   notebooks = [],
   notes,
   noteTypes,
+  noteDefs = NO_DEFS,
+  recentNoteIds = NO_STRINGS,
   tags = NO_STRINGS,
   markLabels = NO_STRINGS,
   tasks,
@@ -109,11 +140,15 @@ export function SearchPalette({
   statuses,
   hasApiKey,
   disabledNotebookIds,
+  newNoteNotebookId,
+  onCreateNote,
 }: SearchPaletteProps) {
   const [query, setQuery] = useState('')
+  const [caret, setCaret] = useState(0)
   const [debounced, setDebounced] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [meaning, setMeaning] = useState<MeaningState | null>(null)
+  const listId = useId()
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   // Rola o item selecionado para a vista só quando a seleção vem do teclado
@@ -136,6 +171,7 @@ export function SearchPalette({
   useEffect(() => {
     if (!open) {
       setQuery('')
+      setCaret(0)
       setDebounced('')
       setSelectedIndex(0)
       setMeaning(null)
@@ -158,9 +194,36 @@ export function SearchPalette({
   const hasFilters =
     parsed.notebookId !== null || parsed.typeId !== null || parsed.archived || parsed.marked || parsed.tag !== null
 
+  // Autocomplete do filtro na palavra do cursor (`#`, `tag:`, `type:`,
+  // `mark:`). Some quando a palavra já é o único nome possível.
+  const caretWord = wordAt(query, Math.min(caret, query.length))
+  const suggestions = useMemo(() => {
+    const found = filterSuggestions(caretWord.word, notebooks, noteTypes, vocab)
+    if (!found) return null
+    const only = found.items.length === 1 ? found.items[0] : null
+    if (only && normalizeSearch(only.token) === normalizeSearch(caretWord.word)) return null
+    return found
+  }, [caretWord.word, notebooks, noteTypes, vocab])
+
+  // Troca a palavra do cursor pelo token do filtro (com espaço depois).
+  const completeFilter = useCallback(
+    (s: FilterSuggestion) => {
+      const { start, end } = wordAt(query, Math.min(caret, query.length))
+      const next = `${query.slice(0, start)}${s.token} ${query.slice(end).trimStart()}`
+      const pos = start + s.token.length + 1
+      setQuery(next)
+      setCaret(pos)
+      setTimeout(() => {
+        inputRef.current?.focus()
+        inputRef.current?.setSelectionRange(pos, pos)
+      }, 0)
+    },
+    [query, caret]
+  )
+
   const results = useMemo<SearchResult[]>(() => {
     if (!open) return []
-    if (!text && !hasFilters) return recentNotes(searchable).map((r) => ({ kind: 'note', ...r }))
+    if (!text && !hasFilters) return recentNotes(searchable, 10, recentNoteIds).map((r) => ({ kind: 'note', ...r }))
     // Com `has:mark`/`mark:` os resultados são as marcas (uma linha por
     // marca), não notas/tasks.
     if (parsed.marked) {
@@ -194,6 +257,7 @@ export function SearchPalette({
       archived: parsed.archived,
       tag: parsed.tag,
       typeNames,
+      defs: noteDefs,
     })
       .filter((r) => !(isTaskBodyNote(r.note) && taskNoteIds.has(r.note.id)))
       .map((r) => ({ kind: 'note', ...r }))
@@ -202,7 +266,7 @@ export function SearchPalette({
       ...foundNotes,
       ...foundTasks.map((task): SearchResult => ({ kind: 'task', task })),
     ]
-  }, [open, searchable, notebooks, tasks, todosById, text, hasFilters, parsed.notebookId, parsed.typeId, parsed.archived, parsed.marked, parsed.markLabel, parsed.tag, typeNames])
+  }, [open, searchable, recentNoteIds, notebooks, tasks, todosById, text, hasFilters, parsed.notebookId, parsed.typeId, parsed.archived, parsed.marked, parsed.markLabel, parsed.tag, typeNames, noteDefs])
 
   // Escopo semântico: pastas de notas dos cadernos com IA ligada (só a do
   // `#Caderno`, se houver).
@@ -220,13 +284,20 @@ export function SearchPalette({
   const meaningKeyRef = useRef(meaningKey)
   meaningKeyRef.current = meaningKey
 
+  // Nada casou: "Create note" com o texto, no caderno do `#` (senão o padrão
+  // de quem abriu), depois da busca por significado (o Enter continua nela).
+  const createNotebookId = parsed.notebookId ?? newNoteNotebookId ?? null
+  const canCreate =
+    !!onCreateNote && !!createNotebookId && !!text && !parsed.marked && !parsed.archived && results.length === 0
+
   const items = useMemo<SearchResult[]>(() => {
-    if (!canSearchMeaning) return results
+    const create: SearchResult[] = canCreate ? [{ kind: 'create' }] : []
+    if (!canSearchMeaning) return [...results, ...create]
     if (currentMeaning?.status === 'done' && currentMeaning.hits.length > 0) {
-      return [...results, ...currentMeaning.hits.map((h): SearchResult => ({ kind: 'meaningNote', ...h }))]
+      return [...results, ...currentMeaning.hits.map((h): SearchResult => ({ kind: 'meaningNote', ...h })), ...create]
     }
-    return [...results, { kind: 'meaning' }]
-  }, [results, canSearchMeaning, currentMeaning])
+    return [...results, { kind: 'meaning' }, ...create]
+  }, [results, canSearchMeaning, currentMeaning, canCreate])
 
   // A seleção volta ao topo quando a consulta muda, não num reload dos dados
   // (tasks de outra janela, index sync); só é limitada ao tamanho da lista.
@@ -301,7 +372,9 @@ export function SearchPalette({
       if (!currentMeaning || currentMeaning.status === 'error') void runMeaningSearch()
       return
     }
-    if (result.kind === 'notebook') {
+    if (result.kind === 'create') {
+      if (createNotebookId) onCreateNote?.(text, { notebookId: createNotebookId, typeId: parsed.typeId, tag: parsed.tag })
+    } else if (result.kind === 'notebook') {
       onSelectNotebook?.(result.notebook.id)
     } else if (result.kind === 'task') {
       onSelectTask(result.task.id)
@@ -313,7 +386,7 @@ export function SearchPalette({
       else if (note.notebookId) onSelectNote(note.notebookId, note.id, note.subjectId)
     }
     onClose()
-  }, [onSelectNotebook, onSelectNote, onSelectMark, onSelectTask, onOpenNoteOnSide, onClose, currentMeaning, runMeaningSearch])
+  }, [onSelectNotebook, onSelectNote, onSelectMark, onSelectTask, onOpenNoteOnSide, onClose, currentMeaning, runMeaningSearch, onCreateNote, createNotebookId, text, parsed.typeId, parsed.tag])
 
   useEffect(() => {
     if (!open) return
@@ -321,6 +394,9 @@ export function SearchPalette({
       if (e.key === 'Escape') {
         e.preventDefault()
         onClose()
+      } else if (e.key === 'Tab' && !e.shiftKey && suggestions && suggestions.items.length > 0) {
+        e.preventDefault()
+        completeFilter(suggestions.items[0])
       } else if (e.key === 'ArrowDown') {
         e.preventDefault()
         scrollToSelectedRef.current = true
@@ -342,7 +418,7 @@ export function SearchPalette({
     }
     document.addEventListener('keydown', handleKeyDown, true)
     return () => document.removeEventListener('keydown', handleKeyDown, true)
-  }, [open, items, selectedIndex, onClose, selectResult, query, debounced])
+  }, [open, items, selectedIndex, onClose, selectResult, query, debounced, suggestions, completeFilter])
 
   useEffect(() => {
     if (!enterPendingRef.current || query !== debounced) return
@@ -352,18 +428,22 @@ export function SearchPalette({
     if (result) selectResult(result, onSide)
   }, [items, query, debounced, selectResult])
 
-  const removeChip = (raw: string) => {
-    setQuery((q) => withoutToken(q, raw))
+  // Consulta trocada por um chip: o cursor vai para o fim (o autocomplete
+  // segue a palavra do cursor).
+  const replaceQuery = (next: string) => {
+    setQuery(next)
+    setCaret(next.length)
     inputRef.current?.focus()
   }
+
+  const removeChip = (raw: string) => replaceQuery(withoutToken(query, raw))
 
   // Chip de tipo alterna `type:<nome>` no texto (um tipo por vez).
   const toggleType = (type: NoteType) => {
     const active = liveParsed.chips.find((c) => c.kind === 'type')
     let next = active ? withoutToken(query, active.raw) : query.trim()
     if (liveParsed.typeId !== type.id) next = `${next} ${typeToken(type)}`.trim()
-    setQuery(next ? `${next} ` : '')
-    inputRef.current?.focus()
+    replaceQuery(next ? `${next} ` : '')
   }
 
   // Atalho do filtro de marcas (botão sempre visível na linha de chips): liga
@@ -377,8 +457,7 @@ export function SearchPalette({
     } else {
       next = `${next} has:mark`.trim()
     }
-    setQuery(next ? `${next} ` : '')
-    inputRef.current?.focus()
+    replaceQuery(next ? `${next} ` : '')
   }
 
   // Rótulo de marca alterna `mark:<rótulo>` (um por vez).
@@ -386,8 +465,7 @@ export function SearchPalette({
     const active = liveParsed.chips.find((c) => c.kind === 'markLabel')
     let next = active ? withoutToken(query, active.raw) : query.trim()
     if (!active || active.label !== label) next = `${next} ${markLabelToken(label)}`.trim()
-    setQuery(next ? `${next} ` : '')
-    inputRef.current?.focus()
+    replaceQuery(next ? `${next} ` : '')
   }
 
   if (!open) return null
@@ -411,17 +489,70 @@ export function SearchPalette({
         ? `Search by meaning failed: ${currentMeaning.error ?? 'unknown error'}`
         : 'Nothing found by meaning'
 
+  const createNotebookName =
+    (createNotebookId && notebookMap.get(createNotebookId)) || (createNotebookId ? QUICK_NOTES_NAME : '')
+  const createType = parsed.typeId ? typeById.get(parsed.typeId) : undefined
+  const optionId = (i: number) => `${listId}-${i}`
+
+  function suggestionChip(s: FilterSuggestion, i: number) {
+    const kindClass =
+      s.kind === 'type' ? styles.typeChip : s.kind === 'markLabel' ? styles.markChip : ''
+    return (
+      <button
+        key={`${s.kind}-${i}-${s.label}`}
+        type="button"
+        className={`${styles.chip} ${kindClass} ${i === 0 ? styles.suggestActive : ''}`}
+        style={s.type?.color ? ({ '--type-color': s.type.color } as CSSProperties) : undefined}
+        title={i === 0 ? `${s.token} (Tab)` : s.token}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => completeFilter(s)}
+      >
+        {s.kind === 'tag' && <Tag size={11} aria-hidden />}
+        {s.type && <TypeIcon name={s.type.icon} size={11} />}
+        <span>{s.kind === 'notebook' ? `#${s.label}` : s.label}</span>
+      </button>
+    )
+  }
+
   return (
     <div className={styles.overlay} onMouseDown={onClose}>
-      <div className={styles.panel} role="dialog" aria-modal="true" onMouseDown={(e) => e.stopPropagation()}>
+      <div className={styles.panel} role="dialog" aria-modal="true" aria-label="Search" onMouseDown={(e) => e.stopPropagation()}>
         <input
           ref={inputRef}
           className={styles.input}
           type="text"
           placeholder="Search… (#notebook, tag:, type:, is:archived, has:mark)"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setQuery(e.target.value)
+            setCaret(e.target.selectionStart ?? e.target.value.length)
+          }}
+          onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
+          role="combobox"
+          aria-label="Search notes"
+          aria-autocomplete="list"
+          aria-expanded={items.length > 0}
+          aria-controls={listId}
+          aria-activedescendant={items[selectedIndex] ? optionId(selectedIndex) : undefined}
         />
+        {suggestions && (
+          <div className={styles.suggestions} role="group" aria-label="Filter suggestions">
+            {suggestions.items.length === 0 ? (
+              <span className={styles.suggestEmpty}>
+                {suggestions.query
+                  ? `No ${FILTER_KIND_NAME[suggestions.kind]} matches “${suggestions.query}”`
+                  : `No ${FILTER_KIND_NAME[suggestions.kind]}s yet`}
+              </span>
+            ) : (
+              <>
+                {suggestions.items.map(suggestionChip)}
+                <span className={styles.suggestHint}>
+                  <kbd>Tab</kbd> to complete
+                </span>
+              </>
+            )}
+          </div>
+        )}
         <div className={styles.chips}>
             {notebookChip && (
               <button
@@ -509,11 +640,11 @@ export function SearchPalette({
               )
             })}
         </div>
-        <div ref={listRef} className={styles.list}>
+        <div ref={listRef} id={listId} className={styles.list} role="listbox" aria-label="Results">
           {results.length === 0 && (text || hasFilters) && (
-            <div className={styles.empty}>No results found</div>
+            <div className={styles.empty} role="presentation">No results found</div>
           )}
-          {showRecent && <div className={styles.sectionHeader}>Recent</div>}
+          {showRecent && <div className={styles.sectionHeader} role="presentation">Recent</div>}
           {items.map((result, i) => {
             const prev = items[i - 1]
             const header =
@@ -527,6 +658,9 @@ export function SearchPalette({
             const className = `${styles.item} ${i === selectedIndex ? styles.itemActive : ''}`
             const itemProps = {
               'data-index': i,
+              id: optionId(i),
+              role: 'option',
+              'aria-selected': i === selectedIndex,
               className,
               onMouseEnter: () => setSelectedIndex(i),
               // Sem tirar o foco do input (a linha "Search by meaning" não fecha a palette).
@@ -563,7 +697,27 @@ export function SearchPalette({
                     <div className={`${styles.itemTitle} ${isOpen(task) ? '' : styles.itemClosed}`}>
                       {task.title || 'Untitled'}
                     </div>
-                    {todosTitle && <span className={styles.itemMeta}>TODOS {todosTitle}</span>}
+                    {todosTitle && <span className={styles.itemAside}>TODOS {todosTitle}</span>}
+                  </div>
+                </div>
+              )
+            } else if (result.kind === 'create') {
+              key = 'create'
+              body = (
+                <div {...itemProps}>
+                  <div className={styles.itemMeta}>
+                    {createType && <TypeEyebrow type={createType} />}
+                    <span className={styles.itemNotebook}>{createNotebookName}</span>
+                    {parsed.tag && (
+                      <span className={styles.itemTag}>
+                        <Tag size={10} aria-hidden />
+                        {parsed.tag}
+                      </span>
+                    )}
+                  </div>
+                  <div className={styles.itemTitleRow}>
+                    <Plus size={13} className={styles.createIcon} aria-hidden />
+                    <div className={styles.itemTitle}>Create note “{text}”</div>
                   </div>
                 </div>
               )
@@ -624,6 +778,11 @@ export function SearchPalette({
                         {result.tag}
                       </span>
                     )}
+                    {result.kind === 'note' && result.property && (
+                      <span className={styles.itemProp} title={`${result.property.name}: ${result.property.value}`}>
+                        {result.property.name}: {result.property.value}
+                      </span>
+                    )}
                     {label && <span className={styles.itemLabel}>{label}</span>}
                   </div>
                   {result.kind === 'meaningNote' ? (
@@ -642,7 +801,7 @@ export function SearchPalette({
             }
             return (
               <Fragment key={key}>
-                {header && <div className={styles.sectionHeader}>{header}</div>}
+                {header && <div className={styles.sectionHeader} role="presentation">{header}</div>}
                 {body}
               </Fragment>
             )

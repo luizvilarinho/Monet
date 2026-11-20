@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { nanoid } from 'nanoid'
 import type { AiResponse, AiSource } from '../types'
 import { storage } from '../storage'
 import {
@@ -21,17 +20,60 @@ export interface StartRequestInput {
   sources?: AiSource[]
 }
 
+export interface PrepareRequestInput {
+  noteId: string
+  command: string
+  query: string
+  commandId: string
+  statusText: string
+}
+
+export interface UseAiOptions {
+  // Uma resposta da nota aberta virou erro (preparo, envio ou stream).
+  onError?: (response: AiResponse) => void
+}
+
 type ResponsesByNote = Record<string, AiResponse[]>
 
 interface StreamMeta {
   noteId: string
 }
 
-export function useAi(activeNoteId: string | null) {
+export function useAi(activeNoteId: string | null, options: UseAiOptions = {}) {
   const [byNote, setByNote] = useState<ResponsesByNote>({})
   const streamsRef = useRef<Map<string, StreamMeta>>(new Map())
   const byNoteRef = useRef<ResponsesByNote>({})
   byNoteRef.current = byNote
+  // Cards parados com o Stop durante o preparo: o start e o erro que chegarem
+  // depois (o preparo continua no App) não fazem nada.
+  const stoppedRef = useRef<Set<string>>(new Set())
+  const activeNoteIdRef = useRef(activeNoteId)
+  activeNoteIdRef.current = activeNoteId
+  const onErrorRef = useRef(options.onError)
+  onErrorRef.current = options.onError
+
+  const notifyError = useCallback((response: AiResponse) => {
+    if (response.noteId === activeNoteIdRef.current) onErrorRef.current?.(response)
+  }, [])
+
+  // Troca a resposta `id` (em qualquer nota) pelo resultado do updater.
+  const replaceResponse = useCallback(
+    (id: string, updater: (r: AiResponse) => AiResponse | null) => {
+      setByNote((prev) => {
+        for (const [noteId, list] of Object.entries(prev)) {
+          const idx = list.findIndex((r) => r.id === id)
+          if (idx < 0) continue
+          const updated = updater(list[idx])
+          if (!updated) return prev
+          const next = list.slice()
+          next[idx] = updated
+          return { ...prev, [noteId]: next }
+        }
+        return prev
+      })
+    },
+    []
+  )
 
   const updateResponse = useCallback(
     (requestId: string, updater: (r: AiResponse) => AiResponse) => {
@@ -101,6 +143,7 @@ export function useAi(activeNoteId: string | null) {
         finalizeResponse(requestId, hasPartial ? 'interrupted' : 'error', {
           response: hasPartial ? current!.response : message,
         })
+        if (current && !hasPartial) notifyError({ ...current, status: 'error', response: message })
       })
       if (cancelled) {
         chunk()
@@ -114,7 +157,7 @@ export function useAi(activeNoteId: string | null) {
       cancelled = true
       unlisteners.forEach((u) => u())
     }
-  }, [updateResponse, finalizeResponse])
+  }, [updateResponse, finalizeResponse, notifyError])
 
   useEffect(() => {
     if (!activeNoteId) return
@@ -123,14 +166,49 @@ export function useAi(activeNoteId: string | null) {
       .getResponses(activeNoteId)
       .then((list) => {
         setByNote((prev) => {
-          if (prev[activeNoteId]) return prev
-          return { ...prev, [activeNoteId]: list }
+          // Um card criado antes da leitura terminar (Enter logo ao abrir a
+          // nota) fica, junto com as respostas gravadas.
+          const local = prev[activeNoteId]
+          if (!local) return { ...prev, [activeNoteId]: list }
+          const ids = new Set(local.map((r) => r.id))
+          return { ...prev, [activeNoteId]: [...local, ...list.filter((r) => !ids.has(r.id))] }
         })
       })
       .catch((err) => console.error('failed to load ai responses', err))
   }, [activeNoteId])
 
   const responses = activeNoteId ? byNote[activeNoteId] ?? [] : []
+
+  // Card no Enter, antes do preparo do contexto (agenda, web, RAG): o usuário
+  // vê o pedido e a etapa enquanto o App monta a mensagem.
+  const prepare = useCallback(
+    ({ noteId, command, query, commandId, statusText }: PrepareRequestInput) => {
+      const response: AiResponse = {
+        id: commandId,
+        noteId,
+        command,
+        query,
+        model: '',
+        response: '',
+        status: 'preparing',
+        statusText,
+        createdAt: Date.now(),
+        commandId,
+      }
+      setByNote((prev) => ({
+        ...prev,
+        [noteId]: [response, ...(prev[noteId] ?? []).filter((r) => r.id !== commandId)],
+      }))
+    },
+    []
+  )
+
+  const setPrepareStatus = useCallback(
+    (commandId: string, statusText: string) => {
+      replaceResponse(commandId, (r) => (r.status === 'preparing' ? { ...r, statusText } : null))
+    },
+    [replaceResponse]
+  )
 
   const start = useCallback(
     async ({
@@ -144,6 +222,8 @@ export function useAi(activeNoteId: string | null) {
       sources,
     }: StartRequestInput) => {
       const id = commandId
+      if (stoppedRef.current.has(id)) return id
+      const prepared = (byNoteRef.current[noteId] ?? []).find((r) => r.id === id)
       const response: AiResponse = {
         id,
         noteId,
@@ -152,15 +232,20 @@ export function useAi(activeNoteId: string | null) {
         model,
         response: '',
         status: 'streaming',
-        createdAt: Date.now(),
+        createdAt: prepared?.createdAt ?? Date.now(),
         commandId,
         sources: sources && sources.length > 0 ? sources : undefined,
       }
       streamsRef.current.set(id, { noteId })
-      setByNote((prev) => ({
-        ...prev,
-        [noteId]: [response, ...(prev[noteId] ?? [])],
-      }))
+      // O card do preparo vira o do streaming, no mesmo lugar.
+      setByNote((prev) => {
+        const list = prev[noteId] ?? []
+        const idx = list.findIndex((r) => r.id === id)
+        if (idx < 0) return { ...prev, [noteId]: [response, ...list] }
+        const next = list.slice()
+        next[idx] = response
+        return { ...prev, [noteId]: next }
+      })
       try {
         // Rastreio dos prompts enviados ao modelo ao acionar slash commands.
         // Útil para depuração e auditoria do que está sendo enviado.
@@ -178,9 +263,11 @@ export function useAi(activeNoteId: string | null) {
           userMessage,
         })
       } catch (err) {
+        // Parado com o Stop durante o envio: o card já está como interrompido.
+        if (!streamsRef.current.has(id)) return id
         streamsRef.current.delete(id)
         const message =
-          err instanceof Error ? err.message : String(err ?? 'erro desconhecido')
+          err instanceof Error ? err.message : String(err ?? 'unknown error')
         const finalResponse: AiResponse = {
           ...response,
           status: 'error',
@@ -197,59 +284,40 @@ export function useAi(activeNoteId: string | null) {
         storage.saveResponse(finalResponse).catch((e) => {
           console.error('failed to persist error response', e)
         })
+        notifyError(finalResponse)
       }
       return id
     },
-    []
+    [notifyError]
   )
 
-  const cancelForNote = useCallback((noteId: string) => {
-    const toCancel: string[] = []
-    for (const [rid, meta] of streamsRef.current.entries()) {
-      if (meta.noteId === noteId) toCancel.push(rid)
+  // Stop do card: no preparo, o envio não acontece; no streaming, cancela e
+  // fica o texto parcial. Os dois viram `interrupted` e são gravados.
+  const stopResponse = useCallback((id: string) => {
+    const streaming = streamsRef.current.has(id)
+    if (streaming) {
+      streamsRef.current.delete(id)
+      cancelOpenRouterStream(id).catch((e) => console.error('failed to cancel stream', e))
+    } else {
+      stoppedRef.current.add(id)
     }
-    for (const rid of toCancel) {
-      const meta = streamsRef.current.get(rid)
-      if (!meta) continue
-      streamsRef.current.delete(rid)
-      cancelOpenRouterStream(rid).catch((e) =>
-        console.error('failed to cancel stream', e)
+    replaceResponse(id, (r) => {
+      if (r.status !== 'preparing' && r.status !== 'streaming') return null
+      const updated: AiResponse = { ...r, status: 'interrupted', statusText: undefined }
+      storage.saveResponse(updated).catch((err) =>
+        console.error('failed to persist interrupted response', err)
       )
-      setByNote((prev) => {
-        const list = prev[noteId] ?? []
-        const idx = list.findIndex((r) => r.id === rid)
-        if (idx < 0) return prev
-        const current = list[idx]
-        const hasPartial = current.response.length > 0
-        if (!hasPartial) {
-          const next = list.slice()
-          next.splice(idx, 1)
-          return { ...prev, [noteId]: next }
-        }
-        const updated: AiResponse = { ...current, status: 'interrupted' }
-        const next = list.slice()
-        next[idx] = updated
-        storage.saveResponse(updated).catch((err) =>
-          console.error('failed to persist interrupted response', err)
-        )
-        return { ...prev, [noteId]: next }
-      })
-    }
-  }, [])
+      return updated
+    })
+  }, [replaceResponse])
 
-  const previousNoteRef = useRef<string | null>(null)
-  useEffect(() => {
-    const prev = previousNoteRef.current
-    if (prev && prev !== activeNoteId) {
-      cancelForNote(prev)
-    }
-    previousNoteRef.current = activeNoteId
-  }, [activeNoteId, cancelForNote])
-
+  // Erro antes do stream: o card do preparo vira o card de erro (no mesmo
+  // lugar e com o id que a linha do editor conhece).
   const addErrorCard = useCallback(
-    (noteId: string, command: string, query: string, message: string) => {
+    (noteId: string, command: string, query: string, message: string, commandId: string) => {
+      if (stoppedRef.current.has(commandId)) return
       const response: AiResponse = {
-        id: nanoid(),
+        id: commandId,
         noteId,
         command,
         query,
@@ -257,19 +325,30 @@ export function useAi(activeNoteId: string | null) {
         response: message,
         status: 'error',
         createdAt: Date.now(),
+        commandId,
       }
-      setByNote((prev) => ({
-        ...prev,
-        [noteId]: [response, ...(prev[noteId] ?? [])],
-      }))
+      setByNote((prev) => {
+        const list = prev[noteId] ?? []
+        const idx = list.findIndex((r) => r.id === response.id)
+        if (idx < 0) return { ...prev, [noteId]: [response, ...list] }
+        const next = list.slice()
+        next[idx] = { ...response, createdAt: list[idx].createdAt }
+        return { ...prev, [noteId]: next }
+      })
       storage.saveResponse(response).catch((err) =>
         console.error('failed to persist error card', err)
       )
+      notifyError(response)
     },
-    []
+    [notifyError]
   )
 
   const removeResponse = useCallback((responseId: string) => {
+    if (streamsRef.current.has(responseId)) {
+      streamsRef.current.delete(responseId)
+      cancelOpenRouterStream(responseId).catch((e) => console.error('failed to cancel stream', e))
+    }
+    stoppedRef.current.add(responseId)
     setByNote((prev) => {
       const next: ResponsesByNote = {}
       for (const [noteId, list] of Object.entries(prev)) {
@@ -285,7 +364,13 @@ export function useAi(activeNoteId: string | null) {
     })
   }, [])
 
-  const hasActiveStream = responses.some((r) => r.status === 'streaming')
-
-  return { responses, start, addErrorCard, hasActiveStream, removeResponse }
+  return {
+    responses,
+    prepare,
+    setPrepareStatus,
+    start,
+    stopResponse,
+    addErrorCard,
+    removeResponse,
+  }
 }

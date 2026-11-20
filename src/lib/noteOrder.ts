@@ -9,7 +9,11 @@ export function loadOrder(key: string): string[] {
 }
 
 export function saveOrder(key: string, ids: string[]): void {
-  localStorage.setItem(key, JSON.stringify(ids))
+  try {
+    localStorage.setItem(key, JSON.stringify(ids))
+  } catch (err) {
+    console.warn('failed to save order', key, err)
+  }
 }
 
 // Shorthands for notes

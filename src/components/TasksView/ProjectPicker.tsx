@@ -11,7 +11,7 @@ interface ProjectPickerProps {
 
 const NEW_NOTEBOOK = '__new__'
 
-// Seletor de projeto (= caderno). Controlado: "+ New notebook…" troca o select
+// Seletor de projeto (= caderno). Controlado: "New notebook…" troca o select
 // por um input de nome; quem usa decide quando confirmar (Enter/botão) e
 // quando cancelar (Esc). O Calendar nunca é projeto.
 export function ProjectPicker({ notebooks, value, onChange }: ProjectPickerProps) {
@@ -44,7 +44,7 @@ export function ProjectPicker({ notebooks, value, onChange }: ProjectPickerProps
             {nb.name || 'unnamed'}
           </option>
         ))}
-      <option value={NEW_NOTEBOOK}>+ New notebook…</option>
+      <option value={NEW_NOTEBOOK}>New notebook…</option>
     </select>
   )
 }

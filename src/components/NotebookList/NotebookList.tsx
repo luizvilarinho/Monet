@@ -14,8 +14,8 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import {
-  ArrowRight,
   ArrowSquareOut,
+  ArrowsMerge,
   Books,
   CalendarBlank,
   CaretRight,
@@ -32,8 +32,10 @@ import {
   Plus,
   PlusCircle,
   SidebarSimple,
-  X,
+  Stack,
+  Trash,
 } from '@phosphor-icons/react'
+import { getVersion } from '@tauri-apps/api/app'
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { countNotebookChatConversations } from '../../hooks/useChat'
 import { useConfirm } from '../../hooks/useConfirm'
@@ -67,6 +69,59 @@ function writeCollapsed(key: string, value: boolean) {
   } catch {
     // sem storage: o estado vale só até recarregar
   }
+}
+
+// Linha clicável da coluna: Enter (ou espaço) faz o mesmo que o clique. Só
+// quando o foco está na própria linha (os botões dela tratam a tecla).
+function activateOnKey(handler: () => void) {
+  return (e: React.KeyboardEvent<HTMLElement>) => {
+    if (e.target !== e.currentTarget) return
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      handler()
+    }
+  }
+}
+
+// Campo inline de criação (caderno ou subject): Enter cria, Esc cancela, e o
+// blur cria se houver nome (como o renomear). Nome vazio não cria.
+function CreateInput({
+  className,
+  placeholder,
+  onCommit,
+  onCancel,
+}: {
+  className: string
+  placeholder: string
+  onCommit: (name: string) => void
+  onCancel: () => void
+}) {
+  const [value, setValue] = useState('')
+  const doneRef = useRef(false)
+  function finish(commit: boolean) {
+    if (doneRef.current) return
+    doneRef.current = true
+    const name = value.trim()
+    if (commit && name) onCommit(name)
+    else onCancel()
+  }
+  return (
+    <input
+      autoFocus
+      className={className}
+      value={value}
+      placeholder={placeholder}
+      aria-label={placeholder}
+      onChange={(e) => setValue(e.target.value)}
+      onBlur={() => finish(true)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') finish(true)
+        if (e.key === 'Escape') finish(false)
+        e.stopPropagation()
+      }}
+      onClick={(e) => e.stopPropagation()}
+    />
+  )
 }
 
 function TaskProgressBadge({ progress }: { progress: NotebookTaskProgress }) {
@@ -137,6 +192,9 @@ function SortableNotebookItem({
         if (editing?.id === nb.id) return
         onSelect(nb.id)
       }}
+      onKeyDown={activateOnKey(() => onSelect(nb.id))}
+      tabIndex={0}
+      aria-current={isActive ? 'page' : undefined}
       onDoubleClick={(e) => {
         if ((e.target as HTMLElement).closest('button')) return
         onStartEdit(nb.id, nb.name)
@@ -189,7 +247,7 @@ function SortableNotebookItem({
             onClick={(e) => { e.stopPropagation(); onSelect(nb.id); onOpenDocuments(nb.id) }}
             onDoubleClick={(e) => e.stopPropagation()}
             aria-label={`documents for notebook ${nb.name}`}
-            title={hasVisibleDocs ? 'notebook documents (active)' : 'notebook documents'}
+            title={hasVisibleDocs ? 'Notebook documents (active)' : 'Notebook documents'}
             type="button"
           >
             <FileText size={13} aria-hidden />
@@ -198,20 +256,21 @@ function SortableNotebookItem({
             className={styles.rowMove}
             onClick={(e) => { e.stopPropagation(); onMoveNotebook(nb.id) }}
             onDoubleClick={(e) => e.stopPropagation()}
-            aria-label={`move notebook ${nb.name || 'unnamed'} to another notebook`}
-            title="move to another notebook"
+            aria-label={`merge notebook ${nb.name || 'unnamed'} into another notebook`}
+            title="Merge into another notebook…"
             type="button"
           >
-            <ArrowRight size={13} aria-hidden />
+            <ArrowsMerge size={13} aria-hidden />
           </button>
           <button
             className={styles.rowDelete}
             onClick={(e) => { e.stopPropagation(); onDelete(nb.id) }}
             onDoubleClick={(e) => e.stopPropagation()}
             aria-label={`delete notebook ${nb.name}`}
+            title="Delete notebook…"
             type="button"
           >
-            <X size={12} weight="bold" aria-hidden />
+            <Trash size={12} aria-hidden />
           </button>
         </span>
       )}
@@ -265,6 +324,9 @@ function SortableSubjectItem({
         if (editing?.id === subject.id) return
         onSelect(subject.id)
       }}
+      onKeyDown={activateOnKey(() => onSelect(subject.id))}
+      tabIndex={0}
+      aria-current={isActive ? 'page' : undefined}
       onDoubleClick={(e) => {
         if ((e.target as HTMLElement).closest('button')) return
         onStartEdit(subject.id, subject.name)
@@ -325,9 +387,10 @@ function SortableSubjectItem({
             onClick={(e) => { e.stopPropagation(); onDelete(subject.id) }}
             onDoubleClick={(e) => e.stopPropagation()}
             aria-label={`delete subject ${subject.name}`}
+            title="Delete subject…"
             type="button"
           >
-            <X size={11} weight="bold" aria-hidden />
+            <Trash size={11} aria-hidden />
           </button>
         </span>
       )}
@@ -339,7 +402,8 @@ export interface NotebookListProps {
   notebooks: Notebook[]
   activeId: string | null
   onSelect: (id: string | null) => void
-  onCreate: () => void
+  // Criação inline: o nome vem do campo da própria coluna (nunca vazio).
+  onCreate: (name: string) => void
   onDelete: (id: string) => void
   onMoveNotebook: (sourceId: string, destNotebookId: string) => void
   onRename: (id: string, name: string) => void
@@ -386,7 +450,8 @@ export interface NotebookListProps {
   subjects: Subject[]
   activeSubjectId: string | null
   onSelectSubject: (id: string | null) => void
-  onCreateSubject: () => void
+  onCreateSubject: (name: string) => void
+  // A confirmação (manter ou apagar as notas) fica com quem apaga.
   onDeleteSubject: (id: string) => void
   onTurnSubjectIntoNotebook: (id: string) => void
   onRenameSubject: (id: string, name: string) => void
@@ -449,13 +514,20 @@ export function NotebookList({
   const [editing, setEditing] = useState<{ id: string; value: string } | null>(null)
   const [subjectEditing, setSubjectEditing] = useState<{ id: string; value: string } | null>(null)
   const [moveNotebookId, setMoveNotebookId] = useState<string | null>(null)
+  // Criação inline em andamento (linha editável no topo de Notebooks / no
+  // lugar do "New subject").
+  const [creatingNotebook, setCreatingNotebook] = useState(false)
+  const [creatingSubject, setCreatingSubject] = useState(false)
   const [tagsCollapsed, setTagsCollapsed] = useState(() => readCollapsed(TAGS_COLLAPSED_KEY))
   const [marksCollapsed, setMarksCollapsed] = useState(() => readCollapsed(MARKS_COLLAPSED_KEY))
-  // Menu "Notebooks" da coluna recolhida: posição fixa ao lado do botão (a
-  // coluna recolhida corta o que passa da largura).
-  const [notebookMenu, setNotebookMenu] = useState<{ top: number; left: number } | null>(null)
+  // Menus "Notebooks" e "Tags" da coluna recolhida: posição fixa ao lado do
+  // botão (a coluna recolhida corta o que passa da largura).
+  const [railMenu, setRailMenu] = useState<{ kind: 'notebooks' | 'tags'; top: number; left: number } | null>(null)
+  const notebookMenu = railMenu?.kind === 'notebooks' ? railMenu : null
+  const tagMenu = railMenu?.kind === 'tags' ? railMenu : null
   const notebookMenuRef = useRef<HTMLDivElement>(null)
   const notebookMenuButtonRef = useRef<HTMLButtonElement>(null)
+  const tagMenuButtonRef = useRef<HTMLButtonElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const subjectInputRef = useRef<HTMLInputElement>(null)
   const { confirm, modal } = useConfirm()
@@ -467,25 +539,34 @@ export function NotebookList({
   const startX = useRef(0)
   const startWidth = useRef(0)
   const currentWidthRef = useRef(width)
+  // Versão do rodapé lida do app (tauri.conf.json), não fixa no código.
+  const [appVersion, setAppVersion] = useState<string | null>(null)
+
+  useEffect(() => {
+    getVersion()
+      .then(setAppVersion)
+      .catch(() => setAppVersion(null))
+  }, [])
 
   useEffect(() => {
     currentWidthRef.current = width
   }, [width])
 
   useEffect(() => {
-    if (!collapsed) setNotebookMenu(null)
+    if (!collapsed) setRailMenu(null)
   }, [collapsed])
 
   useEffect(() => {
-    if (!notebookMenu) return
+    if (!railMenu) return
     function onDoc(e: MouseEvent) {
       const target = e.target as Node
       if (notebookMenuRef.current?.contains(target)) return
       if (notebookMenuButtonRef.current?.contains(target)) return
-      setNotebookMenu(null)
+      if (tagMenuButtonRef.current?.contains(target)) return
+      setRailMenu(null)
     }
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setNotebookMenu(null)
+      if (e.key === 'Escape') setRailMenu(null)
     }
     document.addEventListener('mousedown', onDoc)
     document.addEventListener('keydown', onKey)
@@ -493,7 +574,7 @@ export function NotebookList({
       document.removeEventListener('mousedown', onDoc)
       document.removeEventListener('keydown', onKey)
     }
-  }, [notebookMenu])
+  }, [railMenu])
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
@@ -540,18 +621,10 @@ export function NotebookList({
           ? ' Its chat folder and any web sources saved from it will also be deleted.'
           : ` Its chat (${chatCount} conversation${chatCount === 1 ? '' : 's'}) and any web sources saved from it will also be deleted.`
     const ok = await confirm(
-      `Delete notebook "${name}" and all its notes?${chatNote}`,
-      { title: 'Delete notebook' }
+      `Delete notebook "${name}" and all its notes and subjects?${chatNote} All its tasks, including done ones, move to Quick Notes. This can't be undone.`,
+      { title: 'Delete notebook', confirmLabel: 'Delete notebook' }
     )
     if (ok) onDelete(id)
-  }
-
-  async function handleDeleteSubject(id: string, name: string) {
-    const ok = await confirm(
-      `Delete subject "${name}" and all its notes?`,
-      { title: 'Delete subject' }
-    )
-    if (ok) onDeleteSubject(id)
   }
 
   async function handleTurnSubjectIntoNotebook(id: string, name: string) {
@@ -608,14 +681,15 @@ export function NotebookList({
     })
   }
 
-  function toggleNotebookMenu() {
-    if (notebookMenu) {
-      setNotebookMenu(null)
+  function toggleRailMenu(kind: 'notebooks' | 'tags') {
+    if (railMenu?.kind === kind) {
+      setRailMenu(null)
       return
     }
-    const rect = notebookMenuButtonRef.current?.getBoundingClientRect()
+    const button = kind === 'notebooks' ? notebookMenuButtonRef.current : tagMenuButtonRef.current
+    const rect = button?.getBoundingClientRect()
     if (!rect) return
-    setNotebookMenu({ top: rect.top, left: rect.right + 4 })
+    setRailMenu({ kind, top: rect.top, left: rect.right + 4 })
   }
 
   // Cadernos do usuário (lista ordenável): Calendar e Quick Notes são views fixas.
@@ -651,7 +725,7 @@ export function NotebookList({
                     isActive={subject.id === activeSubjectId}
                     editing={subjectEditing}
                     onSelect={onSelectSubject}
-                    onDelete={(id) => handleDeleteSubject(id, subject.name)}
+                    onDelete={onDeleteSubject}
                     onTurnIntoNotebook={(id) => handleTurnSubjectIntoNotebook(id, subject.name)}
                     onStartEdit={(id, value) => setSubjectEditing({ id, value })}
                     onCommitEdit={commitSubjectEdit}
@@ -660,12 +734,35 @@ export function NotebookList({
                     subjectInputRef={subjectInputRef}
                   />
                 ))}
-                <li className={`${styles.subjectRow} ${styles.subjectAddRow}`} onClick={onCreateSubject}>
-                  <span className={styles.subjectIcon}>
-                    <Plus size={12} aria-hidden />
-                  </span>
-                  <span className={styles.subjectLabel}>New subject</span>
-                </li>
+                {creatingSubject ? (
+                  <li className={styles.subjectRow}>
+                    <span className={styles.subjectIcon}>
+                      <FolderSimple size={12} aria-hidden />
+                    </span>
+                    <CreateInput
+                      className={styles.subjectRenameInput}
+                      placeholder="Subject name"
+                      onCommit={(name) => {
+                        setCreatingSubject(false)
+                        onCreateSubject(name)
+                      }}
+                      onCancel={() => setCreatingSubject(false)}
+                    />
+                  </li>
+                ) : (
+                  <li
+                    className={`${styles.subjectRow} ${styles.subjectAddRow}`}
+                    onClick={() => setCreatingSubject(true)}
+                    onKeyDown={activateOnKey(() => setCreatingSubject(true))}
+                    tabIndex={0}
+                    role="button"
+                  >
+                    <span className={styles.subjectIcon}>
+                      <Plus size={12} aria-hidden />
+                    </span>
+                    <span className={styles.subjectLabel}>New subject</span>
+                  </li>
+                )}
               </ul>
             </SortableContext>
           </DndContext>
@@ -762,7 +859,7 @@ export function NotebookList({
         <button
           ref={notebookMenuButtonRef}
           className={`${styles.railButton} ${userNotebooksActive || notebookMenu ? styles.railActive : ''}`}
-          onClick={toggleNotebookMenu}
+          onClick={() => toggleRailMenu('notebooks')}
           aria-label="Notebooks"
           aria-haspopup="menu"
           aria-expanded={notebookMenu !== null}
@@ -772,10 +869,13 @@ export function NotebookList({
           <NotebookIcon size={16} aria-hidden />
         </button>
         <button
-          className={`${styles.railButton} ${activeTag !== null ? styles.railActive : ''}`}
-          onClick={() => (activeTag !== null ? onCloseTags() : tags[0] && onOpenTag(tags[0].tag))}
+          ref={tagMenuButtonRef}
+          className={`${styles.railButton} ${activeTag !== null || tagMenu ? styles.railActive : ''}`}
+          onClick={() => toggleRailMenu('tags')}
           disabled={tags.length === 0 && activeTag === null}
           aria-label="Tags"
+          aria-haspopup="menu"
+          aria-expanded={tagMenu !== null}
           title={tags.length === 0 ? 'Tags (no tags)' : 'Tags'}
           type="button"
         >
@@ -801,10 +901,13 @@ export function NotebookList({
             <div className={styles.notebookMenuHeader}>Notebooks</div>
             <button
               className={`${styles.notebookMenuItem} ${!viewActive && activeId === null ? styles.active : ''}`}
-              onClick={() => { onSelect(null); setNotebookMenu(null) }}
+              onClick={() => { onSelect(null); setRailMenu(null) }}
               role="menuitem"
               type="button"
             >
+              <span className={styles.allNotesIcon}>
+                <Stack size={14} aria-hidden />
+              </span>
               <span className={`${styles.rowLabel} ${styles.allNotes}`}>All notes</span>
             </button>
             {userNotebooks.map((nb) => {
@@ -813,12 +916,42 @@ export function NotebookList({
                 <button
                   key={nb.id}
                   className={`${styles.notebookMenuItem} ${!viewActive && nb.id === activeId ? styles.active : ''}`}
-                  onClick={() => { onSelect(nb.id); setNotebookMenu(null) }}
+                  onClick={() => { onSelect(nb.id); setRailMenu(null) }}
                   role="menuitem"
                   type="button"
                 >
                   <span className={styles.rowLabel}>{nb.name || 'unnamed'}</span>
                   {progress && <TaskProgressBadge progress={progress} />}
+                </button>
+              )
+            })}
+          </div>
+        )}
+        {tagMenu && (
+          <div
+            ref={notebookMenuRef}
+            className={styles.notebookMenu}
+            style={{ top: tagMenu.top, left: tagMenu.left }}
+            role="menu"
+          >
+            <div className={styles.notebookMenuHeader}>Tags</div>
+            {tags.map((t) => {
+              const active = tagKey(t.tag) === activeTagKey
+              return (
+                <button
+                  key={tagKey(t.tag)}
+                  className={`${styles.notebookMenuItem} ${active ? styles.active : ''}`}
+                  onClick={() => {
+                    if (active) onCloseTags()
+                    else onOpenTag(t.tag)
+                    setRailMenu(null)
+                  }}
+                  role="menuitem"
+                  type="button"
+                  title={`Notes tagged #${t.tag}, from every notebook`}
+                >
+                  <span className={styles.rowLabel}>#{t.tag}</span>
+                  <span className={styles.sectionCount}>{t.count}</span>
                 </button>
               )
             })}
@@ -841,8 +974,10 @@ export function NotebookList({
         if (!moveNotebook) return null
         return (
           <NotebookPickerModal
-            title={`Move “${moveNotebook.name || 'unnamed'}” to:`}
-            confirmLabel="Move"
+            title={`Merge “${moveNotebook.name || 'unnamed'}” into:`}
+            description={`“${moveNotebook.name || 'unnamed'}” becomes a subject of the notebook you pick: all its notes go into that subject (its own subjects are flattened into it) and “${moveNotebook.name || 'unnamed'}” is removed. If that notebook already has a subject with this name, the notes join it.`}
+            confirmLabel="Merge notebook"
+            destructive
             notebooks={notebooks.filter(
               (n) => n.id !== moveNotebookId && n.id !== calendarNotebookId
             )}
@@ -879,6 +1014,8 @@ export function NotebookList({
                 <li
                   className={`${styles.row} ${!viewActive && calendarNb.id === activeId ? styles.active : ''}`}
                   onClick={() => onSelect(calendarNb.id)}
+                  onKeyDown={activateOnKey(() => onSelect(calendarNb.id))}
+                  tabIndex={0}
                 >
                   <span className={styles.calendarIcon}>
                     <CalendarBlank size={16} aria-hidden />
@@ -890,7 +1027,7 @@ export function NotebookList({
                       onClick={(e) => { e.stopPropagation(); onSelect(calendarNb.id); onOpenDocuments(calendarNb.id) }}
                       onDoubleClick={(e) => e.stopPropagation()}
                       aria-label={`documents for notebook ${calendarNb.name}`}
-                      title={notebooksWithDocs.has(calendarNb.id) ? 'notebook documents (active)' : 'notebook documents'}
+                      title={notebooksWithDocs.has(calendarNb.id) ? 'Notebook documents (active)' : 'Notebook documents'}
                       type="button"
                     >
                       <FileText size={13} aria-hidden />
@@ -904,6 +1041,8 @@ export function NotebookList({
                   <li
                     className={`${styles.row} ${notebookSelected(INBOX_NOTEBOOK_ID) ? styles.active : ''} ${notebookParent(INBOX_NOTEBOOK_ID) ? styles.parent : ''}`}
                     onClick={() => onSelect(INBOX_NOTEBOOK_ID)}
+                    onKeyDown={activateOnKey(() => onSelect(INBOX_NOTEBOOK_ID))}
+                    tabIndex={0}
                     title="Notes and tasks without a notebook yet"
                   >
                     <span className={styles.quickNotesIcon}>
@@ -932,7 +1071,7 @@ export function NotebookList({
                         className={`${styles.rowDocs} ${notebooksWithDocs.has(INBOX_NOTEBOOK_ID) ? styles.rowDocsActive : ''}`}
                         onClick={(e) => { e.stopPropagation(); onSelect(INBOX_NOTEBOOK_ID); onOpenDocuments(INBOX_NOTEBOOK_ID) }}
                         aria-label={`documents for notebook ${QUICK_NOTES_NAME}`}
-                        title={notebooksWithDocs.has(INBOX_NOTEBOOK_ID) ? 'notebook documents (active)' : 'notebook documents'}
+                        title={notebooksWithDocs.has(INBOX_NOTEBOOK_ID) ? 'Notebook documents (active)' : 'Notebook documents'}
                         type="button"
                       >
                         <FileText size={13} aria-hidden />
@@ -955,6 +1094,8 @@ export function NotebookList({
               <li
                 className={`${styles.row} ${tasksActive ? styles.active : ''}`}
                 onClick={onOpenTasks}
+                onKeyDown={activateOnKey(onOpenTasks)}
+                tabIndex={0}
               >
                 <span className={styles.tasksIcon}>
                   <ListChecks size={16} aria-hidden />
@@ -967,6 +1108,8 @@ export function NotebookList({
                   className={`${styles.row} ${styles.boardSetUp}`}
                   title="Turn on “Show as board” in a note type"
                   onClick={onSetUpBoard}
+                  onKeyDown={activateOnKey(onSetUpBoard)}
+                  tabIndex={0}
                 >
                   <span className={styles.boardIcon}>
                     <Kanban size={16} aria-hidden />
@@ -982,6 +1125,8 @@ export function NotebookList({
                       className={`${styles.row} ${active ? styles.active : ''}`}
                       title={`${b.type.name} notes by ${b.columnName}`}
                       onClick={() => (active ? onCloseBoard() : onOpenBoard(b.type.id))}
+                      onKeyDown={activateOnKey(() => (active ? onCloseBoard() : onOpenBoard(b.type.id)))}
+                      tabIndex={0}
                     >
                       <span className={styles.boardIcon} style={{ color: b.type.color ?? undefined }}>
                         <TypeIcon name={b.type.icon} />
@@ -1003,7 +1148,7 @@ export function NotebookList({
             <div className={styles.header}>
               <span>Notebooks</span>
               <div className={styles.headerActions}>
-                <button className={styles.headerAdd} onClick={onCreate} aria-label="new notebook" title="New notebook" type="button">
+                <button className={styles.headerAdd} onClick={() => setCreatingNotebook(true)} aria-label="new notebook" title="New notebook" type="button">
                   <PlusCircle size={16} weight="fill" aria-hidden />
                 </button>
               </div>
@@ -1012,12 +1157,48 @@ export function NotebookList({
               <li
                 className={`${styles.row} ${!viewActive && activeId === null ? styles.active : ''}`}
                 onClick={() => onSelect(null)}
+                onKeyDown={activateOnKey(() => onSelect(null))}
+                tabIndex={0}
+                title="Notes from every notebook"
               >
+                <span className={styles.allNotesIcon}>
+                  <Stack size={16} aria-hidden />
+                </span>
                 <span className={`${styles.rowLabel} ${styles.allNotes}`}>All notes</span>
               </li>
 
+              {creatingNotebook && (
+                <li className={`${styles.row} ${styles.notebookRow}`}>
+                  <span className={styles.notebookIcon}>
+                    <NotebookIcon size={14} aria-hidden />
+                  </span>
+                  <CreateInput
+                    className={styles.renameInput}
+                    placeholder="Notebook name"
+                    onCommit={(name) => {
+                      setCreatingNotebook(false)
+                      onCreate(name)
+                    }}
+                    onCancel={() => setCreatingNotebook(false)}
+                  />
+                </li>
+              )}
+
               {userNotebooks.length === 0 ? (
-                <li className={styles.empty}>no notebooks</li>
+                !creatingNotebook && (
+                  <li
+                    className={`${styles.row} ${styles.newNotebookRow}`}
+                    onClick={() => setCreatingNotebook(true)}
+                    onKeyDown={activateOnKey(() => setCreatingNotebook(true))}
+                    tabIndex={0}
+                    role="button"
+                  >
+                    <span className={styles.notebookIcon}>
+                      <Plus size={14} aria-hidden />
+                    </span>
+                    <span className={styles.rowLabel}>New notebook</span>
+                  </li>
+                )
               ) : (
                 <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
                   <SortableContext
@@ -1072,7 +1253,9 @@ export function NotebookList({
             {!tagsCollapsed && (
               <ul className={styles.list}>
                 {tags.length === 0 ? (
-                  <li className={styles.empty}>no tags</li>
+                  <li className={`${styles.empty} ${styles.emptyHint}`}>
+                    Add a tag under a note&rsquo;s title (+ tag) to gather notes from every notebook.
+                  </li>
                 ) : (
                   tags.map((t) => {
                     const active = tagKey(t.tag) === activeTagKey
@@ -1082,6 +1265,8 @@ export function NotebookList({
                         className={`${styles.row} ${active ? styles.active : ''}`}
                         title={`Notes tagged #${t.tag}, from every notebook`}
                         onClick={() => (active ? onCloseTags() : onOpenTag(t.tag))}
+                        onKeyDown={activateOnKey(() => (active ? onCloseTags() : onOpenTag(t.tag)))}
+                        tabIndex={0}
                       >
                         <span className={styles.rowLabel}>#{t.tag}</span>
                         <span className={styles.sectionCount}>{t.count}</span>
@@ -1119,6 +1304,8 @@ export function NotebookList({
                     <li
                       className={`${styles.row} ${allMarksActive ? styles.active : ''}`}
                       onClick={() => (allMarksActive ? onCloseMarks() : onOpenMarks(null))}
+                      onKeyDown={activateOnKey(() => (allMarksActive ? onCloseMarks() : onOpenMarks(null)))}
+                      tabIndex={0}
                     >
                       <span className={`${styles.rowLabel} ${styles.allNotes}`}>All marks</span>
                       <span className={styles.sectionCount}>{markSummary.total}</span>
@@ -1135,6 +1322,8 @@ export function NotebookList({
                           className={`${styles.row} ${active ? styles.active : ''}`}
                           title={l.label}
                           onClick={() => (active ? onCloseMarks() : onOpenMarks({ label: l.label }))}
+                          onKeyDown={activateOnKey(() => (active ? onCloseMarks() : onOpenMarks({ label: l.label })))}
+                          tabIndex={0}
                         >
                           <span className={styles.markDot} aria-hidden />
                           <span className={styles.rowLabel}>{l.label}</span>
@@ -1152,7 +1341,7 @@ export function NotebookList({
       )}
 
       <div className={`${styles.footer} ${collapsed ? styles.footerCollapsed : ''}`}>
-        {!collapsed && <span className={styles.version}>v1.5.0</span>}
+        {!collapsed && appVersion && <span className={styles.version}>v{appVersion}</span>}
         <button
           className={`${styles.settings} ${styles.kbButton}`}
           onClick={onOpenKnowledgeBase}
@@ -1167,6 +1356,7 @@ export function NotebookList({
           className={styles.settings}
           onClick={onOpenSettings}
           aria-label="settings"
+          title="Settings"
           type="button"
         >
           <Gear size={16} aria-hidden />

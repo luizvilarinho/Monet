@@ -1,69 +1,87 @@
+import { useRef, useState } from 'react'
+import { FileText, Notebook, Plus } from '@phosphor-icons/react'
 import styles from './EmptyEditor.module.css'
 
 export interface EmptyEditorProps {
   onCreate?: () => void
   hasNotebook: boolean
+  // Há cadernos do usuário (fora Calendar e Quick Notes). Sem nenhum, o
+  // vazio oferece "New notebook"; com algum, aponta a lista e o Ctrl+P.
+  hasNotebooks?: boolean
+  onCreateNotebook?: (name: string) => void
 }
 
-export function EmptyEditor({ onCreate, hasNotebook }: EmptyEditorProps) {
+// Nome do caderno novo, no lugar (sem window.prompt): Enter ou sair do campo
+// cria; vazio ou Esc cancela.
+function NotebookNameInput({ onCommit, onCancel }: { onCommit: (name: string) => void; onCancel: () => void }) {
+  const [value, setValue] = useState('')
+  const doneRef = useRef(false)
+  function finish(commit: boolean) {
+    if (doneRef.current) return
+    doneRef.current = true
+    const name = value.trim()
+    if (commit && name) onCommit(name)
+    else onCancel()
+  }
+  return (
+    <input
+      autoFocus
+      className={styles.nameInput}
+      value={value}
+      placeholder="Notebook name"
+      aria-label="Notebook name"
+      onChange={(e) => setValue(e.target.value)}
+      onBlur={() => finish(true)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') finish(true)
+        if (e.key === 'Escape') finish(false)
+      }}
+    />
+  )
+}
+
+export function EmptyEditor({ onCreate, hasNotebook, hasNotebooks = true, onCreateNotebook }: EmptyEditorProps) {
+  const [naming, setNaming] = useState(false)
+  const firstNotebook = !hasNotebook && !hasNotebooks
+
   return (
     <div className={styles.empty}>
-      <svg
-        className={styles.icon}
-        width="64"
-        height="64"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden="true"
-      >
-        {hasNotebook ? (
-          // Documento / página
-          <>
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-            <polyline points="14 2 14 8 20 8" />
-            <line x1="12" y1="18" x2="12.01" y2="18" />
-            <line x1="12" y1="14" x2="12.01" y2="14" />
-            <line x1="8" y1="14" x2="8.01" y2="14" />
-            <line x1="8" y1="18" x2="8.01" y2="18" />
-          </>
-        ) : (
-          // Notebooks / folders
-          <>
-            <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 2H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2z" />
-            <path d="M2 8h20" opacity="0.5" />
-          </>
-        )}
-      </svg>
+      {hasNotebook ? (
+        <FileText className={styles.icon} size={64} weight="light" aria-hidden />
+      ) : (
+        <Notebook className={styles.icon} size={64} weight="light" aria-hidden />
+      )}
       <h2 className={styles.heading}>
-        {hasNotebook ? 'No note selected' : 'Select a notebook to get started'}
+        {hasNotebook ? 'No note selected' : firstNotebook ? 'Create your first notebook' : 'No notebook selected'}
       </h2>
       <p className={styles.hint}>
         {hasNotebook
           ? 'Choose a note from the sidebar or create a new one.'
-          : 'Choose a notebook from the sidebar or create a new one.'}
+          : firstNotebook
+            ? 'Notebooks group your notes by subject or project.'
+            : 'Pick a notebook or press Ctrl+P'}
       </p>
       {hasNotebook && (
         <button className={styles.createBtn} onClick={onCreate} type="button">
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <line x1="12" y1="5" x2="12" y2="19" />
-            <line x1="5" y1="12" x2="19" y2="12" />
-          </svg>
+          <Plus size={16} aria-hidden />
           New note
         </button>
+      )}
+      {firstNotebook && onCreateNotebook && (
+        naming ? (
+          <NotebookNameInput
+            onCommit={(name) => {
+              setNaming(false)
+              onCreateNotebook(name)
+            }}
+            onCancel={() => setNaming(false)}
+          />
+        ) : (
+          <button className={styles.createBtn} onClick={() => setNaming(true)} type="button">
+            <Plus size={16} aria-hidden />
+            New notebook
+          </button>
+        )
       )}
     </div>
   )

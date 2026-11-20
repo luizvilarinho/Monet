@@ -1,5 +1,6 @@
 import { NodeViewWrapper, type NodeViewProps } from '@tiptap/react'
 import { useEffect, useMemo, useState } from 'react'
+import { CaretRight } from '@phosphor-icons/react'
 import { renderMarkdown } from '../../lib/markdown'
 import { useEditorResponses } from './EditorResponsesContext'
 import { getToggleTitle } from './commandParser'
@@ -15,7 +16,7 @@ export function EmbedBlockView({ node, updateAttributes, editor, selected }: Nod
     [responses, commandId]
   )
 
-  const title = response ? getToggleTitle(response.command, response.query) : 'Resposta gerada pela IA'
+  const title = response ? getToggleTitle(response.command, response.query) : 'AI response'
   const body = response?.response ?? ''
 
   const [renderedHtml, setRenderedHtml] = useState('')
@@ -55,7 +56,7 @@ export function EmbedBlockView({ node, updateAttributes, editor, selected }: Nod
         aria-expanded={!collapsed}
       >
         <span className={`${styles.chevron} ${!collapsed ? styles.chevronOpen : ''}`} aria-hidden="true">
-          ›
+          <CaretRight size={12} weight="bold" />
         </span>
         <span className={styles.title}>{title}</span>
       </button>

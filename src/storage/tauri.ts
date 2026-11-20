@@ -51,7 +51,7 @@ interface NoteRow {
   date: string | null
   created_at: number
   updated_at: number
-  // Colunas de ensureNotesColumns (ausentes até o primeiro setter de nota).
+  // Colunas de ensureNotesColumns, que roda antes de toda leitura (NOTE_COLUMNS).
   type_id?: string | null
   properties?: string | null
   archived_at?: number | null
@@ -576,6 +576,16 @@ const NOTES_EXTRA_COLUMNS = [
 // board do tipo (JSON); NULL = sem board.
 const NOTE_TYPES_EXTRA_COLUMNS = [{ name: 'board', ddl: 'board TEXT' }]
 
+// Listas explícitas das leituras (iguais às interfaces *Row), não `*`: ver o
+// comentário do getNoteTypes. Incluem as colunas dos *_EXTRA_COLUMNS, então o
+// ensure da tabela roda antes de cada leitura.
+const NOTE_COLUMNS =
+  'id, notebook_id, subject_id, title, content, tags, date, created_at, updated_at, type_id, properties, archived_at'
+const NOTEBOOK_COLUMNS = 'id, name, created_at, updated_at, color'
+const TASK_COLUMNS =
+  'id, title, status, notebook_id, note_id, due_date, scheduled_date, parent_note_id, important, recurrence, recurrence_next_id, created_at, updated_at, completed_at, source_note_id, reschedule_count, sort_order, doing_since, planned_day, metadata'
+const METADATA_DEF_COLUMNS = 'id, name, type, sort_order, created_at, scope, note_type_id, options, show_in_list'
+
 // Adiciona as colunas que faltam (PRAGMA table_info). Outra janela (main/keep)
 // pode ter adicionado a coluna entre o PRAGMA e o ALTER: "duplicate column
 // name" conta como sucesso.
@@ -750,8 +760,9 @@ export class TauriStorage implements StorageAdapter {
 
   async getNotebooks(): Promise<Notebook[]> {
     const db = await this.db()
+    await this.ensureNotebookColorColumn(db)
     const rows = await db.select<NotebookRow[]>(
-      'SELECT * FROM notebooks ORDER BY updated_at DESC'
+      `SELECT ${NOTEBOOK_COLUMNS} FROM notebooks ORDER BY updated_at DESC`
     )
     return rows.map(rowToNotebook)
   }
@@ -830,16 +841,18 @@ export class TauriStorage implements StorageAdapter {
 
   async getNotes(): Promise<Note[]> {
     const db = await this.db()
+    await this.ensureNotesColumns(db)
     const rows = await db.select<NoteRow[]>(
-      'SELECT * FROM notes ORDER BY updated_at DESC'
+      `SELECT ${NOTE_COLUMNS} FROM notes ORDER BY updated_at DESC`
     )
     return rows.map(rowToNote)
   }
 
   async getNote(id: string): Promise<Note | null> {
     const db = await this.db()
+    await this.ensureNotesColumns(db)
     const rows = await db.select<NoteRow[]>(
-      'SELECT * FROM notes WHERE id = $1 LIMIT 1',
+      `SELECT ${NOTE_COLUMNS} FROM notes WHERE id = $1 LIMIT 1`,
       [id]
     )
     return rows[0] ? rowToNote(rows[0]) : null
@@ -847,8 +860,9 @@ export class TauriStorage implements StorageAdapter {
 
   async findNoteByTitle(notebookId: string, title: string): Promise<Note | null> {
     const db = await this.db()
+    await this.ensureNotesColumns(db)
     const rows = await db.select<NoteRow[]>(
-      'SELECT * FROM notes WHERE notebook_id = $1 AND title = $2 ORDER BY updated_at DESC LIMIT 1',
+      `SELECT ${NOTE_COLUMNS} FROM notes WHERE notebook_id = $1 AND title = $2 ORDER BY updated_at DESC LIMIT 1`,
       [notebookId, title]
     )
     return rows[0] ? rowToNote(rows[0]) : null
@@ -895,8 +909,9 @@ export class TauriStorage implements StorageAdapter {
     )
     if (done.length > 0) return null
 
+    await this.ensureNotesColumns(db)
     const rows = await db.select<NoteRow[]>(
-      `SELECT * FROM notes
+      `SELECT ${NOTE_COLUMNS} FROM notes
         WHERE notebook_id = $1 AND title IN (
           SELECT title FROM notes WHERE notebook_id = $1 GROUP BY title HAVING COUNT(*) > 1)
         ORDER BY title, updated_at DESC, created_at DESC, id`,
@@ -976,7 +991,7 @@ export class TauriStorage implements StorageAdapter {
     // propriedade de data do tipo atual no período, ou "em andamento" (2+
     // propriedades de data, a menor antes e a maior depois do período).
     const rows = await db.select<NoteRow[]>(
-      `SELECT * FROM notes
+      `SELECT ${NOTE_COLUMNS} FROM notes
         WHERE (notebook_id IS NOT $3 AND date >= $1 AND date <= $2)
            OR (notebook_id = $3
                AND TRIM(title) GLOB '[0-9][0-9]/[0-9][0-9]/[0-9][0-9][0-9][0-9]'
@@ -1000,14 +1015,16 @@ export class TauriStorage implements StorageAdapter {
 
   async getMarkedNotes(): Promise<Note[]> {
     const db = await this.db()
+    await this.ensureNotesColumns(db)
     const rows = await db.select<NoteRow[]>(
-      "SELECT * FROM notes WHERE instr(content, 'data-mark') > 0 ORDER BY updated_at DESC"
+      `SELECT ${NOTE_COLUMNS} FROM notes WHERE instr(content, 'data-mark') > 0 ORDER BY updated_at DESC`
     )
     return rows.map(rowToNote)
   }
 
   async getNoteSummaries(): Promise<NoteSummary[]> {
     const db = await this.db()
+    await this.ensureNotesColumns(db)
     const rows = await db.select<Array<Omit<NoteRow, 'content' | 'tags' | 'subject_id'>>>(
       'SELECT id, notebook_id, title, date, created_at, updated_at, archived_at FROM notes ORDER BY updated_at DESC'
     )
@@ -1095,9 +1112,9 @@ export class TauriStorage implements StorageAdapter {
   }
 
   // Adiciona `notebooks.color` se faltar; "duplicate column" (outra janela
-  // adicionou entre o PRAGMA e o ALTER) conta como sucesso. Memoizado. Só roda
-  // ao gravar a cor: a leitura (`SELECT *`) já traz a coluna quando existe, e
-  // fica sem DDL no cold start.
+  // adicionou entre o PRAGMA e o ALTER) conta como sucesso. Memoizado. Roda
+  // antes da leitura, que usa lista explícita de colunas (NOTEBOOK_COLUMNS; ver
+  // o getNoteTypes). Num banco que já tem a coluna, é só um PRAGMA por janela.
   private ensureNotebookColorColumn(db: Database): Promise<void> {
     if (!this.notebookColorReady) {
       const p = this.serialDdl(async () => {
@@ -1151,8 +1168,10 @@ export class TauriStorage implements StorageAdapter {
   }
 
   // `notes.type_id`/`properties`/`archived_at`, no padrão do
-  // ensureNotebookColorColumn: só roda nos setters e nas operações de tipo (a leitura via `SELECT *` já traz
-  // as colunas quando existem, sem DDL no cold start).
+  // ensureNotebookColorColumn: roda antes de toda leitura de notes, que usa
+  // lista explícita de colunas (NOTE_COLUMNS; uma conexão do pool com o `*`
+  // preparado no schema antigo estoura o índice no sqlx, ver o getNoteTypes).
+  // Num banco que já tem as colunas, é só um PRAGMA memoizado por janela.
   private ensureNotesColumns(db: Database): Promise<void> {
     if (!this.notesColumnsReady) {
       const p = this.serialDdl(() => addMissingColumns(db, 'notes', NOTES_EXTRA_COLUMNS))
@@ -1199,7 +1218,7 @@ export class TauriStorage implements StorageAdapter {
     const db = await this.db()
     await this.ensureTasksTables(db)
     const rows = await db.select<TaskRow[]>(
-      'SELECT * FROM notebook_tasks ORDER BY sort_order ASC'
+      `SELECT ${TASK_COLUMNS} FROM notebook_tasks ORDER BY sort_order ASC`
     )
     return rows.map(rowToTask)
   }
@@ -1343,7 +1362,7 @@ export class TauriStorage implements StorageAdapter {
     const db = await this.db()
     await this.ensureTasksTables(db)
     const rows = await db.select<MetadataDefRow[]>(
-      'SELECT * FROM metadata_defs ORDER BY sort_order ASC, id ASC'
+      `SELECT ${METADATA_DEF_COLUMNS} FROM metadata_defs ORDER BY sort_order ASC, id ASC`
     )
     return rows.map(rowToMetadataDef)
   }

@@ -60,7 +60,7 @@
 }
 
 .btnConfirm {
-  background: #c0392b;
+  background: var(--accent-danger);
   border: 1px solid transparent;
   color: #fff;
   height: var(--control-lg);
@@ -72,7 +72,7 @@
 }
 
 .btnConfirm:hover {
-  background: #e74c3c;
+  filter: brightness(1.12);
 }
 
 .btnPrimary {

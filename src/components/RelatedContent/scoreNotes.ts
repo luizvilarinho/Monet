@@ -37,6 +37,9 @@ function jaccard(a: Set<string>, b: Set<string>): number {
 export interface ScoredNote {
   note: Note
   score: number
+  // Link explícito (bloco de nota linkada): `out` = a nota ativa linka esta,
+  // `in` = esta linka a ativa, `both` = as duas.
+  linked?: 'out' | 'in' | 'both'
 }
 
 // Palavras raras na base pesam mais (idf) e a nota menor conta como contida
@@ -120,11 +123,11 @@ export function scoreRelatedNotes(
     // Nota sem caderno (Reader) não abre pela lista, como no Ctrl+P.
     if (note.id === active.id || !note.notebookId || opts?.exclude?.has(note.id)) continue
 
-    const noteLinkedIds = new Set(extractLinkedNoteIds(note.content))
-    const isLinked = activeLinkedIds.has(note.id) || noteLinkedIds.has(active.id)
+    const out = activeLinkedIds.has(note.id)
+    const inbound = extractLinkedNoteIds(note.content).includes(active.id)
 
-    if (isLinked) {
-      scored.push({ note, score: 1.0 })
+    if (out || inbound) {
+      scored.push({ note, score: 1.0, linked: out && inbound ? 'both' : out ? 'out' : 'in' })
       continue
     }
 

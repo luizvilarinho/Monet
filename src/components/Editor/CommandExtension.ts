@@ -4,14 +4,25 @@ import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import type { EditorState, Transaction } from '@tiptap/pm/state'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { EditorView } from '@tiptap/pm/view'
-import { getCommandLineStatus, isPotentialCommandLine, parseCommandLine } from './commandParser'
+import { ArrowLineDown, ArrowLineUp, Trash } from '@phosphor-icons/react'
+import { commandLineHint, getCommandLineStatus, isPotentialCommandLine, parseCommandLine } from './commandParser'
+import { iconMarkup } from './iconMarkup'
+import { CHAT_AGENTS, GENERAL_AGENT_ID } from '../../lib/agents/chat'
 import type { AiResponse } from '../../types'
 
 export type CommandPersistedStatus = 'executed' | 'invalid' | 'incomplete'
 
+// Execução da linha pelo Enter: liga a linha à resposta dela em qualquer
+// status (preparo, streaming, erro). `pending` até o onCommand terminar.
+export interface CommandRun {
+  commandId: string
+  pending: boolean
+}
+
 interface MarkEntry {
   text: string
   status: CommandPersistedStatus
+  run?: CommandRun
 }
 
 export interface CommandPluginState {
@@ -24,6 +35,7 @@ interface SetMarkMeta {
   pos: number
   text: string
   status: CommandPersistedStatus
+  run?: CommandRun
 }
 
 interface SyncExecutedMeta {
@@ -31,22 +43,34 @@ interface SyncExecutedMeta {
   texts: Set<string>
 }
 
-interface ClearMarksMeta {
-  type: 'clearMarks'
-}
-
 interface BumpResponsesMeta {
   type: 'bumpResponses'
 }
 
-type Meta = SetMarkMeta | SyncExecutedMeta | ClearMarksMeta | BumpResponsesMeta
+// O onCommand terminou: `ok` false = não rodou, e a linha volta a rascunho.
+interface SettleRunMeta {
+  type: 'settleRun'
+  commandId: string
+  ok: boolean
+}
+
+type Meta = SetMarkMeta | SyncExecutedMeta | BumpResponsesMeta | SettleRunMeta
 
 export const commandPluginKey = new PluginKey<CommandPluginState>('monet-commands')
 
 export interface CommandExtensionOptions {
   getResponses: () => AiResponse[]
-  onRemoveResponse: (id: string) => void
 }
+
+// Ícones dos botões da linha (widgets em DOM puro), desenhados uma vez.
+const ICON_INSERT = iconMarkup(ArrowLineDown)
+const ICON_REMOVE = iconMarkup(ArrowLineUp)
+const ICON_DELETE = iconMarkup(Trash)
+
+// Agentes do chat digitados no editor: a linha avisa onde eles moram.
+const CHAT_ONLY_AGENTS = CHAT_AGENTS.filter((a) => a.id !== GENERAL_AGENT_ID)
+
+const NESTED_HINT = 'Commands run on their own line'
 
 function isParagraph(node: PMNode): boolean {
   return node.type.name === 'paragraph'
@@ -69,6 +93,12 @@ function resolveExecutedKey(text: string): string {
   return text
 }
 
+function chatAgentHint(text: string): string | null {
+  const name = parseCommandLine(text)?.commandName
+  const agent = CHAT_ONLY_AGENTS.find((a) => a.command === name)
+  return agent ? `${agent.label} is a chat agent — open it in Chat` : null
+}
+
 function syncExecutedMarks(
   doc: PMNode,
   current: Map<number, MarkEntry>,
@@ -79,17 +109,27 @@ function syncExecutedMarks(
     if (!isParagraph(node)) return true
     const text = paragraphText(node).trim()
     if (text && isPotentialCommandLine(text)) {
+      const existing = next.get(pos)
+      // Linha rodada nesta sessão: o status vem da resposta dela.
+      if (existing?.run && existing.text === text) return false
       if (texts.has(resolveExecutedKey(text))) {
         next.set(pos, { text, status: 'executed' })
-      } else {
-        const existing = next.get(pos)
-        if (existing?.status === 'executed' && !texts.has(resolveExecutedKey(existing.text))) {
-          next.delete(pos)
-        }
+      } else if (existing?.status === 'executed' && !texts.has(resolveExecutedKey(existing.text))) {
+        next.delete(pos)
       }
     }
     return false
   })
+  return next
+}
+
+function settleRun(marks: Map<number, MarkEntry>, commandId: string, ok: boolean): Map<number, MarkEntry> {
+  const next = new Map(marks)
+  for (const [pos, entry] of marks) {
+    if (entry.run?.commandId !== commandId) continue
+    if (ok) next.set(pos, { ...entry, run: { ...entry.run, pending: false } })
+    else next.delete(pos)
+  }
   return next
 }
 
@@ -119,6 +159,21 @@ function pruneStaleMarks(
   return next
 }
 
+// Resposta da execução, pelo commandId (o card de erro do preparo também o leva).
+function runResponse(run: CommandRun, responses: AiResponse[]): AiResponse | undefined {
+  return responses.find((r) => r.id === run.commandId || r.commandId === run.commandId)
+}
+
+// Linha já executada que o Enter roda de novo: só quando a execução desta
+// sessão falhou (ou terminou sem resposta).
+export function canRunAgain(state: EditorState, pos: number, responses: AiResponse[]): boolean {
+  const mark = commandPluginKey.getState(state)?.marks.get(pos)
+  if (!mark || mark.status !== 'executed') return true
+  if (!mark.run || mark.run.pending) return false
+  const response = runResponse(mark.run, responses)
+  return !response || response.status === 'error'
+}
+
 interface ParagraphCommandInfo {
   pos: number
   end: number
@@ -127,24 +182,36 @@ interface ParagraphCommandInfo {
   hasEmbed: boolean
 }
 
-function buildCommandIndex(doc: PMNode, responses: AiResponse[]): ParagraphCommandInfo[] {
+function buildCommandIndex(
+  doc: PMNode,
+  responses: AiResponse[],
+  marks?: Map<number, MarkEntry>
+): ParagraphCommandInfo[] {
   const result: ParagraphCommandInfo[] = []
 
   // Map response.id -> response
   const byId = new Map<string, AiResponse>()
-  // Map text -> responses (oldest first)
+  // Map text -> responses (oldest first): concluídas e, à parte, as paradas
+  // ou em andamento (sem erro).
   const byText = new Map<string, AiResponse[]>()
+  const otherByText = new Map<string, AiResponse[]>()
   const ordered = [...responses].sort((a, b) => a.createdAt - b.createdAt)
   for (const r of ordered) {
     byId.set(r.id, r)
-    if (r.status !== 'completed') continue
+    if (r.status === 'error') continue
+    const map = r.status === 'completed' ? byText : otherByText
     const text = commandTextFromResponse(r)
-    const arr = byText.get(text) ?? []
+    const arr = map.get(text) ?? []
     arr.push(r)
-    byText.set(text, arr)
+    map.set(text, arr)
   }
 
   const consumed = new Set<string>()
+  const take = (candidates: AiResponse[] | undefined): AiResponse | undefined => {
+    const r = candidates?.find((c) => !consumed.has(c.id))
+    if (r) consumed.add(r.id)
+    return r
+  }
 
   doc.descendants((node, pos) => {
     if (!isParagraph(node)) return true
@@ -168,16 +235,17 @@ function buildCommandIndex(doc: PMNode, responses: AiResponse[]): ParagraphComma
       }
     }
 
-    if (!response) {
-      const candidates = byText.get(resolveExecutedKey(text)) ?? []
-      for (const r of candidates) {
-        if (!consumed.has(r.id)) {
-          response = r
-          consumed.add(r.id)
-          break
-        }
+    const mark = marks?.get(pos)
+    if (!response && mark?.run && mark.text === text) {
+      const own = runResponse(mark.run, responses)
+      if (own && !consumed.has(own.id)) {
+        response = own
+        consumed.add(own.id)
       }
     }
+
+    if (!response) response = take(byText.get(resolveExecutedKey(text)))
+    if (!response) response = take(otherByText.get(resolveExecutedKey(text)))
 
     if (response) {
       result.push({ pos, end: nodeEnd, text, response, hasEmbed })
@@ -202,12 +270,13 @@ function findEmbedPosByCommandId(doc: PMNode, commandId: string): { pos: number;
 }
 
 function findCommandParagraph(
-  doc: PMNode,
+  state: EditorState,
   responseId: string,
   responseText: string,
   responses: AiResponse[]
 ): { pos: number; end: number } | null {
-  const idx = buildCommandIndex(doc, responses)
+  const { doc } = state
+  const idx = buildCommandIndex(doc, responses, commandPluginKey.getState(state)?.marks)
   // Prefer exact match by response.id
   for (const entry of idx) {
     if (entry.response.id === responseId) {
@@ -273,6 +342,44 @@ function deleteCommandLine(
   view.dispatch(tr)
 }
 
+function lineButton(className: string, icon: string, label: string, title: string, onClick: () => void): HTMLButtonElement {
+  const btn = document.createElement('button')
+  btn.type = 'button'
+  btn.className = `monetCmdBtn ${className}`
+  btn.innerHTML = icon
+  const text = document.createElement('span')
+  text.textContent = label
+  btn.appendChild(text)
+  btn.title = title
+  btn.addEventListener('mousedown', (e) => e.preventDefault())
+  btn.addEventListener('click', (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    onClick()
+  })
+  return btn
+}
+
+// Status curto da linha: o que a resposta está fazendo, ou por que falhou.
+function statusNote(text: string, className: string, title?: string): HTMLElement {
+  const note = document.createElement('span')
+  note.className = `monetCmdStatus ${className}`
+  note.textContent = text
+  if (title) note.title = title
+  return note
+}
+
+// `preparing` (montando o contexto) e `streaming` estão em andamento.
+function isRunning(status: AiResponse['status']): boolean {
+  return status === 'preparing' || status === 'streaming'
+}
+
+// Em `preparing`, a etapa que o useAi expõe ("Searching the web…").
+function progressLabel(response: AiResponse): string {
+  if (response.status === 'streaming') return 'Responding…'
+  return response.statusText ?? 'Preparing…'
+}
+
 function makeButtonsWidget(
   view: EditorView,
   entry: ParagraphCommandInfo,
@@ -286,61 +393,68 @@ function makeButtonsWidget(
   const response = entry.response
   const status = response.status
 
-  if (status === 'streaming') {
-    const dots = document.createElement('span')
-    dots.className = 'monetCmdDots'
-    dots.setAttribute('aria-label', 'respondendo')
-    dots.textContent = '...'
-    wrap.appendChild(dots)
+  if (isRunning(status)) {
+    const note = statusNote(progressLabel(response), 'monetCmdDots')
+    note.setAttribute('role', 'status')
+    wrap.appendChild(note)
     return wrap
   }
 
-  // ↓ inserir / ↑ remover — only for completed responses
+  // Insert / Remove block — only for completed responses
   if (status === 'completed') {
-    const toggleBtn = document.createElement('button')
-    toggleBtn.type = 'button'
-    toggleBtn.className = 'monetCmdBtn ' + (entry.hasEmbed ? 'monetCmdBtnRemove' : 'monetCmdBtnInsert')
-    toggleBtn.textContent = entry.hasEmbed ? '↑ remover' : '↓ inserir'
-    toggleBtn.title = entry.hasEmbed
-      ? 'remover bloco da nota'
-      : 'inserir bloco com a resposta na nota'
-    toggleBtn.addEventListener('mousedown', (e) => e.preventDefault())
-    toggleBtn.addEventListener('click', (e) => {
-      e.preventDefault()
-      e.stopPropagation()
-      const responses = options.getResponses()
-      if (entry.hasEmbed) {
-        removeEmbedByCommandId(view, response.id)
-      } else {
-        // Re-resolve paragraph end at click time
-        const found = findCommandParagraph(view.state.doc, response.id, entry.text, responses)
-        const endPos = found ? found.end : entry.end
-        insertEmbedAfter(view, endPos, response.id)
-      }
-    })
+    const toggleBtn = entry.hasEmbed
+      ? lineButton('monetCmdBtnRemove', ICON_REMOVE, 'Remove block', 'Remove the block from the note (the response stays in the AI panel)', () =>
+          removeEmbedByCommandId(view, response.id)
+        )
+      : lineButton('monetCmdBtnInsert', ICON_INSERT, 'Insert', 'Insert the response into the note as a block', () => {
+          // Re-resolve paragraph end at click time
+          const found = findCommandParagraph(view.state, response.id, entry.text, options.getResponses())
+          insertEmbedAfter(view, found ? found.end : entry.end, response.id)
+        })
     wrap.appendChild(toggleBtn)
+  } else if (status === 'error') {
+    const message = response.response.trim().split('\n')[0] ?? ''
+    wrap.appendChild(statusNote(message ? `Failed · ${message}` : 'Failed', 'monetCmdFailed', response.response))
+  } else {
+    wrap.appendChild(statusNote('Stopped', 'monetCmdStoppedNote'))
   }
 
-  // × — para qualquer status finalizado (completed, interrupted, error)
-  const delBtn = document.createElement('button')
-  delBtn.type = 'button'
-  delBtn.className = 'monetCmdBtn monetCmdBtnDelete'
-  delBtn.textContent = '×'
-  delBtn.title = 'remover linha do /comando, bloco e card no painel IA'
-  delBtn.addEventListener('mousedown', (e) => e.preventDefault())
-  delBtn.addEventListener('click', (e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    const responses = options.getResponses()
-    const found = findCommandParagraph(view.state.doc, response.id, entry.text, responses)
-    const paraPos = found ? found.pos : entry.pos
-    const paraEnd = found ? found.end : entry.end
-    deleteCommandLine(view, paraPos, paraEnd, response.id)
-    options.onRemoveResponse(response.id)
-  })
-  wrap.appendChild(delBtn)
+  // Delete — para qualquer status finalizado (completed, interrupted, error).
+  // Tira só a linha e o bloco da nota: a resposta fica no painel de IA, onde
+  // a exclusão é explícita.
+  wrap.appendChild(
+    lineButton('monetCmdBtnDelete', ICON_DELETE, 'Delete', 'Delete the command line and its block. The response stays in the AI panel.', () => {
+      const found = findCommandParagraph(view.state, response.id, entry.text, options.getResponses())
+      deleteCommandLine(view, found ? found.pos : entry.pos, found ? found.end : entry.end, response.id)
+    })
+  )
 
   return wrap
+}
+
+function makePendingWidget(): HTMLElement {
+  const wrap = document.createElement('span')
+  wrap.className = 'monetCmdButtons'
+  wrap.contentEditable = 'false'
+  const note = statusNote('Running…', 'monetCmdDots')
+  note.setAttribute('role', 'status')
+  wrap.appendChild(note)
+  return wrap
+}
+
+function makeHintWidget(text: string): HTMLElement {
+  const hint = document.createElement('span')
+  hint.className = 'monetCmdHint'
+  hint.contentEditable = 'false'
+  hint.textContent = text
+  return hint
+}
+
+function lineClass(status: AiResponse['status']): string {
+  if (status === 'completed') return 'monetCmdExecuted'
+  if (status === 'error') return 'monetCmdError'
+  if (status === 'interrupted') return 'monetCmdStopped'
+  return 'monetCmdPending'
 }
 
 function buildDecorations(
@@ -351,9 +465,11 @@ function buildDecorations(
   options: CommandExtensionOptions
 ): DecorationSet {
   const decorations: Decoration[] = []
-  const index = buildCommandIndex(state.doc, responses)
+  const index = buildCommandIndex(state.doc, responses, pluginState.marks)
   const byPos = new Map<number, ParagraphCommandInfo>()
   for (const entry of index) byPos.set(entry.pos, entry)
+  const { selection } = state
+  const cursorLine = selection.empty && selection.$from.depth > 0 ? selection.$from.before() : -1
 
   state.doc.descendants((node, pos) => {
     if (!isParagraph(node)) return true
@@ -362,38 +478,62 @@ function buildDecorations(
 
     const persisted = pluginState.marks.get(pos)
     const indexEntry = byPos.get(pos)
-    let className: string
-    if (persisted) {
-      switch (persisted.status) {
-        case 'executed':
-          className = 'monetCmdExecuted'
-          break
-        case 'invalid':
-        case 'incomplete':
-          className = 'monetCmdError'
-          break
-      }
-    } else if (indexEntry && indexEntry.response.status !== 'error') {
+    const nodeEnd = pos + node.nodeSize
+    const widgetPos = nodeEnd - 1
+    // Só a linha de topo roda o comando; dentro de lista, toggle ou citação
+    // ela fica como texto e ganha a dica com o cursor nela.
+    const topLevel = state.doc.resolve(pos).depth === 0
+    let className: string | null = null
+    let hint: string | null = null
+    if (indexEntry) {
+      className = lineClass(indexEntry.response.status)
+    } else if (persisted?.run?.pending) {
+      className = 'monetCmdPending'
+    } else if (persisted && persisted.status !== 'executed') {
+      className = 'monetCmdError'
+      hint = chatAgentHint(text) ?? commandLineHint(text, persisted.status)
+    } else if (persisted && !persisted.run) {
       className = 'monetCmdExecuted'
-    } else {
+    } else if (topLevel) {
       className = 'monetCmdDraft'
+      hint = chatAgentHint(text)
+    } else if (cursorLine === pos) {
+      hint = NESTED_HINT
     }
 
-    const nodeEnd = pos + node.nodeSize
-    decorations.push(
-      Decoration.node(pos, nodeEnd, {
-        class: className,
-        spellcheck: 'false',
-      })
-    )
+    if (className) {
+      decorations.push(
+        Decoration.node(pos, nodeEnd, {
+          class: className,
+          spellcheck: 'false',
+        })
+      )
+    }
 
     if (indexEntry && view) {
-      const widgetPos = nodeEnd - 1
       decorations.push(
         Decoration.widget(widgetPos, () => makeButtonsWidget(view, indexEntry, options), {
           side: 1,
           ignoreSelection: true,
-          key: `cmdbtn-${indexEntry.response.id}-${indexEntry.hasEmbed ? '1' : '0'}-${indexEntry.response.status}`,
+          key: `cmdbtn-${indexEntry.response.id}-${indexEntry.hasEmbed ? '1' : '0'}-${indexEntry.response.status}-${indexEntry.response.status === 'error' ? indexEntry.response.response.length : 0}-${indexEntry.response.statusText ?? ''}`,
+        })
+      )
+    } else if (!indexEntry && persisted?.run?.pending) {
+      decorations.push(
+        Decoration.widget(widgetPos, makePendingWidget, {
+          side: 1,
+          ignoreSelection: true,
+          key: `cmdpending-${persisted.run.commandId}`,
+        })
+      )
+    }
+    if (hint) {
+      const text = hint
+      decorations.push(
+        Decoration.widget(widgetPos, () => makeHintWidget(text), {
+          side: 1,
+          ignoreSelection: true,
+          key: `cmdhint-${text}`,
         })
       )
     }
@@ -409,7 +549,6 @@ export const CommandExtension = Extension.create<CommandExtensionOptions>({
   addOptions() {
     return {
       getResponses: () => [],
-      onRemoveResponse: () => {},
     }
   },
 
@@ -432,7 +571,7 @@ export const CommandExtension = Extension.create<CommandExtensionOptions>({
               switch (meta.type) {
                 case 'setMark': {
                   const next = new Map(marks)
-                  next.set(meta.pos, { text: meta.text, status: meta.status })
+                  next.set(meta.pos, { text: meta.text, status: meta.status, run: meta.run })
                   marks = next
                   break
                 }
@@ -440,8 +579,8 @@ export const CommandExtension = Extension.create<CommandExtensionOptions>({
                   marks = syncExecutedMarks(tr.doc, marks, meta.texts)
                   break
                 }
-                case 'clearMarks': {
-                  marks = new Map()
+                case 'settleRun': {
+                  marks = settleRun(marks, meta.commandId, meta.ok)
                   break
                 }
                 case 'bumpResponses': {

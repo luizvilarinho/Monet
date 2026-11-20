@@ -67,7 +67,6 @@ export function KanbanBoard(props: KanbanBoardProps) {
         color: statusColor('done', statuses),
         count: done.length,
         faded: true,
-        clearable: true,
         items: done,
       })
       return columns
@@ -78,7 +77,7 @@ export function KanbanBoard(props: KanbanBoardProps) {
   const onDrop = useCallback(
     (id: string, status: string, tasksById: Map<string, Task>) => {
       const task = tasksById.get(id)
-      if (!task || task.status === status) return
+      if (!task || task.status === status) return false
       onUpdateTasks([{ id, patch: { status } }])
     },
     [onUpdateTasks]

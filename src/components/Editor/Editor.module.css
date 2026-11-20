@@ -246,6 +246,42 @@
   padding: 0;
 }
 
+.dateClear {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted, #606070);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.dateClear:hover {
+  color: var(--accent-warn, #ef9f27);
+}
+
+/* "Archive" no fim da linha das tags. */
+.archiveBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: auto;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-muted, #606070);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.archiveBtn:hover {
+  border-color: var(--border, #333340);
+  color: var(--text-secondary, #a0a0b8);
+}
+
 .bodyWrap {
   position: relative;
   flex: 1;
@@ -556,13 +592,44 @@
   position: relative;
 }
 
-/* /comando inválido ou incompleto */
+/* /comando inválido, incompleto ou que falhou */
 .proseEditor :global(p.monetCmdError) {
   color: #ff8b8b;
   background-color: rgba(239, 79, 79, 0.1);
   border-left: 2px solid #ef4f4f;
   padding-left: 10px;
   margin-left: -12px;
+}
+
+/* /comando em andamento (Enter até a resposta terminar): roxo, sem o verde
+   do sucesso. */
+.proseEditor :global(p.monetCmdPending) {
+  color: var(--accent, #7c6af5);
+  background-color: rgba(124, 106, 245, 0.08);
+  border-left: 2px solid var(--accent, #7c6af5);
+  padding-left: 10px;
+  margin-left: -12px;
+}
+
+/* /comando parado (Stop ou falha no meio) */
+.proseEditor :global(p.monetCmdStopped) {
+  color: var(--text-secondary, #a0a0b8);
+  background-color: var(--surface-1, #1e1e22);
+  border-left: 2px solid var(--border, #333340);
+  padding-left: 10px;
+  margin-left: -12px;
+}
+
+/* Dica cinza no fim da linha: comando desconhecido, sem query, agente de
+   chat ou linha dentro de lista/toggle. Não é texto da nota. */
+.proseEditor :global(.monetCmdHint) {
+  margin-left: var(--space-2);
+  color: var(--text-muted, #606070);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 400;
+  user-select: none;
+  pointer-events: none;
 }
 
 /* Gutter flutuante (BlockGutter): "+" (linha abaixo, Shift = acima) e o
@@ -625,7 +692,7 @@
 .blockMenu {
   position: fixed;
   z-index: 1100;
-  min-width: 140px;
+  min-width: 180px;
   padding: var(--space-1);
   background: var(--surface-1, #1e1e22);
   border: 1px solid var(--hair, #333340);
@@ -650,11 +717,31 @@
   cursor: pointer;
 }
 .blockMenuItem svg {
-  color: #ff8b8b;
+  flex-shrink: 0;
+  color: var(--text-secondary, #a0a0b8);
 }
 .blockMenuItem:hover,
 .blockMenuItem:focus-visible {
   outline: none;
+  background: var(--surface-2, #26262c);
+}
+.blockMenuLabel {
+  flex: 1;
+}
+/* Tipos do "Turn into", recuados sob ele. */
+.blockMenuSub {
+  padding-left: var(--space-6);
+}
+.blockMenuSep {
+  height: 1px;
+  margin: var(--space-1) 0;
+  background: var(--hair, #333340);
+}
+.blockMenuDanger svg {
+  color: #ff8b8b;
+}
+.blockMenuDanger:hover,
+.blockMenuDanger:focus-visible {
   background: rgba(224, 85, 85, 0.16);
   color: #ff9d9d;
 }
@@ -686,6 +773,7 @@
 .proseEditor :global(.monetCmdBtn) {
   display: inline-flex;
   align-items: center;
+  gap: var(--space-1);
   background: var(--surface-1, #1e1e22);
   border: 1px solid var(--border, #333340);
   color: var(--text-secondary, #a0a0b8);
@@ -723,27 +811,44 @@
   border-color: var(--accent-warn, #ef9f27);
 }
 
+.proseEditor :global(.monetCmdBtn svg) {
+  flex-shrink: 0;
+}
+
 .proseEditor :global(.monetCmdBtnDelete) {
   color: #ff8b8b;
   border-color: rgba(239, 79, 79, 0.4);
-  padding: 1px 7px;
-  font-size: 13px;
-  line-height: 1;
 }
 .proseEditor :global(.monetCmdBtnDelete:hover) {
   background: rgba(239, 79, 79, 0.14);
   border-color: #ef4f4f;
 }
 
-/* Indicador "..." durante streaming */
+/* Status da linha do /comando (à direita): etapa, falha ou parada. */
+.proseEditor :global(.monetCmdStatus) {
+  display: inline-block;
+  max-width: 280px;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+/* Em andamento: "Searching the web…", "Responding…", pulsando. */
 .proseEditor :global(.monetCmdDots) {
   color: var(--accent, #7c6af5);
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: 1px;
-  line-height: 1;
-  padding: 1px 6px;
   animation: monetCmdDotsPulse 1.2s ease-in-out infinite;
+}
+
+.proseEditor :global(.monetCmdFailed) {
+  color: #ff8b8b;
+}
+
+.proseEditor :global(.monetCmdStoppedNote) {
+  color: var(--text-muted, #606070);
 }
 
 @keyframes monetCmdDotsPulse {

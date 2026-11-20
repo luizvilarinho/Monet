@@ -79,7 +79,6 @@
   border: none;
   border-radius: var(--radius-sm);
   color: var(--text-muted, #7c7c93);
-  font-size: 18px;
   cursor: pointer;
   line-height: 1;
   padding: 0 var(--space-1);
@@ -173,12 +172,32 @@
 }
 
 .keyBanner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
   background: rgba(239, 159, 39, 0.08);
   border-bottom: 1px solid rgba(239, 159, 39, 0.3);
   color: var(--accent-warn, #ef9f27);
   padding: var(--space-2) var(--space-3);
   font-size: 11px;
   flex-shrink: 0;
+}
+
+.keyBannerBtn {
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  font-family: inherit;
+  font-size: 11px;
+  min-height: var(--control-sm);
+  padding: 0 var(--space-2);
+  cursor: pointer;
+}
+
+.keyBannerBtn:hover {
+  background: rgba(239, 159, 39, 0.12);
 }
 
 /* Âncora do botão "voltar ao fim" (fora do scroll do histórico). */
@@ -286,6 +305,53 @@
   animation-delay: 0.4s;
 }
 
+/* Ações da resposta — mesmo padrão do ChatMessageBubble ("Save to note" com
+   rótulo + copiar). */
+.assistantActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: calc(-1 * var(--space-1));
+}
+
+.saveBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1h);
+  background: transparent;
+  border: 1px solid var(--border, #333340);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary, #9898a4);
+  font-family: inherit;
+  font-size: 12px;
+  min-height: var(--control-sm);
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+}
+
+.saveBtn:hover {
+  color: var(--accent-ai, #5dcaa5);
+  border-color: var(--accent-ai, #5dcaa5);
+}
+
+.copyBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted, #7c7c93);
+  min-width: var(--control-sm);
+  min-height: var(--control-sm);
+  padding: 0;
+  cursor: pointer;
+}
+
+.copyBtn:hover {
+  color: var(--text-primary, #ddddf1);
+}
+
 @keyframes blink {
   0%,
   80%,
@@ -309,6 +375,17 @@
   border-top: 1px solid var(--border, #333340);
   background: var(--bg-panel, #161625);
   padding: var(--space-3);
+}
+
+/* O que vai junto de cada mensagem (contexto efêmero de leitura). */
+.contextChip {
+  margin: 0 0 var(--space-2);
+  color: var(--text-muted, #7c7c93);
+  font-size: 11px;
+  line-height: var(--lh-ui);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .input {

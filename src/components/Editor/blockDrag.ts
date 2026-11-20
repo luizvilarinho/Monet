@@ -1,5 +1,5 @@
 import { TextSelection } from '@tiptap/pm/state'
-import type { Node as PMNode } from '@tiptap/pm/model'
+import { Fragment, type Node as PMNode } from '@tiptap/pm/model'
 import type { EditorView } from '@tiptap/pm/view'
 import { blockRange, isCommandLine, ITEM_TYPES, type BlockUnit } from './blockUnit'
 import { setBlockMark } from './BlockHandle'
@@ -220,12 +220,9 @@ export function trackHandlePress(
 }
 
 // Apaga a unidade (sem confirmação: o Ctrl+Z desfaz). O par /comando +
-// resposta sai junto e a resposta sai também do painel de IA.
-export function deleteBlockUnit(
-  view: EditorView,
-  unit: BlockUnit,
-  onRemoveResponse?: (commandId: string) => void
-): void {
+// resposta sai junto, só da nota: a resposta fica no painel de IA, onde a
+// exclusão é explícita, e o Ctrl+Z traz o bloco de volta com ela.
+export function deleteBlockUnit(view: EditorView, unit: BlockUnit): void {
   const { doc } = view.state
   if (doc.nodeAt(unit.pos) !== unit.node) return
   let { from, to } = blockRange(doc, unit)
@@ -236,17 +233,43 @@ export function deleteBlockUnit(
     from = $from.before()
     to = $from.after()
   }
-  const commandIds: string[] = []
-  doc.nodesBetween(from, to, (node) => {
-    const id = node.type.name === 'embedBlock' ? node.attrs.commandId : null
-    if (typeof id === 'string' && id) commandIds.push(id)
-    return !node.isAtom
-  })
   const tr = view.state.tr.delete(from, to)
   // Seleção válida no lugar do bloco e foco de volta: sem isso o Ctrl+Z não
   // tem onde agir.
   tr.setSelection(TextSelection.near(tr.doc.resolve(Math.min(from, tr.doc.content.size))))
   view.dispatch(tr)
   view.focus()
-  commandIds.forEach((id) => onRemoveResponse?.(id))
+}
+
+// Conteúdo sem os blocos de IA: cada um é a resposta de uma linha (o
+// commandId), e duas cópias seriam a mesma resposta, apagadas juntas pelo
+// card. A linha do /comando fica como texto. Contêiner que fica vazio (toggle
+// só com a resposta) ganha o parágrafo vazio que o schema pede.
+function withoutEmbeds(fragment: Fragment): Fragment {
+  const kept: PMNode[] = []
+  fragment.forEach((node) => {
+    if (node.type.name === 'embedBlock') return
+    if (node.isTextblock || node.isLeaf) {
+      kept.push(node)
+      return
+    }
+    const content = withoutEmbeds(node.content)
+    kept.push(
+      node.type.validContent(content) ? node.copy(content) : node.type.createAndFill(node.attrs, content, node.marks) ?? node
+    )
+  })
+  return Fragment.from(kept)
+}
+
+// Copia a unidade logo abaixo dela, sem os blocos de IA (ver withoutEmbeds),
+// e põe o cursor na cópia. O par /comando + resposta de topo não chega aqui
+// (o menu não oferece Duplicate nele).
+export function duplicateBlockUnit(view: EditorView, unit: BlockUnit): void {
+  const { doc } = view.state
+  if (doc.nodeAt(unit.pos) !== unit.node) return
+  const { from, to } = blockRange(doc, unit)
+  const tr = view.state.tr.insert(to, withoutEmbeds(doc.slice(from, to).content))
+  tr.setSelection(TextSelection.near(tr.doc.resolve(Math.min(to + 1, tr.doc.content.size))))
+  view.dispatch(tr.scrollIntoView())
+  view.focus()
 }

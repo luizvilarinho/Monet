@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { PDFPageProxy, RenderTask } from 'pdfjs-dist'
 import {
+  ArrowLeft,
   ArrowUUpLeft,
   CaretDown,
   CaretLeft,
@@ -9,9 +10,12 @@ import {
   Highlighter,
   ListBullets,
   MagnifyingGlass,
+  MagnifyingGlassMinus,
+  MagnifyingGlassPlus,
   Quotes,
   SidebarSimple,
   Sparkle,
+  Trash,
   X,
 } from '@phosphor-icons/react'
 import type {
@@ -28,10 +32,12 @@ import { booksReadFile } from '../../lib/books'
 import { openPdf, TextLayer, type PDFDocumentProxy } from '../../lib/pdf'
 import { useBookQuotes } from '../../hooks/useBookQuotes'
 import { useConfirm } from '../../hooks/useConfirm'
-import { useHighlights } from '../../hooks/useHighlights'
+import { loadHighlightColor, saveHighlightColor, useHighlights } from '../../hooks/useHighlights'
 import { QuoteToNoteModal } from './QuoteToNoteModal'
 import { ReaderChatPanel } from './ReaderChatPanel'
 import { ReaderNotesPanel } from './ReaderNotesPanel'
+import { useReaderToast } from './ReaderToast'
+import { placeSelectionToolbar } from './toolbarPlacement'
 import styles from './Reader.module.css'
 
 export interface ReaderProps {
@@ -56,6 +62,10 @@ export interface ReaderProps {
     typeId?: string | null,
   ) => Promise<Note>
   onSaveNote: (note: Note) => Promise<void>
+  // Abre o Settings do app (ModelSelector e faixa sem chave do chat).
+  onOpenSettings: () => void
+  // Tela de livro sem arquivo: tira o livro da Library (com confirmação).
+  onRemoveBook?: () => void
 }
 
 // Rótulo de posição da citação no PDF. Fica aqui porque cada formato monta o
@@ -79,7 +89,6 @@ const HIGHLIGHT_COLOR_NAMES: Record<string, string> = {
   '#90CAF9': 'blue',
   '#F48FB1': 'pink',
 }
-const DEFAULT_HIGHLIGHT_COLOR = HIGHLIGHT_COLORS[0]
 
 // Estado do toggle da coluna lateral (Chat/Notes), persistido entre sessões.
 // Mesma chave/valor de antes (CHAT_OPEN_KEY) — preserva a preferência já
@@ -94,6 +103,40 @@ const SIDE_TAB_KEY = 'monet:reader-side-tab'
 const SIDE_PANEL_COLLAPSED_KEY = 'monet:reader-sidepanel-collapsed'
 const SIDE_PANEL_WIDTH = 280
 const SIDE_PANEL_COLLAPSED_WIDTH = 48
+
+// Acima disso o painel de grifos ganha o campo de busca.
+const HIGHLIGHT_SEARCH_MIN = 15
+
+// "Fit width" / "Fit page", por livro. Enquanto um deles está ativo, o zoom
+// acompanha o tamanho da área da página; − e + voltam ao zoom manual.
+type FitMode = 'width' | 'page'
+const FIT_MODE_KEY = 'monet:reader-fit-mode'
+
+function readFitModes(): Record<string, FitMode> {
+  try {
+    const raw = localStorage.getItem(FIT_MODE_KEY)
+    const parsed: unknown = raw ? JSON.parse(raw) : null
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, FitMode>) : {}
+  } catch {
+    return {}
+  }
+}
+
+function loadFitMode(bookId: string): FitMode | null {
+  const mode = readFitModes()[bookId]
+  return mode === 'width' || mode === 'page' ? mode : null
+}
+
+function saveFitMode(bookId: string, mode: FitMode | null): void {
+  try {
+    const modes = readFitModes()
+    if (mode) modes[bookId] = mode
+    else delete modes[bookId]
+    localStorage.setItem(FIT_MODE_KEY, JSON.stringify(modes))
+  } catch (err) {
+    console.error('failed to persist reader fit mode', err)
+  }
+}
 
 type SidePanelTab = 'summary' | 'highlights'
 type SideTab = 'chat' | 'notes'
@@ -400,6 +443,8 @@ export function Reader({
   onCreateNotebook,
   onCreateNote,
   onSaveNote,
+  onOpenSettings,
+  onRemoveBook,
 }: ReaderProps) {
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null)
   const [pageNum, setPageNum] = useState(book.lastPage)
@@ -408,22 +453,31 @@ export function Reader({
   // atual do storage. Livros antigos (sem coluna `zoom`) caem no default
   // 1.0 (clamp aplicado no `rowToBook` do storage).
   const [scale, setScale] = useState(() => clampScale(book.zoom))
+  const [fitMode, setFitMode] = useState<FitMode | null>(() => loadFitMode(book.id))
+  // Página sem texto extraível (PDF escaneado): mostra a faixa de aviso.
+  const [pageHasNoText, setPageHasNoText] = useState(false)
   const [pageInput, setPageInput] = useState(String(book.lastPage))
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  const { toast, showToast } = useReaderToast()
   const {
     highlights,
     orderedHighlights,
     filteredHighlights,
     colorFilter,
     setColorFilter,
+    textFilter,
+    setTextFilter,
     persistHighlight,
     removeHighlight,
     changeColor,
-  } = useHighlights(book.id)
+  } = useHighlights(book.id, (message) => showToast({ message, tone: 'error' }))
   const [selection, setSelection] = useState<SelectionState | null>(null)
-  const [activeColor, setActiveColor] = useState<string>(DEFAULT_HIGHLIGHT_COLOR)
+  // Última cor usada (comum aos leitores): é a do atalho H.
+  const [activeColor, setActiveColor] = useState<string>(() =>
+    loadHighlightColor(HIGHLIGHT_COLORS),
+  )
   const [removalCandidate, setRemovalCandidate] = useState<RemovalCandidate | null>(
     null,
   )
@@ -454,21 +508,31 @@ export function Reader({
     text: string
     page: number
   } | null>(null)
+  const showNotesTab = useCallback(() => {
+    setSideTab('notes')
+    setSideOpen(true)
+  }, [])
   const {
-    copyCitationAbout,
+    addQuoteToNote,
+    addToNoteTitle,
+    openNote,
+    linkVersion,
     modal: quoteModal,
-    toast: saveToast,
   } = useBookQuotes({
     bookId: book.id,
     bookTitle: book.title,
     notes,
     notebooks,
     onSaveNote,
+    showToast,
+    onShowNotes: showNotesTab,
   })
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const textLayerRef = useRef<HTMLDivElement>(null)
   const pageWrapRef = useRef<HTMLDivElement>(null)
+  const pageAreaRef = useRef<HTMLDivElement>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
   const highlightLayerRef = useRef<HTMLDivElement>(null)
   const toolbarRef = useRef<HTMLDivElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
@@ -1023,6 +1087,71 @@ export function Reader({
     setPageInput(String(pageNum))
   }, [pageNum])
 
+  // A página nova começa no topo, como ao virar a folha.
+  useEffect(() => {
+    pageAreaRef.current?.scrollTo({ top: 0 })
+  }, [pageNum])
+
+  // Fit width / Fit page: recalcula o zoom pela área da página ao trocar de
+  // página e quando a área muda de tamanho (janela, colunas laterais).
+  useEffect(() => {
+    const area = pageAreaRef.current
+    if (!doc || !fitMode || !area) return
+    let cancelled = false
+    const fit = async () => {
+      try {
+        const page = await doc.getPage(pageNum)
+        if (cancelled) return
+        const base = page.getViewport({ scale: 1 })
+        const cs = getComputedStyle(area)
+        const availW =
+          area.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)
+        const availH =
+          area.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom)
+        if (availW <= 0 || availH <= 0) return
+        const byWidth = availW / base.width
+        const next = fitMode === 'width' ? byWidth : Math.min(byWidth, availH / base.height)
+        setScale(clampScale(Math.floor(next * 100) / 100))
+      } catch (err) {
+        console.error('failed to fit page to the reading area', err)
+      }
+    }
+    void fit()
+    const observer = new ResizeObserver(() => void fit())
+    observer.observe(area)
+    return () => {
+      cancelled = true
+      observer.disconnect()
+    }
+  }, [doc, pageNum, fitMode])
+
+  function chooseFitMode(mode: FitMode) {
+    setFitMode(mode)
+    saveFitMode(book.id, mode)
+  }
+
+  // − e + voltam ao zoom manual.
+  function zoomBy(delta: number) {
+    if (fitMode) {
+      setFitMode(null)
+      saveFitMode(book.id, null)
+    }
+    setScale((s) => clampScale(s + delta))
+  }
+
+  // Página sem text layer (PDF escaneado): a faixa avisa que grifo, busca e
+  // o contexto da IA não funcionam nela.
+  useEffect(() => {
+    if (!doc) return
+    let cancelled = false
+    void getPageText(pageNum).then((text) => {
+      if (!cancelled) setPageHasNoText(text === null)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [doc, pageNum, getPageText])
+
   const goToPage = useCallback(
     (page: number) => {
       if (!doc) return
@@ -1094,27 +1223,64 @@ export function Reader({
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
-  // Atalhos ←/→ (ignorando inputs/textarea/contenteditable).
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      const target = e.target as HTMLElement | null
-      if (
-        target &&
-        (target.tagName === 'INPUT' ||
-          target.tagName === 'TEXTAREA' ||
-          target.isContentEditable)
-      ) {
-        return
-      }
-      if (e.key === 'ArrowLeft') {
-        setPageNum((p) => Math.max(1, p - 1))
-      } else if (e.key === 'ArrowRight' && doc) {
-        setPageNum((p) => Math.min(doc.numPages, p + 1))
-      }
+  // Atalhos do leitor (ignorando inputs/textarea/contenteditable): ←/→ trocam
+  // de página, Esc fecha a toolbar de seleção e o popover do grifo, H grifa a
+  // seleção com a última cor. O handler é trocado a cada render (ref) para
+  // ver a seleção atual.
+  const keyHandlerRef = useRef<(e: KeyboardEvent) => void>(() => {})
+  keyHandlerRef.current = (e: KeyboardEvent) => {
+    const target = e.target as HTMLElement | null
+    if (
+      target &&
+      (target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable)
+    ) {
+      return
     }
+    if (e.key === 'ArrowLeft') {
+      setPageNum((p) => Math.max(1, p - 1))
+    } else if (e.key === 'ArrowRight' && doc) {
+      const total = doc.numPages
+      setPageNum((p) => Math.min(total, p + 1))
+    } else if (e.key === 'Escape' && (selection || removalCandidate)) {
+      setSelection(null)
+      setRemovalCandidate(null)
+      window.getSelection()?.removeAllRanges()
+    } else if (
+      (e.key === 'h' || e.key === 'H') &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.altKey &&
+      selection
+    ) {
+      e.preventDefault()
+      void handleHighlight(activeColor)
+    }
+  }
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => keyHandlerRef.current(e)
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [doc])
+  }, [])
+
+  // Ctrl+F abre (ou foca) a busca no livro. Fica na captura para passar à
+  // frente do Ctrl+F do editor, exceto com o foco na nota da aba Notes ou num
+  // modal, que têm a busca deles.
+  useEffect(() => {
+    function onFind(e: KeyboardEvent) {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'f') return
+      if (document.activeElement?.closest('[data-note-editor], [aria-modal="true"]')) return
+      e.preventDefault()
+      e.stopPropagation()
+      setSearchOpen(true)
+      searchInputRef.current?.focus()
+      searchInputRef.current?.select()
+    }
+    window.addEventListener('keydown', onFind, true)
+    return () => window.removeEventListener('keydown', onFind, true)
+  }, [])
 
   function commitPageInput() {
     const parsed = Number.parseInt(pageInput, 10)
@@ -1290,6 +1456,11 @@ export function Reader({
   }, [])
 
   // ─── Ações da toolbar ─────────────────────────────────────────────────
+  function chooseColor(color: string) {
+    setActiveColor(color)
+    saveHighlightColor(color)
+  }
+
   async function handleHighlight(color: string) {
     if (!selection) return
     const highlight: BookHighlight = {
@@ -1338,9 +1509,9 @@ export function Reader({
     }
   }
 
-  function handleCopyCitation() {
+  function handleAddToNote() {
     if (!selection) return
-    copyCitationAbout(selection.text, pageNum, pdfPositionLabel(pageNum))
+    addQuoteToNote(selection.text, pageNum, pdfPositionLabel(pageNum))
     setSelection(null)
     window.getSelection()?.removeAllRanges()
   }
@@ -1413,8 +1584,13 @@ export function Reader({
 
   async function handleConfirmRemove(h: BookHighlight) {
     const ok = await confirm(
-      'Remove this highlight? The text in the PDF is not affected.',
-      { title: 'Remove highlight', confirmLabel: 'Remove', cancelLabel: 'Cancel' },
+      'Delete this highlight? The text in the PDF is not affected.',
+      {
+        title: 'Delete highlight',
+        confirmLabel: 'Delete',
+        cancelLabel: 'Cancel',
+        destructive: true,
+      },
     )
     if (!ok) return
     setRemovalCandidate(null)
@@ -1432,25 +1608,40 @@ export function Reader({
     h: BookHighlight,
   ) {
     e.stopPropagation()
-    const ok = await confirm('Delete this highlight?', {
+    const ok = await confirm('Delete this highlight? The text in the PDF is not affected.', {
       title: 'Delete highlight',
       confirmLabel: 'Delete',
       cancelLabel: 'Cancel',
+      destructive: true,
     })
     if (!ok) return
     await removeHighlight(h.id)
   }
 
   // ─── Posicionamento da toolbar e popover ──────────────────────────────
-  function toolbarStyle(): React.CSSProperties {
-    if (!selection) return { display: 'none' }
-    const { anchor } = selection
-    // Acima da seleção, alinhado ao canto esquerdo. Se não couber, fica abaixo.
-    return {
-      left: `${Math.max(8, anchor.x)}px`,
-      top: `${Math.max(8, anchor.y - 40)}px`,
-    }
-  }
+  // Toolbar de seleção: acima da seleção, ou abaixo quando não cabe, e sempre
+  // dentro da parte visível da área da página. Medida depois de montada e
+  // antes da pintura; as coordenadas são as do .pageWrap.
+  useLayoutEffect(() => {
+    const el = toolbarRef.current
+    const wrap = pageWrapRef.current
+    const area = pageAreaRef.current
+    if (!selection || !el || !wrap || !area) return
+    const wrapRect = wrap.getBoundingClientRect()
+    const areaRect = area.getBoundingClientRect()
+    const { left, top } = placeSelectionToolbar(
+      selection.anchor,
+      { width: el.offsetWidth, height: el.offsetHeight },
+      {
+        left: areaRect.left - wrapRect.left,
+        top: areaRect.top - wrapRect.top,
+        right: areaRect.left + area.clientWidth - wrapRect.left,
+        bottom: areaRect.top + area.clientHeight - wrapRect.top,
+      },
+    )
+    el.style.left = `${left}px`
+    el.style.top = `${top}px`
+  }, [selection])
 
   function popoverStyle(): React.CSSProperties {
     if (!removalCandidate) return { display: 'none' }
@@ -1466,9 +1657,16 @@ export function Reader({
       <div className={styles.reader}>
         <div className={styles.errorState}>
           <p className={styles.errorMessage}>{error}</p>
-          <button type="button" className={styles.primary} onClick={onBack}>
-            Back to Library
-          </button>
+          <div className={styles.errorActions}>
+            <button type="button" className={styles.primary} onClick={onBack}>
+              Back to Library
+            </button>
+            {onRemoveBook && (
+              <button type="button" className={styles.secondary} onClick={onRemoveBook}>
+                Remove from Library
+              </button>
+            )}
+          </div>
         </div>
         {confirmModal}
       </div>
@@ -1479,7 +1677,8 @@ export function Reader({
     <div className={styles.reader}>
       <div className={styles.toolbar}>
         <button type="button" className={styles.backButton} onClick={onBack}>
-          ← Library
+          <ArrowLeft size={13} aria-hidden />
+          Library
         </button>
 
         <div className={styles.pageControls}>
@@ -1489,8 +1688,9 @@ export function Reader({
             onClick={() => goToPage(pageNum - 1)}
             disabled={!doc || pageNum <= 1}
             aria-label="Previous page"
+            title="Previous page"
           >
-            ‹
+            <CaretLeft size={14} aria-hidden />
           </button>
           <input
             className={styles.pageInput}
@@ -1514,8 +1714,9 @@ export function Reader({
             onClick={() => goToPage(pageNum + 1)}
             disabled={!doc || pageNum >= (doc?.numPages ?? 1)}
             aria-label="Next page"
+            title="Next page"
           >
-            ›
+            <CaretRight size={14} aria-hidden />
           </button>
         </div>
 
@@ -1525,6 +1726,7 @@ export function Reader({
             className={styles.highlightsToggle}
             onClick={() => setSearchOpen(true)}
             aria-label="Search in book"
+            title="Search in book (Ctrl+F)"
           >
             <MagnifyingGlass size={14} aria-hidden />
             Search
@@ -1532,6 +1734,7 @@ export function Reader({
         ) : (
           <div className={styles.searchBar}>
             <input
+              ref={searchInputRef}
               type="text"
               className={styles.searchInput}
               placeholder="Search in book…"
@@ -1604,21 +1807,41 @@ export function Reader({
           <button
             type="button"
             className={styles.navButton}
-            onClick={() => setScale((s) => Math.max(MIN_SCALE, s - SCALE_STEP))}
+            onClick={() => zoomBy(-SCALE_STEP)}
             disabled={scale <= MIN_SCALE}
             aria-label="Zoom out"
+            title="Zoom out"
           >
-            −
+            <MagnifyingGlassMinus size={14} aria-hidden />
           </button>
           <span className={styles.zoomLabel}>{Math.round(scale * 100)}%</span>
           <button
             type="button"
             className={styles.navButton}
-            onClick={() => setScale((s) => Math.min(MAX_SCALE, s + SCALE_STEP))}
+            onClick={() => zoomBy(SCALE_STEP)}
             disabled={scale >= MAX_SCALE}
             aria-label="Zoom in"
+            title="Zoom in"
           >
-            +
+            <MagnifyingGlassPlus size={14} aria-hidden />
+          </button>
+          <button
+            type="button"
+            className={`${styles.fitButton} ${fitMode === 'width' ? styles.fitButtonActive : ''}`}
+            onClick={() => chooseFitMode('width')}
+            aria-pressed={fitMode === 'width'}
+            title="Zoom to the width of the reading area"
+          >
+            Fit width
+          </button>
+          <button
+            type="button"
+            className={`${styles.fitButton} ${fitMode === 'page' ? styles.fitButtonActive : ''}`}
+            onClick={() => chooseFitMode('page')}
+            aria-pressed={fitMode === 'page'}
+            title="Zoom to show the whole page"
+          >
+            Fit page
           </button>
         </div>
 
@@ -1648,6 +1871,13 @@ export function Reader({
         </div>
       </div>
 
+      {doc && pageHasNoText && (
+        <p className={styles.noTextBanner} role="status">
+          This page has no selectable text (scanned PDF). Highlights, search and page
+          context for the AI don&apos;t work here.
+        </p>
+      )}
+
       <div className={styles.readerBody}>
         <aside
           className={`${styles.sidePanel} ${
@@ -1676,8 +1906,8 @@ export function Reader({
                   setSidePanelTab('summary')
                   setSidePanelCollapsed(false)
                 }}
-                aria-label="Show summary"
-                title="Summary"
+                aria-label="Show contents"
+                title="Contents"
               >
                 <ListBullets size={16} aria-hidden />
               </button>
@@ -1716,7 +1946,7 @@ export function Reader({
                   }`}
                   onClick={() => setSidePanelTab('summary')}
                 >
-                  Summary
+                  Contents
                 </button>
                 <button
                   type="button"
@@ -1746,11 +1976,25 @@ export function Reader({
                 </div>
               ) : (
                 <>
+                  {(orderedHighlights.length > HIGHLIGHT_SEARCH_MIN || textFilter !== '') && (
+                    <input
+                      type="search"
+                      className={styles.highlightsSearch}
+                      placeholder="Search highlights…"
+                      value={textFilter}
+                      onChange={(e) => setTextFilter(e.target.value)}
+                      aria-label="Search highlights"
+                    />
+                  )}
                   {orderedHighlights.length === 0 ? (
-                    <p className={styles.highlightsPanelEmpty}>No highlights yet</p>
+                    <p className={styles.highlightsPanelEmpty}>
+                      Select text on the page to highlight it.
+                    </p>
                   ) : filteredHighlights.length === 0 ? (
                     <p className={styles.highlightsPanelEmpty}>
-                      No highlights match this color
+                      {textFilter.trim()
+                        ? 'No highlights match this search'
+                        : 'No highlights match this color'}
                     </p>
                   ) : (
                     <ul className={styles.highlightsPanelList}>
@@ -1801,14 +2045,14 @@ export function Reader({
                               className={styles.highlightsPanelItemAction}
                               onClick={(e) => {
                                 e.stopPropagation()
-                                copyCitationAbout(
+                                addQuoteToNote(
                                   h.text,
                                   h.page,
                                   pdfPositionLabel(h.page),
                                 )
                               }}
-                              aria-label="Copy citation"
-                              title="Copy citation"
+                              aria-label="Add to note"
+                              title={addToNoteTitle}
                             >
                               <Quotes size={12} aria-hidden />
                             </button>
@@ -1819,23 +2063,7 @@ export function Reader({
                               aria-label="Delete highlight"
                               title="Delete highlight"
                             >
-                              <svg
-                                width="12"
-                                height="12"
-                                viewBox="0 0 16 16"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="1.6"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                aria-hidden="true"
-                              >
-                                <path d="M3 4h10" />
-                                <path d="M5.5 4V2.5h5V4" />
-                                <path d="M4.5 4l.6 9a1 1 0 0 0 1 .9h3.8a1 1 0 0 0 1-.9l.6-9" />
-                                <path d="M7 7v5" />
-                                <path d="M9 7v5" />
-                              </svg>
+                              <Trash size={12} aria-hidden />
                             </button>
                           </div>
                         </li>
@@ -1866,7 +2094,7 @@ export function Reader({
           )}
         </aside>
 
-        <div className={styles.pageArea}>
+        <div className={styles.pageArea} ref={pageAreaRef}>
           {loading ? (
             <p className={styles.loadingText}>Loading book…</p>
           ) : (
@@ -1926,7 +2154,6 @@ export function Reader({
                 <div
                   ref={toolbarRef}
                   className={styles.highlightToolbar}
-                  style={toolbarStyle()}
                   onMouseDown={(e) => e.stopPropagation()}
                 >
                   {HIGHLIGHT_COLORS.map((c) => (
@@ -1938,10 +2165,11 @@ export function Reader({
                       }`}
                       style={{ background: c }}
                       onClick={() => {
-                        setActiveColor(c)
+                        chooseColor(c)
                         void handleHighlight(c)
                       }}
-                      aria-label={`Highlight with ${c}`}
+                      aria-label={`Highlight with ${HIGHLIGHT_COLOR_NAMES[c] ?? c}`}
+                      title={c === activeColor ? 'Highlight (H)' : undefined}
                     />
                   ))}
                   <span className={styles.highlightToolbarDivider} />
@@ -1955,9 +2183,10 @@ export function Reader({
                   <button
                     type="button"
                     className={styles.highlightToolbarButton}
-                    onClick={handleCopyCitation}
+                    onClick={handleAddToNote}
+                    title={addToNoteTitle}
                   >
-                    Copy citation
+                    Add to note
                   </button>
                   <button
                     type="button"
@@ -1997,16 +2226,17 @@ export function Reader({
                       type="button"
                       className={styles.removalPopoverQuickButton}
                       onClick={() => {
-                        copyCitationAbout(
+                        addQuoteToNote(
                           removalCandidate.highlight.text,
                           removalCandidate.highlight.page,
                           pdfPositionLabel(removalCandidate.highlight.page),
                         )
                         setRemovalCandidate(null)
                       }}
+                      title={addToNoteTitle}
                     >
                       <Quotes size={13} aria-hidden />
-                      Copy citation
+                      Add to note
                     </button>
                   </div>
                   <div className={styles.removalPopoverColors}>
@@ -2039,7 +2269,7 @@ export function Reader({
                         void handleConfirmRemove(removalCandidate.highlight)
                       }
                     >
-                      Remove
+                      Delete
                     </button>
                   </div>
                 </div>
@@ -2086,14 +2316,24 @@ export function Reader({
           onClose={() => setSideOpen(false)}
           pendingQuote={pendingQuote}
           onPendingQuoteConsumed={() => setPendingQuote(null)}
+          notebooks={notebooks}
+          notes={notes}
+          onCreateNotebook={onCreateNotebook}
+          onCreateNote={onCreateNote}
+          onSaveNote={onSaveNote}
+          onOpenNote={openNote}
+          showToast={showToast}
+          onOpenSettings={onOpenSettings}
         />
         <ReaderNotesPanel
           book={book}
           notebooks={notebooks}
           notes={notes}
           noteTypes={noteTypes}
+          onCreateNotebook={onCreateNotebook}
           onCreateNote={onCreateNote}
           onSaveNote={onSaveNote}
+          linkVersion={linkVersion}
           open={sideOpen && sideTab === 'notes'}
           onClose={() => setSideOpen(false)}
         />
@@ -2114,15 +2354,12 @@ export function Reader({
           positionLabel={quoteModal.positionLabel}
           bookId={book.id}
           onSaved={quoteModal.onSaved}
+          onLinkNote={quoteModal.onLinkNote}
           onClose={quoteModal.onClose}
         />
       )}
 
-      {saveToast && (
-        <div className={styles.saveToast} role="status">
-          {saveToast}
-        </div>
-      )}
+      {toast}
 
       {confirmModal}
     </div>

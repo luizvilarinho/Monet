@@ -1,3 +1,4 @@
+import { CaretRight, WarningCircle } from '@phosphor-icons/react'
 import { useState } from 'react'
 import type { ChatMessage, ChatTimings } from '../../hooks/useChat'
 import { useRagDetailed } from '../../hooks/useRagDetailed'
@@ -70,11 +71,25 @@ export function MessageSources({ message, trace, timings: timingsData }: Message
   const timings = detailed && timingsData ? timingLine(timingsData) : ''
 
   if (message.role !== 'assistant') return null
-  const hasFooter = sources.length > 0 || !!message.ragNothingFound || showInspector || !!timings
+  const searchFailed = !!message.webSearchFailed || !!message.kbSearchFailed
+  const hasFooter = sources.length > 0 || !!message.ragNothingFound || searchFailed || showInspector || !!timings
   if (!hasFooter) return null
 
   return (
     <div className={styles.wrap}>
+      {/* Busca do turno que falhou: a resposta saiu sem ela. */}
+      {message.webSearchFailed && (
+        <p className={styles.failed}>
+          <WarningCircle size={12} aria-hidden />
+          Web search failed — answered without web results.
+        </p>
+      )}
+      {message.kbSearchFailed && (
+        <p className={styles.failed}>
+          <WarningCircle size={12} aria-hidden />
+          Couldn't search your documents — answered without them.
+        </p>
+      )}
       {sources.length > 0 ? (
         <>
           <button
@@ -83,20 +98,7 @@ export function MessageSources({ message, trace, timings: timingsData }: Message
             aria-expanded={open}
             onClick={() => setOpen((v) => !v)}
           >
-            <svg
-              className={open ? styles.caretOpen : styles.caret}
-              viewBox="0 0 16 16"
-              width="10"
-              height="10"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <polyline points="6,4 10,8 6,12" />
-            </svg>
+            <CaretRight size={10} weight="bold" className={open ? styles.caretOpen : styles.caret} aria-hidden />
             Sources ({sources.length})
           </button>
           {open && (

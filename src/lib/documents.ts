@@ -207,6 +207,16 @@ export async function getNotebookVisibleDocumentIds(
   return invoke<string[]>('documents_get_notebook_visible_ids', { notebookId })
 }
 
+// Todas as linhas de visibilidade (caderno × documento), para a coluna "Used in" da KB.
+export interface NotebookVisibilityRow {
+  notebookId: string
+  documentId: string
+}
+
+export async function documentsListVisibility(): Promise<NotebookVisibilityRow[]> {
+  return invoke<NotebookVisibilityRow[]>('documents_list_visibility')
+}
+
 export async function getNotebooksWithVisibleDocs(): Promise<string[]> {
   return invoke<string[]>('documents_get_notebooks_with_visible_docs')
 }
@@ -227,9 +237,9 @@ export async function embedText(text: string): Promise<number[]> {
   return invoke<number[]>('embed_text', { text })
 }
 
-export async function pickDocumentFile(): Promise<string | null> {
-  const result = await invoke<string | null>('documents_pick_file')
-  return result ?? null
+// Seleção múltipla; vazio quando o usuário cancela.
+export async function pickDocumentFiles(): Promise<string[]> {
+  return invoke<string[]>('documents_pick_files')
 }
 
 export async function pickDocumentFolder(): Promise<string | null> {

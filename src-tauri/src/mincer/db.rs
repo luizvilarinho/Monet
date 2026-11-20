@@ -55,6 +55,36 @@ pub(crate) fn insert_queued(
     )
 }
 
+// Gravação órfã achada no boot (jobs::on_startup): entra interrompida, com
+// Resume, para não gastar API sozinha. O OR IGNORE cobre um item com o mesmo
+// id criado durante o boot.
+pub(crate) fn insert_recovered(
+    app: &AppHandle,
+    id: &str,
+    title: &str,
+    options: &MincerJobOptions,
+    message: &str,
+) -> Result<(), String> {
+    let now = now_ms();
+    exec(
+        app,
+        "INSERT OR IGNORE INTO mincer_items (id, kind, title, status, error, preset, summary_prompt,
+            transcription_model, summary_model, queued_at, force_summary, unseen,
+            created_at, updated_at)
+         VALUES (?1, 'record', ?2, 'interrupted', ?3, ?4, ?5, ?6, ?7, ?8, 0, 1, ?8, ?8)",
+        params![
+            id,
+            title,
+            message,
+            options.preset,
+            options.summary_prompt,
+            options.transcription_model,
+            options.summary_model,
+            now
+        ],
+    )
+}
+
 // Resume passa false e mantém a flag de um Regenerate que falhou ou foi cancelado.
 pub(crate) fn enqueue(app: &AppHandle, id: &str, force_summary: bool) -> Result<(), String> {
     let now = now_ms();
@@ -132,7 +162,7 @@ pub(crate) fn list_items(app: &AppHandle) -> Result<Vec<MincerItemSummary>, Stri
         let mut stmt = conn
             .prepare(
                 "SELECT id, kind, title, status, stage, progress_current, progress_total, error,
-                    created_at, updated_at, unseen, sent_to_notebook_at
+                    created_at, updated_at, unseen, sent_to_notebook_at, queued_at
                  FROM mincer_items ORDER BY created_at DESC",
             )
             .map_err(|e| format!("mincer db: {}", e))?;
@@ -151,6 +181,7 @@ pub(crate) fn list_items(app: &AppHandle) -> Result<Vec<MincerItemSummary>, Stri
                     updated_at: r.get(9)?,
                     unseen: r.get::<_, i64>(10)? != 0,
                     sent_to_notebook_at: r.get(11)?,
+                    queued_at: r.get::<_, Option<i64>>(12)?.unwrap_or(0),
                 })
             })
             .map_err(|e| format!("mincer db: {}", e))?;
@@ -298,10 +329,12 @@ pub(crate) fn delete_item(app: &AppHandle, id: &str) -> Result<(), String> {
     exec(app, "DELETE FROM mincer_items WHERE id = ?1", params![id])
 }
 
+// Interrompido fica "novo" (pede atenção) até ser aberto, como a gravação recuperada.
 pub(crate) fn mark_running_interrupted(app: &AppHandle, message: &str) -> Result<(), String> {
     exec(
         app,
-        "UPDATE mincer_items SET status = 'interrupted', error = ?1, stage = NULL, updated_at = ?2
+        "UPDATE mincer_items SET status = 'interrupted', error = ?1, stage = NULL, unseen = 1,
+            updated_at = ?2
          WHERE status = 'running'",
         params![message, now_ms()],
     )

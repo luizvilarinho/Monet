@@ -14,6 +14,8 @@ import {
 } from '../../lib/tasks'
 import type { Task } from '../../types'
 import { useTasksEnv } from './TasksEnv'
+import { useTaskActions } from './useTaskActions'
+import { TASKS_SHORTCUTS_EVENT } from './TaskShortcuts'
 
 // Atalhos e multi-seleção das visões de Tasks (lista, Week, Kanban). Ativos
 // só com o foco dentro do container; eventos vindos de campos de texto são
@@ -21,7 +23,9 @@ import { useTasksEnv } from './TasksEnv'
 //   ↑/↓ cursor (Shift estende) · Enter abre · Esc limpa a seleção
 //   x concluir/reabrir · s cicla status · t para hoje · d escolher data
 //   p planeja para hoje · z adia 1 dia · Z adia 1 semana · Delete → dropped
-//   / ou Ctrl+F foca a busca
+//   / ou Ctrl+F foca a busca · ? abre a lista de atalhos (TaskShortcuts)
+// As ações que mudam tasks passam por useTaskActions (barra "Undo" e pergunta
+// do deadline estourado ao reagendar).
 // Clique abre; Ctrl/Cmd+clique alterna na seleção; Shift+clique seleciona o
 // intervalo desde o cursor.
 
@@ -61,6 +65,7 @@ export function useTaskKeyboard({
 }: Options) {
   const { confirm, modal: confirmModal } = useConfirm()
   const { statuses } = useTasksEnv()
+  const actions = useTaskActions({ tasksById, todayKey, onUpdateTasks, onDeleteTasks })
   const [cursorId, setCursorId] = useState<string | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   // Popover de data: posição na tela (linha do cursor ou barra de lote).
@@ -78,22 +83,25 @@ export function useTaskKeyboard({
   const clearSelection = useCallback(() => setSelectedIds(new Set()), [])
   const closeDatePicker = useCallback(() => setDatePickerAt(null), [])
 
-  function apply(patchFor: (t: Task) => TaskPatch | null) {
+  function apply(patchFor: (t: Task) => TaskPatch | null, verb: string, ids = targets) {
     const changes: TaskChanges = []
-    for (const id of targets) {
+    for (const id of ids) {
       const t = tasksById.get(id)
       const patch = t ? patchFor(t) : null
       if (patch) changes.push({ id, patch })
     }
-    if (changes.length > 0) onUpdateTasks(changes)
+    actions.update(changes, verb)
   }
 
+  const taskList = (ids: string[]) => ids.map((id) => tasksById.get(id)).filter((t): t is Task => !!t)
+
+  // Exclusão definitiva (sem Undo): só com confirmação.
   async function requestDelete(ids: string[], title = 'Delete tasks') {
-    const list = ids.map((id) => tasksById.get(id)).filter((t): t is Task => !!t)
+    const list = taskList(ids)
     if (list.length === 0) return
     const ok = await confirm(deleteTasksMessage(list), {
       title,
-      confirmLabel: 'Delete',
+      confirmLabel: 'Delete permanently',
       destructive: true,
     })
     if (!ok) return
@@ -102,24 +110,39 @@ export function useTaskKeyboard({
   }
 
   function toggleDone() {
-    const all = targets.map((id) => tasksById.get(id)).filter((t): t is Task => !!t)
+    const all = taskList(targets)
     const allDone = all.length > 0 && all.every(isDone)
-    apply(() => ({ status: allDone ? 'todo' : 'done' }))
+    apply(() => ({ status: allDone ? 'todo' : 'done' }), allDone ? 'reopened' : 'marked done')
   }
 
-  function schedule(key: string | null) {
-    apply((t) => (t.scheduledDate === key ? null : { scheduledDate: key }))
+  function schedule(key: string | null, ids = targets) {
+    void actions.reschedule(
+      ids.map((id) => ({ id, date: key })),
+      key === todayKey ? 'moved to today' : 'rescheduled'
+    )
   }
 
-  // Plan today: planeja para hoje; se todas já estão, remove.
-  function togglePlanToday() {
-    const all = targets.map((id) => tasksById.get(id)).filter((t): t is Task => !!t)
+  // My Day: adiciona ao dia de hoje; se todas já estão, remove.
+  function togglePlan(ids = targets) {
+    const all = taskList(ids)
     const allPlanned = all.length > 0 && all.every((t) => t.plannedDay === todayKey)
-    apply((t) => (isOpen(t) ? { plannedDay: allPlanned ? null : todayKey } : null))
+    apply(
+      (t) => (isOpen(t) ? { plannedDay: allPlanned ? null : todayKey } : null),
+      allPlanned ? 'removed from My Day' : 'added to My Day',
+      ids
+    )
   }
 
-  function snooze(kind: SnoozeKind) {
-    apply((t) => (isDone(t) || isDropped(t) ? null : { scheduledDate: snoozeDate(t, kind, todayKey) }))
+  function snooze(kind: SnoozeKind, ids = targets) {
+    const open = taskList(ids).filter((t) => !isDone(t) && !isDropped(t))
+    void actions.reschedule(
+      open.map((t) => ({ id: t.id, date: snoozeDate(t, kind, todayKey) })),
+      'snoozed'
+    )
+  }
+
+  function drop(ids = targets) {
+    apply((t) => (isDropped(t) ? null : { status: 'dropped' }), 'dropped', ids)
   }
 
   function openDatePicker(anchor: HTMLElement | null) {
@@ -135,6 +158,8 @@ export function useTaskKeyboard({
       idx < 0 ? (delta > 0 ? 0 : orderedIds.length - 1) : Math.min(orderedIds.length - 1, Math.max(0, idx + delta))
     const next = orderedIds[nextIdx]
     if (extend) {
+      // Seleção nova: o Undo de uma ação anterior não esconde a barra de lote.
+      actions.dismissUndo()
       setSelectedIds((prev) => {
         const set = new Set(prev)
         if (cursor) set.add(cursor)
@@ -184,13 +209,13 @@ export function useTaskKeyboard({
         toggleDone()
         break
       case 's':
-        apply((t) => ({ status: nextStatus(t.status, statuses) }))
+        apply((t) => ({ status: nextStatus(t.status, statuses) }), 'status changed')
         break
       case 't':
         schedule(todayKey)
         break
       case 'p':
-        togglePlanToday()
+        togglePlan()
         break
       case 'z':
         snooze('1d')
@@ -202,7 +227,14 @@ export function useTaskKeyboard({
         openDatePicker(cursor ? rowEl(e.currentTarget, cursor) : null)
         break
       case 'Delete':
-        apply((t) => (isDropped(t) ? null : { status: 'dropped' }))
+        drop()
+        break
+      case '?':
+        // Com o foco nas Tasks vale a lista de Tasks, não o ShortcutsOverlay da
+        // casca: stopPropagation + o preventDefault abaixo (o handler global
+        // ignora tecla já tratada) não deixam os dois abrirem juntos.
+        e.stopPropagation()
+        window.dispatchEvent(new Event(TASKS_SHORTCUTS_EVENT))
         break
       default:
         return
@@ -212,6 +244,7 @@ export function useTaskKeyboard({
 
   // Clique numa task: devolve true quando ela deve ser aberta (clique simples).
   function handleClick(e: ClickModifiers, id: string): boolean {
+    if (e.ctrlKey || e.metaKey || (e.shiftKey && cursor)) actions.dismissUndo()
     if (e.ctrlKey || e.metaKey) {
       setSelectedIds((prev) => {
         const set = new Set(prev)
@@ -241,9 +274,15 @@ export function useTaskKeyboard({
     selectedIds: new Set(selection),
     handleClick,
     clearSelection,
+    actions,
     schedule,
-    markDone: () => apply((t) => (isDone(t) ? null : { status: 'done' })),
-    snooze,
+    markDone: () => apply((t) => (isDone(t) ? null : { status: 'done' }), 'marked done'),
+    // Uma task só (botões do card/linha), sem mexer na seleção.
+    snoozeTask: (t: Task, kind: SnoozeKind) => snooze(kind, [t.id]),
+    togglePlanTask: (t: Task) => togglePlan([t.id]),
+    toggleTask: (id: string, done: boolean, run: () => void) =>
+      actions.track(done ? 'marked done' : 'reopened', [id], run),
+    dropSelected: () => drop(),
     requestDelete,
     deleteSelected: () => void requestDelete(targets),
     confirmModal,

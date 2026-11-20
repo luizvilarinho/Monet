@@ -22,6 +22,9 @@
 }
 
 .backButton {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1h);
   background: transparent;
   border: 1px solid var(--border, #333340);
   border-radius: var(--radius-md);
@@ -60,13 +63,23 @@
   gap: var(--space-2);
 }
 
+/* Ícone que dá nome ao grupo (tamanho do texto, margem). */
+.controlIcon {
+  flex-shrink: 0;
+  color: var(--text-muted, #7c7c93);
+}
+
 .navButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: transparent;
   border: 1px solid var(--border, #333340);
   border-radius: var(--radius-md);
   color: var(--text-secondary, #9898a4);
   width: var(--control-md);
   height: var(--control-md);
+  padding: 0;
   font-size: 15px;
   line-height: 1;
   cursor: pointer;

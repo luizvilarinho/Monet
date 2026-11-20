@@ -260,7 +260,13 @@ export interface BookQuote {
   createdAt: number
 }
 
+// Ciclo de um slash: `preparing` (card criado no Enter, montando o contexto;
+// só em memória, nunca gravado) → `streaming` → `completed`, ou `error` (o
+// `response` é a mensagem) ou `interrupted` (Stop ou falha no meio; `response`
+// vazio = parado antes do primeiro texto). A linha do `/comando` no editor lê
+// este status pelo `commandId` (igual ao `id` da resposta).
 export type AiResponseStatus =
+  | 'preparing'
   | 'streaming'
   | 'completed'
   | 'interrupted'
@@ -281,6 +287,8 @@ export interface AiResponse {
   model: string
   response: string
   status: AiResponseStatus
+  // Só em `preparing`: a etapa do preparo ("Searching the web…"). Não é gravado.
+  statusText?: string
   createdAt: number
   commandId?: string | null
   sources?: AiSource[]

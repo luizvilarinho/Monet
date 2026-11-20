@@ -16,6 +16,9 @@ interface NotePropertiesBarProps {
   defs: MetadataDef[]
   properties: Record<string, MetadataValue>
   onChange: (defId: string, value: MetadataValue) => void
+  // "New option…" no select: cria a opção no tipo e devolve o id (lança com
+  // a mensagem quando o nome não vale).
+  onCreateOption?: (defId: string, name: string) => Promise<string>
   // Acrescenta o template ao fim da nota (nunca sobrescreve).
   onInsertTemplate: () => void
 }
@@ -26,6 +29,7 @@ export function NotePropertiesBar({
   defs,
   properties,
   onChange,
+  onCreateOption,
   onInsertTemplate,
 }: NotePropertiesBarProps) {
   const color = type.color ?? 'var(--accent)'
@@ -51,6 +55,7 @@ export function NotePropertiesBar({
               def={def}
               value={properties[def.id] ?? null}
               onChange={(v) => onChange(def.id, v)}
+              onCreateOption={onCreateOption && ((name) => onCreateOption(def.id, name))}
             />
           </span>
         </div>

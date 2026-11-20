@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import {
   closestCenter,
   DndContext,
+  KeyboardSensor,
   PointerSensor,
   useSensor,
   useSensors,
@@ -11,6 +12,7 @@ import {
 import {
   arrayMove,
   SortableContext,
+  sortableKeyboardCoordinates,
   useSortable,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
@@ -75,7 +77,12 @@ export function StatusManagerModal({
   // Contagem recalculada no momento do confirm (não a do render).
   const tasksRef = useRef(tasks)
   tasksRef.current = tasks
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
+  // Teclado (KeyboardSensor) e ponteiro com 5px de deslocamento, como no
+  // gerenciador de propriedades.
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  )
 
   if (!open) return null
 

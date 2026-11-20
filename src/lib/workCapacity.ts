@@ -24,6 +24,11 @@ export function isValidWorkDays(days: number[]): boolean {
   return days.length >= 1 && days.every((d) => Number.isInteger(d) && d >= 0 && d <= 6)
 }
 
+// Sábado e domingo fora dos dias de trabalho (o Week recolhe o fim de semana).
+export function isWeekendOff(workDays: number[]): boolean {
+  return !workDays.includes(0) && !workDays.includes(6)
+}
+
 function normalizeDays(days: number[]): number[] {
   return [...new Set(days)].sort((a, b) => a - b)
 }

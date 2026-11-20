@@ -1,4 +1,6 @@
 .calendar {
+  /* Nota editada no dia (card e ponto): cor neutra, não a da IA. */
+  --cal-edited: var(--text-secondary, #a0a0b8);
   flex-shrink: 0;
   background: var(--bg-app, #0e0e10);
   border-right: 1px solid var(--border, #333340);
@@ -116,9 +118,15 @@
   inset: 0 -2px;
 }
 
-.navBtn:hover {
+.navBtn:hover:not(:disabled) {
   color: var(--accent, #7c6af5);
   background: var(--surface-1, #1e1e22);
+}
+
+/* Limite da faixa de anos. */
+.navBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .headerRight {
@@ -170,6 +178,13 @@
 
 .yearInput:focus {
   border-color: var(--accent, #7c6af5);
+}
+
+/* Grade + legenda. */
+.month {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
 }
 
 .grid {
@@ -262,7 +277,7 @@
 }
 
 .dotActivity {
-  background: var(--dot-activity);
+  background: var(--cal-edited);
 }
 
 .taskBar {
@@ -278,6 +293,43 @@
 .taskBarDue {
   width: 14px;
   opacity: 1;
+}
+
+/* Legenda dos marcadores (recolhível). */
+.legend {
+  font-size: 11px;
+  color: var(--text-muted, #606070);
+}
+
+.legendSummary {
+  width: fit-content;
+  padding: 0 var(--space-0);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.legendSummary:hover {
+  color: var(--text-secondary, #a0a0b8);
+}
+
+.legendSummary:focus-visible {
+  outline: 1px solid var(--accent, #7c6af5);
+  outline-offset: 1px;
+}
+
+.legendList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  margin: var(--space-1) 0 0;
+  padding: 0 var(--space-0);
+  list-style: none;
+}
+
+.legendList li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 .selected {
@@ -306,7 +358,7 @@
 }
 
 .noteCardActive {
-  border-right-color: var(--accent-ai, #5dcaa5);
+  border-right-color: var(--cal-edited);
 }
 
 .noteCard:hover {
@@ -388,6 +440,27 @@
 /* Bloco anterior (Overdue) → próximo rótulo com 16px (8 do gap + 8) */
 .overdueBlock + .sectionTitle {
   margin-top: var(--space-2);
+}
+
+/* "Dated" e "Edited this day": 16px dos cards de cima (8 do gap + 8). */
+.noteSection {
+  margin-top: var(--space-2);
+}
+
+.moreBtn {
+  align-self: flex-start;
+  background: transparent;
+  border: none;
+  padding: 0 var(--space-0);
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--text-muted, #606070);
+  cursor: pointer;
+}
+
+.moreBtn:hover {
+  color: var(--text-primary, #e8e8f0);
+  text-decoration: underline;
 }
 
 .taskCard {
@@ -486,6 +559,9 @@
 }
 
 .addTaskBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-0);
   background: transparent;
   border: none;
   color: var(--accent-task);

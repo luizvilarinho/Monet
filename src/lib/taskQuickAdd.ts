@@ -14,6 +14,9 @@ import {
 // campos da task; o resto é o título.
 //   today/hoje, tomorrow/amanhã, dia da semana (EN/PT), dd/mm[/yyyy] → Do date
 //   !<data>   → Deadline
+//   Abreviações que também são palavras ("ter", "sex", "dom", "sun"…) e
+//   `dd/mm` (casa frações como "1/3") só valem no fim do texto (só tokens
+//   depois delas), com ponto ("ter.") ou com `!`.
 //   #Projeto  → caderno existente; nome desconhecido só após confirmação
 //   @status   → status pelo nome (sem espaços, sem diferenciar maiúsculas)
 //   !!        → important
@@ -90,6 +93,9 @@ const WEEKDAYS: Record<string, number> = {
   sat: 6, saturday: 6, sab: 6, sabado: 6,
 }
 
+// Abreviações ambíguas (palavras comuns em PT/EN): só no fim ou com ponto.
+const AMBIGUOUS_DAYS = new Set(['ter', 'dom', 'seg', 'sex', 'mon', 'wed', 'sat', 'sun'])
+
 const DAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
 function keyDate(key: string): Date {
@@ -97,16 +103,21 @@ function keyDate(key: string): Date {
   return new Date(y, m - 1, d)
 }
 
-// Data de um token (sem o `!`), ou null se não for data.
-function parseDateWord(word: string, todayKey: string): string | null {
-  const w = normalizeName(word)
+// Data de um token (sem o `!`), ou null se não for data. `loose` = o token
+// está no fim do texto (ou tem `!`): aceita as abreviações ambíguas e `dd/mm`.
+function parseDateWord(word: string, todayKey: string, loose: boolean): string | null {
+  let w = normalizeName(word)
+  const dotted = w.length > 1 && w.endsWith('.')
+  if (dotted) w = w.slice(0, -1)
   if (w === 'today' || w === 'hoje') return todayKey
   if (w === 'tomorrow' || w === 'amanha') return addDaysKey(todayKey, 1)
   if (w in WEEKDAYS) {
+    if (AMBIGUOUS_DAYS.has(w) && !loose && !dotted) return null
     // Próxima ocorrência, incluindo hoje.
     const diff = (WEEKDAYS[w] - keyDate(todayKey).getDay() + 7) % 7
     return addDaysKey(todayKey, diff)
   }
+  if (!loose) return null
   const m = w.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?$/)
   if (!m) return null
   const day = Number(m[1])
@@ -140,6 +151,20 @@ function dayLabel(key: string): string {
 
 export function parseQuickAdd(input: string, opts: QuickAddOptions): QuickAddResult {
   const { notebooks, todayKey, ignored, confirmed, statuses = BUILTIN_STATUS_DEFS, todos: todosList = [] } = opts
+  const words = [...input.matchAll(/\S+/g)].map((m) => ({ raw: m[0], start: m.index ?? 0 }))
+  // Início do "fim do texto": a sequência final de palavras que são tokens.
+  const isTokenLike = (raw: string): boolean => {
+    if (ignored.has(raw.toLowerCase())) return false
+    if (raw === '!!') return true
+    if (raw.startsWith('!')) return parseDateWord(raw.slice(1), todayKey, true) !== null
+    if (parseDateWord(raw, todayKey, true) !== null) return true
+    if (raw.length < 2) return false
+    if (raw.startsWith('@')) return findStatusByTag(statuses, raw.slice(1)) !== undefined
+    if (raw.startsWith('#')) return !/^#\d+$/.test(raw)
+    return raw.startsWith('>')
+  }
+  let tailStart = words.length
+  while (tailStart > 0 && isTokenLike(words[tailStart - 1].raw)) tailStart--
   const accepted = new Map<QuickAddTokenKind, QuickAddToken>()
   const pending: QuickAddToken[] = []
   let scheduledDate: string | null = null
@@ -151,9 +176,7 @@ export function parseQuickAdd(input: string, opts: QuickAddOptions): QuickAddRes
   // `>Nome`: resolvido depois do laço, para preferir as TODOS do `#Projeto`.
   let todosWord: { start: number; end: number; raw: string; name: string } | null = null
 
-  for (const m of input.matchAll(/\S+/g)) {
-    const raw = m[0]
-    const start = m.index ?? 0
+  for (const [i, { raw, start }] of words.entries()) {
     const end = start + raw.length
     const lower = raw.toLowerCase()
     if (ignored.has(lower)) continue
@@ -161,18 +184,18 @@ export function parseQuickAdd(input: string, opts: QuickAddOptions): QuickAddRes
 
     if (raw === '!!') {
       important = true
-      accepted.set('important', { ...base, kind: 'important', label: '⚑ Important' })
+      accepted.set('important', { ...base, kind: 'important', label: 'Important' })
       continue
     }
     if (raw.startsWith('!') && !raw.startsWith('!!')) {
-      const date = parseDateWord(raw.slice(1), todayKey)
+      const date = parseDateWord(raw.slice(1), todayKey, true)
       if (date) {
         dueDate = date
         accepted.set('deadline', { ...base, kind: 'deadline', label: `Deadline ${formatDueShort(date)}` })
       }
       continue
     }
-    const date = parseDateWord(raw, todayKey)
+    const date = parseDateWord(raw, todayKey, i >= tailStart)
     if (date) {
       scheduledDate = date
       accepted.set('date', { ...base, kind: 'date', label: `Do ${dayLabel(date)}` })

@@ -1,0 +1,50 @@
+/* Acima dos modais (z-index 1000): o toast de uma citação gravada pelo modal
+   aparece com ele ainda aberto. */
+.toast {
+  position: fixed;
+  bottom: var(--space-6);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: calc(100vw - var(--space-12));
+  background: var(--accent-ai, #5dcaa5);
+  color: #0e0e10;
+  font-size: 12px;
+  font-weight: 500;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+
+.toastError {
+  background: var(--accent-danger, #e05555);
+  color: #fff;
+}
+
+.message {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.action {
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  min-height: var(--control-sm);
+  padding: 0 var(--space-2);
+  cursor: pointer;
+}
+
+.action:hover {
+  background: rgba(0, 0, 0, 0.1);
+}

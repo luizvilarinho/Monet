@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { useAnchoredPosition, type PopoverAnchor } from './anchoredPosition'
 import styles from './TimePicker.module.css'
 
 interface TimePickerProps {
-  position: { top: number; left: number }
+  // Com `lineTop`, vira para cima quando não cabe abaixo da linha.
+  position: PopoverAnchor
   onConfirm: (time: string) => void
   onCancel: () => void
 }
@@ -19,6 +22,8 @@ function defaultTime(): string {
 export function TimePicker({ position, onConfirm, onCancel }: TimePickerProps) {
   const [time, setTime] = useState(defaultTime)
   const inputRef = useRef<HTMLInputElement>(null)
+  const ref = useRef<HTMLDivElement>(null)
+  const pos = useAnchoredPosition(ref, position)
 
   useEffect(() => {
     inputRef.current?.focus()
@@ -26,8 +31,7 @@ export function TimePicker({ position, onConfirm, onCancel }: TimePickerProps) {
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      const el = document.querySelector('[data-time-picker]')
-      if (el && !el.contains(e.target as Node)) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
         onCancel()
       }
     }
@@ -43,11 +47,13 @@ export function TimePicker({ position, onConfirm, onCancel }: TimePickerProps) {
     }
   }
 
-  return (
+  // Portal: acima do modal da task (z-index 1000) e fora do overflow do editor.
+  return createPortal(
     <div
+      ref={ref}
       data-time-picker
       className={styles.popup}
-      style={{ top: position.top, left: position.left }}
+      style={{ top: pos.top, left: pos.left }}
     >
       <span className={styles.label}>Reminder</span>
       <input
@@ -71,6 +77,7 @@ export function TimePicker({ position, onConfirm, onCancel }: TimePickerProps) {
       <button type="button" className={styles.confirm} onMouseDown={(e) => { e.preventDefault(); confirm() }}>
         Set
       </button>
-    </div>
+    </div>,
+    document.body
   )
 }

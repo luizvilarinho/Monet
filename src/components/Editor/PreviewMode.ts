@@ -2,14 +2,14 @@ import { Editor, Extension } from '@tiptap/core'
 import { Plugin, PluginKey, type EditorState } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
+import { isPotentialCommandLine } from './commandParser'
 
 // Plugin key com estado de controle do modo preview.
 export const previewPluginKey = new PluginKey<boolean>('monetPreviewMode')
 
-// Verifica se um parágrafo é uma linha de slash command (começa com "/").
-// Espelha a lógica de isPotentialCommandLine usada pelo CommandExtension.
+// Parágrafo que é linha de slash command (mesma regra do CommandExtension).
 function isCommandParagraph(text: string): boolean {
-  return /^\s*\//.test(text.trim())
+  return isPotentialCommandLine(text.trim())
 }
 
 function buildPreviewDecorations(state: EditorState): DecorationSet {

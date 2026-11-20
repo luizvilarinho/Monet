@@ -132,13 +132,17 @@
 }
 
 .dismiss {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--control-sm);
+  min-height: var(--control-sm);
   background: transparent;
   border: none;
   color: var(--accent-warn, #ef9f27);
-  font-size: 16px;
   cursor: pointer;
   line-height: 1;
-  padding: 0 4px;
+  padding: 0 var(--space-1);
 }
 
 .body {
@@ -266,7 +270,7 @@
 }
 
 .colTitle {
-  width: 28%;
+  width: 24%;
 }
 
 .colAuthor {
@@ -278,7 +282,7 @@
 }
 
 .colProgress {
-  width: 12%;
+  width: 10%;
 }
 
 .colDate {
@@ -286,8 +290,34 @@
 }
 
 .colActions {
-  width: 14%;
+  width: 20%;
   text-align: right;
+}
+
+/* Filtro da lista (acima de BOOK_FILTER_MIN livros). */
+.filterInput {
+  width: 100%;
+  max-width: 320px;
+  margin-bottom: var(--space-3);
+  background: var(--surface-1, #1d1d34);
+  border: 1px solid var(--border, #333340);
+  border-radius: var(--radius-md);
+  color: var(--text-primary, #ddddf1);
+  min-height: var(--control-md);
+  padding: var(--space-1) var(--space-2);
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.filterInput:focus {
+  outline: none;
+  border-color: var(--accent, #7b6ed4);
+}
+
+.filterEmpty {
+  margin: 0;
+  color: var(--text-muted, #7c7c93);
+  font-size: 12px;
 }
 
 .cellTitle {
@@ -353,6 +383,9 @@
 .primary,
 .secondary,
 .danger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   border-radius: 6px;
   padding: 6px 12px;
   font-size: 12px;

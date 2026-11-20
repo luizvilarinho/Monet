@@ -27,8 +27,6 @@ export interface BoardColumn<T extends { id: string }> {
   // Cards da coluna; `sections` agrupa os mesmos cards em subseções.
   items: T[]
   sections?: BoardSection<T>[]
-  // Mostra "Clear done" no cabeçalho (coluna de concluídas).
-  clearable?: boolean
   // Controle extra no cabeçalho (ex.: cor do projeto).
   headerExtra?: ReactNode
 }
@@ -36,14 +34,12 @@ export interface BoardColumn<T extends { id: string }> {
 interface BoardColumnsProps<T extends { id: string }> {
   columns: BoardColumn<T>[]
   onDrop: (itemId: string, columnKey: string) => void
-  onClearColumn?: (column: BoardColumn<T>) => void
   renderCard: (item: T, column: BoardColumn<T>) => ReactNode
 }
 
 export function BoardColumns<T extends { id: string }>({
   columns,
   onDrop,
-  onClearColumn,
   renderCard,
 }: BoardColumnsProps<T>) {
   const { draggingId, overKey, onCardMouseDown } = useCardDrag(onDrop)
@@ -83,11 +79,6 @@ export function BoardColumns<T extends { id: string }>({
                 {c.wipLimit != null ? `${c.count}/${c.wipLimit}` : c.count}
               </span>
               {c.headerExtra}
-              {c.clearable && c.items.length > 0 && onClearColumn && (
-                <button type="button" className={styles.headerAction} onClick={() => onClearColumn(c)}>
-                  Clear done
-                </button>
-              )}
             </div>
             <div className={styles.cards}>
               {c.sections

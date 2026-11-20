@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { CaretDown } from '@phosphor-icons/react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import type { AiModel } from '../../types'
 import styles from './AiPanel.module.css'
 
@@ -25,7 +26,11 @@ export function ModelSelector({
 }: ModelSelectorProps) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
+  // Item destacado pelas setas (índice na lista filtrada).
+  const [highlighted, setHighlighted] = useState(0)
   const wrapperRef = useRef<HTMLDivElement | null>(null)
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const listRef = useRef<HTMLDivElement | null>(null)
 
   const selected = useMemo(
     () => models.find((m) => m.id === selectedId) ?? null,
@@ -41,6 +46,21 @@ export function ModelSelector({
     )
   }, [query, models])
 
+  // Ao abrir, o destaque começa no modelo atual; ao filtrar, no primeiro.
+  useEffect(() => {
+    if (!open) return
+    const at = filtered.findIndex((m) => m.id === selectedId)
+    setHighlighted(query.trim() || at < 0 ? 0 : at)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, query])
+
+  useEffect(() => {
+    if (!open) return
+    listRef.current
+      ?.querySelector<HTMLElement>(`[data-index="${highlighted}"]`)
+      ?.scrollIntoView({ block: 'nearest' })
+  }, [open, highlighted])
+
   useEffect(() => {
     if (!open) return
     function onDoc(e: MouseEvent) {
@@ -50,6 +70,37 @@ export function ModelSelector({
     document.addEventListener('mousedown', onDoc)
     return () => document.removeEventListener('mousedown', onDoc)
   }, [open])
+
+  function close() {
+    setOpen(false)
+    setQuery('')
+    triggerRef.current?.focus()
+  }
+
+  function pick(id: string) {
+    onSelect(id)
+    close()
+  }
+
+  // Esc fecha; ↑/↓ movem o destaque (circular) e Enter escolhe.
+  function onSearchKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      e.stopPropagation()
+      close()
+      return
+    }
+    if (loading || filtered.length === 0) return
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      const step = e.key === 'ArrowDown' ? 1 : -1
+      setHighlighted((i) => (i + step + filtered.length) % filtered.length)
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      const m = filtered[highlighted]
+      if (m) pick(m.id)
+    }
+  }
 
   if (apiKeyChecked && !hasApiKey) {
     return (
@@ -70,82 +121,79 @@ export function ModelSelector({
   const buttonLabel = selected
     ? selected.name
     : loading
-      ? 'loading models...'
+      ? 'Loading models…'
       : models.length === 0
-        ? 'no model available'
-        : 'select model'
+        ? 'No model available'
+        : 'Select model'
 
   return (
     <div className={styles.selectorWrap} ref={wrapperRef}>
       <button
+        ref={triggerRef}
         type="button"
         className={styles.selectorButton}
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="listbox"
         aria-expanded={open}
-        aria-label="select model"
+        aria-label="Select model"
         disabled={!loading && models.length === 0 && !error}
       >
         <span className={styles.selectorLabel}>{buttonLabel}</span>
-        <svg
-          className={styles.caret}
-          viewBox="0 0 24 24"
-          width="10"
-          height="10"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <polyline points="6 9 12 15 18 9" />
-        </svg>
+        <CaretDown size={10} className={styles.caret} aria-hidden />
       </button>
       {open && (
-        <div className={styles.popover} role="listbox">
+        <div className={styles.popover}>
           <input
             className={styles.search}
-            placeholder="search models..."
+            placeholder="Search models…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={onSearchKeyDown}
             autoFocus
-            aria-label="search models"
+            aria-label="Search models"
+            aria-controls="model-selector-list"
+            aria-activedescendant={
+              filtered[highlighted] ? `model-option-${highlighted}` : undefined
+            }
           />
-          <div className={styles.modelList}>
+          <div className={styles.modelList} role="listbox" id="model-selector-list" ref={listRef}>
             {loading && (
-              <div className={styles.popoverInfo}>loading models...</div>
+              <div className={styles.popoverInfo}>Loading models…</div>
             )}
             {error && !loading && (
               <div className={styles.popoverError}>{error}</div>
             )}
             {!loading && !error && filtered.length === 0 && models.length === 0 && (
               <div className={styles.popoverInfo}>
-                no models available at the moment.
+                No models available at the moment.
               </div>
             )}
             {!loading && !error && filtered.length === 0 && models.length > 0 && (
               <div className={styles.popoverInfo}>
-                no model matches the filter.
+                No model matches the filter.
               </div>
             )}
             {!loading &&
-              filtered.map((m) => {
+              filtered.map((m, i) => {
                 const active = m.id === selectedId
+                const className = active
+                  ? styles.modelItemActive
+                  : i === highlighted
+                    ? `${styles.modelItem} ${styles.modelItemHighlighted}`
+                    : styles.modelItem
                 return (
                   <button
                     key={m.id}
+                    id={`model-option-${i}`}
+                    data-index={i}
                     type="button"
                     role="option"
                     aria-selected={active}
-                    className={
-                      active ? styles.modelItemActive : styles.modelItem
-                    }
-                    onClick={() => {
-                      onSelect(m.id)
-                      setOpen(false)
-                      setQuery('')
-                    }}
+                    tabIndex={-1}
+                    className={className}
+                    data-highlighted={i === highlighted || undefined}
+                    onMouseEnter={() => setHighlighted(i)}
+                    onClick={() => pick(m.id)}
                   >
                     <span className={styles.modelName}>{m.name}</span>
                     <span className={styles.modelId}>{m.id}</span>

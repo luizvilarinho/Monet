@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { FileAudio, Microphone, Plus, StopCircle, Trash } from '@phosphor-icons/react'
+import { useEffect, useRef, useState } from 'react'
+import { FileAudio, Microphone, Plus, StopCircle, Trash, Warning } from '@phosphor-icons/react'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import type { MincerJobState } from '../../hooks/useMincerJob'
 import type { useConfirm } from '../../hooks/useConfirm'
@@ -8,9 +8,12 @@ import {
   formatElapsed,
   getTranscriptionModel,
   isTextFile,
+  MAX_RECORD_HOURS,
   mincerPickFiles,
+  mincerRecordDevices,
   mincerRecordDiscard,
   mincerRecordExtend,
+  mincerRecordSetTitle,
   mincerRecordStart,
   mincerRecordStatus,
   mincerRecordStop,
@@ -20,9 +23,16 @@ import {
   type MincerJobOptions,
   type MincerKind,
   type MincerLevel,
+  type MincerRecordDevices,
 } from '../../lib/mincer'
 import { SummaryOptions } from './SummaryOptions'
-import { loadSummarySettings, resolveSummaryPrompt, saveSummarySettings, type SummarySettings } from './presets'
+import {
+  loadPresetForTab,
+  loadSummarySettings,
+  resolveSummaryPrompt,
+  saveSummarySettings,
+  type SummarySettings,
+} from './presets'
 import shared from './Mincer.module.css'
 import styles from './MincerNew.module.css'
 
@@ -49,7 +59,7 @@ interface MincerNewProps {
 }
 
 // Rascunho da tela New: sobrevive à troca de modo (a tela é desmontada), não
-// a reiniciar o app.
+// a reiniciar o app. O título da gravação em curso fica no Rust.
 const draft = {
   mode: 'file' as Mode,
   filePaths: [] as string[],
@@ -57,6 +67,33 @@ const draft = {
   youtubeUrl: '',
   webUrl: '',
   webCapture: false,
+  recordTitle: '',
+}
+
+// Arquivos soltos com um item aberto (Mincer.tsx): a tela New abre com eles
+// selecionados. Durante a gravação a aba Record fica.
+export function queueDroppedFiles(paths: string[], recording: boolean): void {
+  draft.filePaths = paths
+  if (!recording) draft.mode = 'file'
+}
+
+// Pico acima disso (~-44 dBFS) conta como áudio, como o SILENCE_PEAK do Rust.
+const AUDIO_PEAK = 0.006
+// System mudo por este tempo com o Mic captando: aviso de dispositivo errado.
+const SYSTEM_SILENT_WARN_MS = 60_000
+// Prazo para as faixas abrirem os dispositivos depois do Start (o status é
+// lido a cada 2 s, então cobre o 1º e o 2º poll).
+const DEVICE_OPEN_GRACE_MS = 3000
+
+function clockTime(ms: number): string {
+  return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+// O mesmo nome que o Rust dá sem título (`recording_title`): hora de início.
+function defaultRecordingTitle(ms: number): string {
+  const d = new Date(ms)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `Recording ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
 function errorMessage(err: unknown): string {
@@ -76,14 +113,29 @@ function formatMinutes(total: number): string {
   return m === 0 ? `${h} h` : `${h} h ${m} min`
 }
 
-// Como a gravação em curso para sozinha, mostrado durante a gravação.
-function autoStopHint(limits: RecordLimitsView): string {
+// Como a gravação em curso para sozinha, mostrado durante a gravação; com o
+// início, diz a hora do teto e quanto falta ("at 17:40 (in 25 min)").
+function autoStopHint(limits: RecordLimitsView, startedAt: number | null, now: number): string {
+  let maxRule: string | null = null
+  if (limits.maxMinutes > 0) {
+    if (startedAt) {
+      const stopAt = startedAt + limits.maxMinutes * 60_000
+      const left = Math.max(0, Math.ceil((stopAt - now) / 60_000))
+      maxRule = `at ${clockTime(stopAt)} (in ${formatMinutes(left)})`
+    } else {
+      maxRule = `at ${formatMinutes(limits.maxMinutes)}`
+    }
+  }
   const rules = [
     limits.silenceStopMinutes > 0 ? `after ${limits.silenceStopMinutes} min of silence` : null,
-    limits.maxMinutes > 0 ? `at ${formatMinutes(limits.maxMinutes)}` : null,
+    maxRule,
   ].filter(Boolean)
   const auto = rules.length > 0 ? `Stops by itself ${rules.join(' or ')}. ` : ''
   return `${auto}Ctrl+Alt+R or the tray icon also stop it.`
+}
+
+function devicesLine(devices: MincerRecordDevices): string {
+  return `System: ${devices.system ?? 'no output device found'} · Mic: ${devices.mic ?? 'no microphone found'}`
 }
 
 interface RecordLimitsView {
@@ -129,8 +181,15 @@ export function MincerNew({
   onOpenSettings,
 }: MincerNewProps) {
   const [mode, setMode] = useState<Mode>(() => (job.recording ? 'record' : draft.mode))
-  const [summary, setSummary] = useState<SummarySettings>(loadSummarySettings)
+  const [summary, setSummary] = useState<SummarySettings>(() => loadSummarySettings(mode))
   const [filePaths, setFilePaths] = useState<string[]>(draft.filePaths)
+  // Antes do Start fica no rascunho; durante a gravação, no Rust.
+  const [recordTitle, setRecordTitle] = useState(() => (job.recording ? '' : draft.recordTitle))
+  const [devices, setDevices] = useState<MincerRecordDevices | null>(null)
+  // System mudo por 60 s com o Mic captando (dispositivo de saída errado?).
+  const [systemSilent, setSystemSilent] = useState(false)
+  // Montada com a gravação em curso: o título vem do status uma vez.
+  const titleFromStatusRef = useRef(job.recording)
   const [text, setText] = useState(draft.text)
   const [youtubeUrl, setYoutubeUrl] = useState(draft.youtubeUrl)
   const [webUrl, setWebUrl] = useState(draft.webUrl)
@@ -151,9 +210,67 @@ export function MincerNew({
     Object.assign(draft, { mode, filePaths, text, youtubeUrl, webUrl, webCapture })
   }, [mode, filePaths, text, youtubeUrl, webUrl, webCapture])
 
+  // O título digitado antes do Start fica no rascunho; o da gravação em curso,
+  // não (a próxima gravação começa sem título).
+  const recording = job.recording
+  useEffect(() => {
+    draft.recordTitle = recording ? '' : recordTitle
+  }, [recording, recordTitle])
+
+  // Título editado durante a gravação vale para qualquer parada (tray, atalho,
+  // silêncio, teto); o Stop da tela grava o último antes de parar.
+  const pendingTitleRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!recording || titleFromStatusRef.current) {
+      pendingTitleRef.current = null
+      return
+    }
+    pendingTitleRef.current = recordTitle
+    const timer = window.setTimeout(() => {
+      pendingTitleRef.current = null
+      mincerRecordSetTitle(recordTitle).catch(() => {})
+    }, 300)
+    return () => window.clearTimeout(timer)
+  }, [recording, recordTitle])
+  // Ao desmontar (troca de modo, remontagem pela `key`), o título ainda no
+  // debounce vai na hora.
+  useEffect(
+    () => () => {
+      const pending = pendingTitleRef.current
+      if (pending !== null) mincerRecordSetTitle(pending).catch(() => {})
+    },
+    [],
+  )
+
+  // Dispositivos padrão antes do Start, relidos ao voltar à janela (um headset
+  // conectado muda a saída padrão).
+  useEffect(() => {
+    if (mode !== 'record' || recording) return
+    let cancelled = false
+    const load = () =>
+      mincerRecordDevices()
+        .then((d) => {
+          if (!cancelled) setDevices(d)
+        })
+        .catch(() => {})
+    void load()
+    window.addEventListener('focus', load)
+    return () => {
+      cancelled = true
+      window.removeEventListener('focus', load)
+    }
+  }, [mode, recording])
+
+  function changeMode(next: Mode) {
+    setMode(next)
+    setError(null)
+    setSummary((prev) => ({ ...prev, presetId: loadPresetForTab(next) }))
+  }
+
   // Arquivos soltos na janela vão para a aba File, só selecionados (sem iniciar).
   // Durante a gravação a aba Record fica (Stop e Discard à vista).
-  const recording = job.recording
+  const modeRef = useRef(mode)
+  modeRef.current = mode
   useEffect(() => {
     const pending = getCurrentWebview().onDragDropEvent((e) => {
       const p = e.payload
@@ -164,7 +281,7 @@ export function MincerNew({
       } else {
         setDragging(false)
         if (p.paths.length > 0) {
-          if (!recording) setMode('file')
+          if (!recording && modeRef.current !== 'file') changeMode('file')
           setFilePaths(p.paths)
           setError(null)
         }
@@ -177,19 +294,27 @@ export function MincerNew({
 
   function updateSummary(next: SummarySettings) {
     setSummary(next)
-    saveSummarySettings(next)
+    saveSummarySettings(next, mode)
   }
 
   // Gravação em curso: relógio a cada 1 s, avisos a cada 2 s e nível por faixa
   // (~4 eventos/s do Rust, assinados só nesta tela).
+  const wasRecordingRef = useRef(job.recording)
   useEffect(() => {
     if (!job.recording) {
       setRecordStartedAt(null)
       setRecordErrors([])
       setRecordLimits(null)
       setLevel(null)
+      setSystemSilent(false)
+      // A gravação acabou (Stop, tray, parada automática): o título era dela.
+      if (wasRecordingRef.current) setRecordTitle('')
+      wasRecordingRef.current = false
       return
     }
+    wasRecordingRef.current = true
+    // "Detecting devices…" até o status trazer os dispositivos da gravação.
+    setDevices(null)
     let cancelled = false
     const poll = () =>
       mincerRecordStatus()
@@ -198,13 +323,32 @@ export function MincerNew({
           setRecordStartedAt(s.startedAt)
           setRecordErrors(s.errors)
           setRecordLimits({ silenceStopMinutes: s.silenceStopMinutes, maxMinutes: s.maxMinutes })
+          // Logo depois do Start as faixas ainda abrem os dispositivos (nome
+          // vazio no status); passado o prazo, vazio quer dizer "não achou".
+          const opening = s.startedAt !== null && Date.now() - s.startedAt < DEVICE_OPEN_GRACE_MS
+          if (!opening || (s.devices.system !== null && s.devices.mic !== null)) setDevices(s.devices)
+          if (titleFromStatusRef.current) {
+            titleFromStatusRef.current = false
+            setRecordTitle(s.title ?? '')
+          }
         })
         .catch(() => {})
     void poll()
     const pollTimer = window.setInterval(poll, 2000)
     const clockTimer = window.setInterval(() => setNow(Date.now()), 1000)
+    let systemSilentSince = Date.now()
+    let micHeard = false
     const pendingLevel = onMincerLevel((l) => {
-      if (!cancelled) setLevel(l)
+      if (cancelled) return
+      setLevel(l)
+      if (l.system > AUDIO_PEAK) {
+        systemSilentSince = Date.now()
+        micHeard = false
+        setSystemSilent(false)
+        return
+      }
+      if (l.mic !== null && l.mic > AUDIO_PEAK) micHeard = true
+      if (micHeard && Date.now() - systemSilentSince >= SYSTEM_SILENT_WARN_MS) setSystemSilent(true)
     })
     return () => {
       cancelled = true
@@ -217,6 +361,8 @@ export function MincerNew({
   const hasMediaFile = mode === 'file' && filePaths.some((p) => !isTextFile(p))
   const needsTranscription = hasMediaFile || mode === 'record' || mode === 'youtube'
   const needsSummary = !(mode === 'web' && webCapture)
+  // Na aba File sem arquivo ainda não se sabe se haverá áudio.
+  const showsTranscriptionModel = needsTranscription || (mode === 'file' && filePaths.length === 0)
   const missingTranscription = needsTranscription && !transcriptionModel
   const missingSummary = needsSummary && !summaryModel
   const missingKey = missingApiKey && (needsTranscription || needsSummary)
@@ -287,12 +433,19 @@ export function MincerNew({
     setBusy(true)
     setError(null)
     try {
-      await mincerRecordStart(buildOptions())
+      await mincerRecordStart(buildOptions(), recordTitle)
     } catch (err) {
       setError(errorMessage(err))
     } finally {
       setBusy(false)
     }
+  }
+
+  // O título mais recente vai antes do Stop (o envio do campo espera 300 ms).
+  async function stopRecording(): Promise<string> {
+    // Antes do 1º status o campo ainda não tem o título do Rust.
+    if (!titleFromStatusRef.current) await mincerRecordSetTitle(recordTitle).catch(() => {})
+    return mincerRecordStop()
   }
 
   async function handleExtendRecording() {
@@ -332,6 +485,7 @@ export function MincerNew({
   }
 
   const micError = recordErrors.some((e) => e.startsWith('Microphone'))
+  const atMaxRecordLength = !!recordLimits && recordLimits.maxMinutes >= MAX_RECORD_HOURS * 60
   const fileLabel = `${hasMediaFile || filePaths.length === 0 ? 'Transcribe & summarize' : 'Summarize'}${
     filePaths.length > 1 ? ` ${filePaths.length} files` : ''
   }`
@@ -353,10 +507,7 @@ export function MincerNew({
             role="tab"
             aria-selected={mode === m.id}
             className={mode === m.id ? styles.tabActive : styles.tab}
-            onClick={() => {
-              setMode(m.id)
-              setError(null)
-            }}
+            onClick={() => changeMode(m.id)}
           >
             {m.label}
           </button>
@@ -390,6 +541,20 @@ export function MincerNew({
           />
         )}
 
+        {mode === 'record' && (
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Title (optional)</span>
+            <input
+              className={styles.input}
+              value={recordTitle}
+              onChange={(e) => setRecordTitle(e.target.value)}
+              placeholder={
+                recordStartedAt ? defaultRecordingTitle(recordStartedAt) : 'Leave empty to name it by the start time'
+              }
+              maxLength={200}
+            />
+          </label>
+        )}
         {mode === 'record' &&
           (job.recording ? (
             <>
@@ -400,14 +565,31 @@ export function MincerNew({
                 </span>
                 <span className={shared.muted}>Recording system audio and microphone…</span>
               </div>
+              <p className={styles.devices}>{devices ? devicesLine(devices) : 'Detecting devices…'}</p>
               <div className={styles.levels}>
                 <LevelMeter label="System" peak={level ? level.system : 0} />
                 <LevelMeter label="Mic" peak={level ? level.mic : 0} />
               </div>
-              {recordLimits && <p className={shared.muted}>{autoStopHint(recordLimits)}</p>}
+              {systemSilent && (
+                <p className={styles.warning} role="status">
+                  <Warning size={14} aria-hidden="true" />
+                  No system audio detected. Is the meeting playing on another device?
+                </p>
+              )}
+              {recordLimits && <p className={shared.muted}>{autoStopHint(recordLimits, recordStartedAt, now)}</p>}
             </>
           ) : (
-            <p className={shared.muted}>Records system audio and your microphone.</p>
+            <>
+              <p className={shared.muted}>Records system audio and your microphone.</p>
+              {devices && (
+                <p
+                  className={styles.devices}
+                  title="Monet records the Windows default output and microphone. Change them in Windows sound settings."
+                >
+                  {devicesLine(devices)}
+                </p>
+              )}
+            </>
           ))}
         {mode === 'record' && recordErrors.length > 0 && (
           <div className={styles.warnings}>
@@ -459,15 +641,27 @@ export function MincerNew({
         )}
 
         {needsSummary && (
-          <SummaryOptions value={summary} onChange={updateSummary} disabled={mode === 'record' && job.recording} />
+          <SummaryOptions
+            value={summary}
+            onChange={updateSummary}
+            confirm={confirm}
+            disabled={mode === 'record' && job.recording}
+          />
         )}
 
-        <p className={styles.models}>
-          Transcription: {transcriptionModel ?? 'not set'} · Summary: {summaryModel ?? 'not set'}{' '}
-          <button type="button" className={shared.linkButton} onClick={() => onOpenSettings('mincer')}>
-            Change in Settings
-          </button>
-        </p>
+        {(showsTranscriptionModel || needsSummary) && (
+          <p className={styles.models}>
+            {[
+              showsTranscriptionModel ? `Transcription: ${transcriptionModel ?? 'not set'}` : null,
+              needsSummary ? `Summary: ${summaryModel ?? 'not set'}` : null,
+            ]
+              .filter(Boolean)
+              .join(' · ')}{' '}
+            <button type="button" className={shared.linkButton} onClick={() => onOpenSettings('mincer')}>
+              Change in Settings
+            </button>
+          </p>
+        )}
 
         {blocked && (
           <div className={styles.blocked}>
@@ -498,7 +692,7 @@ export function MincerNew({
                 <button
                   type="button"
                   className={shared.primary}
-                  onClick={() => void run(mincerRecordStop, () => {})}
+                  onClick={() => void run(stopRecording, () => {})}
                   disabled={busy}
                 >
                   <StopCircle size={14} aria-hidden="true" />
@@ -509,8 +703,12 @@ export function MincerNew({
                     type="button"
                     className={shared.secondary}
                     onClick={() => void handleExtendRecording()}
-                    disabled={busy}
-                    title="Extend the recording limit by 30 minutes"
+                    disabled={busy || atMaxRecordLength}
+                    title={
+                      atMaxRecordLength
+                        ? 'Maximum length (6 h) reached'
+                        : 'Extend the recording limit by 30 minutes'
+                    }
                   >
                     <Plus size={14} aria-hidden="true" />
                     30 min

@@ -44,10 +44,57 @@
   flex-shrink: 0;
 }
 
+.headerTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .headerActions {
   display: flex;
   align-items: center;
   gap: var(--space-1);
+  flex-shrink: 0;
+}
+
+/* Filtro da Toolbar ativo: aviso fixo acima da lista. */
+.filterChip {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.filterChipText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.filterChipClear {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.filterChipClear:hover {
+  text-decoration: underline;
 }
 
 .headerAdd,
@@ -122,6 +169,11 @@
 .list li:hover {
   background: var(--surface-1, #1e1e22);
   color: var(--text-primary, #e8e8f0);
+}
+
+.list li:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
 }
 
 .row {
@@ -215,6 +267,10 @@
   display: flex;
   flex-wrap: wrap;
   column-gap: var(--space-2);
+}
+
+.rowDetailIcon {
+  vertical-align: -1px;
 }
 
 .rowDetail {
@@ -389,8 +445,8 @@
 }
 
 .rowDelete:hover {
-  color: #ff6b6b;
-  background: rgba(255, 107, 107, 0.1);
+  color: var(--accent-danger);
+  background: color-mix(in srgb, var(--accent-danger) 10%, transparent);
 }
 
 .active {
@@ -476,6 +532,54 @@
 .subjectDropdown button:hover {
   background: var(--surface-1, #1e1e22);
   color: var(--text-primary, #e8e8f0);
+}
+
+/* Menu "Assign to subject": portal com posição fixa, acima de 1000. */
+.subjectMenu {
+  position: fixed;
+  z-index: 1100;
+  min-width: 160px;
+  max-width: 260px;
+  max-height: 50vh;
+  overflow-y: auto;
+  padding: var(--space-1) 0;
+  background: var(--surface-2, #26262c);
+  border: 1px solid var(--border, #333340);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
+
+.subjectMenu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: var(--space-1h) var(--space-3);
+  line-height: var(--lh-row);
+  background: transparent;
+  border: none;
+  color: var(--text-secondary, #a0a0b8);
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.subjectMenu button:hover,
+.subjectMenu button:focus-visible {
+  background: var(--surface-1, #1e1e22);
+  color: var(--text-primary, #e8e8f0);
+  outline: none;
+}
+
+.subjectMenu button[aria-checked='true'] {
+  color: var(--accent);
+}
+
+.subjectMenuEmpty {
+  padding: var(--space-1h) var(--space-3);
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 /* Menu "New <tipo>" ao lado do "+" (reusa o .subjectDropdown). */

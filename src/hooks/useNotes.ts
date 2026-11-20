@@ -3,6 +3,7 @@ import { nanoid } from 'nanoid'
 import { emit } from '@tauri-apps/api/event'
 import type { MetadataValue, Note } from '../types'
 import { storage } from '../storage'
+import { CALENDAR_NOTEBOOK_ID } from '../lib/calendar'
 
 export function useNotes() {
   const [notes, setNotes] = useState<Note[]>([])
@@ -71,6 +72,8 @@ export function useNotes() {
     try {
       await storage.saveNote(note)
       setSaveError(null)
+      // A keep recarrega a nota do dia se for a que está aberta nela.
+      if (note.notebookId === CALENDAR_NOTEBOOK_ID) void emit('calendar-note-updated', { noteId: note.id })
       return true
     } catch (err) {
       console.error('failed to save note', err)

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ConfirmModal } from '../components/ConfirmModal/ConfirmModal'
 
 interface ConfirmOptions {
@@ -19,6 +19,12 @@ interface ConfirmState {
 
 export function useConfirm() {
   const [state, setState] = useState<ConfirmState | null>(null)
+  const stateRef = useRef<ConfirmState | null>(null)
+  stateRef.current = state
+
+  // O dono do hook desmontou (o modal pai fechou) com uma confirmação aberta:
+  // a promessa resolve como cancel em vez de ficar pendente.
+  useEffect(() => () => stateRef.current?.resolve('cancel'), [])
 
   const confirm = useCallback((message: string, options: ConfirmOptions = {}): Promise<boolean> => {
     return new Promise((resolve) => {

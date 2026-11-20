@@ -17,12 +17,17 @@ export async function getTavilyKey(): Promise<string | null> {
   }
 }
 
+// Avisa nesta janela que a chave do Tavily mudou: o aviso do composer recheca.
+export const TAVILY_KEY_CHANGED_EVENT = 'monet:tavily-key-changed'
+
 export async function saveTavilyKey(key: string): Promise<void> {
   await invoke('save_tavily_key', { key })
+  window.dispatchEvent(new Event(TAVILY_KEY_CHANGED_EVENT))
 }
 
 export async function clearTavilyKey(): Promise<void> {
   await invoke('clear_tavily_key')
+  window.dispatchEvent(new Event(TAVILY_KEY_CHANGED_EVENT))
 }
 
 export async function hasTavilyKey(): Promise<boolean> {
@@ -43,12 +48,21 @@ function isSearchResult(value: unknown): value is SearchResult {
   )
 }
 
-export async function webSearch(query: string, maxResults = 5, includeRawContent = false): Promise<SearchResult[]> {
+// `signal` deixa o Stop do chat cancelar a busca em andamento (o fetch rejeita
+// com AbortError).
+export async function webSearch(
+  query: string,
+  maxResults = 5,
+  includeRawContent = false,
+  signal?: AbortSignal
+): Promise<SearchResult[]> {
   const key = await getTavilyKey()
   if (!key) throw new Error('Tavily key not configured')
+  signal?.throwIfAborted()
 
   const res = await fetch('https://api.tavily.com/search', {
     method: 'POST',
+    signal,
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${key}`,

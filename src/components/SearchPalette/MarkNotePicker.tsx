@@ -93,7 +93,7 @@ export function MarkNotePicker({
                     <div className={styles.itemTitle}>{note.title || 'Untitled'}</div>
                     {entry.label && <span className={styles.markLabel}>{entry.label}</span>}
                     {note.archivedAt && <span className={styles.itemLabel}>archived</span>}
-                    <span className={styles.itemMeta}>{new Date(note.updatedAt).toLocaleDateString()}</span>
+                    <span className={styles.itemAside}>{new Date(note.updatedAt).toLocaleDateString()}</span>
                   </div>
                   {(entry.before || entry.after) && (
                     <div className={styles.markPreview}>

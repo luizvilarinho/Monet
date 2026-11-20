@@ -51,7 +51,8 @@
   position: absolute;
   left: 0;
   top: calc(100% + var(--space-1));
-  z-index: 30;
+  /* Popover acima de 1000 (regra do projeto), como o MarkLabelPopover. */
+  z-index: 1100;
   min-width: 180px;
   max-height: 60vh;
   overflow-y: auto;

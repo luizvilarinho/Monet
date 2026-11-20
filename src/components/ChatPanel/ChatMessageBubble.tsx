@@ -1,4 +1,13 @@
-import { CalendarPlus, IdentificationCard } from '@phosphor-icons/react'
+import {
+  ArrowClockwise,
+  CalendarPlus,
+  Check,
+  Copy,
+  FloppyDisk,
+  GearSix,
+  IdentificationCard,
+  WarningCircle,
+} from '@phosphor-icons/react'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { ChatMessage } from '../../hooks/useChat'
@@ -22,6 +31,20 @@ export function agentLabelIds(messages: ChatMessage[]): Set<string> {
     previous = m.agentId
   }
   return ids
+}
+
+// Resposta vazia que esta instância não está escrevendo. Com a marca de corte
+// (gravada por quem cortou), ou velha demais para um turno vivo (app fechado no
+// meio), ela não chegou: "No response (interrupted)". Sem a marca, outra janela
+// ainda a escreve: sem Retry, que duplicaria o turno.
+const STALE_EMPTY_ANSWER_MS = 15 * 60_000
+
+export function emptyAnswerState(message: ChatMessage, isStreaming: boolean): 'streaming' | 'elsewhere' | 'stopped' | null {
+  if (message.role !== 'assistant' || message.content.length > 0) return null
+  if (isStreaming) return 'streaming'
+  if (message.interrupted) return 'stopped'
+  const age = Date.now() - Date.parse(message.timestamp)
+  return age > STALE_EMPTY_ANSWER_MS ? 'stopped' : 'elsewhere'
 }
 
 // Ícone + nome do agente acima da resposta (id desconhecido = sem rótulo).
@@ -49,8 +72,23 @@ interface ChatMessageBubbleProps {
   // Clique numa marca (`==texto==`) citada na resposta: abre a nota nela (o
   // App decide entre abrir direto e o seletor de notas).
   onOpenMark?: (text: string) => void
+  // Retry do turno (erro, sem resposta ou interrompido). Só na última resposta.
+  onRetry?: () => void
+  // Retry sem o que reenviar (a pergunta só tinha imagens, que não ficam
+  // gravadas): o botão aparece desabilitado, com o motivo no title.
+  retryDisabledReason?: string
+  // Erro que se resolve no Settings (chave, créditos): botão "Open Settings".
+  onOpenSettings?: () => void
+  // Marca "Saved to <nota>": título atual da nota e como abri-la. Ausente com
+  // a nota apagada.
+  savedNote?: { title: string; onOpen: () => void }
   // Conteudo extra abaixo da resposta do assistant.
   footer?: ReactNode
+}
+
+const INTERRUPTED_LABEL: Record<NonNullable<ChatMessage['interrupted']>, string> = {
+  stopped: 'Stopped',
+  cut: 'Interrupted',
 }
 
 export function ChatMessageBubble({
@@ -60,20 +98,28 @@ export function ChatMessageBubble({
   onSaveToNote,
   onSaveAgentNote,
   onOpenMark,
+  onRetry,
+  retryDisabledReason,
+  onOpenSettings,
+  savedNote,
   footer,
 }: ChatMessageBubbleProps) {
   const isUser = message.role === 'user'
   const [html, setHtml] = useState('')
   const [copied, setCopied] = useState(false)
   const imageViewer = useImageViewer()
-  const isStreamingPlaceholder = !isUser && message.content.length === 0
-  const isErrorMessage =
-    !isUser &&
-    message.content.startsWith('Error:')
+  const isEmptyAnswer = !isUser && message.content.length === 0
+  // Balão vazio só tem os três pontinhos enquanto o turno roda aqui; parado, é
+  // uma resposta que não chegou ou que outra janela ainda escreve.
+  const emptyState = emptyAnswerState(message, isStreaming)
+  const isStreamingPlaceholder = emptyState === 'streaming'
+  const isNoResponse = emptyState === 'stopped'
+  const isErrorMessage = !isUser && !!message.failed
+  const errorText = isErrorMessage ? message.content.replace(/^Error:\s*/, '') : ''
   const canSaveToNote =
     !isUser &&
     !isStreaming &&
-    !isStreamingPlaceholder &&
+    !isEmptyAnswer &&
     !isErrorMessage &&
     message.content.trim().length > 0
   const agentDraft = useMemo(
@@ -87,19 +133,19 @@ export function ChatMessageBubble({
   )
 
   useEffect(() => {
-    if (isUser) return
+    if (isUser || isErrorMessage) return
     if (!message.content) {
       setHtml('')
       return
     }
     let cancelled = false
-    renderMarkdown(message.content).then((out) => {
+    renderMarkdown(message.content, { allowedImageUrls: message.allowedImageUrls }).then((out) => {
       if (!cancelled) setHtml(linkNoteMarks(out))
     })
     return () => {
       cancelled = true
     }
-  }, [isUser, message.content, cacheKey])
+  }, [isUser, isErrorMessage, message.content, cacheKey, message.allowedImageUrls?.join('\n')])
 
   // Objeto estável: o React 19 reescreve o innerHTML quando a identidade do
   // { __html } muda, e isso desfaz a seleção do usuário na resposta.
@@ -116,6 +162,23 @@ export function ChatMessageBubble({
   }
 
   const hasAttachedDocs = isUser && message.attachedDocs && message.attachedDocs.length > 0
+  const images = isUser ? message.imageDataUrls ?? [] : []
+
+  const retryButton = onRetry ? (
+    <button
+      type="button"
+      className={styles.saveBtn}
+      onClick={onRetry}
+      disabled={!!retryDisabledReason}
+      title={retryDisabledReason}
+    >
+      <ArrowClockwise size={13} aria-hidden />
+      Retry
+    </button>
+  ) : null
+
+  const interruptedLabel = !isStreaming && message.interrupted ? INTERRUPTED_LABEL[message.interrupted] : null
+  const showMeta = !isStreaming && (!!message.model || !!interruptedLabel)
 
   return (
     <div
@@ -133,14 +196,19 @@ export function ChatMessageBubble({
             </div>
           )}
           <div className={hasAttachedDocs ? styles.bubbleUser : undefined}>
-            {message.imageDataUrl && (
-              <img
-                src={message.imageDataUrl}
-                alt="attached image"
-                className={styles.userMessageImage}
-                title="Open image"
-                onClick={() => imageViewer.open(message.imageDataUrl!)}
-              />
+            {images.length > 0 && (
+              <div className={styles.userImages}>
+                {images.map((url, i) => (
+                  <img
+                    key={i}
+                    src={url}
+                    alt={`attached image ${i + 1}`}
+                    className={styles.userMessageImage}
+                    title="Open image"
+                    onClick={() => imageViewer.open(url)}
+                  />
+                ))}
+              </div>
             )}
             <p className={styles.userText}>{message.content}</p>
           </div>
@@ -151,6 +219,34 @@ export function ChatMessageBubble({
           <span />
           <span />
         </span>
+      ) : isNoResponse ? (
+        <>
+          <p className={styles.noResponse}>No response (interrupted)</p>
+          {retryButton && <div className={styles.turnActions}>{retryButton}</div>}
+        </>
+      ) : emptyState === 'elsewhere' ? (
+        <p className={styles.noResponse} role="status">
+          Responding in another window…
+        </p>
+      ) : isErrorMessage ? (
+        <>
+          <div className={styles.errorBox} role="alert">
+            <WarningCircle size={14} aria-hidden className={styles.errorIcon} />
+            <span>{errorText}</span>
+          </div>
+          {(retryButton || (message.failed === 'settings' && onOpenSettings)) && (
+            <div className={styles.turnActions}>
+              {message.failed === 'settings' && onOpenSettings && (
+                <button type="button" className={styles.saveBtn} onClick={onOpenSettings}>
+                  <GearSix size={13} aria-hidden />
+                  Open Settings
+                </button>
+              )}
+              {retryButton}
+            </div>
+          )}
+          {/* Resposta com erro: sem "Sources", que sugeririam uma resposta baseada nelas. */}
+        </>
       ) : (
         <>
           {message.thinking && (
@@ -183,15 +279,36 @@ export function ChatMessageBubble({
               void openUrl(href)
             }}
           />
-          {!isStreaming && message.model && (
-            <div className={styles.msgMeta}>
-              <span>{message.model}</span>
-              {message.tokensPerSecond !== undefined && (
-                <span>{message.tokensPerSecond} tok/s</span>
+          {showMeta && (
+            <div className={styles.msgMetaRow}>
+              {interruptedLabel && (
+                <span className={message.interrupted === 'cut' ? styles.markCut : styles.markStopped}>
+                  {interruptedLabel}
+                </span>
+              )}
+              {message.model && (
+                <div className={styles.msgMeta}>
+                  <span>{message.model}</span>
+                  {message.tokensPerSecond !== undefined && !message.interrupted && (
+                    <span>{message.tokensPerSecond} tok/s</span>
+                  )}
+                </div>
               )}
             </div>
           )}
           <div className={styles.assistantActions}>
+            {savedNote && !isStreaming && (
+              <button
+                type="button"
+                className={styles.savedMark}
+                onClick={savedNote.onOpen}
+                title={`Open "${savedNote.title}"`}
+              >
+                <FloppyDisk size={12} aria-hidden />
+                <span className={styles.savedMarkTitle}>Saved to {savedNote.title}</span>
+              </button>
+            )}
+            {interruptedLabel && retryButton}
             {agentDraft && onSaveAgentNote && (
               <button
                 type="button"
@@ -216,21 +333,7 @@ export function ChatMessageBubble({
                 onClick={() => onSaveToNote(message.content)}
                 aria-label="Save response to a note"
               >
-                <svg
-                  viewBox="0 0 16 16"
-                  width="13"
-                  height="13"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M3 2h8l2 2v10a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" />
-                  <polyline points="5,2 5,7 10,7 10,2" />
-                  <line x1="5" y1="11" x2="11" y2="11" />
-                </svg>
+                <FloppyDisk size={13} aria-hidden />
                 Save to note
               </button>
             )}
@@ -241,20 +344,10 @@ export function ChatMessageBubble({
               title={copied ? 'Copied!' : 'Copy response'}
               aria-label="Copy response"
             >
-              {copied ? (
-                <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <polyline points="3,8 6,11 13,4" />
-                </svg>
-              ) : (
-                <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <rect x="5" y="5" width="9" height="9" rx="1" />
-                  <path d="M11 4V3a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h1" />
-                </svg>
-              )}
+              {copied ? <Check size={14} aria-hidden /> : <Copy size={14} aria-hidden />}
             </button>
           </div>
-          {/* Resposta com erro: sem "Sources", que sugeririam uma resposta baseada nelas. */}
-          {!isErrorMessage && footer}
+          {footer}
         </>
       )}
       {imageViewer.viewer}

@@ -56,8 +56,16 @@ export function isOpen(t: Task): boolean {
   return !isDone(t) && !isDropped(t)
 }
 
-// Aberta e já iniciada: `doing` ou qualquer status custom (conta em Doing).
+// Em andamento: só o status `doing`. Status custom (ex.: Waiting) contam como
+// abertos, não como andamento: ficam fora de "In progress" e do chip Doing.
 export function isInProgress(t: Task): boolean {
+  return isOpen(t) && t.status === 'doing'
+}
+
+// Aberta e já fora de To do (Doing, Waiting e os status custom): o que está
+// aberto e parado. A agenda da IA e o bloco "this week" das notas mostram
+// essas mesmo sem data.
+export function isStarted(t: Task): boolean {
   return isOpen(t) && t.status !== 'todo'
 }
 
@@ -129,6 +137,9 @@ export type TaskPatch = Partial<
     | 'recurrenceNextId'
     | 'plannedDay'
     | 'metadata'
+    | 'rescheduleCount'
+    | 'completedAt'
+    | 'doingSince'
   >
 >
 
@@ -139,6 +150,8 @@ export type TaskPatch = Partial<
 // - limpar o deadline zera o reschedule_count (recomeço, ex.: data errada);
 // - completed_at é gravado ao entrar em `done` e limpo ao sair dele;
 // - doing_since é gravado ao entrar em `doing` e limpo ao sair dele.
+// rescheduleCount, completedAt e doingSince explícitos no patch (Undo)
+// prevalecem sobre essas regras: restauram o estado anterior.
 export function applyTaskPatch(prev: Task, patch: TaskPatch, now: number): Task {
   const next: Task = { ...prev, ...patch, updatedAt: now }
   if (
@@ -164,7 +177,57 @@ export function applyTaskPatch(prev: Task, patch: TaskPatch, now: number): Task 
     if (patch.status === 'doing') next.doingSince = now
     else if (prev.status === 'doing') next.doingSince = null
   }
+  if (patch.rescheduleCount !== undefined) next.rescheduleCount = patch.rescheduleCount
+  if (patch.completedAt !== undefined) next.completedAt = patch.completedAt
+  if (patch.doingSince !== undefined) next.doingSince = patch.doingSince
   return next
+}
+
+// Campos que o Undo das visões de Tasks restaura. O projeto fica de fora:
+// mover leva a nota-corpo junto e é desfeito movendo de volta.
+const UNDO_FIELDS = [
+  'status',
+  'scheduledDate',
+  'dueDate',
+  'plannedDay',
+  'parentNoteId',
+  'important',
+  'recurrenceNextId',
+  'rescheduleCount',
+  'completedAt',
+  'doingSince',
+] as const
+
+// Patch que devolve `current` ao estado de `before`; null = nada mudou.
+export function undoPatch(before: Task, current: Task): TaskPatch | null {
+  const patch: TaskPatch = {}
+  for (const key of UNDO_FIELDS) {
+    if (before[key] !== current[key]) (patch as Record<string, unknown>)[key] = before[key]
+  }
+  return Object.keys(patch).length > 0 ? patch : null
+}
+
+// Reagendar para `date` uma task aberta cujo deadline já passou: a visão
+// pergunta se o deadline vai junto ("Move deadline too" / "Keep deadline").
+export function deadlinePassedFor(t: Task, date: string | null, todayKey: string): boolean {
+  return isOpen(t) && date !== null && date >= todayKey && t.dueDate !== null && t.dueDate < todayKey
+}
+
+// Patch de um reagendamento (arrasto no Week, snooze, `t`, `z`, lote, Review):
+// grava o do date e tira a task do My Day de hoje quando ela vai para outro dia
+// (senão ela continuaria em Today). `moveDeadline` leva o deadline para a mesma
+// data. null = nada muda.
+export function reschedulePatch(
+  t: Task,
+  date: string | null,
+  todayKey: string,
+  moveDeadline = false
+): TaskPatch | null {
+  const patch: TaskPatch = {}
+  if (t.scheduledDate !== date) patch.scheduledDate = date
+  if (t.plannedDay === todayKey && date !== todayKey) patch.plannedDay = null
+  if (moveDeadline && date !== null && t.dueDate !== null && t.dueDate !== date) patch.dueDate = date
+  return Object.keys(patch).length > 0 ? patch : null
 }
 
 // Confirmação de exclusão: a task leva a nota-corpo junto e não há desfazer.
@@ -243,8 +306,9 @@ export function planDate(t: Task): string | null {
 
 export type OverdueKind = 'deadline' | 'plan'
 
-// Tipo de atraso de uma task aberta: 'deadline' = prazo de entrega estourado
-// (vermelho); 'plan' = do date passou mas o deadline não (amarelo).
+// Sinal de atraso (cor) de uma task aberta: 'deadline' = prazo de entrega
+// estourado (vermelho), mesmo se já replanejada; 'plan' = do date passou mas o
+// deadline não (amarelo).
 export function overdueKind(t: Task, todayKey: string): OverdueKind | null {
   if (!isOpen(t)) return null
   if (t.dueDate !== null && t.dueDate < todayKey) return 'deadline'
@@ -257,8 +321,13 @@ export function scheduledAfterDeadline(t: Task): boolean {
   return t.scheduledDate !== null && t.dueDate !== null && t.scheduledDate > t.dueDate
 }
 
+// Atrasada e sem plano novo (grupo e coluna Overdue). Com o deadline estourado
+// e um do date de hoje em diante, a task já foi replanejada: sai de Overdue e
+// vai para o dia do plano, com o deadline em vermelho (overdueKind).
 export function isOverdue(t: Task, todayKey: string): boolean {
-  return overdueKind(t, todayKey) !== null
+  const kind = overdueKind(t, todayKey)
+  if (kind !== 'deadline') return kind !== null
+  return t.scheduledDate === null || t.scheduledDate < todayKey
 }
 
 // Período que a task ocupa no Calendar. Vencidas não têm período (aparecem
@@ -305,11 +374,10 @@ export function endOfWeekKey(todayKey: string): string {
   return addDaysKey(startOfWeekKey(todayKey), 6)
 }
 
-const DONE_LIMIT = 50
-
 export interface TaskGroups {
   inProgress: Task[]
   overdue: Task[]
+  slipped: Task[]
   today: Task[]
   thisWeek: Task[]
   later: Task[]
@@ -317,35 +385,56 @@ export interface TaskGroups {
   done: Task[]
 }
 
+// Grupo da task na lista por data; os chips Overdue e Today contam o mesmo
+// que os grupos. A marcada no My Day de hoje vai para Today, mesmo atrasada:
+// foi escolha do usuário. Overdue = deadline estourado (vermelho); Slipped =
+// só o do date passou (amarelo).
+export function taskBucket(t: Task, todayKey: string): keyof TaskGroups {
+  if (!isOpen(t)) return 'done'
+  const plannedToday = t.plannedDay === todayKey
+  if (!plannedToday && isOverdue(t, todayKey)) {
+    return overdueKind(t, todayKey) === 'deadline' ? 'overdue' : 'slipped'
+  }
+  if (isInProgress(t)) return 'inProgress'
+  const plan = plannedToday ? todayKey : planDate(t)
+  if (plan === null) return 'noDate'
+  if (plan === todayKey) return 'today'
+  if (plan <= endOfWeekKey(todayKey)) return 'thisWeek'
+  return 'later'
+}
+
+// Done mais recente primeiro (sem corte: a janela de 14 dias é de groupTasksBy).
 export function groupTasks(tasks: Task[], todayKey: string): TaskGroups {
   const groups: TaskGroups = {
     inProgress: [],
     overdue: [],
+    slipped: [],
     today: [],
     thisWeek: [],
     later: [],
     noDate: [],
     done: [],
   }
-  const weekEnd = endOfWeekKey(todayKey)
-  for (const t of tasks) {
-    const plan = planDate(t)
-    if (!isOpen(t)) groups.done.push(t)
-    else if (isOverdue(t, todayKey)) groups.overdue.push(t)
-    else if (isInProgress(t)) groups.inProgress.push(t)
-    else if (plan === null) groups.noDate.push(t)
-    else if (plan === todayKey) groups.today.push(t)
-    else if (plan <= weekEnd) groups.thisWeek.push(t)
-    else groups.later.push(t)
+  for (const t of tasks) groups[taskBucket(t, todayKey)].push(t)
+  for (const key of Object.keys(groups) as Array<keyof TaskGroups>) {
+    groups[key].sort(key === 'done' ? byCompletedDesc : compareTasks)
   }
-  groups.inProgress.sort(compareTasks)
-  groups.overdue.sort(compareTasks)
-  groups.today.sort(compareTasks)
-  groups.thisWeek.sort(compareTasks)
-  groups.later.sort(compareTasks)
-  groups.noDate.sort(compareTasks)
-  groups.done = groups.done.sort(byCompletedDesc).slice(0, DONE_LIMIT)
   return groups
+}
+
+// Janela do grupo Done: os últimos 14 dias, hoje incluído.
+const DONE_WINDOW_DAYS = 14
+
+// Concluídas/descartadas dentro da janela (`recent`) e as mais antigas, que a
+// lista mostra só em "Show older (N)". Mais recentes primeiro.
+export function splitDoneWindow(tasks: Task[], todayKey: string): { recent: Task[]; older: Task[] } {
+  const from = addDaysKey(todayKey, -(DONE_WINDOW_DAYS - 1))
+  const recent: Task[] = []
+  const older: Task[] = []
+  for (const t of [...tasks].sort(byCompletedDesc)) {
+    ;(dateKeyFromMs(t.completedAt ?? t.updatedAt) >= from ? recent : older).push(t)
+  }
+  return { recent, older }
 }
 
 // Ordem dentro de um grupo/coluna: important primeiro, depois a data de
@@ -384,19 +473,22 @@ export interface TaskSummary {
   week: number
   doing: number
   doneThisWeek: number
-  // Denominador da barra da semana: concluídas na semana + abertas com
-  // planejamento até o fim da semana (inclui atrasadas).
+  // Denominador da barra da semana: concluídas na semana + abertas planejadas
+  // nesta semana (sem as atrasadas de semanas anteriores) ou no My Day de hoje.
   weekTotal: number
 }
 
 export function summaryMatches(key: TaskSummaryKey, t: Task, todayKey: string): boolean {
   const plan = planDate(t)
   switch (key) {
-    case 'overdue':
-      return isOverdue(t, todayKey)
+    case 'overdue': {
+      // Os grupos Overdue e Slipped da lista.
+      const bucket = taskBucket(t, todayKey)
+      return bucket === 'overdue' || bucket === 'slipped'
+    }
     case 'today':
-      // Marcadas no My Day (sol) entram mesmo atrasadas: foi escolha do usuário.
-      return isOpen(t) && (t.plannedDay === todayKey || (!isOverdue(t, todayKey) && plan === todayKey))
+      // O grupo Today da lista (inclui o My Day de hoje).
+      return taskBucket(t, todayKey) === 'today'
     case 'week':
       // Marcadas no My Day (sol) também contam na semana, como no Today.
       return (
@@ -420,6 +512,7 @@ export function summaryMatches(key: TaskSummaryKey, t: Task, todayKey: string): 
 }
 
 export function computeTaskSummary(tasks: Task[], todayKey: string): TaskSummary {
+  const weekStart = startOfWeekKey(todayKey)
   const weekEnd = endOfWeekKey(todayKey)
   const summary: TaskSummary = {
     overdue: 0,
@@ -432,13 +525,15 @@ export function computeTaskSummary(tasks: Task[], todayKey: string): TaskSummary
   }
   for (const t of tasks) {
     if (summaryMatches('overdue', t, todayKey)) summary.overdue++
-    if (overdueKind(t, todayKey) === 'deadline') summary.overdueHasDeadline = true
+    if (taskBucket(t, todayKey) === 'overdue') summary.overdueHasDeadline = true
     if (summaryMatches('today', t, todayKey)) summary.today++
     if (summaryMatches('week', t, todayKey)) summary.week++
     if (summaryMatches('doing', t, todayKey)) summary.doing++
     if (summaryMatches('doneWeek', t, todayKey)) summary.doneThisWeek++
     const plan = planDate(t)
-    if (isOpen(t) && ((plan !== null && plan <= weekEnd) || t.plannedDay === todayKey)) summary.weekTotal++
+    if (isOpen(t) && ((plan !== null && plan >= weekStart && plan <= weekEnd) || t.plannedDay === todayKey)) {
+      summary.weekTotal++
+    }
   }
   summary.weekTotal += summary.doneThisWeek
   return summary
@@ -474,7 +569,8 @@ export function taskProgressByNotebook(
     p.total++
     if (isDone(t)) p.done++
     else p.open++
-    if (isOverdue(t, todayKey)) p.overdue++
+    // Inclui o deadline estourado já replanejado: o prazo continua vencido.
+    if (overdueKind(t, todayKey) !== null) p.overdue++
   }
   for (const [id, p] of all) if (p.open === 0) all.delete(id)
   return all
@@ -530,6 +626,28 @@ export function extractTaskRefTitles(
 // "Oct 14" a partir de uma chave `YYYY-MM-DD`.
 export function formatDueShort(key: string): string {
   return parseKey(key).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+// Data relativa para bater o olho: "Today", "Tomorrow", "Yesterday", "In 3 days"
+// e "2 days ago" até 6 dias de distância; além disso, "Oct 14".
+export function formatRelativeDay(key: string, todayKey: string): string {
+  const diff = daysBetween(todayKey, key)
+  if (diff === 0) return 'Today'
+  if (diff === 1) return 'Tomorrow'
+  if (diff === -1) return 'Yesterday'
+  if (diff > 1 && diff <= 6) return `In ${diff} days`
+  if (diff < -1 && diff >= -6) return `${-diff} days ago`
+  return formatDueShort(key)
+}
+
+// "Wed, Oct 14, 2026": a data completa do tooltip.
+export function formatDateLong(key: string): string {
+  return parseKey(key).toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })
 }
 
 // ─── TODOS (nota entregável que agrupa tasks) ───────────────────────────────
@@ -647,11 +765,14 @@ export type TaskGroupBy = 'date' | 'project' | 'status' | 'todos'
 export interface TaskSection {
   key: string
   label: string
-  tone?: 'overdue'
+  // overdue = vermelho (Overdue); late = amarelo (Slipped).
+  tone?: 'overdue' | 'late'
   // Subtítulos (Group by projeto/TODOS): label null = sem subtítulo.
   subgroups?: Array<{ label: string | null; tasks: Task[] }>
   // Todas as tasks da seção, na ordem de exibição.
   tasks: Task[]
+  // Seção Done: as anteriores à janela de 14 dias ("Show older (N)").
+  older?: Task[]
   // Seção que começa recolhida (Done/Dropped).
   collapsible: boolean
 }
@@ -659,6 +780,7 @@ export interface TaskSection {
 const DATE_SECTIONS: Array<{ key: keyof TaskGroups; label: string }> = [
   { key: 'inProgress', label: 'In progress' },
   { key: 'overdue', label: 'Overdue' },
+  { key: 'slipped', label: 'Slipped' },
   { key: 'today', label: 'Today' },
   { key: 'thisWeek', label: 'This week' },
   { key: 'later', label: 'Later' },
@@ -675,16 +797,25 @@ export function groupTasksBy(
   statuses: TaskStatusDef[],
   todosById: Map<string, TodosInfo>
 ): TaskSection[] {
+  // Seção Done: janela de 14 dias + as mais antigas à parte.
+  const doneSection = (label: string, closed: Task[]): TaskSection => {
+    const { recent, older } = splitDoneWindow(closed, todayKey)
+    return { key: 'done', label, tasks: recent, older, collapsible: true }
+  }
   let sections: TaskSection[]
   if (mode === 'date') {
     const groups = groupTasks(tasks, todayKey)
-    sections = DATE_SECTIONS.map(({ key, label }) => ({
-      key,
-      label,
-      tone: key === 'overdue' ? 'overdue' : undefined,
-      tasks: groups[key],
-      collapsible: key === 'done',
-    }))
+    sections = DATE_SECTIONS.map(({ key, label }) =>
+      key === 'done'
+        ? doneSection(label, groups.done)
+        : {
+            key,
+            label,
+            tone: key === 'overdue' ? 'overdue' : key === 'slipped' ? 'late' : undefined,
+            tasks: groups[key],
+            collapsible: false,
+          }
+    )
   } else if (mode === 'status') {
     const withStatus = (s: TaskStatus) => tasks.filter((t) => t.status === s)
     const known = new Set(statuses.map((s) => s.id))
@@ -702,12 +833,7 @@ export function groupTasksBy(
         tasks: withStatus(id).sort(compareTasks),
         collapsible: false,
       })),
-      {
-        key: 'done',
-        label: statusName('done', statuses),
-        tasks: withStatus('done').sort(byCompletedDesc).slice(0, DONE_LIMIT),
-        collapsible: true,
-      },
+      doneSection(statusName('done', statuses), withStatus('done')),
       {
         key: 'dropped',
         label: statusName('dropped', statuses),
@@ -738,12 +864,7 @@ export function groupTasksBy(
         collapsible: false,
       }
     })
-    sections.push({
-      key: 'done',
-      label: 'Done',
-      tasks: tasks.filter((t) => !isOpen(t)).sort(byCompletedDesc).slice(0, DONE_LIMIT),
-      collapsible: true,
-    })
+    sections.push(doneSection('Done', tasks.filter((t) => !isOpen(t))))
   } else {
     const byNotebook = new Map<string, Task[]>()
     for (const t of tasks) {
@@ -767,14 +888,9 @@ export function groupTasksBy(
         collapsible: false,
       }
     })
-    sections.push({
-      key: 'done',
-      label: 'Done',
-      tasks: tasks.filter((t) => !isOpen(t)).sort(byCompletedDesc).slice(0, DONE_LIMIT),
-      collapsible: true,
-    })
+    sections.push(doneSection('Done', tasks.filter((t) => !isOpen(t))))
   }
-  return sections.filter((s) => s.tasks.length > 0)
+  return sections.filter((s) => s.tasks.length > 0 || (s.older?.length ?? 0) > 0)
 }
 
 function todosLabel(todosById: Map<string, TodosInfo>, id: string): string {
@@ -860,7 +976,7 @@ export function parseTasksFilter(text: string, notebooks: Notebook[]): TasksBloc
 }
 
 // Tasks abertas do bloco, por data de planejamento. `this week` inclui as
-// atrasadas e as em andamento (doing), mesmo sem data.
+// atrasadas e as que saíram de To do (Doing, Waiting…), mesmo sem data.
 export function filterTasksForBlock(
   tasks: Task[],
   filter: TasksBlockFilter,
@@ -880,7 +996,7 @@ export function filterTasksForBlock(
         case 'overdue':
           return late
         case 'this week':
-          return late || isInProgress(t) || (plan !== null && plan <= weekEnd)
+          return late || isStarted(t) || (plan !== null && plan <= weekEnd)
         case 'all':
           return true
       }
@@ -957,7 +1073,8 @@ export function nextOccurrenceDate(rec: TaskRecurrence, anchorKey: string, today
 }
 
 // Próxima ocorrência de uma task recorrente concluída: mesmo título, projeto,
-// TODOS, important, metadados e regra; nasce em To do, sem nota-corpo. Mantém o formato
+// TODOS, important, metadados e regra; nasce em To do, sem nota-corpo (o App
+// copia a nota-corpo depois, com o checklist desmarcado). Mantém o formato
 // das datas da original (só do date, só deadline, ou ambos com o mesmo
 // intervalo entre eles).
 export function buildNextOccurrence(
@@ -1032,6 +1149,15 @@ export function checklistProgress(markdown: string): ChecklistProgress | null {
   return total === 0 ? null : { done, total }
 }
 
+// Cópia do corpo para a próxima ocorrência: desmarca os itens do checklist.
+// Linhas com `<task-ref` (tasks vinculadas) ficam como estão.
+export function uncheckChecklist(markdown: string): string {
+  return markdown
+    .split('\n')
+    .map((line) => (line.includes('<task-ref') ? line : line.replace(/^(\s*- )\[[xX]\]/, '$1[ ]')))
+    .join('\n')
+}
+
 // ─── Tool "Tasks" do chat ───────────────────────────────────────────────────
 
 export type TasksQueryPeriod = 'overdue' | 'today' | 'this_week' | 'next_week' | 'open' | 'done_this_week'
@@ -1082,12 +1208,13 @@ export function queryTasksText(
     .filter((t) => {
       if (notebookId !== null && t.notebookId !== notebookId) return false
       if (wantedTodos !== null && !normalizeName(todosTitle(t) ?? '').includes(wantedTodos)) return false
-      // "doing" no chat = em andamento como na UI (inclui status custom).
-      if (statusId === 'doing' ? !isInProgress(t) : statusId && t.status !== statusId) return false
+      if (statusId && t.status !== statusId) return false
       const plan = planDate(t)
       switch (q.period) {
+        // Atrasada para o chat = deadline vencido ou plano passado, mesmo que
+        // a task já tenha sido replanejada para frente.
         case 'overdue':
-          return isOverdue(t, todayKey)
+          return overdueKind(t, todayKey) !== null
         case 'today':
           return isOpen(t) && (plan === todayKey || t.dueDate === todayKey)
         case 'this_week':

@@ -168,18 +168,26 @@ export function NoteBoard({
   // Notas sem valor que ficaram de fora com "Hide No value".
   const hidden = visible.length - shown
   const filtered = notebookId !== null || activeSections.length > 0
+  // Total sem caderno, chips nem busca, para o "N of M notes".
+  const total = useMemo(
+    () => buildBoardColumns(typeNotes, board, null).reduce((n, c) => n + c.notes.length, 0),
+    [typeNotes, board]
+  )
 
+  // Com "All notebooks", o caderno de destino aparece no botão (o filtro não
+  // diz para onde a nota vai).
   function newButton(label: string, columnKey: string, sectionKey?: string) {
     return (
       <button
         type="button"
         className={styles.newBtn}
         onClick={() => handleCreate(columnKey, sectionKey)}
-        aria-label={`new ${type.name} note in ${label}`}
+        aria-label={`new ${type.name} note in ${label}, notebook ${newNotebookName}`}
         title={`New ${type.name} note in ${label} (notebook: ${newNotebookName})`}
       >
         <Plus size={12} aria-hidden />
         New
+        {notebookId === null && <span className={styles.newTarget}>· {newNotebookName}</span>}
       </button>
     )
   }
@@ -311,7 +319,9 @@ export function NoteBoard({
             <span className={styles.by}>· by {column.name}</span>
           </span>
           <span className={styles.count}>
-            {shown} {shown === 1 ? 'note' : 'notes'}
+            {filtered || wanted
+              ? `${shown} of ${total} ${total === 1 ? 'note' : 'notes'}`
+              : `${shown} ${shown === 1 ? 'note' : 'notes'}`}
             {hidden > 0 && ` · ${hidden} with no ${column.name} hidden`}
           </span>
           {board.filter && <span className={styles.hint}>Only notes where {board.filter.name} is checked</span>}

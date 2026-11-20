@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { FileText, Folder, X } from '@phosphor-icons/react'
 import type { Document } from '../../types'
 import { useConfirm } from '../../hooks/useConfirm'
 import { useKnowledgeBase, useNotebookVisibility } from '../../hooks/useDocuments'
-import { notesFolderDocId } from '../../lib/documents'
+import { listChatFolderIds } from '../../hooks/useChat'
+import { documentMatchesFilter, notesFolderDocId, webFolderChatFolderId } from '../../lib/documents'
 import styles from './DocumentsModal.module.css'
 
 export interface DocumentsModalProps {
@@ -16,10 +18,14 @@ export interface DocumentsModalProps {
   onToggleNotesIndex: (enabled: boolean) => Promise<void>
 }
 
+function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e)
+}
+
 function statusLabel(status: Document['status']): string {
-  if (status === 'available') return 'available'
-  if (status === 'indexing') return 'indexing'
-  return 'error'
+  if (status === 'available') return 'Available'
+  if (status === 'indexing') return 'Indexing'
+  return 'Error'
 }
 
 function StatusPill({ doc }: { doc: Document }) {
@@ -32,7 +38,7 @@ function StatusPill({ doc }: { doc: Document }) {
   return (
     <span
       className={`${styles.pill} ${cls}`}
-      title={doc.status === 'error' ? doc.errorMessage ?? 'error' : undefined}
+      title={doc.status === 'error' ? doc.errorMessage ?? 'Error' : undefined}
     >
       {statusLabel(doc.status)}
     </span>
@@ -44,17 +50,36 @@ interface FolderRowProps {
   checked: boolean
   disabled: boolean
   alwaysOn?: boolean
+  orphan?: boolean
   onToggle: () => void
 }
 
-function FolderRow({ folder, checked, disabled, alwaysOn, onToggle }: FolderRowProps) {
+function FolderRow({ folder, checked, disabled, alwaysOn, orphan, onToggle }: FolderRowProps) {
+  const label = folder.alias ?? folder.name
   return (
     <tr>
       <td className={styles.cellName} title={folder.originalPath ?? folder.name}>
-        {folder.alias ?? folder.name}
-        {alwaysOn && <span className={styles.alwaysOn}> (always on)</span>}
+        <span className={styles.nameWrap}>
+          <span className={styles.nameText}>{label}</span>
+          {alwaysOn && <span className={styles.alwaysOn}>(always on)</span>}
+          {folder.origin === 'ai' && <span className={styles.aiBadge}>AI-generated</span>}
+          {orphan && (
+            <span
+              className={styles.orphanBadge}
+              title="The chat folder that saved these web sources no longer exists."
+            >
+              Orphan
+            </span>
+          )}
+          {folder.origin === 'notes' && <span className={styles.notesBadge}>Notes</span>}
+        </span>
       </td>
-      <td>📁 Folder</td>
+      <td>
+        <span className={styles.type}>
+          <Folder size={14} aria-hidden />
+          Folder
+        </span>
+      </td>
       <td>
         <StatusPill doc={folder} />
       </td>
@@ -64,7 +89,7 @@ function FolderRow({ folder, checked, disabled, alwaysOn, onToggle }: FolderRowP
           checked={checked}
           disabled={disabled}
           onChange={onToggle}
-          aria-label={`toggle visibility for folder ${folder.alias ?? folder.name}`}
+          aria-label={`Use folder ${label} in AI`}
           title={
             alwaysOn
               ? "This notebook's notes are always searched"
@@ -87,17 +112,45 @@ export function DocumentsModal({
 }: DocumentsModalProps) {
   const { documents: allDocuments, loading, error } = useKnowledgeBase()
   const { isVisible, toggle } = useNotebookVisibility(open ? notebookId : null)
-  const { confirm, modal: confirmModal } = useConfirm()
+  const { confirm: askConfirm, modal: confirmModal } = useConfirm()
+  // O modal fica montado: uma confirmação aberta ao fechar (ou ao trocar de
+  // caderno) resolve como cancel e não age sobre o caderno anterior.
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const settleConfirmRef = useRef<((ok: boolean) => void) | null>(null)
+  const confirm = useCallback(
+    (message: string, options: Parameters<typeof askConfirm>[1]) =>
+      new Promise<boolean>((resolve) => {
+        const settle = (ok: boolean) => {
+          if (settleConfirmRef.current !== settle) return
+          settleConfirmRef.current = null
+          setConfirmOpen(false)
+          resolve(ok)
+        }
+        settleConfirmRef.current = settle
+        setConfirmOpen(true)
+        void askConfirm(message, options).then(settle)
+      }),
+    [askConfirm],
+  )
   const [notesIndexPending, setNotesIndexPending] = useState(false)
+  const [toggleError, setToggleError] = useState<string | null>(null)
+  const [filter, setFilter] = useState('')
 
+  // Com uma confirmação aberta, o Escape é dela.
   useEffect(() => {
     if (!open) return
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape' && !confirmOpen) onClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
+  }, [open, onClose, confirmOpen])
+
+  useEffect(() => {
+    settleConfirmRef.current?.(false)
+    setToggleError(null)
+    setFilter('')
+  }, [open, notebookId])
 
   if (!open || !notebookId) return null
 
@@ -111,10 +164,11 @@ export function DocumentsModal({
 
   async function handleToggleNotesIndex() {
     const next = !notesIndexEnabled
+    setToggleError(null)
     if (!next) {
       const ok = await confirm(
-        "Turn off note indexing for this notebook? Its indexed copies will be deleted (your notes are not affected).",
-        { title: 'Turn off note indexing' },
+        "Turn off note indexing for this notebook? Its indexed copies are deleted. Your notes are not changed.",
+        { title: 'Turn off note indexing', confirmLabel: 'Turn off' },
       )
       if (!ok) return
     }
@@ -122,36 +176,69 @@ export function DocumentsModal({
     try {
       await onToggleNotesIndex(next)
     } catch (e) {
-      console.error('failed to toggle notes indexing', e)
+      setToggleError(`Could not turn note indexing ${next ? 'on' : 'off'}: ${errorText(e)}`)
     } finally {
       setNotesIndexPending(false)
     }
   }
 
-  const folders = documents.filter((d) => d.docType === 'folder')
-  const standaloneFiles = documents.filter((d) => d.docType === 'file' && !d.parentFolderId)
-
-  async function handleToggleFile(doc: Document) {
-    if (doc.status !== 'available') return
+  async function handleToggle(doc: Document) {
+    if (doc.docType === 'file' && doc.status !== 'available') return
     const next = !isVisible(doc.id)
+    setToggleError(null)
     try {
       await toggle(doc.id, next)
     } catch (e) {
-      console.error('failed to toggle document visibility', e)
+      setToggleError(`Could not ${next ? 'use' : 'stop using'} "${doc.alias ?? doc.name}": ${errorText(e)}`)
     }
   }
 
-  async function handleToggleFolder(folder: Document) {
-    try {
-      await toggle(folder.id, !isVisible(folder.id))
-    } catch (e) {
-      console.error('failed to toggle folder visibility', e)
-    }
+  // Pasta web cuja pasta de chat dona foi apagada (como na KB).
+  const chatFolderIds = listChatFolderIds()
+  const isOrphan = (d: Document) => {
+    const chatFolderId = webFolderChatFolderId(d)
+    return !!chatFolderIds && chatFolderId !== null && !chatFolderIds.includes(chatFolderId)
+  }
+
+  const matches = documents.filter((d) => documentMatchesFilter(d, filter))
+  const folders = matches.filter((d) => d.docType === 'folder')
+  const standaloneFiles = matches.filter((d) => d.docType === 'file' && !d.parentFolderId)
+  const userFolders = folders.filter((d) => d.origin !== 'notes' && d.origin !== 'ai')
+  const otherNotes = folders.filter((d) => d.origin === 'notes')
+  const webFolders = folders.filter((d) => d.origin === 'ai')
+  const hasRows =
+    userFolders.length + standaloneFiles.length + otherNotes.length + webFolders.length > 0 || !!ownNotesFolder
+
+  function renderFolder(folder: Document) {
+    const hasAvailableChildren = documents.some(
+      (d) => d.parentFolderId === folder.id && d.docType === 'file' && d.status === 'available',
+    )
+    const checked = isVisible(folder.id)
+    return (
+      <FolderRow
+        key={folder.id}
+        folder={folder}
+        checked={checked}
+        disabled={!hasAvailableChildren && !checked}
+        orphan={isOrphan(folder)}
+        onToggle={() => void handleToggle(folder)}
+      />
+    )
+  }
+
+  function groupHeader(label: string) {
+    return (
+      <tr className={styles.groupRow}>
+        <th colSpan={4} scope="colgroup">
+          {label}
+        </th>
+      </tr>
+    )
   }
 
   return createPortal(
     <>
-    {confirmModal}
+    {confirmOpen && confirmModal}
     <div
       className={styles.overlay}
       role="dialog"
@@ -170,9 +257,10 @@ export function DocumentsModal({
             className={styles.close}
             type="button"
             onClick={onClose}
-            aria-label="close"
+            aria-label="Close"
+            title="Close"
           >
-            ×
+            <X size={16} aria-hidden />
           </button>
         </header>
 
@@ -191,6 +279,24 @@ export function DocumentsModal({
               </span>
             </span>
           </label>
+          <p className={styles.useInAiHelp}>
+            Use in AI: checked items are searched by this notebook&apos;s chat and /commands.
+          </p>
+          {documents.length > 0 && !error && (
+            <input
+              className={styles.filterInput}
+              type="search"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="Filter by name, alias or path…"
+              aria-label="Filter documents"
+            />
+          )}
+          {toggleError && (
+            <p className={styles.errorText} role="alert">
+              {toggleError}
+            </p>
+          )}
           {loading && documents.length === 0 && !ownNotesFolder ? (
             <ul className={styles.skeletonList} aria-hidden="true">
               {[0, 1, 2].map((i) => (
@@ -217,6 +323,8 @@ export function DocumentsModal({
                 to get started.
               </p>
             </div>
+          ) : !hasRows ? (
+            <p className={styles.muted}>No matches.</p>
           ) : (
             <table className={styles.table}>
               <thead>
@@ -224,11 +332,12 @@ export function DocumentsModal({
                   <th className={styles.colName}>Name</th>
                   <th className={styles.colType}>Type</th>
                   <th className={styles.colStatus}>Status</th>
-                  <th className={styles.colVisible}>Visible</th>
+                  <th className={styles.colVisible}>Use in AI</th>
                 </tr>
               </thead>
-              <tbody>
-                {ownNotesFolder && (
+              {ownNotesFolder && (
+                <tbody>
+                  {groupHeader('This notebook’s notes')}
                   <FolderRow
                     folder={ownNotesFolder}
                     checked
@@ -236,62 +345,70 @@ export function DocumentsModal({
                     alwaysOn
                     onToggle={() => {}}
                   />
-                )}
-                {folders.map((folder) => {
-                  const hasAvailableChildren = documents.some(
-                    (d) => d.parentFolderId === folder.id && d.docType === 'file' && d.status === 'available',
-                  )
-                  const checked = isVisible(folder.id)
-                  return (
-                    <FolderRow
-                      key={folder.id}
-                      folder={folder}
-                      checked={checked}
-                      disabled={!hasAvailableChildren && !checked}
-                      onToggle={() => handleToggleFolder(folder)}
-                    />
-                  )
-                })}
-                {standaloneFiles.map((doc) => {
-                  const canToggle = doc.status === 'available'
-                  const visible = isVisible(doc.id)
-                  return (
-                    <tr key={doc.id}>
-                      <td className={styles.cellName} title={doc.originalPath ?? doc.name}>
-                        {doc.name}
-                      </td>
-                      <td>📄 File</td>
-                      <td>
-                        <StatusPill doc={doc} />
-                      </td>
-                      <td className={styles.cellVisible}>
-                        <input
-                          type="checkbox"
-                          checked={visible}
-                          disabled={!canToggle}
-                          onChange={() => handleToggleFile(doc)}
-                          aria-label={`toggle visibility for ${doc.name}`}
-                          title={!canToggle ? `Document is ${doc.status} — not toggleable` : undefined}
-                        />
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
+                </tbody>
+              )}
+              {userFolders.length + standaloneFiles.length > 0 && (
+                <tbody>
+                  {groupHeader('Your files and folders')}
+                  {userFolders.map(renderFolder)}
+                  {standaloneFiles.map((doc) => {
+                    const canToggle = doc.status === 'available'
+                    const visible = isVisible(doc.id)
+                    return (
+                      <tr key={doc.id}>
+                        <td className={styles.cellName} title={doc.originalPath ?? doc.name}>
+                          {doc.name}
+                        </td>
+                        <td>
+                          <span className={styles.type}>
+                            <FileText size={14} aria-hidden />
+                            File
+                          </span>
+                        </td>
+                        <td>
+                          <StatusPill doc={doc} />
+                        </td>
+                        <td className={styles.cellVisible}>
+                          <input
+                            type="checkbox"
+                            checked={visible}
+                            disabled={!canToggle}
+                            onChange={() => void handleToggle(doc)}
+                            aria-label={`Use ${doc.name} in AI`}
+                            title={!canToggle ? `Only available documents can be used (this one is ${statusLabel(doc.status).toLowerCase()})` : undefined}
+                          />
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              )}
+              {otherNotes.length > 0 && (
+                <tbody>
+                  {groupHeader('Notes from other notebooks')}
+                  {otherNotes.map(renderFolder)}
+                </tbody>
+              )}
+              {webFolders.length > 0 && (
+                <tbody>
+                  {groupHeader('Web sources')}
+                  {webFolders.map(renderFolder)}
+                </tbody>
+              )}
             </table>
           )}
         </div>
 
         <footer className={styles.footer}>
           <p className={styles.footerHint}>
-            Only &quot;available&quot; documents can be toggled.
+            Only available documents can be used in AI.
           </p>
           <button
             className={styles.secondary}
             type="button"
             onClick={() => { onClose(); onOpenKnowledgeBase() }}
           >
-            manage Knowledge Base
+            Manage Knowledge Base
           </button>
         </footer>
       </div>

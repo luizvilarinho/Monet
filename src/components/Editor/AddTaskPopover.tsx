@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { ProjectChoice } from '../../lib/tasks'
 import type { Notebook } from '../../types'
 import { ProjectPicker } from '../TasksView/ProjectPicker'
+import { useAnchoredPosition, type PopoverAnchor } from './anchoredPosition'
 import styles from './AddTaskPopover.module.css'
 
 interface AddTaskPopoverProps {
-  position: { top: number; left: number }
+  position: PopoverAnchor
   count: number
   notebooks: Notebook[]
   suggestedNotebookId: string
@@ -26,6 +28,8 @@ export function AddTaskPopover({
   const [dueDate, setDueDate] = useState('')
   const [project, setProject] = useState<ProjectChoice>({ notebookId: suggestedNotebookId })
   const dateRef = useRef<HTMLInputElement>(null)
+  const ref = useRef<HTMLDivElement>(null)
+  const pos = useAnchoredPosition(ref, position)
   // Ref: `onCancel` muda a cada render do Editor e re-registrar o listener
   // abriria uma janela em que o clique fora se perde.
   const onCancelRef = useRef(onCancel)
@@ -37,8 +41,7 @@ export function AddTaskPopover({
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      const el = document.querySelector('[data-add-task-popover]')
-      if (el && !el.contains(e.target as Node)) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
         onCancelRef.current()
       }
     }
@@ -56,11 +59,13 @@ export function AddTaskPopover({
     onConfirm({ dueDate: dueDate || null, project })
   }
 
-  return (
+  // Portal: acima do modal da task (z-index 1000) e fora do overflow do editor.
+  return createPortal(
     <div
+      ref={ref}
       data-add-task-popover
       className={styles.popup}
-      style={{ top: position.top, left: position.left }}
+      style={{ top: pos.top, left: pos.left }}
       onKeyDown={(e) => {
         if (e.key === 'Enter') {
           e.preventDefault()
@@ -97,6 +102,7 @@ export function AddTaskPopover({
       >
         {count > 1 ? `Add ${count} tasks` : 'Add task'}
       </button>
-    </div>
+    </div>,
+    document.body
   )
 }

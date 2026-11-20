@@ -5,8 +5,7 @@ use std::sync::{Mutex, OnceLock};
 use rusqlite::ffi::sqlite3_auto_extension;
 use rusqlite::Connection;
 use sqlite_vec::sqlite3_vec_init;
-use tauri::{AppHandle, Manager, State};
-use zerocopy::AsBytes;
+use tauri::{AppHandle, Manager};
 
 pub const EMBEDDING_DIM: usize = 768;
 // Versão do formato dos chunks (2 = cabeçalho de metadados no texto embutido).
@@ -195,42 +194,4 @@ pub(crate) fn ensure_fts(conn: &Connection) -> Result<bool, String> {
     tx.commit()
         .map_err(|e| format!("falha ao gravar backfill de chunks_fts: {}", e))?;
     Ok(true)
-}
-
-#[tauri::command]
-pub fn vec_db_smoke_test(state: State<'_, VecDb>) -> Result<String, String> {
-    let conn = state.0.lock().map_err(|e| e.to_string())?;
-
-    let v: Vec<f32> = vec![0.0; EMBEDDING_DIM];
-    let version: String = conn
-        .query_row("SELECT vec_version()", [], |row| row.get(0))
-        .map_err(|e| format!("vec_version falhou: {}", e))?;
-
-    conn.execute(
-        "INSERT INTO vec_chunks(rowid, embedding) VALUES (?1, ?2)",
-        rusqlite::params![-1_i64, v.as_bytes()],
-    )
-    .map_err(|e| format!("insert smoke falhou: {}", e))?;
-
-    let mut stmt = conn
-        .prepare(
-            "SELECT rowid, distance FROM vec_chunks
-             WHERE embedding MATCH ?1 AND k = 1
-             ORDER BY distance",
-        )
-        .map_err(|e| format!("prepare smoke falhou: {}", e))?;
-
-    let (rowid, _distance): (i64, f64) = stmt
-        .query_row(rusqlite::params![v.as_bytes()], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })
-        .map_err(|e| format!("select smoke falhou: {}", e))?;
-
-    conn.execute(
-        "DELETE FROM vec_chunks WHERE rowid = ?1",
-        rusqlite::params![rowid],
-    )
-    .map_err(|e| format!("cleanup smoke falhou: {}", e))?;
-
-    Ok(format!("sqlite-vec ok (versao {})", version))
 }

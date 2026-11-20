@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Brain, CalendarBlank, FileText, Globe, ListChecks, ListMagnifyingGlass } from '@phosphor-icons/react'
+import { Brain, CalendarBlank, FileText, Globe, ListChecks, ListMagnifyingGlass, Wrench } from '@phosphor-icons/react'
 import type { ChatTools } from '../../hooks/useChat'
+import type { ChatAgentDef } from '../../lib/agents/chat'
 import { useRagDetailed } from '../../hooks/useRagDetailed'
 import styles from './ChatToolsMenu.module.css'
 
@@ -16,23 +17,7 @@ const TOOLS: ToolDef[] = [
     key: 'webSearch',
     name: 'Web Search',
     description: 'Searches the web for current information (uses Tavily).',
-    icon: (
-      <svg
-        viewBox="0 0 24 24"
-        width="16"
-        height="16"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden="true"
-      >
-        <circle cx="12" cy="12" r="10" />
-        <line x1="2" y1="12" x2="22" y2="12" />
-        <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-      </svg>
-    ),
+    icon: <Globe size={16} aria-hidden />,
   },
 ]
 
@@ -50,6 +35,9 @@ export interface ChatToolsMenuProps {
   dailyNotesTool?: { supported: boolean } | null
   // Tool "Notes" (get_note e search_marks); `supported` = o modelo aceita tools.
   notesTool?: { supported: boolean } | null
+  // Agente da conversa: os switches mostram o estado efetivo (o agente que não
+  // usa a web a desliga; o que força Tasks ou Notes as liga) com o motivo.
+  agent?: ChatAgentDef | null
 }
 
 export function ChatToolsMenu({
@@ -63,6 +51,7 @@ export function ChatToolsMenu({
   tasksTool = null,
   dailyNotesTool = null,
   notesTool = null,
+  agent = null,
 }: ChatToolsMenuProps) {
   const [open, setOpen] = useState(false)
   const [ragDetailed, setRagDetailed] = useRagDetailed()
@@ -74,17 +63,35 @@ export function ChatToolsMenu({
       if (!wrapRef.current) return
       if (!wrapRef.current.contains(e.target as Node)) setOpen(false)
     }
+    // Escape fecha o popover sem sair do composer.
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== 'Escape') return
+      e.stopPropagation()
+      setOpen(false)
+    }
     document.addEventListener('mousedown', onDoc)
-    return () => document.removeEventListener('mousedown', onDoc)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDoc)
+      document.removeEventListener('keydown', onKey)
+    }
   }, [open])
 
+  // Estado efetivo por agente (General não muda nada).
+  const webOffByAgent = !!agent && !agent.context.web
+  const tasksForced = !!agent?.forceTasksTool && !!tasksTool?.supported
+  const notesForced = !!agent?.forceNotesTool && !!notesTool?.supported
+  const effective = (key: keyof ChatTools): boolean => {
+    if (key === 'webSearch') return tools.webSearch && !webOffByAgent
+    return tools[key]
+  }
   const activeCount =
-    TOOLS.filter((t) => tools[t.key]).length +
+    TOOLS.filter((t) => effective(t.key)).length +
     (folderMemory?.enabled ? 1 : 0) +
     (folderWebResearch?.enabled ? 1 : 0) +
-    (tasksTool && tools.tasks ? 1 : 0) +
+    (tasksTool && (tools.tasks || tasksForced) ? 1 : 0) +
     (dailyNotesTool && tools.dailyNotes ? 1 : 0) +
-    (notesTool && tools.notes ? 1 : 0)
+    (notesTool && (tools.notes || notesForced) ? 1 : 0)
 
   return (
     <div className={styles.wrap} ref={wrapRef}>
@@ -96,46 +103,41 @@ export function ChatToolsMenu({
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label="tools"
-        title="tools"
+        aria-label="Tools"
+        title="Tools"
       >
-        <svg
-          viewBox="0 0 24 24"
-          width="16"
-          height="16"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.5-2.5 2.5-2.5z" />
-        </svg>
+        <Wrench size={16} aria-hidden />
         {activeCount > 0 && (
           <span className={styles.badge}>{activeCount}</span>
         )}
       </button>
       {open && (
         <div className={styles.popover} role="menu">
-          <div className={styles.popoverHeader}>FERRAMENTAS</div>
+          <div className={styles.popoverHeader}>Tools</div>
           <div className={styles.toolList}>
             {TOOLS.map((t) => {
-              const enabled = tools[t.key]
+              const enabled = effective(t.key)
+              const lockedBy = t.key === 'webSearch' && webOffByAgent ? agent : null
               return (
-                <div key={t.key} className={styles.toolRow}>
+                <div
+                  key={t.key}
+                  className={styles.toolRow}
+                  title={lockedBy ? `${lockedBy.label} doesn't use web search` : undefined}
+                >
                   <span className={styles.toolIcon}>{t.icon}</span>
                   <div className={styles.toolText}>
                     <span className={styles.toolName}>{t.name}</span>
                     <span className={styles.toolDescription}>
                       {t.description}
                     </span>
+                    {lockedBy && <span className={styles.toolLocked}>Off for {lockedBy.label}</span>}
                   </div>
                   <button
                     type="button"
                     role="switch"
                     aria-checked={enabled}
-                    aria-label={`alternar ${t.name}`}
+                    aria-label={`toggle ${t.name.toLowerCase()}`}
+                    disabled={!!lockedBy}
                     className={enabled ? styles.toggleOn : styles.toggleOff}
                     onClick={() => onToggle(t.key, !enabled)}
                   >
@@ -147,7 +149,13 @@ export function ChatToolsMenu({
             {tasksTool && (
               <div
                 className={styles.toolRow}
-                title={tasksTool.supported ? undefined : 'This model does not support tools'}
+                title={
+                  !tasksTool.supported
+                    ? 'This model does not support tools'
+                    : tasksForced && agent
+                      ? `${agent.label} always reads your tasks`
+                      : undefined
+                }
               >
                 <span className={styles.toolIcon}>
                   <ListChecks size={16} />
@@ -157,14 +165,15 @@ export function ChatToolsMenu({
                   <span className={styles.toolDescription}>
                     Lets the AI look up your tasks (by period, project or status) when you ask about them.
                   </span>
+                  {tasksForced && agent && <span className={styles.toolLocked}>On for {agent.label}</span>}
                 </div>
                 <button
                   type="button"
                   role="switch"
-                  aria-checked={tools.tasks}
+                  aria-checked={tools.tasks || tasksForced}
                   aria-label="toggle tasks"
-                  disabled={!tasksTool.supported}
-                  className={tools.tasks ? styles.toggleOn : styles.toggleOff}
+                  disabled={!tasksTool.supported || tasksForced}
+                  className={tools.tasks || tasksForced ? styles.toggleOn : styles.toggleOff}
                   onClick={() => onToggle('tasks', !tools.tasks)}
                 >
                   <span className={styles.toggleKnob} aria-hidden="true" />
@@ -201,7 +210,13 @@ export function ChatToolsMenu({
             {notesTool && (
               <div
                 className={styles.toolRow}
-                title={notesTool.supported ? undefined : 'This model does not support tools'}
+                title={
+                  !notesTool.supported
+                    ? 'This model does not support tools'
+                    : notesForced && agent
+                      ? `${agent.label} always looks up your notes`
+                      : undefined
+                }
               >
                 <span className={styles.toolIcon}>
                   <FileText size={16} />
@@ -211,14 +226,15 @@ export function ChatToolsMenu({
                   <span className={styles.toolDescription}>
                     Lets the AI look up a note by title when you name one (metadata, its tasks if it is a TODOS, and an excerpt) and list your marks when you ask what you marked.
                   </span>
+                  {notesForced && agent && <span className={styles.toolLocked}>On for {agent.label}</span>}
                 </div>
                 <button
                   type="button"
                   role="switch"
-                  aria-checked={tools.notes}
+                  aria-checked={tools.notes || notesForced}
                   aria-label="toggle notes"
-                  disabled={!notesTool.supported}
-                  className={tools.notes ? styles.toggleOn : styles.toggleOff}
+                  disabled={!notesTool.supported || notesForced}
+                  className={tools.notes || notesForced ? styles.toggleOn : styles.toggleOff}
                   onClick={() => onToggle('notes', !tools.notes)}
                 >
                   <span className={styles.toggleKnob} aria-hidden="true" />

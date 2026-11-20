@@ -1,20 +1,48 @@
-import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentType,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type RefObject,
+} from 'react'
 import { createPortal } from 'react-dom'
-import { DotsSixVertical, Plus, Trash } from '@phosphor-icons/react'
+import {
+  ArrowsClockwise,
+  CaretDown,
+  CaretRight,
+  CheckSquare,
+  Copy,
+  DotsSixVertical,
+  ListBullets,
+  ListNumbers,
+  Plus,
+  Quotes,
+  TextHOne,
+  TextHThree,
+  TextHTwo,
+  TextT,
+  Trash,
+  type IconProps,
+} from '@phosphor-icons/react'
 import type { Editor as TiptapEditor } from '@tiptap/core'
 import { TextSelection } from '@tiptap/pm/state'
 import { isPotentialCommandLine } from './commandParser'
-import { blockRange, resolveBlockUnit } from './blockUnit'
+import { blockRange, isCommandLine, resolveBlockUnit } from './blockUnit'
 import type { BlockUnit } from './blockUnit'
 import { setBlockMark } from './BlockHandle'
-import { deleteBlockUnit, trackHandlePress } from './blockDrag'
+import { deleteBlockUnit, duplicateBlockUnit, trackHandlePress } from './blockDrag'
+import { canTurnInto, turnBlockInto, type TurnIntoKind } from './formattingActions'
+import { useAnchoredPosition, type PopoverAnchor } from './anchoredPosition'
 import styles from './Editor.module.css'
 
 // Gutter flutuante à esquerda do bloco sob o mouse: "+" insere uma linha
 // abaixo (Shift: acima) e o handle (⠿) arrasta o bloco ou, no clique, abre o
-// menu do bloco (Delete). Um par de botões só, reposicionado no mousemove —
-// sem widget por bloco, nada roda enquanto se digita. Some sob a régua e
-// durante a seleção com o mouse.
+// menu do bloco (Turn into, Duplicate, Delete). Um par de botões só,
+// reposicionado no mousemove — sem widget por bloco, nada roda enquanto se
+// digita. Some sob a régua e durante a seleção com o mouse.
 
 interface BlockGutterProps {
   editor: TiptapEditor | null
@@ -22,8 +50,6 @@ interface BlockGutterProps {
   disabled: boolean
   // Handle (⠿) ao lado do "+". Sem ele (painel de notas do Reader) só o "+".
   blockHandles: boolean
-  // Apagar a linha de /comando tira a resposta também do painel de IA.
-  onRemoveResponse?: (commandId: string) => void
 }
 
 interface GutterState {
@@ -34,9 +60,20 @@ interface GutterState {
 
 interface MenuState {
   unit: BlockUnit
-  top: number
-  left: number
+  anchor: PopoverAnchor
 }
+
+const TURN_INTO: Array<{ kind: TurnIntoKind; label: string; icon: ComponentType<IconProps> }> = [
+  { kind: 'paragraph', label: 'Text', icon: TextT },
+  { kind: 'h1', label: 'Heading 1', icon: TextHOne },
+  { kind: 'h2', label: 'Heading 2', icon: TextHTwo },
+  { kind: 'h3', label: 'Heading 3', icon: TextHThree },
+  { kind: 'ul', label: 'Bulleted list', icon: ListBullets },
+  { kind: 'ol', label: 'Numbered list', icon: ListNumbers },
+  { kind: 'todo', label: 'Checklist', icon: CheckSquare },
+  { kind: 'blockquote', label: 'Quote', icon: Quotes },
+  { kind: 'toggle', label: 'Toggle', icon: CaretRight },
+]
 
 const GUTTER_HEIGHT = 22
 // Botões de 18px, 2px entre eles e 4px até o texto.
@@ -49,7 +86,6 @@ const VERTICAL_SLACK = 16
 // lista/toggle. O meio do editor caía fora da coluna em janela larga (o texto
 // para em --measure-note) e o "+" sumia dos parágrafos.
 const PROBE_INSET = 160
-const MENU_HEIGHT = 40
 
 // Topo do gutter centralizado na 1ª linha do bloco (blocos sem texto: no topo).
 function firstLineTop(editor: TiptapEditor, unit: BlockUnit, rect: DOMRect): number {
@@ -154,14 +190,129 @@ function insertAround(editor: TiptapEditor, unit: BlockUnit, where: 'above' | 'b
   view.focus()
 }
 
-export function BlockGutter({ editor, scrollEl, disabled, blockHandles, onRemoveResponse }: BlockGutterProps) {
+// Menu do bloco: foco no 1º item, ↑↓ entre os itens, Delete por último.
+// "Turn into" abre a lista de tipos logo abaixo dele.
+function BlockMenu({
+  editor,
+  menu,
+  menuRef,
+  onClose,
+}: {
+  editor: TiptapEditor
+  menu: MenuState
+  menuRef: RefObject<HTMLDivElement | null>
+  onClose: () => void
+}) {
+  const [turnOpen, setTurnOpen] = useState(false)
+  const pos = useAnchoredPosition(menuRef, menu.anchor)
+  const { unit } = menu
+  const turnable = canTurnInto(unit.node) && !isCommandLine(unit.node)
+  // O par /comando + resposta não duplica: as duas cópias seriam da mesma
+  // resposta (o mesmo commandId).
+  const duplicable = !isCommandLine(unit.node) && unit.node.type.name !== 'embedBlock'
+
+  useEffect(() => {
+    menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus({ preventScroll: true })
+  }, [menuRef])
+
+  useEffect(() => {
+    if (!turnOpen) return
+    menuRef.current?.querySelector<HTMLButtonElement>('[data-turn-into]')?.focus({ preventScroll: true })
+  }, [turnOpen, menuRef])
+
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+    e.preventDefault()
+    const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])
+    if (items.length === 0) return
+    const at = items.indexOf(document.activeElement as HTMLButtonElement)
+    const step = e.key === 'ArrowDown' ? 1 : -1
+    items[(at + step + items.length) % items.length].focus({ preventScroll: true })
+  }
+
+  const turnInto = (kind: TurnIntoKind) => {
+    onClose()
+    turnBlockInto(editor, unit.pos, unit.node, kind)
+  }
+
+  const duplicate = () => {
+    onClose()
+    duplicateBlockUnit(editor.view, unit)
+  }
+
+  const remove = () => {
+    onClose()
+    deleteBlockUnit(editor.view, unit)
+  }
+
+  return createPortal(
+    <div
+      ref={menuRef}
+      className={styles.blockMenu}
+      role="menu"
+      aria-label="Block options"
+      style={{ top: pos.top, left: pos.left }}
+      onMouseDown={(e) => e.preventDefault()}
+      onKeyDown={onKeyDown}
+    >
+      {turnable && (
+        <>
+          <button
+            type="button"
+            role="menuitem"
+            className={styles.blockMenuItem}
+            aria-expanded={turnOpen}
+            onClick={() => setTurnOpen((v) => !v)}
+          >
+            <ArrowsClockwise size={15} aria-hidden />
+            <span className={styles.blockMenuLabel}>Turn into</span>
+            {turnOpen ? <CaretDown size={12} aria-hidden /> : <CaretRight size={12} aria-hidden />}
+          </button>
+          {turnOpen &&
+            TURN_INTO.map(({ kind, label, icon: IconCmp }, i) => (
+              <button
+                key={kind}
+                type="button"
+                role="menuitem"
+                data-turn-into={i === 0 ? '' : undefined}
+                className={`${styles.blockMenuItem} ${styles.blockMenuSub}`}
+                onClick={() => turnInto(kind)}
+              >
+                <IconCmp size={15} aria-hidden />
+                <span className={styles.blockMenuLabel}>{label}</span>
+              </button>
+            ))}
+        </>
+      )}
+      {duplicable && (
+        <button type="button" role="menuitem" className={styles.blockMenuItem} onClick={duplicate}>
+          <Copy size={15} aria-hidden />
+          <span className={styles.blockMenuLabel}>Duplicate</span>
+        </button>
+      )}
+      {(turnable || duplicable) && <div className={styles.blockMenuSep} role="separator" />}
+      <button
+        type="button"
+        role="menuitem"
+        className={`${styles.blockMenuItem} ${styles.blockMenuDanger}`}
+        onClick={remove}
+        title="Delete the block (Ctrl+Z brings it back)"
+      >
+        <Trash size={15} aria-hidden />
+        <span className={styles.blockMenuLabel}>Delete</span>
+      </button>
+    </div>,
+    document.body
+  )
+}
+
+export function BlockGutter({ editor, scrollEl, disabled, blockHandles }: BlockGutterProps) {
   const [gutter, setGutter] = useState<GutterState | null>(null)
   const [menu, setMenu] = useState<MenuState | null>(null)
   const [dragging, setDragging] = useState(false)
   const wrapRef = useRef<HTMLDivElement>(null)
   const handleRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
-  const deleteRef = useRef<HTMLButtonElement>(null)
   // Menu aberto ou arrasto em curso: o gutter fica parado no bloco.
   const pinnedRef = useRef(false)
   pinnedRef.current = menu !== null || dragging
@@ -228,11 +379,9 @@ export function BlockGutter({ editor, scrollEl, disabled, blockHandles, onRemove
     if (menu && (disabled || !blockHandles)) closeMenu()
   }, [menu, disabled, blockHandles, closeMenu])
 
-  // Menu aberto: foco no Delete (Enter apaga); Esc, clique fora, rolagem ou
-  // doc mudando fecham.
+  // Menu aberto: Esc, clique fora, rolagem ou doc mudando fecham.
   useEffect(() => {
     if (!menu || !editor || !scrollEl) return
-    deleteRef.current?.focus({ preventScroll: true })
     const onDocDown = (e: MouseEvent) => {
       const target = e.target as Node
       if (menuRef.current?.contains(target) || handleRef.current?.contains(target)) return
@@ -271,12 +420,8 @@ export function BlockGutter({ editor, scrollEl, disabled, blockHandles, onRemove
 
   const openMenu = (unit: BlockUnit, anchor: DOMRect) => {
     if (!editor) return
-    const below = anchor.bottom + 4
-    setMenu({
-      unit,
-      top: below + MENU_HEIGHT > window.innerHeight - 8 ? anchor.top - MENU_HEIGHT - 4 : below,
-      left: anchor.left,
-    })
+    // Abaixo do handle; perto da borda de baixo, vira para cima.
+    setMenu({ unit, anchor: { top: anchor.bottom + 4, left: anchor.left, lineTop: anchor.top } })
     setBlockMark(editor.view, { ...blockRange(editor.state.doc, unit), kind: 'menu' })
   }
 
@@ -299,13 +444,6 @@ export function BlockGutter({ editor, scrollEl, disabled, blockHandles, onRemove
         setGutter(null)
       },
     })
-  }
-
-  const deleteBlock = () => {
-    if (!editor || !menu) return
-    const { unit } = menu
-    closeMenu()
-    deleteBlockUnit(editor.view, unit, onRemoveResponse)
   }
 
   if (!editor) return null
@@ -340,28 +478,7 @@ export function BlockGutter({ editor, scrollEl, disabled, blockHandles, onRemove
           )}
         </div>
       )}
-      {menu &&
-        createPortal(
-          <div
-            ref={menuRef}
-            className={styles.blockMenu}
-            role="menu"
-            style={{ top: menu.top, left: menu.left }}
-            onMouseDown={(e) => e.preventDefault()}
-          >
-            <button
-              ref={deleteRef}
-              type="button"
-              role="menuitem"
-              className={styles.blockMenuItem}
-              onClick={deleteBlock}
-            >
-              <Trash size={15} />
-              <span>Delete</span>
-            </button>
-          </div>,
-          document.body
-        )}
+      {menu && <BlockMenu key={menu.unit.pos} editor={editor} menu={menu} menuRef={menuRef} onClose={closeMenu} />}
     </>
   )
 }

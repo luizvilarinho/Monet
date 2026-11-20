@@ -120,6 +120,92 @@
   gap: 4px;
 }
 
+/* O título da task fica com o espaço; o Add só com o rótulo. */
+.newTaskInput {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.newTaskInput .newTask {
+  flex: 1;
+  min-width: 0;
+}
+
+.addBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+  min-height: var(--control-md);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-2);
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.addBtn:hover:not(:disabled) {
+  border-color: var(--accent-task);
+}
+
+.addBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.hintWarn {
+  color: var(--accent-late);
+}
+
+.added {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.addedTitle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.addedOpen {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--accent-task);
+  cursor: pointer;
+}
+
+.addedOpen:hover {
+  text-decoration: underline;
+}
+
+.error {
+  margin: 0;
+  font-size: 11px;
+  color: var(--accent-danger);
+}
+
 .tokens {
   display: flex;
   flex-wrap: wrap;
@@ -145,6 +231,9 @@
 }
 
 .tokenLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
   background: transparent;
   border: none;
   padding: 0;

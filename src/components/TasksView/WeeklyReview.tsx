@@ -1,13 +1,14 @@
 import { useMemo, useState, type ReactNode } from 'react'
+import { CaretLeft, CaretRight, Copy } from '@phosphor-icons/react'
+import { dateKeyFromMs } from '../../lib/calendar'
 import {
   addDaysKey,
   byTodosId,
   compareTasks,
   computeTaskSummary,
-  endOfWeekKey,
-  filterBySummary,
   filterTasksForView,
   formatDueShort,
+  isDone,
   isOpen,
   isOverdue,
   planDate,
@@ -20,12 +21,15 @@ import { TasksHeader, type NewTaskDraft } from './TasksHeader'
 import { useTasksEnv } from './TasksEnv'
 import type { TasksMainView } from './views'
 import { TaskCard } from './TaskCard'
+import { TaskUndoBar } from './TaskBatchBar'
+import { useTaskActions } from './useTaskActions'
 import type { TaskChanges } from './useTaskKeyboard'
 import styles from './WeeklyReview.module.css'
 
-// Weekly review guiado da semana corrente (respeita o filtro de projeto):
-// concluídas, escorregadas, pendências (mover para a próxima segunda) e uma
-// reflexão acrescentada à nota diária de hoje no Calendar.
+// Weekly review guiado (respeita o filtro de projeto), da semana corrente ou
+// de semanas anteriores: concluídas, escorregadas, pendências (mover para a
+// próxima segunda; uma task aparece numa seção só) e uma reflexão
+// acrescentada à nota diária de hoje no Calendar, ou copiada.
 interface WeeklyReviewProps {
   tasks: Task[]
   notebooks: Notebook[]
@@ -36,15 +40,18 @@ interface WeeklyReviewProps {
   onFilterChange: (notebookId: string | null) => void
   // Chip da faixa de resumo: o App volta para a lista com o filtro aplicado.
   onSummaryFilterChange: (key: TaskSummaryKey | null) => void
-  onCreateTask: (draft: NewTaskDraft) => Promise<void>
+  onCreateTask: (draft: NewTaskDraft) => Promise<Task | undefined>
   onConvertPipeTitles: (tasks: Task[]) => void
   onOpenTask: (task: Task) => void
   onToggleTask: (id: string, done: boolean) => void
   onUpdateTasks: (changes: TaskChanges) => void
+  // Undo de uma recorrente concluída aqui: apaga a ocorrência gerada.
+  onDeleteTasks?: (ids: string[]) => void
   checklist: Map<string, ChecklistProgress>
   // Acrescenta o review (markdown) à nota diária de hoje. `askAi`: também
   // acrescenta uma linha `/week-review` e abre a nota para o usuário executá-la.
-  onSaveReview: (markdown: string, askAi: boolean) => Promise<void>
+  // false = não gravou (o texto fica no campo).
+  onSaveReview: (markdown: string, askAi: boolean) => Promise<boolean>
 }
 
 export function WeeklyReview({
@@ -61,12 +68,18 @@ export function WeeklyReview({
   onOpenTask,
   onToggleTask,
   onUpdateTasks,
+  onDeleteTasks,
   checklist,
   onSaveReview,
 }: WeeklyReviewProps) {
+  const currentWeek = startOfWeekKey(todayKey)
+  const [weekStart, setWeekStart] = useState(currentWeek)
   const [selected, setSelected] = useState<Set<string>>(() => new Set())
   const [reflection, setReflection] = useState('')
-  const [saved, setSaved] = useState(false)
+  // Resultado da última ação do rodapé (salvar/copiar).
+  const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null)
+  const tasksById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks])
+  const actions = useTaskActions({ tasksById, todayKey, onUpdateTasks, onDeleteTasks })
 
   const notebookNameById = useMemo(
     () => new Map(notebooks.map((nb) => [nb.id, nb.name || 'unnamed'])),
@@ -83,36 +96,56 @@ export function WeeklyReview({
   )
   const summary = useMemo(() => computeTaskSummary(projectTasks, todayKey), [projectTasks, todayKey])
 
-  const weekStart = startOfWeekKey(todayKey)
-  const weekEnd = endOfWeekKey(todayKey)
-  const nextMonday = addDaysKey(weekStart, 7)
+  const isCurrentWeek = weekStart === currentWeek
+  const weekEnd = addDaysKey(weekStart, 6)
+  // Destino do "Move to…": a segunda seguinte à semana revista, ou a próxima
+  // segunda a partir de hoje quando aquela já passou.
+  const nextMonday = addDaysKey(currentWeek, 7)
+  const target = addDaysKey(weekStart, 7) >= todayKey ? addDaysKey(weekStart, 7) : nextMonday
   const weekLabel = `${formatDueShort(weekStart)} – ${formatDueShort(weekEnd)}`
 
-  const done = useMemo(() => filterBySummary(projectTasks, 'doneWeek', todayKey), [projectTasks, todayKey])
+  const done = useMemo(
+    () =>
+      projectTasks
+        .filter((t) => {
+          if (!isDone(t) || t.completedAt === null) return false
+          const day = dateKeyFromMs(t.completedAt)
+          return day >= weekStart && day <= weekEnd
+        })
+        .sort((a, b) => (b.completedAt ?? 0) - (a.completedAt ?? 0)),
+    [projectTasks, weekStart, weekEnd]
+  )
   const slipped = useMemo(
     () =>
       projectTasks
         .filter((t) => {
           if (!isOpen(t)) return false
-          if (isOverdue(t, todayKey)) return true
           const plan = planDate(t)
-          return t.rescheduleCount >= 1 && plan !== null && plan >= weekStart && plan <= weekEnd
+          if (plan === null) return false
+          if (isOverdue(t, todayKey)) return plan <= weekEnd
+          return t.rescheduleCount >= 1 && plan >= weekStart && plan <= weekEnd
         })
         .sort(compareTasks),
     [projectTasks, todayKey, weekStart, weekEnd]
   )
-  const stillOpen = useMemo(
-    () =>
-      projectTasks
-        .filter((t) => {
-          const plan = planDate(t)
-          return isOpen(t) && plan !== null && plan <= weekEnd
-        })
-        .sort(compareTasks),
-    [projectTasks, weekEnd]
-  )
-  // Seleção só vale para o que ainda está pendente.
-  const selectedOpen = stillOpen.filter((t) => selected.has(t.id))
+  // Pendências da semana que não escorregaram (sem duplicar o Slipped).
+  const stillOpen = useMemo(() => {
+    const slippedIds = new Set(slipped.map((t) => t.id))
+    return projectTasks
+      .filter((t) => {
+        const plan = planDate(t)
+        return isOpen(t) && plan !== null && plan <= weekEnd && !slippedIds.has(t.id)
+      })
+      .sort(compareTasks)
+  }, [projectTasks, weekEnd, slipped])
+  // Seleção: escorregadas e pendências que ainda estão na tela.
+  const selectable = [...slipped, ...stillOpen]
+  const selectedOpen = selectable.filter((t) => selected.has(t.id))
+
+  function changeWeek(next: string) {
+    setWeekStart(next)
+    setSelected(new Set())
+  }
 
   function toggleSelected(id: string) {
     setSelected((prev) => {
@@ -123,8 +156,11 @@ export function WeeklyReview({
     })
   }
 
-  function moveToNextMonday() {
-    onUpdateTasks(selectedOpen.map((t) => ({ id: t.id, patch: { scheduledDate: nextMonday } })))
+  function moveSelected() {
+    void actions.reschedule(
+      selectedOpen.map((t) => ({ id: t.id, date: target })),
+      target === nextMonday ? 'moved to next Monday' : `moved to ${formatDueShort(target)}`
+    )
     setSelected(new Set())
   }
 
@@ -142,7 +178,7 @@ export function WeeklyReview({
       for (const group of groupsOf(slipped)) {
         if (group.label !== null) lines.push(`#### ${group.label}`)
         lines.push(
-          ...group.tasks.map((t) => `- ${t.title}${t.rescheduleCount > 0 ? ` (↻${t.rescheduleCount})` : ''}`)
+          ...group.tasks.map((t) => `- ${t.title}${t.rescheduleCount > 0 ? ` (postponed ${t.rescheduleCount}×)` : ''}`)
         )
       }
     }
@@ -150,10 +186,30 @@ export function WeeklyReview({
     return lines.join('\n')
   }
 
+  // Falha ao gravar: a reflexão fica no campo e o erro aparece no lugar do "Saved".
   async function save(askAi: boolean) {
-    await onSaveReview(buildMarkdown(), askAi)
+    setNotice(null)
+    let ok = false
+    try {
+      ok = await onSaveReview(buildMarkdown(), askAi)
+    } catch (err) {
+      console.error('failed to save weekly review', err)
+    }
+    if (!ok) {
+      setNotice({ text: "Couldn't save the review. Your text is kept.", error: true })
+      return
+    }
     setReflection('')
-    setSaved(true)
+    setNotice({ text: "Saved to today's note.", error: false })
+  }
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(buildMarkdown())
+      setNotice({ text: 'Copied as Markdown.', error: false })
+    } catch {
+      setNotice({ text: "Couldn't copy to the clipboard.", error: true })
+    }
   }
 
   function renderLine(t: Task) {
@@ -165,7 +221,9 @@ export function WeeklyReview({
         projectColor={notebookColorById.get(t.notebookId) ?? null}
         checklist={checklist.get(t.id)}
         onSelect={() => onOpenTask(t)}
-        onToggle={(isDone) => onToggleTask(t.id, isDone)}
+        onToggle={(checked) =>
+          actions.track(checked ? 'marked done' : 'reopened', [t.id], () => onToggleTask(t.id, checked))
+        }
       />
     )
   }
@@ -234,53 +292,86 @@ export function WeeklyReview({
           summaryFilter={null}
           onSummaryFilterChange={onSummaryFilterChange}
           onCreateTask={onCreateTask}
+          onOpenTask={onOpenTask}
           onConvertPipeTitles={onConvertPipeTitles}
         />
       </div>
       <div className={styles.page}>
-        <h2 className={styles.title}>Weekly review · {weekLabel}</h2>
+        <div className={styles.titleRow}>
+          <h2 className={styles.title}>Weekly review · {weekLabel}</h2>
+          <div className={styles.weekNav}>
+            <button
+              type="button"
+              className={styles.navBtn}
+              onClick={() => changeWeek(addDaysKey(weekStart, -7))}
+              aria-label="previous week"
+            >
+              <CaretLeft size={13} weight="bold" aria-hidden />
+            </button>
+            <button
+              type="button"
+              className={styles.button}
+              onClick={() => changeWeek(currentWeek)}
+              disabled={isCurrentWeek}
+            >
+              This week
+            </button>
+            <button
+              type="button"
+              className={styles.navBtn}
+              onClick={() => changeWeek(addDaysKey(weekStart, 7))}
+              disabled={isCurrentWeek}
+              aria-label="next week"
+            >
+              <CaretRight size={13} weight="bold" aria-hidden />
+            </button>
+          </div>
+        </div>
 
         <div className={styles.section}>
           <h3 className={styles.sectionTitle}>
-            Done this week <span className={styles.count}>{done.length}</span>
+            {isCurrentWeek ? 'Done this week' : 'Done'} <span className={styles.count}>{done.length}</span>
           </h3>
-          {renderGrouped(done, 'Nothing done yet this week.')}
+          {renderGrouped(done, isCurrentWeek ? 'Nothing done yet this week.' : 'Nothing done that week.')}
         </div>
+
+        {selectable.length > 0 && (
+          <div className={styles.actions}>
+            <label className={styles.selectAll}>
+              <input
+                type="checkbox"
+                checked={selectedOpen.length === selectable.length}
+                onChange={(e) =>
+                  setSelected(e.target.checked ? new Set(selectable.map((t) => t.id)) : new Set())
+                }
+              />
+              Select all
+            </label>
+            <button
+              type="button"
+              className={styles.button}
+              disabled={selectedOpen.length === 0}
+              onClick={moveSelected}
+              title={`Set the do date to ${formatDueShort(target)}`}
+            >
+              {target === nextMonday ? 'Move to next Monday' : `Move to Mon ${formatDueShort(target)}`}
+              {selectedOpen.length > 0 ? ` (${selectedOpen.length})` : ''}
+            </button>
+          </div>
+        )}
 
         <div className={styles.section}>
           <h3 className={styles.sectionTitle}>
             Slipped <span className={styles.count}>{slipped.length}</span>
           </h3>
-          {renderGrouped(slipped, 'Nothing slipped.')}
+          {renderGrouped(slipped, 'Nothing slipped.', renderSelectRow)}
         </div>
 
         <div className={styles.section}>
           <h3 className={styles.sectionTitle}>
-            Still open this week <span className={styles.count}>{stillOpen.length}</span>
+            {isCurrentWeek ? 'Still open this week' : 'Still open'}{' '}
+            <span className={styles.count}>{stillOpen.length}</span>
           </h3>
-          {stillOpen.length > 0 && (
-            <div className={styles.actions}>
-              <label className={styles.selectAll}>
-                <input
-                  type="checkbox"
-                  checked={selectedOpen.length === stillOpen.length}
-                  onChange={(e) =>
-                    setSelected(e.target.checked ? new Set(stillOpen.map((t) => t.id)) : new Set())
-                  }
-                />
-                Select all
-              </label>
-              <button
-                type="button"
-                className={styles.button}
-                disabled={selectedOpen.length === 0}
-                onClick={moveToNextMonday}
-                title={`Set the do date to ${formatDueShort(nextMonday)} (deadline unchanged)`}
-              >
-                Move to next Monday{selectedOpen.length > 0 ? ` (${selectedOpen.length})` : ''}
-              </button>
-            </div>
-          )}
           {renderGrouped(stillOpen, 'No pending tasks for this week.', renderSelectRow)}
         </div>
 
@@ -291,7 +382,7 @@ export function WeeklyReview({
             value={reflection}
             onChange={(e) => {
               setReflection(e.target.value)
-              setSaved(false)
+              setNotice(null)
             }}
             placeholder="What went well? What got in the way? What matters next week?"
             rows={5}
@@ -308,10 +399,20 @@ export function WeeklyReview({
             >
               Ask AI (/week-review)
             </button>
-            {saved && <span className={styles.saved}>Saved to today's note.</span>}
+            <button type="button" className={`${styles.button} ${styles.iconButton}`} onClick={() => void copy()}>
+              <Copy size={12} aria-hidden />
+              Copy
+            </button>
+            {notice && (
+              <span className={notice.error ? styles.error : styles.saved} role={notice.error ? 'alert' : 'status'}>
+                {notice.text}
+              </span>
+            )}
           </div>
         </div>
+        <TaskUndoBar actions={actions} />
       </div>
+      {actions.modal}
     </section>
   )
 }

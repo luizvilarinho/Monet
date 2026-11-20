@@ -1,6 +1,7 @@
 import {
   closestCenter,
   DndContext,
+  KeyboardSensor,
   PointerSensor,
   useSensor,
   useSensors,
@@ -9,14 +10,17 @@ import {
 import {
   arrayMove,
   SortableContext,
+  sortableKeyboardCoordinates,
   useSortable,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
+import { ArrowsInSimple, ArrowsOutSimple, DotsSixVertical } from '@phosphor-icons/react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useConfirm } from '../../hooks/useConfirm'
 import { loadOrder, saveOrder } from '../../lib/noteOrder'
 import type { AiModel, AiResponse } from '../../types'
-import { AiCard } from './AiCard'
+import { AiCard, type AiCardActions } from './AiCard'
 import styles from './AiPanel.module.css'
 import { ModelSelector } from './ModelSelector'
 
@@ -44,17 +48,14 @@ function aiOrderKey(noteId: string | null) {
   return `monet:ai-order:${noteId ?? ''}`
 }
 
-interface SortableAiCardProps {
+interface SortableAiCardProps extends AiCardActions {
   response: AiResponse
-  execIndex: number
-  forceOpen?: boolean
   globalExpand?: boolean | null
-  onDelete?: (id: string) => void
   hasApiKey?: boolean
-  onOpenInChat?: (response: AiResponse) => void
+  inNote: boolean
 }
 
-function SortableAiCard({ response, execIndex, forceOpen, globalExpand, onDelete, hasApiKey, onOpenInChat }: SortableAiCardProps) {
+function SortableAiCard({ response, globalExpand, hasApiKey, inNote, ...actions }: SortableAiCardProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: response.id,
   })
@@ -66,30 +67,21 @@ function SortableAiCard({ response, execIndex, forceOpen, globalExpand, onDelete
   }
 
   return (
-    <div ref={setNodeRef} style={style} className={styles.sortableCard} data-exec-index={execIndex}>
+    <div ref={setNodeRef} style={style} className={styles.sortableCard}>
       <div
         className={styles.cardDragHandle}
         {...attributes}
         {...listeners}
-        aria-label="drag to reorder"
+        aria-label="Drag to reorder (Space, then arrow keys)"
       >
-        <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true">
-          <circle cx="5" cy="4" r="1.2" />
-          <circle cx="5" cy="8" r="1.2" />
-          <circle cx="5" cy="12" r="1.2" />
-          <circle cx="11" cy="4" r="1.2" />
-          <circle cx="11" cy="8" r="1.2" />
-          <circle cx="11" cy="12" r="1.2" />
-        </svg>
+        <DotsSixVertical size={12} weight="bold" aria-hidden />
       </div>
       <AiCard
         response={response}
-        execIndex={execIndex}
-        forceOpen={forceOpen}
         globalExpand={globalExpand}
-        onDelete={onDelete}
         hasApiKey={hasApiKey}
-        onOpenInChat={onOpenInChat}
+        inNote={inNote}
+        {...actions}
       />
     </div>
   )
@@ -107,8 +99,16 @@ export interface AiPanelProps {
   modelId: string | null
   onModelChange: (id: string) => void
   onOpenSettings: () => void
-  navigateToCard?: { index: number; ts: number } | null
   onDeleteResponse?: (id: string) => void
+  onRetryResponse?: (response: AiResponse) => void
+  onStopResponse?: (id: string) => void
+  // "Open Settings" dos cards de erro de chave (OpenRouter ou Tavily).
+  onOpenSettingsSection?: (section: 'openrouter' | 'search') => void
+  // Conteúdo da nota aberta: selo "In note" nos cards com bloco nela.
+  openNoteContent?: string
+  // Nota que tem o bloco de IA da resposta (null = nenhuma): o "×" do card
+  // confirma antes de apagar, porque o bloco fica vazio.
+  blockNoteTitle?: (responseId: string) => string | null
   onOpenInChat?: (response: AiResponse) => void
   activeTab: RightTab
   onTabChange: (tab: RightTab) => void
@@ -134,8 +134,12 @@ export function AiPanel({
   modelId,
   onModelChange,
   onOpenSettings,
-  navigateToCard,
   onDeleteResponse,
+  onRetryResponse,
+  onStopResponse,
+  onOpenSettingsSection,
+  openNoteContent,
+  blockNoteTitle,
   onOpenInChat,
   activeTab,
   onTabChange,
@@ -192,16 +196,63 @@ export function AiPanel({
     }
   }, [wide, open])
   const shownWideWidth = wideRoom === null ? wideWidth : Math.max(MIN_WIDTH, Math.min(wideWidth, wideRoom))
-  const [forceOpenIndex, setForceOpenIndex] = useState<number | null>(null)
   const [expandAll, setExpandAll] = useState<boolean | null>(null)
   const [orderedIds, setOrderedIds] = useState<string[]>([])
   const dragging = useRef(false)
   const startX = useRef(0)
   const startWidth = useRef(0)
-  const contentRef = useRef<HTMLDivElement | null>(null)
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  )
+
+  // Respostas novas fora da vista (coluna fechada ou outra aba): contagem na
+  // aba AI até ela ser vista, na cor de erro se alguma falhou. As respostas
+  // lidas do banco (anteriores à abertura do app) não contam.
+  const [mountedAt] = useState(() => Date.now())
+  const [seenIds, setSeenIds] = useState<ReadonlySet<string>>(() => new Set())
+  const aiVisible = open && activeTab === 'ai'
+  useEffect(() => {
+    if (!aiVisible) return
+    setSeenIds((prev) => {
+      if (responses.every((r) => prev.has(r.id))) return prev
+      const next = new Set(prev)
+      for (const r of responses) next.add(r.id)
+      return next
+    })
+  }, [aiVisible, responses])
+  const unseen = aiVisible ? [] : responses.filter((r) => r.createdAt >= mountedAt && !seenIds.has(r.id))
+  const unseenError = unseen.some((r) => r.status === 'error')
+
+  // Selo "In note": a resposta tem bloco de IA na nota aberta.
+  const responseIdsKey = responses.map((r) => r.id).join(',')
+  const inNoteIds = useMemo(() => {
+    const ids = new Set<string>()
+    if (!openNoteContent || !responseIdsKey) return ids
+    for (const id of responseIdsKey.split(',')) {
+      if (openNoteContent.includes(`data-cmd="${id}"`)) ids.add(id)
+    }
+    return ids
+  }, [responseIdsKey, openNoteContent])
+
+  // O bloco de IA da nota busca o texto na resposta: apagar a resposta deixa
+  // o bloco vazio, então pede confirmação dizendo em que nota ele está.
+  const { confirm, modal: confirmModal } = useConfirm()
+  const handleDelete = useCallback(
+    async (id: string) => {
+      if (!onDeleteResponse) return
+      const holder = blockNoteTitle?.(id) ?? null
+      if (holder !== null) {
+        const ok = await confirm(
+          `This response is inserted as an AI block in the note "${holder}". Deleting it here also empties that block.`,
+          { title: 'Delete AI response?', confirmLabel: 'Delete response', destructive: true }
+        )
+        if (!ok) return
+      }
+      onDeleteResponse(id)
+    },
+    [onDeleteResponse, blockNoteTitle, confirm]
   )
 
   // Load saved order when note changes
@@ -275,22 +326,6 @@ export function AiPanel({
     }
   }, [])
 
-  useEffect(() => {
-    if (!navigateToCard) return
-    const { index: execIndex } = navigateToCard
-    const cardIndex = orderedResponses.length - 1 - execIndex
-    if (cardIndex < 0 || cardIndex >= orderedResponses.length) return
-    setForceOpenIndex(cardIndex)
-    requestAnimationFrame(() => {
-      const card = contentRef.current?.querySelector(
-        `[data-exec-index="${cardIndex}"]`
-      ) as HTMLElement | null
-      if (card) {
-        card.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
-      }
-    })
-  }, [navigateToCard, orderedResponses.length])
-
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event
     if (!over || active.id === over.id) return
@@ -321,8 +356,17 @@ export function AiPanel({
             className={styles.tab}
             aria-pressed={isAiTab}
             onClick={() => onTabChange('ai')}
+            title={unseen.length > 0 ? 'New AI responses for this note' : undefined}
           >
             AI
+            {unseen.length > 0 && (
+              <span
+                className={unseenError ? `${styles.tabCount} ${styles.tabCountError}` : styles.tabCount}
+                aria-label={`${unseen.length} new ${unseen.length === 1 ? 'response' : 'responses'}${unseenError ? ', with errors' : ''}`}
+              >
+                {unseen.length}
+              </span>
+            )}
           </button>
           <button
             type="button"
@@ -366,21 +410,25 @@ export function AiPanel({
             Set up your OpenRouter key in Settings to enable AI features.
           </span>
           <button type="button" onClick={onOpenSettings} className={styles.keyBannerCta}>
-            open Settings
+            Open Settings
           </button>
         </div>
       )}
       {isAiTab && (
-        <div className={styles.content} ref={contentRef}>
+        <div className={styles.content}>
           {orderedResponses.length > 0 && (
             <div className={styles.cardsToolbar}>
               <button
                 className={styles.expandToggle}
                 onClick={() => setExpandAll((v) => v === true ? false : true)}
-                title={expandAll === true ? 'collapse all' : 'expand all'}
                 type="button"
               >
-                {expandAll === true ? '−' : '+'}
+                {expandAll === true ? (
+                  <ArrowsInSimple size={12} aria-hidden />
+                ) : (
+                  <ArrowsOutSimple size={12} aria-hidden />
+                )}
+                <span>{expandAll === true ? 'Collapse all' : 'Expand all'}</span>
               </button>
             </div>
           )}
@@ -391,16 +439,18 @@ export function AiPanel({
           ) : (
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
               <SortableContext items={orderedResponses.map((r) => r.id)} strategy={verticalListSortingStrategy}>
-                {orderedResponses.map((r, i) => (
+                {orderedResponses.map((r) => (
                   <SortableAiCard
                     key={r.id}
                     response={r}
-                    execIndex={i}
-                    forceOpen={forceOpenIndex === i}
                     globalExpand={expandAll}
-                    onDelete={onDeleteResponse}
                     hasApiKey={hasApiKey}
+                    inNote={inNoteIds.has(r.id)}
+                    onDelete={onDeleteResponse ? (id) => void handleDelete(id) : undefined}
                     onOpenInChat={onOpenInChat}
+                    onRetry={onRetryResponse}
+                    onStop={onStopResponse}
+                    onOpenSettings={onOpenSettingsSection}
                   />
                 ))}
               </SortableContext>
@@ -410,6 +460,7 @@ export function AiPanel({
       )}
       <div className={activeTab === 'chat' ? styles.chatTab : styles.chatTabHidden}>{chatPanel}</div>
       {activeTab === 'open' && openPanel}
+      {confirmModal}
     </aside>
   )
 }

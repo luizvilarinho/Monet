@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import {
   computeTaskSummary,
   filterTasksForView,
-  snoozeDate,
+  summaryMatches,
   type ChecklistProgress,
   type TaskSummaryKey,
 } from '../../lib/tasks'
@@ -18,8 +18,9 @@ import type { TasksMainView } from './views'
 import styles from './WeekBoard.module.css'
 
 // Casca comum das visões em colunas (Kanban, Projects, TODOS, Today): header,
-// filtros (projeto + busca), colunas arrastáveis, teclado e barra de lote. Cada
-// visão só diz quais colunas montar e o que um drop significa.
+// filtros (projeto + busca + chip de resumo), colunas arrastáveis, teclado,
+// barra de lote e Undo. Cada visão só diz quais colunas montar e o que um drop
+// significa.
 export interface BoardViewProps {
   ariaLabel: string
   tasks: Task[]
@@ -29,9 +30,12 @@ export interface BoardViewProps {
   onMainViewChange: (view: TasksMainView) => void
   filter: string | null
   onFilterChange: (notebookId: string | null) => void
-  // Chip da faixa de resumo: o App volta para a lista com o filtro aplicado.
+  // Chip da faixa de resumo: filtra os cards do board.
+  summaryFilter: TaskSummaryKey | null
   onSummaryFilterChange: (key: TaskSummaryKey | null) => void
-  onCreateTask: (draft: NewTaskDraft) => Promise<void>
+  onCreateTask: (draft: NewTaskDraft) => Promise<Task | undefined>
+  // My Day: as tasks criadas no board já nascem planejadas para hoje.
+  newTaskPlannedDay?: string
   onOpenTask: (task: Task) => void
   onToggleTask: (id: string, done: boolean) => void
   onUpdateTasks: (changes: TaskChanges) => void
@@ -40,7 +44,8 @@ export interface BoardViewProps {
   checklist: Map<string, ChecklistProgress>
   // Monta as colunas a partir das tasks já filtradas (projeto + busca).
   columnsFor: (projectTasks: Task[]) => BoardColumn<Task>[]
-  onDrop: (taskId: string, columnKey: string, tasksById: Map<string, Task>) => void
+  // false = o drop não mudou nada (sem Undo).
+  onDrop: (taskId: string, columnKey: string, tasksById: Map<string, Task>) => boolean | void
   // Mostra o chip do projeto nos cards (falso onde a coluna já é o projeto).
   showProject?: boolean
   // Kanban: a coluna já é o status; o card mostra só o quadrado de cor + tempo.
@@ -56,8 +61,10 @@ export function BoardView({
   onMainViewChange,
   filter,
   onFilterChange,
+  summaryFilter,
   onSummaryFilterChange,
   onCreateTask,
+  newTaskPlannedDay,
   onOpenTask,
   onToggleTask,
   onUpdateTasks,
@@ -76,7 +83,11 @@ export function BoardView({
     [tasks, filter, search, todosById]
   )
   const summary = useMemo(() => computeTaskSummary(projectTasks, todayKey), [projectTasks, todayKey])
-  const columns = useMemo(() => columnsFor(projectTasks), [columnsFor, projectTasks])
+  const shownTasks = useMemo(
+    () => (summaryFilter ? projectTasks.filter((t) => summaryMatches(summaryFilter, t, todayKey)) : projectTasks),
+    [projectTasks, summaryFilter, todayKey]
+  )
+  const columns = useMemo(() => columnsFor(shownTasks), [columnsFor, shownTasks])
 
   const tasksById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks])
   const orderedIds = useMemo(() => columns.flatMap((c) => c.items.map((t) => t.id)), [columns])
@@ -101,16 +112,17 @@ export function BoardView({
           filter={filter}
           onFilterChange={onFilterChange}
           summary={summary}
-          summaryFilter={null}
+          summaryFilter={summaryFilter}
           onSummaryFilterChange={onSummaryFilterChange}
           onCreateTask={onCreateTask}
+          plannedDay={newTaskPlannedDay}
+          onOpenTask={onOpenTask}
           onConvertPipeTitles={onConvertPipeTitles}
         />
       </div>
       <BoardColumns
         columns={columns}
-        onDrop={(id, key) => onDrop(id, key, tasksById)}
-        onClearColumn={(c) => void kb.requestDelete(c.items.map((t) => t.id), 'Clear done')}
+        onDrop={(id, key) => kb.actions.track('moved', [id], () => onDrop(id, key, tasksById))}
         renderCard={(t) => {
           const nb = notebookById.get(t.notebookId)
           return (
@@ -126,17 +138,11 @@ export function BoardView({
               onSelect={(e) => {
                 if (kb.handleClick(e, t.id)) onOpenTask(t)
               }}
-              onToggle={(done) => onToggleTask(t.id, done)}
+              onToggle={(done) => kb.toggleTask(t.id, done, () => onToggleTask(t.id, done))}
               onDelete={() => void kb.requestDelete([t.id], 'Delete task')}
-              onSnooze={(kind) =>
-                onUpdateTasks([{ id: t.id, patch: { scheduledDate: snoozeDate(t, kind, todayKey) } }])
-              }
+              onSnooze={(kind) => kb.snoozeTask(t, kind)}
               planned={t.plannedDay === todayKey}
-              onTogglePlan={() =>
-                onUpdateTasks([
-                  { id: t.id, patch: { plannedDay: t.plannedDay === todayKey ? null : todayKey } },
-                ])
-              }
+              onTogglePlan={() => kb.togglePlanTask(t)}
             />
           )
         }}

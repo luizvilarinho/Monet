@@ -51,6 +51,11 @@
   color: var(--text-primary, #ddddf1);
 }
 
+/* "Expand" vai para a direita; o "Code" fica colado nele. */
+.toggle.afterExpand {
+  margin-left: 0;
+}
+
 .block .diagramArea {
   margin: 0;
   padding: var(--space-2) var(--space-3) var(--space-3);

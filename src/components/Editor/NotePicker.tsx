@@ -1,116 +1,141 @@
-import { useEffect, useRef, useState } from 'react'
-import type { Note } from '../../types'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import type { Note, Notebook } from '../../types'
+import { normalizeName } from '../../lib/tasks'
+import { useAnchoredPosition, type PopoverAnchor } from './anchoredPosition'
 import styles from './NotePicker.module.css'
 
 interface NotePickerProps {
   notes: Note[]
+  // Nome do caderno ao lado do título.
+  notebooks?: Notebook[]
+  // Notas deste caderno vêm primeiro; dentro de cada parte, as mais recentes.
+  currentNotebookId?: string | null
   onSelect: (note: Note) => void
+  // Esc ou clique fora.
   onClose: () => void
-  position?: { top: number; left: number }
+  anchor: PopoverAnchor
 }
 
-export function NotePicker({ notes, onSelect, onClose, position }: NotePickerProps) {
-  const [filter, setFilter] = useState('')
-  const inputRef = useRef<HTMLInputElement>(null)
+const MAX_RESULTS = 50
+const NO_NOTEBOOKS: Notebook[] = []
 
-  const filtered = notes.filter((n) =>
-    n.title.toLowerCase().includes(filter.toLowerCase())
-  )
+// Seletor de nota do `[[` e do "Link note" do menu Insert: busca sem caixa e
+// sem acento em todos os cadernos, ↑↓ e Enter.
+export function NotePicker({
+  notes,
+  notebooks = NO_NOTEBOOKS,
+  currentNotebookId,
+  onSelect,
+  onClose,
+  anchor,
+}: NotePickerProps) {
+  const [filter, setFilter] = useState('')
+  const [active, setActive] = useState(0)
+  const ref = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  const pos = useAnchoredPosition(ref, anchor)
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+
+  const notebookNames = useMemo(() => new Map(notebooks.map((nb) => [nb.id, nb.name])), [notebooks])
+
+  const results = useMemo(() => {
+    const q = normalizeName(filter.trim())
+    const rank = (n: Note) => (n.notebookId === currentNotebookId ? 0 : 1)
+    return notes
+      .filter((n) => !n.archivedAt && (!q || normalizeName(n.title || 'Untitled').includes(q)))
+      .sort((a, b) => rank(a) - rank(b) || b.updatedAt - a.updatedAt)
+      .slice(0, MAX_RESULTS)
+  }, [notes, filter, currentNotebookId])
+
+  useEffect(() => setActive(0), [filter])
 
   useEffect(() => {
     inputRef.current?.focus()
   }, [])
 
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose()
-      }
-    }
-    document.addEventListener('keydown', handler)
-    return () => document.removeEventListener('keydown', handler)
-  }, [onClose])
+    const item = listRef.current?.querySelector(`[data-idx="${active}"]`)
+    if (item instanceof HTMLElement) item.scrollIntoView({ block: 'nearest' })
+  }, [active])
 
   useEffect(() => {
-    if (!position) return
     const handler = (e: MouseEvent) => {
-      const target = e.target as Node
-      const el = document.querySelector('[data-note-picker]')
-      if (el && !el.contains(target)) {
-        onClose()
-      }
+      if (ref.current && !ref.current.contains(e.target as Node)) onCloseRef.current()
     }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [position, onClose])
+    document.addEventListener('mousedown', handler, true)
+    return () => document.removeEventListener('mousedown', handler, true)
+  }, [])
 
-  if (position) {
-    return (
-      <div
-        data-note-picker
-        className={styles.dropdown}
-        style={{ top: position.top, left: position.left }}
-      >
-        <input
-          ref={inputRef}
-          className={styles.input}
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          placeholder="Search notes..."
-        />
-        {filtered.length === 0 ? (
-          <div className={styles.empty}>No notes found</div>
-        ) : (
-          filtered.map((note) => (
-            <div
-              key={note.id}
-              className={styles.item}
-              onMouseDown={() => {
-                onSelect(note)
-                onClose()
-              }}
-            >
-              {note.title || 'Untitled'}
-            </div>
-          ))
-        )}
-      </div>
-    )
+  function pick(note: Note | undefined) {
+    if (note) onSelect(note)
   }
 
-  return (
-    <div className={styles.overlay} onMouseDown={onClose}>
-      <div
-        data-note-picker
-        className={styles.panel}
-        role="dialog"
-        aria-modal="true"
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <input
-          ref={inputRef}
-          className={styles.input}
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          placeholder="Search notes..."
-        />
-        {filtered.length === 0 ? (
+  return createPortal(
+    <div
+      ref={ref}
+      data-note-picker
+      className={styles.dropdown}
+      style={{ top: pos.top, left: pos.left }}
+      role="dialog"
+      aria-label="Link note"
+    >
+      <input
+        ref={inputRef}
+        className={styles.input}
+        value={filter}
+        onChange={(e) => setFilter(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowDown') {
+            e.preventDefault()
+            if (results.length) setActive((i) => (i + 1) % results.length)
+          } else if (e.key === 'ArrowUp') {
+            e.preventDefault()
+            if (results.length) setActive((i) => (i - 1 + results.length) % results.length)
+          } else if (e.key === 'Enter') {
+            e.preventDefault()
+            pick(results[active])
+          } else if (e.key === 'Escape') {
+            // Já tratado para quem escuta no document (modal da task).
+            e.preventDefault()
+            e.stopPropagation()
+            onClose()
+          }
+        }}
+        placeholder="Search notes in every notebook"
+        role="combobox"
+        aria-expanded={results.length > 0}
+        aria-autocomplete="list"
+      />
+      <div ref={listRef} className={styles.list} role="listbox">
+        {results.length === 0 ? (
           <div className={styles.empty}>No notes found</div>
         ) : (
-          filtered.map((note) => (
-            <div
-              key={note.id}
-              className={styles.item}
-              onMouseDown={() => {
-                onSelect(note)
-                onClose()
-              }}
-            >
-              {note.title || 'Untitled'}
-            </div>
-          ))
+          results.map((note, idx) => {
+            const notebookName = note.notebookId ? notebookNames.get(note.notebookId) : undefined
+            return (
+              <div
+                key={note.id}
+                data-idx={idx}
+                role="option"
+                aria-selected={idx === active}
+                className={`${styles.item} ${idx === active ? styles.active : ''}`}
+                onMouseEnter={() => setActive(idx)}
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  pick(note)
+                }}
+              >
+                <span className={styles.itemTitle}>{note.title || 'Untitled'}</span>
+                {notebookName && <span className={styles.notebook}>{notebookName}</span>}
+              </div>
+            )
+          })
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }

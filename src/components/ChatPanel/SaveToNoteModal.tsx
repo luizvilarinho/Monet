@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { nanoid } from 'nanoid'
+import { ArrowLeft, MagnifyingGlass, Plus, X } from '@phosphor-icons/react'
 import type { Note, Notebook } from '../../types'
 import { formatLocalTimestamp } from '../../lib/calendar'
 import { stripMarkCitations } from '../../lib/noteMarks'
@@ -30,6 +31,8 @@ export interface SaveToNoteModalProps {
   plain?: boolean
   /** Title suggested for a new note. */
   defaultNoteTitle?: string
+  /** Called once the content is in the note (chat: marks the reply as saved). */
+  onSaved?: (target: { notebookId: string; noteId: string; title: string }) => void
 }
 
 type Stage =
@@ -75,6 +78,11 @@ export function buildToggleBlock(rawMarkdown: string, timestamp = formatLocalTim
   return `**Chat Response — ${timestamp}**\n\n${body}`
 }
 
+// Busca sem caixa e sem acento ("reuniao" acha "Reunião").
+function foldForSearch(s: string): string {
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+}
+
 export function appendToggleToContent(existing: string, block: string): string {
   if (!existing.trim()) return block
   const trimmedEnd = existing.replace(/\n+$/, '')
@@ -94,11 +102,13 @@ export function SaveToNoteModal({
   onClose,
   plain = false,
   defaultNoteTitle,
+  onSaved,
 }: SaveToNoteModalProps) {
   const [stage, setStage] = useState<Stage>(() => initialStage(notebooks.length))
   const [newNotebookName, setNewNotebookName] = useState('')
   const [newNoteTitle, setNewNoteTitle] = useState('')
   const [titleError, setTitleError] = useState<string | null>(null)
+  const [noteQuery, setNoteQuery] = useState('')
   /** Notebook selected in the previous stage (highlighted when going back). */
   const [recentlyPickedNotebookId, setRecentlyPickedNotebookId] = useState<string | null>(null)
 
@@ -119,6 +129,7 @@ export function SaveToNoteModal({
     setNewNotebookName('')
     setNewNoteTitle(defaultNoteTitle ?? '')
     setTitleError(null)
+    setNoteQuery('')
     setRecentlyPickedNotebookId(null)
     failedNotebookRef.current = null
   }, [open, notebooks.length, defaultNoteTitle])
@@ -168,10 +179,17 @@ export function SaveToNoteModal({
     ? (notebooks.find((n) => n.id === selectedNotebookId)?.name ?? '')
     : ''
 
+  // Notas arquivadas ficam fora: salvar nelas some da lista do caderno.
   const notesOfSelected = useMemo(() => {
     if (!selectedNotebookId) return []
-    return notes.filter((n) => n.notebookId === selectedNotebookId)
+    return notes.filter((n) => n.notebookId === selectedNotebookId && !n.archivedAt)
   }, [notes, selectedNotebookId])
+
+  const filteredNotes = useMemo(() => {
+    const q = foldForSearch(noteQuery.trim())
+    if (!q) return notesOfSelected
+    return notesOfSelected.filter((n) => foldForSearch(n.title.trim() || 'untitled').includes(q))
+  }, [notesOfSelected, noteQuery])
 
   if (!open) return null
 
@@ -217,13 +235,15 @@ export function SaveToNoteModal({
       }
       saveLastNotebookId(notebookId)
       const nb = notebooks.find((n) => n.id === notebookId)
+      const noteTitle = note.title.trim() || 'untitled'
       setStage({
         kind: 'success',
         notebookId,
         notebookName: nb?.name ?? '',
         noteId: note.id,
-        noteTitle: note.title.trim() || 'untitled',
+        noteTitle,
       })
+      onSaved?.({ notebookId, noteId: note.id, title: noteTitle })
     } catch (err) {
       const message =
         err instanceof Error ? err.message : `Failed to save ${plain ? 'content' : 'response'} to note.`
@@ -246,13 +266,15 @@ export function SaveToNoteModal({
       const note = await onCreateNote(notebookId, title, block, requestId)
       saveLastNotebookId(notebookId)
       const nb = notebooks.find((n) => n.id === notebookId)
+      const noteTitle = note.title.trim() || title
       setStage({
         kind: 'success',
         notebookId,
         notebookName: nb?.name ?? '',
         noteId: note.id,
-        noteTitle: note.title.trim() || title,
+        noteTitle,
       })
+      onSaved?.({ notebookId, noteId: note.id, title: noteTitle })
     } catch (err) {
       const message =
         err instanceof Error ? err.message : 'Failed to create note.'
@@ -290,8 +312,8 @@ export function SaveToNoteModal({
             onKeyDown={(e) => {
               if (e.key === 'Enter') void handleCreateNotebookFromEmpty()
             }}
-            placeholder="notebook name"
-            aria-label="notebook name"
+            placeholder="Notebook name"
+            aria-label="Notebook name"
           />
           <div className={styles.footerActions}>
             <button
@@ -299,7 +321,7 @@ export function SaveToNoteModal({
               className={styles.btnSecondary}
               onClick={onClose}
             >
-              cancel
+              Cancel
             </button>
             <button
               type="button"
@@ -307,7 +329,7 @@ export function SaveToNoteModal({
               onClick={handleCreateNotebookFromEmpty}
               disabled={newNotebookName.trim().length === 0}
             >
-              create notebook
+              Create notebook
             </button>
           </div>
         </div>
@@ -332,6 +354,7 @@ export function SaveToNoteModal({
                     className={cls.join(' ')}
                     onClick={() => {
                       setRecentlyPickedNotebookId(nb.id)
+                      setNoteQuery('')
                       setStage({ kind: 'note-select', notebookId: nb.id })
                     }}
                     aria-selected={isPicked}
@@ -358,15 +381,29 @@ export function SaveToNoteModal({
               type="button"
               className={styles.linkBack}
               onClick={() => setStage({ kind: 'notebook-select' })}
-              aria-label="go back to notebook selection"
+              aria-label="Back to notebook selection"
             >
-              ← back
+              <ArrowLeft size={12} aria-hidden />
+              Back
             </button>
             <span className={styles.breadcrumbName}>
               {selectedNotebookName}
             </span>
           </div>
           <p className={styles.stepLabel}>Step 2 of 2 · choose a note</p>
+          {notesOfSelected.length > 0 && (
+            <div className={styles.searchWrap}>
+              <MagnifyingGlass size={13} className={styles.searchIcon} aria-hidden />
+              <input
+                className={`${styles.input} ${styles.searchInput}`}
+                value={noteQuery}
+                onChange={(e) => setNoteQuery(e.target.value)}
+                placeholder="Search notes"
+                aria-label="Search notes in this notebook"
+                autoFocus
+              />
+            </div>
+          )}
           <ul className={styles.list} role="listbox">
             <li>
               <button
@@ -376,15 +413,22 @@ export function SaveToNoteModal({
                   setStage({ kind: 'new-note-title', notebookId })
                 }
               >
-                <span className={styles.listItemLabel}>+ Create new note</span>
+                <span className={`${styles.listItemLabel} ${styles.createLabel}`}>
+                  <Plus size={13} aria-hidden />
+                  Create new note
+                </span>
               </button>
             </li>
             {notesOfSelected.length === 0 ? (
               <li className={styles.muted}>
                 This notebook has no notes yet.
               </li>
+            ) : filteredNotes.length === 0 ? (
+              <li className={styles.muted}>
+                No notes match “{noteQuery.trim()}”.
+              </li>
             ) : (
-              notesOfSelected.map((n) => (
+              filteredNotes.map((n) => (
                 <li key={n.id}>
                   <button
                     type="button"
@@ -416,9 +460,10 @@ export function SaveToNoteModal({
                 setTitleError(null)
                 setStage({ kind: 'note-select', notebookId })
               }}
-              aria-label="cancel note creation"
+              aria-label="Back to note selection"
             >
-              ← back
+              <ArrowLeft size={12} aria-hidden />
+              Back
             </button>
             <span className={styles.breadcrumbName}>
               {selectedNotebookName}
@@ -437,7 +482,7 @@ export function SaveToNoteModal({
               if (e.key === 'Enter') handleConfirmNewNoteTitle(notebookId)
             }}
             placeholder="e.g.: Conversation summary"
-            aria-label="new note title"
+            aria-label="New note title"
             aria-invalid={!!titleError}
           />
           {titleError && (
@@ -455,14 +500,14 @@ export function SaveToNoteModal({
                 setStage({ kind: 'note-select', notebookId })
               }}
             >
-              cancel
+              Cancel
             </button>
             <button
               type="button"
               className={styles.btnPrimary}
               onClick={() => handleConfirmNewNoteTitle(notebookId)}
             >
-              create and save
+              Create and save
             </button>
           </div>
         </div>
@@ -560,9 +605,10 @@ export function SaveToNoteModal({
             type="button"
             className={styles.close}
             onClick={onClose}
-            aria-label="close"
+            aria-label="Close"
+            title="Close"
           >
-            ×
+            <X size={14} aria-hidden />
           </button>
         </header>
         {renderStage()}

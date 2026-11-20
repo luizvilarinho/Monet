@@ -12,8 +12,10 @@ export type NoteMode = 'full' | 'userText' | 'termSnippet' | 'none'
 export type RagPolicy = { pipeline: 'vector'; topK: number } | { pipeline: 'hybrid' }
 
 // none      = sem web
-// required  = sem chave Tavily vira card de erro; busca quando há query
-// withQuery = só o /expand: busca se houver query e chave; sem chave, segue e avisa numa linha
+// required  = sem chave Tavily vira card de erro; busca quando há query (/search, /profile)
+// withQuery = busca se houver query e chave; sem chave, segue e avisa numa linha
+//             (/expand, /ask, /explain, /guide). O selo "web" do autocomplete
+//             vale para required e withQuery.
 export type WebPolicy = 'none' | 'required' | 'withQuery'
 
 export interface AgendaWindow {

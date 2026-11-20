@@ -84,3 +84,38 @@ export function agentSuggestions(draft: string): ChatAgentDef[] {
   if (CHAT_AGENTS.some((a) => a.command === prefix)) return []
   return CHAT_AGENTS.filter((a) => a.command.startsWith(prefix))
 }
+
+// Composer do chat com o agente ativo: placeholder, estado vazio e, nos
+// agentes que não pedem pergunta (o app monta o contexto), a mensagem enviada
+// quando o rascunho está vazio (ou é só o atalho, como "/coach").
+export interface ChatAgentComposerHint {
+  placeholder: string
+  empty: string
+  defaultMessage?: string
+}
+
+const COMPOSER_HINTS: Record<string, ChatAgentComposerHint> = {
+  'plan-week': {
+    placeholder: 'Plan week: press Enter to plan your week from your tasks',
+    empty: 'Plan week reads your tasks and drafts your work week. Press Enter to start, or say what matters most this week.',
+    defaultMessage: 'Plan my week',
+  },
+  planner: {
+    placeholder: 'Planner: what do you want to plan, and until when?',
+    empty: 'Planner drafts or redoes the plan for a goal with a deadline. Say what you want to plan and until when.',
+  },
+  coach: {
+    placeholder: 'Coach: press Enter to check your plans',
+    empty: 'Coach checks whether your plans are on schedule. Press Enter to start, or ask about one plan.',
+    defaultMessage: 'Check my plans',
+  },
+  tutor: {
+    placeholder: 'Tutor: which topic should we review?',
+    empty: 'Tutor reviews your study of a topic and suggests next steps. Say which topic.',
+  },
+}
+
+// null = General (o composer usa os textos da superfície).
+export function chatAgentComposerHint(id: string | null | undefined): ChatAgentComposerHint | null {
+  return COMPOSER_HINTS[findChatAgent(id).id] ?? null
+}

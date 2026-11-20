@@ -1,4 +1,4 @@
-import { CaretLeft, CaretRight, Eye, EyeSlash } from '@phosphor-icons/react'
+import { CaretLeft, CaretRight, Eye, EyeSlash, Target } from '@phosphor-icons/react'
 import { useEffect, useMemo, useState } from 'react'
 import { dateKeyFromMs } from '../../lib/calendar'
 import {
@@ -11,12 +11,13 @@ import {
   isOpen,
   isOverdue,
   planDate,
-  snoozeDate,
   startOfWeekKey,
+  summaryMatches,
   weekDayKeys,
   type ChecklistProgress,
   type TaskSummaryKey,
 } from '../../lib/tasks'
+import { isWeekendOff, loadWorkCapacity } from '../../lib/workCapacity'
 import type { Notebook, Task } from '../../types'
 import { TasksHeader, type NewTaskDraft } from './TasksHeader'
 import { useTasksEnv } from './TasksEnv'
@@ -28,8 +29,10 @@ import { useTaskKeyboard, type TaskChanges } from './useTaskKeyboard'
 import styles from './WeekBoard.module.css'
 
 // Visão Week na área principal: Overdue | 7 dias da semana | No date.
-// Arrastar um card para um dia muda o Do date; para No date limpa o Do date
-// (o deadline nunca muda). Overdue e dias passados não aceitam drop.
+// Arrastar um card para um dia muda o Do date; para No date limpa o Do date.
+// O deadline só muda se o usuário escolher "Move deadline too" (deadline já
+// estourado). Overdue e dias passados não aceitam drop. As tasks do My Day
+// ficam na coluna de hoje; o cabeçalho do dia marca o que vence nele.
 interface WeekBoardProps {
   tasks: Task[]
   notebooks: Notebook[]
@@ -38,12 +41,12 @@ interface WeekBoardProps {
   onMainViewChange: (view: TasksMainView) => void
   filter: string | null
   onFilterChange: (notebookId: string | null) => void
-  // Chip da faixa de resumo: o App volta para a lista com o filtro aplicado.
+  // Chip da faixa de resumo: filtra os cards do board.
+  summaryFilter: TaskSummaryKey | null
   onSummaryFilterChange: (key: TaskSummaryKey | null) => void
-  onCreateTask: (draft: NewTaskDraft) => Promise<void>
+  onCreateTask: (draft: NewTaskDraft) => Promise<Task | undefined>
   onOpenTask: (task: Task) => void
   onToggleTask: (id: string, done: boolean) => void
-  onSchedule: (id: string, scheduledDate: string | null) => void
   onUpdateTasks: (changes: TaskChanges) => void
   onDeleteTasks: (ids: string[]) => void
   onConvertPipeTitles: (tasks: Task[]) => void
@@ -77,6 +80,26 @@ function byBoardOrder(a: Task, b: Task): number {
   return a.sortOrder - b.sortOrder
 }
 
+// Coluna de uma task aberta: My Day de hoje → hoje; atrasada sem plano
+// novo → Overdue; senão o dia do plano (ou No date).
+function columnOf(t: Task, todayKey: string): string {
+  if (t.plannedDay === todayKey) return todayKey
+  if (isOverdue(t, todayKey)) return 'overdue'
+  return planDate(t) ?? NO_DATE
+}
+
+// Fim de semana oculto: a escolha do usuário; sem escolha, os dias de
+// trabalho do Settings › Agenda (sábado e domingo fora = oculto).
+function initialHideWeekend(): boolean {
+  try {
+    const stored = localStorage.getItem(HIDE_WEEKEND_KEY)
+    if (stored === '1' || stored === '0') return stored === '1'
+  } catch {
+    /* cai nos dias de trabalho */
+  }
+  return isWeekendOff(loadWorkCapacity().workDays)
+}
+
 export function WeekBoard({
   tasks,
   notebooks,
@@ -85,11 +108,11 @@ export function WeekBoard({
   onMainViewChange,
   filter,
   onFilterChange,
+  summaryFilter,
   onSummaryFilterChange,
   onCreateTask,
   onOpenTask,
   onToggleTask,
-  onSchedule,
   onUpdateTasks,
   onDeleteTasks,
   onConvertPipeTitles,
@@ -97,13 +120,7 @@ export function WeekBoard({
 }: WeekBoardProps) {
   const [weekStart, setWeekStartState] = useState(() => startOfWeekKey(todayKey))
   const currentWeek = startOfWeekKey(todayKey)
-  const [hideWeekend, setHideWeekendState] = useState(() => {
-    try {
-      return localStorage.getItem(HIDE_WEEKEND_KEY) === '1'
-    } catch {
-      return false
-    }
-  })
+  const [hideWeekend, setHideWeekendState] = useState(initialHideWeekend)
   // Fim de semana exibido temporariamente (drag segurado sobre o trilho).
   const [peek, setPeek] = useState(false)
   // A semana começa na segunda: days[0] = segunda, days[5] = sábado, days[6] = domingo.
@@ -139,17 +156,31 @@ export function WeekBoard({
     [tasks, filter, search, todosById]
   )
   const summary = useMemo(() => computeTaskSummary(projectTasks, todayKey), [projectTasks, todayKey])
+  const shownTasks = useMemo(
+    () => (summaryFilter ? projectTasks.filter((t) => summaryMatches(summaryFilter, t, todayKey)) : projectTasks),
+    [projectTasks, summaryFilter, todayKey]
+  )
+
+  // Deadlines abertos de cada dia (marcador no cabeçalho da coluna).
+  const dueByDay = useMemo(() => {
+    const map = new Map<string, Task[]>()
+    for (const t of shownTasks) {
+      if (!isOpen(t) || t.dueDate === null) continue
+      map.set(t.dueDate, [...(map.get(t.dueDate) ?? []), t])
+    }
+    return map
+  }, [shownTasks])
 
   const columns = useMemo((): Column[] => {
     const byDay = new Map(days.map((d) => [d, { open: [] as Task[], done: [] as Task[] }]))
     const overdue: Task[] = []
     const noDate: Task[] = []
-    for (const t of projectTasks) {
+    for (const t of shownTasks) {
       if (isOpen(t)) {
-        const plan = planDate(t)
-        if (isOverdue(t, todayKey)) overdue.push(t)
-        else if (plan === null) noDate.push(t)
-        else byDay.get(plan)?.open.push(t)
+        const key = columnOf(t, todayKey)
+        if (key === 'overdue') overdue.push(t)
+        else if (key === NO_DATE) noDate.push(t)
+        else byDay.get(key)?.open.push(t)
       } else if (isDone(t) && t.completedAt !== null) {
         byDay.get(dateKeyFromMs(t.completedAt))?.done.push(t)
       }
@@ -203,7 +234,7 @@ export function WeekBoard({
         collapsible: true,
       },
     ]
-  }, [projectTasks, days, todayKey, weekendHidden])
+  }, [shownTasks, days, todayKey, weekendHidden])
 
   const tasksById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks])
   const orderedIds = useMemo(
@@ -225,12 +256,9 @@ export function WeekBoard({
 
   const { draggingId, overKey, onCardMouseDown } = useCardDrag((id, dropKey) => {
     const task = tasksById.get(id)
-    if (!task || dropKey === WEEKEND) return
-    const target = dropKey === NO_DATE ? null : dropKey
     // Soltar na própria coluna não muda nada.
-    if (!isOverdue(task, todayKey) && planDate(task) === target) return
-    if (task.scheduledDate === target) return
-    onSchedule(id, target)
+    if (!task || dropKey === WEEKEND || columnOf(task, todayKey) === dropKey) return
+    void kb.actions.reschedule([{ id, date: dropKey === NO_DATE ? null : dropKey }], 'moved')
   })
 
   // Segurar um card ~400ms sobre o trilho expande o fim de semana.
@@ -272,11 +300,9 @@ export function WeekBoard({
           onSelect={(e) => {
             if (kb.handleClick(e, t.id)) onOpenTask(t)
           }}
-          onToggle={(done) => onToggleTask(t.id, done)}
+          onToggle={(done) => kb.toggleTask(t.id, done, () => onToggleTask(t.id, done))}
           onDelete={() => void kb.requestDelete([t.id], 'Delete task')}
-          onSnooze={(kind) =>
-            onUpdateTasks([{ id: t.id, patch: { scheduledDate: snoozeDate(t, kind, todayKey) } }])
-          }
+          onSnooze={(kind) => kb.snoozeTask(t, kind)}
         />
       </div>
     )
@@ -294,9 +320,10 @@ export function WeekBoard({
           filter={filter}
           onFilterChange={onFilterChange}
           summary={summary}
-          summaryFilter={null}
+          summaryFilter={summaryFilter}
           onSummaryFilterChange={onSummaryFilterChange}
           onCreateTask={onCreateTask}
+          onOpenTask={onOpenTask}
           onConvertPipeTitles={onConvertPipeTitles}
         />
         <div className={styles.weekNav}>
@@ -346,7 +373,7 @@ export function WeekBoard({
         style={{
           gridTemplateColumns: columns
             .map((c) =>
-              c.kind === 'weekend' || (c.collapsible && c.open.length === 0) ? '36px' : 'minmax(200px, 1fr)'
+              c.kind === 'weekend' || (c.collapsible && c.open.length === 0) ? '36px' : 'minmax(150px, 1fr)'
             )
             .join(' '),
         }}
@@ -372,6 +399,7 @@ export function WeekBoard({
             )
           }
           const rail = c.collapsible && c.open.length === 0
+          const due = dueByDay.get(c.key) ?? []
           return (
             <div
               key={c.key}
@@ -389,6 +417,15 @@ export function WeekBoard({
               <div className={styles.columnHeader}>
                 <span className={styles.columnLabel}>{c.label}</span>
                 <span className={styles.columnCount}>{c.open.length}</span>
+                {due.length > 0 && (
+                  <span
+                    className={styles.dueMarker}
+                    title={`Deadline on this day: ${due.map((t) => t.title).join(', ')}`}
+                  >
+                    <Target size={11} aria-hidden />
+                    {due.length} due
+                  </span>
+                )}
               </div>
               {!rail && (
                 <div className={styles.cards}>

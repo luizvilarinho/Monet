@@ -7,7 +7,14 @@ import styles from './SearchInNote.module.css'
 export interface MatchRange {
   from: number
   to: number
+  // Ocorrência no título de um toggle: `from`/`to` são o nó do toggle (o
+  // título é atributo, sem posição de texto).
+  title?: boolean
 }
+
+// Chave do spec da decoração de nó do título: o ToggleBlockView lê e marca o
+// título ('match' | 'current').
+export const SEARCH_TITLE_SPEC = 'monetSearchTitle'
 
 interface SearchHighlightMeta {
   matches: MatchRange[]
@@ -30,7 +37,9 @@ function buildState(doc: ProseMirrorNode, { matches, current }: SearchHighlightM
       : DecorationSet.create(
           doc,
           matches.map((m, i) =>
-            Decoration.inline(m.from, m.to, { class: i === current ? styles.matchCurrent : styles.match })
+            m.title
+              ? Decoration.node(m.from, m.to, {}, { [SEARCH_TITLE_SPEC]: i === current ? 'current' : 'match' })
+              : Decoration.inline(m.from, m.to, { class: i === current ? styles.matchCurrent : styles.match })
           )
         )
   return { matches, current, decorations }
@@ -61,7 +70,7 @@ export const SearchHighlight = Extension.create({
             if (!tr.docChanged || value.matches.length === 0) return value
             return buildState(tr.doc, {
               current: value.current,
-              matches: value.matches.map((m) => ({ from: tr.mapping.map(m.from), to: tr.mapping.map(m.to) })),
+              matches: value.matches.map((m) => ({ ...m, from: tr.mapping.map(m.from), to: tr.mapping.map(m.to) })),
             })
           },
         },
@@ -75,12 +84,13 @@ export const SearchHighlight = Extension.create({
   },
 })
 
-// Seleciona a ocorrência `current` e destaca todas (lista vazia limpa).
+// Seleciona a ocorrência `current` e destaca todas (lista vazia limpa). No
+// título do toggle só há o destaque: o título não tem seleção de texto.
 export function setSearchHighlight(editor: Editor, matches: MatchRange[], current: number): void {
   if (editor.isDestroyed) return
   const chain = editor.chain()
-  if (matches.length > 0) {
-    const match = matches[current]
+  const match = matches[current]
+  if (match && !match.title) {
     chain.setTextSelection({ from: match.from, to: match.to })
   }
   chain.setMeta(searchHighlightKey, matches.length > 0 ? { matches, current } : NO_HIGHLIGHT).setMeta('addToHistory', false).run()

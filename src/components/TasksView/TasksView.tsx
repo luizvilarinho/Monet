@@ -1,12 +1,10 @@
-import { Warning } from '@phosphor-icons/react'
+import { CaretDown, CaretRight, Warning } from '@phosphor-icons/react'
 import { useMemo, useState } from 'react'
 import {
   computeTaskSummary,
   filterBySummary,
   filterTasksForView,
   groupTasksBy,
-  isOpen,
-  snoozeDate,
   type ChecklistProgress,
   type TaskGroupBy,
   type TaskSummaryKey,
@@ -45,7 +43,7 @@ interface TasksViewProps {
   selectedTaskId: string | null
   onSelectTask: (task: Task) => void
   // Cria a task (com a nota-corpo) e a abre no editor.
-  onCreateTask: (draft: NewTaskDraft) => Promise<void>
+  onCreateTask: (draft: NewTaskDraft) => Promise<Task | undefined>
   onToggleTask: (id: string, done: boolean) => void
   onUpdateTasks: (changes: TaskChanges) => void
   onDeleteTasks: (ids: string[]) => void
@@ -82,6 +80,8 @@ export function TasksView({
 }: TasksViewProps) {
   // Seções recolhíveis (Done/Dropped) abertas pelo usuário.
   const [openSections, setOpenSections] = useState<Set<string>>(() => new Set())
+  // Done: as concluídas antes da janela de 14 dias ("Show older").
+  const [showOlder, setShowOlder] = useState(false)
   const onResizeMouseDown = useSidebarResize(width, onWidthChange, wide)
 
   const notebookNameById = useMemo(
@@ -89,7 +89,7 @@ export function TasksView({
     [notebooks]
   )
 
-  const { statuses, search, todosById } = useTasksEnv()
+  const { statuses, search, onSearchChange, todosById } = useTasksEnv()
   const notebookColorById = useMemo(
     () => new Map(notebooks.map((nb) => [nb.id, nb.color ?? null])),
     [notebooks]
@@ -113,9 +113,13 @@ export function TasksView({
     () =>
       (summaryFilter
         ? filtered
-        : sections.flatMap((s) => (s.collapsible && !openSections.has(s.key) ? [] : s.tasks))
+        : sections.flatMap((s) =>
+            s.collapsible && !openSections.has(s.key)
+              ? []
+              : [...s.tasks, ...(showOlder ? s.older ?? [] : [])]
+          )
       ).map((t) => t.id),
-    [summaryFilter, filtered, sections, openSections]
+    [summaryFilter, filtered, sections, openSections, showOlder]
   )
   const kb = useTaskKeyboard({
     orderedIds,
@@ -144,27 +148,36 @@ export function TasksView({
         onSelect={(e) => {
           if (kb.handleClick(e, t.id)) onSelectTask(t)
         }}
-        onToggle={(done) => onToggleTask(t.id, done)}
+        onToggle={(done) => kb.toggleTask(t.id, done, () => onToggleTask(t.id, done))}
         onDelete={() => void kb.requestDelete([t.id], 'Delete task')}
-        onSnooze={(kind) =>
-          onUpdateTasks([{ id: t.id, patch: { scheduledDate: snoozeDate(t, kind, todayKey) } }])
-        }
+        onSnooze={(kind) => kb.snoozeTask(t, kind)}
         planned={t.plannedDay === todayKey}
-        onTogglePlan={() =>
-          onUpdateTasks([{ id: t.id, patch: { plannedDay: t.plannedDay === todayKey ? null : todayKey } }])
-        }
+        onTogglePlan={() => kb.togglePlanTask(t)}
       />
     )
   }
 
-  // "Clear done": o escopo inteiro do grupo Done (filtro de projeto atual,
-  // sem o corte de exibição). No Group by status são só as concluídas; nos
-  // demais o grupo também inclui as dropped.
-  function clearDone() {
-    const ids = projectTasks
-      .filter((t) => (groupBy === 'status' ? t.status === 'done' : !isOpen(t)))
-      .map((t) => t.id)
-    void kb.requestDelete(ids, 'Clear done')
+  // Lista vazia: diz o que fazer, ou o que o filtro escondeu.
+  function emptyState() {
+    const projectName = filter !== null ? notebookNameById.get(filter) ?? 'this project' : null
+    if (search.trim()) {
+      return (
+        <div className={styles.emptyState}>
+          <span>
+            No tasks match “{search.trim()}”{projectName ? ` in ${projectName}` : ''}.
+          </span>
+          <button type="button" className={styles.headerAction} onClick={() => onSearchChange('')}>
+            Clear search
+          </button>
+        </div>
+      )
+    }
+    if (projectName) {
+      return <span className={styles.empty}>No tasks in {projectName} yet. Type one above to add it here.</span>
+    }
+    return (
+      <span className={styles.empty}>No tasks yet. Type one above, e.g. “Send report fri #Work”.</span>
+    )
   }
 
   function toggleSection(key: string) {
@@ -207,27 +220,49 @@ export function TasksView({
               <span className={styles.count}>{filtered.length}</span>
             </button>
             {filtered.length === 0 ? (
-              <span className={styles.empty}>no tasks</span>
+              <span className={styles.empty}>
+                No tasks in {SUMMARY_LABEL[summaryFilter]}
+                {search.trim() ? ` matching “${search.trim()}”` : ''}.
+              </span>
             ) : (
               filtered.map(renderTask)
             )}
           </section>
+        ) : sections.length === 0 ? (
+          emptyState()
         ) : (
           sections.map((section) => {
             const { key, label, tasks: list } = section
+            const older = section.older ?? []
             const collapsed = section.collapsible && !openSections.has(key)
+            const tone =
+              section.tone === 'overdue' ? styles.groupOverdue : section.tone === 'late' ? styles.groupLate : ''
             return (
               <section key={key} className={styles.group}>
                 <div className={styles.groupHeaderRow}>
                   <button
                     type="button"
-                    className={`${styles.groupHeader} ${section.tone === 'overdue' ? styles.groupOverdue : ''}`}
+                    className={`${styles.groupHeader} ${tone}`}
                     onClick={section.collapsible ? () => toggleSection(key) : undefined}
                     disabled={!section.collapsible}
+                    title={
+                      key === 'overdue'
+                        ? 'Deadline passed, no new do date'
+                        : key === 'slipped'
+                          ? 'Do date passed, no deadline missed'
+                          : key === 'done'
+                            ? 'Done in the last 14 days'
+                            : undefined
+                    }
                   >
-                    {section.collapsible && <span className={styles.caret}>{collapsed ? '▸' : '▾'}</span>}
+                    {section.collapsible &&
+                      (collapsed ? (
+                        <CaretRight size={10} weight="bold" aria-hidden />
+                      ) : (
+                        <CaretDown size={10} weight="bold" aria-hidden />
+                      ))}
                     {label}
-                    <span className={styles.count}>{list.length}</span>
+                    <span className={styles.count}>{list.length + older.length}</span>
                     {key === 'inProgress' && list.length > IN_PROGRESS_SOFT_LIMIT && (
                       <span
                         className={styles.groupWarning}
@@ -237,9 +272,13 @@ export function TasksView({
                       </span>
                     )}
                   </button>
-                  {key === 'done' && (
-                    <button type="button" className={styles.clearDone} onClick={clearDone}>
-                      Clear done
+                  {key === 'slipped' && (
+                    <button
+                      type="button"
+                      className={styles.headerAction}
+                      onClick={() => kb.schedule(todayKey, list.map((t) => t.id))}
+                    >
+                      Move all to today
                     </button>
                   )}
                 </div>
@@ -259,6 +298,18 @@ export function TasksView({
                         </div>
                       ))
                     : list.map(renderTask))}
+                {!collapsed && older.length > 0 && (
+                  <>
+                    {showOlder && older.map(renderTask)}
+                    <button
+                      type="button"
+                      className={styles.showOlder}
+                      onClick={() => setShowOlder((v) => !v)}
+                    >
+                      {showOlder ? 'Hide older' : `Show older (${older.length})`}
+                    </button>
+                  </>
+                )}
               </section>
             )
           })

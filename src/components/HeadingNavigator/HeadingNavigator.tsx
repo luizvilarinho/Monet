@@ -20,7 +20,8 @@ export function HeadingNavigator({
   const [panelPos, setPanelPos] = useState({ right: 0, top: 0 })
   const boxRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
-  const activeDashRef = useRef<HTMLDivElement | null>(null)
+  const activeDashRef = useRef<HTMLButtonElement | null>(null)
+  const activeItemRef = useRef<HTMLButtonElement | null>(null)
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const headings = useMemo(() => parseHeadings(content), [content])
@@ -33,6 +34,11 @@ export function HeadingNavigator({
   useEffect(() => {
     activeDashRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   }, [activeHeading])
+
+  // Painel aberto: o item ativo fica à vista (nota longa rola dentro do painel).
+  useEffect(() => {
+    if (panelOpen) activeItemRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [panelOpen])
 
   const showPanel = useCallback(() => {
     if (hideTimerRef.current) {
@@ -53,13 +59,8 @@ export function HeadingNavigator({
     hideTimerRef.current = setTimeout(() => setPanelOpen(false), 150)
   }, [])
 
-  if (headings.length === 0) {
-    return (
-      <div className={styles.box}>
-        <div className={styles.empty} />
-      </div>
-    )
-  }
+  // Sem headings, nada na tela.
+  if (headings.length === 0) return null
 
   return (
     <>
@@ -68,6 +69,12 @@ export function HeadingNavigator({
         ref={boxRef}
         onMouseEnter={showPanel}
         onMouseLeave={hidePanel}
+        onFocus={showPanel}
+        onBlur={hidePanel}
+        // Um ponto de Tab só: o foco abre o painel, e o Tab segue para os itens.
+        tabIndex={0}
+        role="navigation"
+        aria-label="Headings"
       >
         {headings.map((heading) => {
           const isActive = activeHeading?.offset === heading.offset
@@ -80,10 +87,17 @@ export function HeadingNavigator({
             : styles.dashH6
 
           return (
-            <div
+            <button
               key={heading.offset}
+              type="button"
               ref={isActive ? activeDashRef : undefined}
               className={`${styles.dash} ${levelClass} ${isActive ? styles.dashActive : ''}`}
+              onClick={(e) => {
+                e.stopPropagation()
+                onNavigate(heading.offset)
+              }}
+              tabIndex={-1}
+              aria-label={heading.text}
             />
           )
         })}
@@ -94,13 +108,17 @@ export function HeadingNavigator({
           ref={panelRef}
           onMouseEnter={showPanel}
           onMouseLeave={hidePanel}
-          style={{ right: panelPos.right, top: panelPos.top }}
+          onFocus={showPanel}
+          onBlur={hidePanel}
+          style={{ right: panelPos.right, top: panelPos.top, maxHeight: `calc(100vh - ${panelPos.top}px - 16px)` }}
         >
           {headings.map((heading) => {
             const isActive = activeHeading?.offset === heading.offset
             return (
-              <span
+              <button
                 key={heading.offset}
+                type="button"
+                ref={isActive ? activeItemRef : undefined}
                 className={`${styles.panelItem} ${isActive ? styles.panelItemActive : ''}`}
                 onClick={(e) => {
                   e.stopPropagation()
@@ -111,7 +129,7 @@ export function HeadingNavigator({
                   {'#'.repeat(heading.level)}
                 </span>
                 {heading.text}
-              </span>
+              </button>
             )
           })}
         </div>

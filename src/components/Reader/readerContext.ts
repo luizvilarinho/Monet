@@ -6,7 +6,7 @@ import type { BookHighlight } from '../../types'
 // vazias (sem grifos) são omitidas.
 
 const PAGE_TEXT_BUDGET = 6000
-const MAX_HIGHLIGHTS = 10
+export const MAX_HIGHLIGHTS = 10
 const ITEM_TEXT_BUDGET = 300
 
 export interface ReaderContextInput {

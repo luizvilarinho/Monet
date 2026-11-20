@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { DotsThree } from '@phosphor-icons/react'
+import { DotsThree, File, Folder, X } from '@phosphor-icons/react'
 import type { Document } from '../../types'
 import type { ChatFolder } from '../../hooks/useChat'
 import { useConfirm } from '../../hooks/useConfirm'
 import { useKnowledgeBase } from '../../hooks/useDocuments'
+import { DISCARD_CHANGES_CONFIRM } from './discardChanges'
 import {
   documentMatchesFilter,
   documentSetsDelete,
@@ -59,7 +60,10 @@ function FolderItem({ folder, checked, disabled, alwaysOn, onToggle }: FolderIte
         {folder.alias ?? folder.name}
         {alwaysOn && <span className={docStyles.alwaysOn}> (always on)</span>}
       </span>
-      <span className={docStyles.colType}>📁 Folder</span>
+      <span className={docStyles.colType}>
+        <Folder size={12} aria-hidden />
+        Folder
+      </span>
       <span
         className={`${docStyles.pill} ${
           folder.status === 'available'
@@ -132,17 +136,37 @@ export function FolderDocumentSelectorModal({
     return () => document.removeEventListener('mousedown', onDown)
   }, [menuSetId])
 
-  // Close on Escape (the set menu first, when open)
+  // Seleção diferente da salva: fechar sem o Save pede confirmação (o
+  // conjunto aplicado já foi salvo e vira a seleção salva).
+  const savedKey = initialSelectedIds.filter((id) => id !== implicitDocumentId).sort().join('\n')
+  const currentKey = Array.from(selectedIds)
+    .filter((id) => id !== implicitDocumentId)
+    .sort()
+    .join('\n')
+  const dirty = currentKey !== savedKey
+  const requestCloseRef = useRef<() => void>(() => {})
+  requestCloseRef.current = () => {
+    if (!dirty) {
+      onClose()
+      return
+    }
+    void confirm('Your changes to the document selection will be lost.', DISCARD_CHANGES_CONFIRM).then((ok) => {
+      if (ok) onClose()
+    })
+  }
+
+  // Close on Escape (the set menu first, when open; o modal de confirmação,
+  // aberto, fica com o ESC)
   useEffect(() => {
     if (!open) return
     function onKey(e: KeyboardEvent) {
       if (e.key !== 'Escape') return
       if (menuSetId) setMenuSetId(null)
-      else onClose()
+      else requestCloseRef.current()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose, menuSetId])
+  }, [open, menuSetId])
 
   if (!open || !folder) return null
   const targetFolderId = folder.id
@@ -231,7 +255,7 @@ export function FolderDocumentSelectorModal({
     setMenuSetId(null)
     const ok = await confirm(
       `Delete the set "${set.name}"? The documents and the current selection are not affected.`,
-      { title: 'Delete set' },
+      { title: 'Delete set', confirmLabel: 'Delete' },
     )
     if (!ok) return
     setSetsError(null)
@@ -294,7 +318,7 @@ export function FolderDocumentSelectorModal({
       aria-modal="true"
       aria-label={`Knowledge Base documents for ${folder.name || 'folder'}`}
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose()
+        if (e.target === e.currentTarget) requestCloseRef.current()
       }}
     >
       <div className={styles.modal}>
@@ -305,10 +329,11 @@ export function FolderDocumentSelectorModal({
           <button
             type="button"
             className={styles.close}
-            onClick={onClose}
-            aria-label="close"
+            onClick={() => requestCloseRef.current()}
+            aria-label="Close"
+            title="Close"
           >
-            ×
+            <X size={14} aria-hidden />
           </button>
         </header>
 
@@ -490,7 +515,10 @@ export function FolderDocumentSelectorModal({
                     <span className={docStyles.docName} title={doc.originalPath ?? doc.name}>
                       {doc.name}
                     </span>
-                    <span className={docStyles.colType}>📄 File</span>
+                    <span className={docStyles.colType}>
+                      <File size={12} aria-hidden />
+                      File
+                    </span>
                     <span
                       className={`${docStyles.pill} ${
                         doc.status === 'available'
@@ -512,16 +540,16 @@ export function FolderDocumentSelectorModal({
             <button
               type="button"
               className={styles.btnSecondary}
-              onClick={onClose}
+              onClick={() => requestCloseRef.current()}
             >
-              cancel
+              Cancel
             </button>
             <button
               type="button"
               className={styles.btnPrimary}
               onClick={handleConfirm}
             >
-              save
+              Save
             </button>
           </div>
         </div>

@@ -1,7 +1,7 @@
 {
   "name": "monet",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.5.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,16 +11,11 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev --config src-tauri/tauri.conf.dev.json",
     "sidecars": "powershell -ExecutionPolicy Bypass -File scripts/fetch-sidecars.ps1",
+    "test": "vitest run",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
     "tauri:build": "dotenv -e .env -- powershell -Command \"$env:TAURI_SIGNING_PRIVATE_KEY = Get-Content 'C:\\Users\\User\\Documents\\projetos\\Monet\\~\\.tauri\\monet.key' -Raw; $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = \\\"$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD\\\"; npm run tauri build\""
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.90.0",
-    "@codemirror/autocomplete": "^6.20.1",
-    "@codemirror/commands": "^6.10.3",
-    "@codemirror/lang-markdown": "^6.5.0",
-    "@codemirror/language": "^6.12.3",
-    "@codemirror/state": "^6.6.0",
-    "@codemirror/view": "^6.41.1",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
@@ -32,6 +27,7 @@
     "@tauri-apps/plugin-process": "^2",
     "@tauri-apps/plugin-sql": "^2.4.0",
     "@tauri-apps/plugin-updater": "^2",
+    "@tiptap/core": "^3.23.4",
     "@tiptap/extension-bubble-menu": "^3.23.4",
     "@tiptap/extension-image": "^3.23.4",
     "@tiptap/extension-link": "^3.23.4",
@@ -49,6 +45,7 @@
     "mermaid": "12.3.0",
     "nanoid": "^5.1.9",
     "pdfjs-dist": "^5.6.205",
+    "prosemirror-markdown": "^1.13.4",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "rehype-sanitize": "^6.0.0",
@@ -57,7 +54,8 @@
     "remark-parse": "^11.0.0",
     "remark-rehype": "^11.1.2",
     "tiptap-markdown": "^0.9.0",
-    "unified": "^11.0.5"
+    "unified": "^11.0.5",
+    "unist-util-visit": "^5.1.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
@@ -66,7 +64,9 @@
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
     "dotenv-cli": "^11.0.0",
+    "happy-dom": "^21.0.4",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4"
+    "vite": "^7.0.4",
+    "vitest": "^5.1.0"
   }
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { CaretDown, Check, Plus } from '@phosphor-icons/react'
 import type { NoteType } from '../../types'
 import { TypeIcon } from './TypeIcon'
@@ -7,8 +7,10 @@ import styles from './NoteTypePicker.module.css'
 // Controle do tipo da nota. Com tipo, é o rótulo da barra de propriedades
 // (ícone + nome + ▾ na cor do tipo); sem tipo, o "+ type" discreto da linha de
 // data/tags. O menu lista os tipos (o atual marcado) e, com tipo, "Remove
-// type", "Edit type" e "Open board" (tipo com board); sempre "Manage types…" e, na nota de caderno,
-// "Archive"/"Unarchive". Fecha com Esc ou clique fora.
+// type", "Edit type" e "Open board" (tipo com board); sempre "Manage types…".
+// Arquivar fica no botão "Archive" do editor e no selo "Archived". Abre com o
+// foco no tipo atual (ou no 1º item); setas, Home e End navegam. Fecha com Esc
+// (o foco volta ao botão) ou clique fora.
 interface NoteTypePickerProps {
   types: NoteType[]
   // Tipo atual (id órfão, de tipo apagado em outra janela, chega como null).
@@ -20,8 +22,6 @@ interface NoteTypePickerProps {
   onEditType?: () => void
   // Board do tipo atual (só quando o tipo tem board ligado).
   onOpenBoard?: () => void
-  archived?: boolean
-  onSetArchived?: (archived: boolean) => void
 }
 
 export function NoteTypePicker({
@@ -31,14 +31,17 @@ export function NoteTypePicker({
   onManage,
   onEditType,
   onOpenBoard,
-  archived = false,
-  onSetArchived,
 }: NoteTypePickerProps) {
   const [open, setOpen] = useState(false)
   const wrapRef = useRef<HTMLSpanElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!open) return
+    const menu = menuRef.current
+    const first = menu?.querySelector<HTMLElement>('[aria-checked="true"]') ?? menu?.querySelector<HTMLElement>('button')
+    first?.focus()
     function handleMouseDown(e: MouseEvent) {
       if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false)
     }
@@ -48,6 +51,7 @@ export function NoteTypePicker({
       e.preventDefault()
       e.stopPropagation()
       setOpen(false)
+      triggerRef.current?.focus()
     }
     document.addEventListener('mousedown', handleMouseDown)
     document.addEventListener('keydown', handleKeyDown, true)
@@ -67,9 +71,25 @@ export function NoteTypePicker({
     action()
   }
 
+  function handleMenuKeyDown(e: ReactKeyboardEvent<HTMLDivElement>) {
+    const items = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('button'))
+    if (items.length === 0) return
+    const i = items.indexOf(document.activeElement as HTMLElement)
+    const next =
+      e.key === 'ArrowDown' ? (i + 1) % items.length
+      : e.key === 'ArrowUp' ? (i <= 0 ? items.length - 1 : i - 1)
+      : e.key === 'Home' ? 0
+      : e.key === 'End' ? items.length - 1
+      : -1
+    if (next < 0) return
+    e.preventDefault()
+    items[next].focus()
+  }
+
   return (
     <span ref={wrapRef} className={styles.wrap}>
       <button
+        ref={triggerRef}
         type="button"
         className={type ? styles.trigger : styles.add}
         style={type?.color ? ({ '--type-color': type.color } as CSSProperties) : undefined}
@@ -83,7 +103,7 @@ export function NoteTypePicker({
         {type && <CaretDown size={10} weight="bold" aria-hidden />}
       </button>
       {open && (
-        <div className={styles.menu} role="menu">
+        <div ref={menuRef} className={styles.menu} role="menu" onKeyDown={handleMenuKeyDown}>
           {types.map((t) => (
             <button
               key={t.id}
@@ -121,19 +141,6 @@ export function NoteTypePicker({
             <button type="button" role="menuitem" className={styles.item} onClick={() => run(onManage)}>
               <span className={styles.itemName}>Manage types…</span>
             </button>
-          )}
-          {onSetArchived && (
-            <>
-              <div className={styles.sep} role="separator" />
-              <button
-                type="button"
-                role="menuitem"
-                className={styles.item}
-                onClick={() => run(() => onSetArchived(!archived))}
-              >
-                <span className={styles.itemName}>{archived ? 'Unarchive' : 'Archive'}</span>
-              </button>
-            </>
           )}
         </div>
       )}

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { CaretDown, CaretRight } from '@phosphor-icons/react'
 import { nanoid } from 'nanoid'
+import type { useConfirm } from '../../hooks/useConfirm'
 import {
   MINCER_PRESETS,
   loadSavedPrompts,
@@ -14,10 +15,11 @@ import styles from './SummaryOptions.module.css'
 interface SummaryOptionsProps {
   value: SummarySettings
   onChange: (v: SummarySettings) => void
+  confirm: ReturnType<typeof useConfirm>['confirm']
   disabled?: boolean
 }
 
-export function SummaryOptions({ value, onChange, disabled = false }: SummaryOptionsProps) {
+export function SummaryOptions({ value, onChange, confirm, disabled = false }: SummaryOptionsProps) {
   const [expanded, setExpanded] = useState(() => value.extra.trim() !== '')
   const [saved, setSaved] = useState<SavedPrompt[]>(loadSavedPrompts)
   const [selectedSavedId, setSelectedSavedId] = useState('')
@@ -49,8 +51,16 @@ export function SummaryOptions({ value, onChange, disabled = false }: SummaryOpt
     persist(saved.map((p) => (p.id === selectedSavedId ? { ...p, text: value.extra } : p)))
   }
 
-  function handleDelete() {
-    persist(saved.filter((p) => p.id !== selectedSavedId))
+  async function handleDelete() {
+    const prompt = saved.find((p) => p.id === selectedSavedId)
+    if (!prompt) return
+    const ok = await confirm(`Delete the saved instructions "${prompt.name}"? The text in the box stays.`, {
+      title: 'Delete saved instructions',
+      confirmLabel: 'Delete',
+      destructive: true,
+    })
+    if (!ok) return
+    persist(saved.filter((p) => p.id !== prompt.id))
     setSelectedSavedId('')
   }
 
@@ -159,7 +169,7 @@ export function SummaryOptions({ value, onChange, disabled = false }: SummaryOpt
                   <button type="button" className={shared.secondary} onClick={handleUpdate} disabled={disabled}>
                     Update
                   </button>
-                  <button type="button" className={shared.danger} onClick={handleDelete} disabled={disabled}>
+                  <button type="button" className={shared.danger} onClick={() => void handleDelete()} disabled={disabled}>
                     Delete
                   </button>
                 </>

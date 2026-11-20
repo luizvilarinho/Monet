@@ -15,7 +15,9 @@ export interface MincerItemSummary {
   error: string | null
   createdAt: number
   updatedAt: number
-  // Terminou (done/error) e ainda não foi aberto.
+  // Ordem da fila: a posição de um item enfileirado.
+  queuedAt: number
+  // Terminou (done/error), foi interrompido ou recuperado, e ainda não foi aberto.
   unseen: boolean
   sentToNotebookAt: number | null
 }
@@ -81,6 +83,15 @@ export interface MincerRecordStatus {
   silenceStopMinutes: number
   maxMinutes: number
   errors: string[]
+  // Título digitado (null = padrão com a hora de início) e dispositivos abertos.
+  title: string | null
+  devices: MincerRecordDevices
+}
+
+// Nome do dispositivo de saída (loopback) e do microfone; null se indisponível.
+export interface MincerRecordDevices {
+  system: string | null
+  mic: string | null
 }
 
 export const MINCER_TRANSCRIPTION_MODEL_KEY = 'monet:mincer-transcription-model'
@@ -91,6 +102,8 @@ export const MINCER_SILENCE_STOP_KEY = 'monet:mincer-silence-stop-min'
 export const MINCER_MAX_RECORD_KEY = 'monet:mincer-max-record-hours'
 export const DEFAULT_SILENCE_STOP_MINUTES = 10
 export const DEFAULT_MAX_RECORD_HOURS = 3
+// Teto real do WAV (4 GiB); o Rust aplica o mesmo limite (MAX_RECORD_MINUTES).
+export const MAX_RECORD_HOURS = 6
 
 // Parada automática da gravação; 0 em silenceStopMinutes desliga a regra.
 export interface MincerRecordLimits {
@@ -104,10 +117,17 @@ function readNumber(key: string, fallback: number): number {
   return Number.isFinite(value) && value >= 0 ? value : fallback
 }
 
+// Entre 1 e 6 h: um valor salvo antes (8 h, ou 0 = sem limite) vira 6.
+export function getMaxRecordHours(): number {
+  const hours = readNumber(MINCER_MAX_RECORD_KEY, DEFAULT_MAX_RECORD_HOURS)
+  if (hours === 0 || hours > MAX_RECORD_HOURS) return MAX_RECORD_HOURS
+  return Math.max(1, hours)
+}
+
 export function getRecordLimits(): MincerRecordLimits {
   return {
     silenceStopMinutes: readNumber(MINCER_SILENCE_STOP_KEY, DEFAULT_SILENCE_STOP_MINUTES),
-    maxMinutes: readNumber(MINCER_MAX_RECORD_KEY, DEFAULT_MAX_RECORD_HOURS) * 60,
+    maxMinutes: getMaxRecordHours() * 60,
   }
 }
 
@@ -244,8 +264,18 @@ export function mincerSaveFiles(id: string, folder: string): Promise<string> {
   return invoke<string>('mincer_save_files', { id, folder })
 }
 
-export function mincerRecordStart(options: MincerJobOptions): Promise<void> {
-  return invoke('mincer_record_start', { options, limits: getRecordLimits() })
+export function mincerRecordStart(options: MincerJobOptions, title: string): Promise<void> {
+  return invoke('mincer_record_start', { options, limits: getRecordLimits(), title: title.trim() || null })
+}
+
+// Título da gravação em curso, valendo para qualquer parada (botão, tray, atalho, automática).
+export function mincerRecordSetTitle(title: string): Promise<void> {
+  return invoke('mincer_record_set_title', { title: title.trim() || null })
+}
+
+// Dispositivos padrão que a gravação usaria agora.
+export function mincerRecordDevices(): Promise<MincerRecordDevices> {
+  return invoke<MincerRecordDevices>('mincer_record_devices')
 }
 
 export function mincerRecordStop(): Promise<string> {
@@ -287,4 +317,14 @@ export function onMincerRecord(handler: (p: { active: boolean }) => void): Promi
 
 export function onMincerLevel(handler: (p: MincerLevel) => void): Promise<UnlistenFn> {
   return listen<MincerLevel>('mincer://level', (e) => handler(e.payload))
+}
+
+// A lista mudou fora de um job (itens interrompidos e recuperados no boot).
+export function onMincerChanged(handler: () => void): Promise<UnlistenFn> {
+  return listen('mincer://changed', () => handler())
+}
+
+// Interrompido (crash) ou recuperado (gravação órfã): pede um Resume.
+export function needsAttention(item: { status: MincerStatus }): boolean {
+  return item.status === 'interrupted'
 }

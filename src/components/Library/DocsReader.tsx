@@ -7,10 +7,15 @@ import {
   useState,
 } from 'react'
 import {
+  ArrowLeft,
+  ArrowsOutLineHorizontal,
   CaretDown,
   CaretRight,
   FileText,
+  Minus,
+  Plus,
   SidebarSimple,
+  TextAa,
 } from '@phosphor-icons/react'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { renderMarkdown } from '../../lib/markdown'
@@ -314,7 +319,8 @@ export function DocsReader({ folder, onBack }: DocsReaderProps) {
       setDocLoading(true)
       try {
         const md = await docsReadFile(root, relPath)
-        const html = addHeadingIds(await renderMarkdown(stripFrontmatter(md)))
+        // Documento do usuário, não resposta de IA: as imagens remotas carregam.
+        const html = addHeadingIds(await renderMarkdown(stripFrontmatter(md), { allowRemoteImages: true }))
         if (seq !== loadSeqRef.current) return
         missingScrollRef.current = null
         scrollIntentRef.current =
@@ -602,7 +608,8 @@ export function DocsReader({ folder, onBack }: DocsReaderProps) {
     <div className={styles.reader}>
       <div className={styles.toolbar}>
         <button type="button" className={styles.backButton} onClick={onBack}>
-          ← Library
+          <ArrowLeft size={13} aria-hidden />
+          Library
         </button>
         <span className={styles.toolbarTitle} title={root}>
           {alias}
@@ -611,15 +618,17 @@ export function DocsReader({ folder, onBack }: DocsReaderProps) {
           )}
         </span>
 
-        <div className={styles.fontControls}>
+        <div className={styles.fontControls} role="group" aria-label="Text size" title="Text size">
+          <TextAa size={16} className={styles.controlIcon} aria-hidden />
           <button
             type="button"
             className={styles.navButton}
             onClick={() => changeFontScale(fontScale - FONT_SCALE_STEP)}
             disabled={fontScale <= MIN_FONT_SCALE}
             aria-label="Decrease text size"
+            title="Smaller text"
           >
-            −
+            <Minus size={12} aria-hidden />
           </button>
           <span className={styles.fontLabel}>{fontSizeCss(fontScale)}</span>
           <button
@@ -628,20 +637,23 @@ export function DocsReader({ folder, onBack }: DocsReaderProps) {
             onClick={() => changeFontScale(fontScale + FONT_SCALE_STEP)}
             disabled={fontScale >= MAX_FONT_SCALE}
             aria-label="Increase text size"
+            title="Larger text"
           >
-            +
+            <Plus size={12} aria-hidden />
           </button>
         </div>
 
-        <div className={styles.fontControls}>
+        <div className={styles.fontControls} role="group" aria-label="Page margins" title="Page margins">
+          <ArrowsOutLineHorizontal size={16} className={styles.controlIcon} aria-hidden />
           <button
             type="button"
             className={styles.navButton}
             onClick={() => changeMargin(marginPx - MARGIN_STEP_PX)}
             disabled={marginPx <= MIN_MARGIN_PX}
             aria-label="Decrease margin"
+            title="Narrower margins"
           >
-            −
+            <Minus size={12} aria-hidden />
           </button>
           <span className={styles.fontLabel}>{marginPx}px</span>
           <button
@@ -650,8 +662,9 @@ export function DocsReader({ folder, onBack }: DocsReaderProps) {
             onClick={() => changeMargin(marginPx + MARGIN_STEP_PX)}
             disabled={marginPx >= MAX_MARGIN_PX}
             aria-label="Increase margin"
+            title="Wider margins"
           >
-            +
+            <Plus size={12} aria-hidden />
           </button>
         </div>
       </div>
@@ -666,7 +679,7 @@ export function DocsReader({ folder, onBack }: DocsReaderProps) {
               ? SIDE_PANEL_COLLAPSED_WIDTH
               : SIDE_PANEL_WIDTH,
           }}
-          aria-label="Documentation navigation"
+          aria-label="Docs navigation"
         >
           {sidePanelCollapsed ? (
             <div className={styles.sidePanelRail}>
@@ -692,7 +705,7 @@ export function DocsReader({ folder, onBack }: DocsReaderProps) {
                 >
                   <SidebarSimple size={16} aria-hidden />
                 </button>
-                <span className={styles.sidePanelTitle}>Documents</span>
+                <span className={styles.sidePanelTitle}>Files</span>
               </div>
               <div ref={treePanelRef} className={styles.tocPanel}>
                 {tree === null ? (

@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { ArrowCounterClockwise, Broom, Checks, SquareSplitHorizontal, X } from '@phosphor-icons/react'
+import { ArrowCounterClockwise, ArrowLeft, Broom, Checks, SquareSplitHorizontal, X } from '@phosphor-icons/react'
 import { notePreview } from '../../lib/noteSearch'
 import type { OpenEntryKind } from '../../lib/openNotes'
 import { isOpen, statusColor, statusName, todosTitleOf } from '../../lib/tasks'
@@ -57,7 +57,7 @@ export function OpenNotesPanel({
         <span className={styles.listTitle}>Opened today</span>
         <div className={styles.headerActions}>
           <span className={styles.hint}>
-            <kbd>Alt</kbd>+<kbd>←</kbd> last note
+            <kbd>Alt</kbd>+<kbd><ArrowLeft size={10} aria-label="Left arrow" /></kbd> last note
           </span>
           {canClearAll && (
             <button

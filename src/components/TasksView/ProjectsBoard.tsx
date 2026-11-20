@@ -9,7 +9,8 @@ import { useTasksEnv } from './TasksEnv'
 // Visão Projects: uma coluna por projeto (caderno, inclusive Inbox) com as
 // tasks abertas, em subseções por TODOS ("No TODOS" ao final). Projeto sem
 // tasks abertas não aparece. Arrastar para outra coluna move a task e a
-// nota-corpo para o projeto.
+// nota-corpo para o projeto. A cor do projeto aparece uma vez só, no botão
+// de cor do cabeçalho.
 type ProjectsBoardProps = Omit<
   BoardViewProps,
   'ariaLabel' | 'columnsFor' | 'onDrop' | 'showProject' | 'compactStatus'
@@ -58,7 +59,6 @@ export function ProjectsBoard(props: ProjectsBoardProps) {
           return {
             key: nb.id,
             title: nb.name || 'unnamed',
-            color: nb.color ?? null,
             count: list.length,
             items: sections.flatMap((s) => s.items),
             sections,
@@ -78,7 +78,7 @@ export function ProjectsBoard(props: ProjectsBoardProps) {
   const onDrop = useCallback(
     (id: string, notebookId: string, tasksById: Map<string, Task>) => {
       const task = tasksById.get(id)
-      if (!task || task.notebookId === notebookId) return
+      if (!task || task.notebookId === notebookId) return false
       onMoveTaskToProject(id, notebookId)
     },
     [onMoveTaskToProject]

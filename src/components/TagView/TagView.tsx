@@ -105,6 +105,7 @@ export function TagView({
   }, [tagged, query, showArchived, notebooks])
 
   const shown = groups.reduce((n, g) => n + g.notes.length, 0)
+  const tagName = tags.find((t) => tagKey(t.tag) === currentKey)?.tag ?? tag
 
   // A nota aberta fica à vista ao trocar de tag.
   useEffect(() => {
@@ -115,7 +116,14 @@ export function TagView({
     <aside className={styles.view} style={{ width }}>
       <div className={styles.resizeHandle} onMouseDown={onResizeMouseDown} />
       <div className={styles.header}>
-        <span>Tags</span>
+        {/* A tag aberta, na grafia mais usada; a contagem inclui as arquivadas
+            (como no chip). */}
+        <span className={styles.headerTitle} title={`#${tagName}`}>
+          <span className={styles.headerTag}>#{tagName}</span>
+          <span className={styles.headerCount}>
+            · {tagged.length} {tagged.length === 1 ? 'note' : 'notes'}
+          </span>
+        </span>
         <button type="button" className={styles.headerBtn} onClick={onClose} title="Back to notes" aria-label="close tags">
           <X size={14} aria-hidden />
         </button>

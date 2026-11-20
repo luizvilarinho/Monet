@@ -62,6 +62,12 @@
   background: var(--surface-3);
 }
 
+.itemIcon {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+}
+
 .itemActive {
   color: var(--accent-task);
 }

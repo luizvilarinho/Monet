@@ -174,11 +174,11 @@ export function useNoteTypes(opts?: { onRemoved?: () => void }) {
   )
 
   // O tipo de dado não muda depois de criado. Nome único dentro do tipo; no
-  // máximo MAX_LIST_PROPERTIES com "show in list" por tipo.
+  // máximo MAX_LIST_PROPERTIES com "show in list" por tipo. false = não gravou.
   const updateDef = useCallback(
-    async (id: string, patch: NoteDefPatch) => {
+    async (id: string, patch: NoteDefPatch): Promise<boolean> => {
       const current = defsRef.current.find((d) => d.id === id)
-      if (!current) return
+      if (!current) return false
       const siblings = defsRef.current.filter((d) => d.noteTypeId === current.noteTypeId)
       const next = { ...current, ...patch }
       if (patch.name !== undefined) {
@@ -198,7 +198,7 @@ export function useNoteTypes(opts?: { onRemoved?: () => void }) {
         throw new Error(`At most ${MAX_LIST_PROPERTIES} properties can be shown in the list.`)
       }
       setDefs((list) => list.map((d) => (d.id === id ? next : d)))
-      await persist(() => storage.saveMetadataDef(next), 'save property')
+      return persist(() => storage.saveMetadataDef(next), 'save property')
     },
     [persist]
   )
@@ -220,6 +220,25 @@ export function useNoteTypes(opts?: { onRemoved?: () => void }) {
       await persist(() => storage.saveNoteType(next), 'save note type')
     },
     [persist]
+  )
+
+  // Opção nova no fim do select (modal de tipos e "New option…" da nota). Se
+  // não gravar, a opção sai da memória e o erro vai para quem chamou (a nota
+  // não fica com um id que não está no banco).
+  const createOption = useCallback(
+    async (defId: string, name: string): Promise<SelectOption> => {
+      const def = defsRef.current.find((d) => d.id === defId)
+      if (!def) throw new Error('This property no longer exists.')
+      const option = newSelectOption(validOptionName(def, name, null), null)
+      if (!(await updateDef(def.id, { options: [...(def.options ?? []), option] }))) {
+        setDefs((list) =>
+          list.map((d) => (d.id === defId ? { ...d, options: (d.options ?? []).filter((o) => o.id !== option.id) } : d))
+        )
+        throw new Error('Failed to save the option.')
+      }
+      return option
+    },
+    [updateDef]
   )
 
   const reorderDefs = useCallback(
@@ -252,6 +271,7 @@ export function useNoteTypes(opts?: { onRemoved?: () => void }) {
     createDef,
     updateDef,
     removeDef,
+    createOption,
     reorderDefs,
   }
 }
@@ -260,4 +280,16 @@ export type NoteTypesRegistry = ReturnType<typeof useNoteTypes>
 
 export function newSelectOption(name: string, color: string | null): SelectOption {
   return { id: `opt_${nanoid(6)}`, name: name.trim(), color }
+}
+
+// Nome de opção do select: obrigatório e único na propriedade (a troca de
+// tipo casa as opções pelo nome); lança para a UI.
+export function validOptionName(def: MetadataDef, name: string, exceptId: string | null): string {
+  const trimmed = name.trim().slice(0, MAX_PROPERTY_NAME)
+  if (!trimmed) throw new Error('Option name is required.')
+  const wanted = normalizeName(trimmed)
+  if ((def.options ?? []).some((o) => o.id !== exceptId && normalizeName(o.name) === wanted)) {
+    throw new Error('This property already has an option with this name.')
+  }
+  return trimmed
 }

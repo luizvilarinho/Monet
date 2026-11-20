@@ -184,40 +184,25 @@
   gap: 6px;
 }
 
-.statusOk::before {
-  content: '✓';
-  display: inline-block;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: rgba(93, 202, 165, 0.15);
-  color: var(--accent-ai, #5dcaa5);
-  font-size: 11px;
-  line-height: 16px;
-  text-align: center;
-}
-
 .statusError {
   margin: 0;
   font-size: 12px;
-  color: #e96a6a;
+  color: var(--accent-danger);
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-1h);
 }
 
-.statusError::before {
-  content: '!';
-  display: inline-block;
+/* Ícone (Phosphor) num círculo na cor do estado. */
+.statusIcon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: rgba(233, 106, 106, 0.15);
-  color: #e96a6a;
-  font-size: 11px;
-  line-height: 16px;
-  font-weight: 600;
-  text-align: center;
+  background: color-mix(in srgb, currentColor 15%, transparent);
 }
 
 .note {

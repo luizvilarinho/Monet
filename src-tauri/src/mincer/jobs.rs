@@ -14,8 +14,8 @@ use tokio::sync::watch;
 use super::sidecar::{self, JobCtx, JobError};
 use super::{
     db, item_dir, load_pending_summary, mincer_root, record, summarize, toast, transcribe, webpage, youtube, ActiveJob,
-    MincerDoneEvent, MincerErrorEvent, MincerItem, MincerJobs, MincerRecording, EVENT_DONE,
-    EVENT_ERROR,
+    MincerDoneEvent, MincerErrorEvent, MincerItem, MincerJobOptions, MincerJobs, MincerRecording, EVENT_CHANGED,
+    EVENT_DONE, EVENT_ERROR,
 };
 
 // Nada roda antes do on_startup marcar os 'running' antigos como interrompidos,
@@ -330,9 +330,20 @@ pub(crate) fn delete(app: &AppHandle, id: &str) -> Result<(), String> {
     {
         return Err("Cancel the job before deleting this item.".to_string());
     }
+    // A pasta sai antes da linha: uma pasta com áudio que sobrasse sem a linha
+    // voltaria no boot como "Recovered recording". Se ela não sai (arquivo
+    // ainda preso logo depois do Cancel), o item fica para outra tentativa.
+    match fs::remove_dir_all(mincer_root(app)?.join(id)) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => {
+            return Err(format!(
+                "Could not delete the item's files: {}. Try again in a moment.",
+                e
+            ))
+        }
+    }
     db::delete_item(app, id)?;
-    drop(guard);
-    remove_item_dir(app, id);
     Ok(())
 }
 
@@ -340,6 +351,56 @@ pub(crate) fn active_item_id(app: &AppHandle) -> Option<String> {
     let state = app.state::<MincerJobs>();
     let guard = state.0.lock().ok()?;
     guard.as_ref().map(|job| job.item_id.clone())
+}
+
+// Pasta em mincer/ sem item no banco: sobra de crash, de item apagado ou de
+// uma gravação cujo INSERT falhou.
+#[derive(Debug, PartialEq)]
+enum OrphanAction {
+    // Áudio numa pasta com nome de item: volta como item interrompido.
+    Recover,
+    // Áudio numa pasta com outro nome: fica no disco e vai para o log.
+    Keep,
+    // Sem áudio: apagada.
+    Remove,
+}
+
+fn orphan_action(name: &str, dir: &Path) -> OrphanAction {
+    if !record::has_audio(dir) {
+        OrphanAction::Remove
+    } else if uuid::Uuid::parse_str(name).is_ok() {
+        OrphanAction::Recover
+    } else {
+        OrphanAction::Keep
+    }
+}
+
+// Registra a pasta órfã como item 'record' interrompido, com as opções que a
+// gravação deixou (ou as padrão).
+fn recover_orphan(app: &AppHandle, id: &str, dir: &Path) -> Result<(), String> {
+    let options: MincerJobOptions = fs::read_to_string(dir.join(record::OPTIONS_FILE))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    let when = fs::metadata(dir)
+        .and_then(|m| m.modified())
+        .map(chrono::DateTime::<chrono::Local>::from)
+        .unwrap_or_else(|_| chrono::Local::now());
+    let when = when.format("%Y-%m-%d %H:%M").to_string();
+    let title = format!("Recovered recording {}", when);
+    let message = recovered_message(&when, record::audio_duration_secs(dir));
+    db::insert_recovered(app, id, &title, &options, &message)
+}
+
+// O banner do item diz quando foi gravado e quanto áudio há para processar.
+fn recovered_message(when: &str, duration_secs: Option<u64>) -> String {
+    let length = duration_secs
+        .map(|secs| format!(", about {} of audio", record::duration_label(secs)))
+        .unwrap_or_default();
+    format!(
+        "This recording (from {}{}) was recovered after an error. Click Resume to process it.",
+        when, length
+    )
 }
 
 pub async fn on_startup(app: AppHandle) {
@@ -358,21 +419,38 @@ pub async fn on_startup(app: AppHandle) {
         .map(|g| g.is_some())
         .unwrap_or(true);
     if !recording_active && record::has_pending_recording(&app) {
-        if let Err(e) = record::finalize_into_item(&app, &[], None) {
+        let title = record::pending_recording_title(&app);
+        if let Err(e) = record::finalize_into_item(&app, &[], None, &title) {
             eprintln!("mincer: recovered recording: {}", e);
         }
     }
 
     match (mincer_root(&app), db::item_ids(&app)) {
         (Ok(root), Ok(ids)) => {
+            let blocking_app = app.clone();
             let _ = tokio::task::spawn_blocking(move || {
                 let Ok(entries) = fs::read_dir(&root) else {
                     return;
                 };
                 for entry in entries.flatten() {
                     let name = entry.file_name().to_string_lossy().to_string();
-                    if name != "recording" && !ids.contains(&name) && entry.path().is_dir() {
-                        let _ = fs::remove_dir_all(entry.path());
+                    let path = entry.path();
+                    if name == "recording" || ids.contains(&name) || !path.is_dir() {
+                        continue;
+                    }
+                    // Pasta com áudio nunca é apagada aqui.
+                    match orphan_action(&name, &path) {
+                        OrphanAction::Remove => {
+                            let _ = fs::remove_dir_all(&path);
+                        }
+                        OrphanAction::Keep => {
+                            eprintln!("mincer: kept orphan folder with audio: {}", path.display());
+                        }
+                        OrphanAction::Recover => {
+                            if let Err(e) = recover_orphan(&blocking_app, &name, &path) {
+                                eprintln!("mincer: could not recover {}: {}", path.display(), e);
+                            }
+                        }
                     }
                 }
             })
@@ -382,6 +460,9 @@ pub async fn on_startup(app: AppHandle) {
     }
 
     READY.store(true, Ordering::SeqCst);
+    // Itens interrompidos e recuperados acima: a UI relê a lista e o ponto da
+    // Toolbar sem esperar o próximo evento (sem toast no boot).
+    let _ = app.emit(EVENT_CHANGED, ());
     // Os itens enfileirados antes do fechamento voltam a rodar, em ordem.
     start_next(&app);
 }
@@ -395,8 +476,9 @@ pub fn shutdown(app: &AppHandle) {
         .try_state::<MincerRecording>()
         .and_then(|state| state.0.lock().ok().and_then(|mut g| g.take()));
     if let Some(handle) = handle {
+        let title = record::handle_title(&handle);
         let errors = record::stop_handle(handle);
-        if let Err(e) = record::finalize_into_item(app, &errors, None) {
+        if let Err(e) = record::finalize_into_item(app, &errors, None, &title) {
             eprintln!("mincer: recording on exit: {}", e);
         }
     }
@@ -414,5 +496,53 @@ pub fn shutdown(app: &AppHandle) {
         let child = job.child_job.lock().ok().and_then(|mut g| g.take());
         drop(child);
         let _ = job.cancel.send(true);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn new_id() -> String {
+        uuid::Uuid::new_v4().to_string()
+    }
+
+    #[test]
+    fn orphan_folders_with_audio_are_not_removed() {
+        let root = std::env::temp_dir().join(format!("monet-mincer-test-{}", new_id()));
+        let cases: Vec<(String, &[(&str, usize)], OrphanAction)> = vec![
+            (new_id(), &[("mic.wav", 2048)], OrphanAction::Recover),
+            (new_id(), &[("audio.mp3", 2048)], OrphanAction::Recover),
+            ("not-an-item".to_string(), &[("loopback.wav", 2048)], OrphanAction::Keep),
+            // UUID só com o cache de texto de um pedaço.
+            (new_id(), &[("chunk_000.txt", 2048)], OrphanAction::Remove),
+            // Só o cabeçalho: não é utilizável.
+            (new_id(), &[("mic.wav", 100)], OrphanAction::Remove),
+        ];
+        let mut results = Vec::new();
+        for (name, files, _) in &cases {
+            let dir = root.join(name);
+            fs::create_dir_all(&dir).unwrap();
+            for (file, size) in files.iter() {
+                fs::write(dir.join(file), vec![0u8; *size]).unwrap();
+            }
+            results.push(orphan_action(name, &dir));
+        }
+        let _ = fs::remove_dir_all(&root);
+        for ((name, _, expected), got) in cases.iter().zip(results) {
+            assert_eq!(&got, expected, "{}", name);
+        }
+    }
+
+    #[test]
+    fn recovered_message_says_how_long_the_audio_is() {
+        assert_eq!(
+            recovered_message("2026-11-19 14:05", Some(4380)),
+            "This recording (from 2026-11-19 14:05, about 1 h 13 min of audio) was recovered after an error. Click Resume to process it."
+        );
+        assert_eq!(
+            recovered_message("2026-11-19 14:05", None),
+            "This recording (from 2026-11-19 14:05) was recovered after an error. Click Resume to process it."
+        );
     }
 }

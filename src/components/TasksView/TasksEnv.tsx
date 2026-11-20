@@ -19,6 +19,8 @@ export interface TasksEnv {
   onDeleteView: (id: string) => void
   // Id da visão salva aplicada (null = visão built-in).
   activeSavedViewId: string | null
+  // Erro da última gravação de visão (null = ok).
+  viewsError: string | null
   // Busca de texto (título/TODOS), válida para todas as visões.
   search: string
   onSearchChange: (text: string) => void
@@ -45,6 +47,7 @@ export const DEFAULT_TASKS_ENV: TasksEnv = {
   onRenameView: noop,
   onDeleteView: noop,
   activeSavedViewId: null,
+  viewsError: null,
   search: '',
   onSearchChange: noop,
   onMoveTaskToProject: noop,

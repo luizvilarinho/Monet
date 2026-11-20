@@ -129,11 +129,16 @@ const ParagraphWithBlankLines = Paragraph.extend({
 // custom (embed/toggle/linked-note/reminder-chip/task-ref/tasks-query) — um editor sem eles
 // descartaria esses nodes no parse e o autosave destruiria o conteúdo.
 // Qualquer node novo deve entrar aqui, não inline em um dos editores.
-export function buildBaseExtensions(placeholder: string): AnyExtension[] {
+// `linkOpenOnClick: false`: o clique no link é do editor (popover do link e
+// Ctrl+clique abrindo no navegador), não do window.open do Tiptap.
+export function buildBaseExtensions(
+  placeholder: string,
+  { linkOpenOnClick = true }: { linkOpenOnClick?: boolean } = {}
+): AnyExtension[] {
   return [
     StarterKit.configure({
       heading: { levels: [1, 2, 3] },
-      link: { openOnClick: true, autolink: false },
+      link: { openOnClick: linkOpenOnClick, autolink: false },
       code: false,
       paragraph: false,
       codeBlock: false,

@@ -1,10 +1,10 @@
 // Editor completo da nota-corpo dentro do modal da task aberto a partir de uma
 // nota (R4). É um segundo Editor isolado do principal: sem `onEditorReady` (o
 // App continua apontando para o editor de trás) e sem slash commands (o
-// `onCommand` do App grava na nota de trás). Task sem nota-corpo abre só com as
-// propriedades e o "Add body note" explícito — abrir nunca cria a nota.
-import { useMemo } from 'react'
-import { unlinkResponseFromChat } from '../../hooks/useChat'
+// `onCommand` do App grava na nota de trás). Task sem nota-corpo abre com o
+// título editável, as propriedades e o "Add body note" explícito — abrir nunca
+// cria a nota.
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAi } from '../../hooks/useAi'
 import type { ProjectChoice, TaskPatch, TodosInfo } from '../../lib/tasks'
 import type {
@@ -88,7 +88,7 @@ export function TaskModalEditor({
   tagSuggestions,
   tasksContext,
 }: TaskModalEditorProps) {
-  const { responses, removeResponse } = useAi(note?.id ?? null)
+  const { responses } = useAi(note?.id ?? null)
 
   // Mesma regra do App: comandos executados no corpo (sem os que deram erro)
   // não voltam ao autocomplete.
@@ -124,6 +124,7 @@ export function TaskModalEditor({
   if (!note) {
     return (
       <div className={styles.noBody}>
+        <TaskTitleInput key={task.id} title={task.title} onCommit={(title) => onUpdate({ title })} />
         {propertiesBar}
         <p className={styles.noBodyText}>This task has no body note.</p>
         <button type="button" className={styles.noBodyButton} onClick={() => void onAddBodyNote()}>
@@ -154,10 +155,6 @@ export function TaskModalEditor({
         disableSlashCommands
         responses={responses}
         executedCommandTexts={executedCommandTexts}
-        onRemoveResponse={(id) => {
-          removeResponse(id)
-          unlinkResponseFromChat(id)
-        }}
         taskStatuses={taskStatuses}
         taskNotebooks={notebooks}
         suggestedTaskNotebookId={suggestedTaskNotebookId}
@@ -168,5 +165,41 @@ export function TaskModalEditor({
         topSlot={propertiesBar}
       />
     </TasksProvider>
+  )
+}
+
+// Título da task sem nota-corpo: grava no blur/Enter (vazio volta). Renomeada
+// por fora com o modal aberto, o campo acompanha, a não ser que haja texto
+// digitado ainda não gravado.
+function TaskTitleInput({ title, onCommit }: { title: string; onCommit: (title: string) => void }) {
+  const [draft, setDraft] = useState(title)
+  const syncedRef = useRef(title)
+  useEffect(() => {
+    const previous = syncedRef.current
+    syncedRef.current = title
+    setDraft((d) => (d === previous ? title : d))
+  }, [title])
+
+  const commit = () => {
+    const next = draft.trim()
+    if (!next) {
+      setDraft(title)
+      return
+    }
+    setDraft(next)
+    if (next !== title) onCommit(next)
+  }
+
+  return (
+    <input
+      className={styles.titleInput}
+      value={draft}
+      aria-label="task title"
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.currentTarget.blur()
+      }}
+    />
   )
 }

@@ -1,10 +1,12 @@
-import { useMemo, useState } from 'react'
-import { DotsThree, GearSix, MagnifyingGlass, X } from '@phosphor-icons/react'
+import { useEffect, useMemo, useState } from 'react'
+import { ArrowSquareOut, DotsThree, Flag, GearSix, MagnifyingGlass, Plus, X } from '@phosphor-icons/react'
 import { useConfirm } from '../../hooks/useConfirm'
 import {
   INBOX_NOTEBOOK_ID,
+  matchesSearch,
   normalizeName,
   splitPipeTitle,
+  summaryMatches,
   type ProjectChoice,
   type TaskGroupBy,
   type TaskSummary,
@@ -14,6 +16,7 @@ import { parseQuickAdd, type QuickAddResult } from '../../lib/taskQuickAdd'
 import type { Notebook, Task, TaskStatus } from '../../types'
 import { ProjectPicker } from './ProjectPicker'
 import { useTasksEnv } from './TasksEnv'
+import { TaskShortcuts, TASKS_SHORTCUTS_EVENT } from './TaskShortcuts'
 import { ViewMenu } from './ViewMenu'
 import type { TasksMainView } from './views'
 import styles from './TasksHeader.module.css'
@@ -28,7 +31,11 @@ export interface NewTaskDraft {
   project: ProjectChoice
   // Nota TODOS (`>Nome` ou contexto); `newTitle` cria a TODOS no projeto.
   todos: QuickAddResult['todos']
+  // My Day: criada no board de hoje, nasce planejada para hoje.
+  plannedDay?: string | null
 }
+
+const ADDED_MS = 5000
 
 // Cabeçalho das Tasks: seletor de visão, filtro de projeto, faixa de resumo
 // (contadores clicáveis que filtram a lista + barra da semana) e o
@@ -45,7 +52,12 @@ interface TasksHeaderProps {
   summary: TaskSummary
   summaryFilter: TaskSummaryKey | null
   onSummaryFilterChange: (key: TaskSummaryKey | null) => void
-  onCreateTask: (draft: NewTaskDraft) => Promise<void>
+  // Devolve a task criada (undefined = falhou).
+  onCreateTask: (draft: NewTaskDraft) => Promise<Task | undefined>
+  // Dia do My Day para as tasks novas (board de hoje).
+  plannedDay?: string
+  // "Open" do aviso "Added …" (nos boards; a List já abre a task criada).
+  onOpenTask?: (task: Task) => void
   // Group by da lista (só na visão List).
   groupBy?: TaskGroupBy
   onGroupByChange?: (mode: TaskGroupBy) => void
@@ -82,14 +94,32 @@ export function TasksHeader({
   summaryFilter,
   onSummaryFilterChange,
   onCreateTask,
+  plannedDay,
+  onOpenTask,
   groupBy,
   onGroupByChange,
   onConvertPipeTitles,
 }: TasksHeaderProps) {
-  const { statuses, onManageStatuses, search, onSearchChange, todosById } = useTasksEnv()
+  const { statuses, onManageStatuses, search, onSearchChange, todosById, viewsError } = useTasksEnv()
   const todosList = useMemo(() => [...todosById.values()], [todosById])
   const [newTitle, setNewTitle] = useState('')
+  const [newFocused, setNewFocused] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  // Aviso "Added …" da última task criada.
+  const [added, setAdded] = useState<Task | null>(null)
+
+  useEffect(() => {
+    const open = () => setShortcutsOpen(true)
+    window.addEventListener(TASKS_SHORTCUTS_EVENT, open)
+    return () => window.removeEventListener(TASKS_SHORTCUTS_EVENT, open)
+  }, [])
+
+  useEffect(() => {
+    if (!added) return
+    const timer = window.setTimeout(() => setAdded(null), ADDED_MS)
+    return () => window.clearTimeout(timer)
+  }, [added])
   const { confirm, modal } = useConfirm()
   // null = projeto padrão (o filtrado, ou o Inbox).
   const [newProject, setNewProject] = useState<ProjectChoice | null>(null)
@@ -167,10 +197,20 @@ export function TasksHeader({
       // `#Projeto` reconhecido sobrepõe o seletor.
       project: parsed.project ?? newProjectValue,
       todos: parsed.todos,
+      plannedDay: plannedDay ?? null,
     }
     resetDraft()
-    await onCreateTask(draft)
+    const task = await onCreateTask(draft)
+    if (!task) return
+    // A task nova não nasce escondida: sai o filtro que a esconderia.
+    if (search.trim() && !matchesSearch(task, search, todosById)) onSearchChange('')
+    if (filter !== null && task.notebookId !== filter) onFilterChange(null)
+    if (summaryFilter !== null && !summaryMatches(summaryFilter, task, todayKey)) onSummaryFilterChange(null)
+    setAdded(task)
   }
+
+  // Só tokens, sem título: o Enter não cria nada, então a dica avisa.
+  const needsTitle = newTitle.trim() !== '' && !parsed.title
 
   const counts: Record<TaskSummaryKey, number> = {
     overdue: summary.overdue,
@@ -236,7 +276,7 @@ export function TasksHeader({
         {summary.weekTotal > 0 && (
           <div
             className={styles.weekBar}
-            title={`${summary.doneThisWeek} of ${summary.weekTotal} tasks of this week done`}
+            title="Tasks planned for this week (Mon–Sun), and the ones done this week"
           >
             <div className={styles.weekTrack}>
               <div
@@ -245,7 +285,7 @@ export function TasksHeader({
               />
             </div>
             <span className={styles.weekLabel}>
-              Week {summary.doneThisWeek}/{summary.weekTotal}
+              {summary.doneThisWeek} of {summary.weekTotal} done this week
             </span>
           </div>
         )}
@@ -318,21 +358,46 @@ export function TasksHeader({
           )}
         </div>
       )}
+      {viewsError && (
+        <p className={styles.error} role="alert">
+          {viewsError}
+        </p>
+      )}
       <div
         className={styles.newTaskRow}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') void handleCreate()
+          // Enter num chip ("Create #X?") só confirma o chip; criar é no campo.
+          if (e.key === 'Enter' && e.target instanceof HTMLInputElement) void handleCreate()
           if (e.key === 'Escape') setNewProject(null)
         }}
       >
-        <input
-          className={styles.newTask}
-          value={newTitle}
-          onChange={(e) => setNewTitle(e.target.value)}
-          placeholder="New task…"
-          aria-label="new task"
-          title="Try: today, tomorrow, fri, 17/10, !fri (deadline), #Project, >TODOS, @status, !! (important)"
-        />
+        <div className={styles.newTaskInput}>
+          <input
+            className={styles.newTask}
+            value={newTitle}
+            onChange={(e) => setNewTitle(e.target.value)}
+            onFocus={() => setNewFocused(true)}
+            onBlur={() => setNewFocused(false)}
+            placeholder="New task — e.g. Review ch. 3 fri #Study"
+            aria-label="new task"
+          />
+          <button
+            type="button"
+            className={styles.addBtn}
+            onClick={() => void handleCreate()}
+            disabled={!parsed.title}
+          >
+            <Plus size={12} weight="bold" aria-hidden />
+            Add
+          </button>
+        </div>
+        {(newFocused || newTitle) && (
+          <p className={`${styles.hint} ${needsTitle ? styles.hintWarn : ''}`}>
+            {needsTitle
+              ? 'Add a title: only dates and tags so far.'
+              : 'fri · 17/10 · !fri deadline · #Project · >TODOS · @status · !! important'}
+          </p>
+        )}
         {parsed.tokens.length > 0 && (
           <div className={styles.tokens}>
             {parsed.tokens.map((t) => (
@@ -354,7 +419,10 @@ export function TasksHeader({
                     {t.label}
                   </button>
                 ) : (
-                  <span className={styles.tokenLabel}>{t.label}</span>
+                  <span className={styles.tokenLabel}>
+                    {t.kind === 'important' && <Flag size={10} weight="fill" aria-hidden />}
+                    {t.label}
+                  </span>
                 )}
                 <button
                   type="button"
@@ -371,6 +439,25 @@ export function TasksHeader({
         )}
         <ProjectPicker notebooks={notebooks} value={newProjectValue} onChange={setNewProject} />
       </div>
+      {added && (
+        <p className={styles.added} role="status">
+          <span className={styles.addedTitle}>Added “{added.title}”</span>
+          {onOpenTask && (
+            <button
+              type="button"
+              className={styles.addedOpen}
+              onClick={() => {
+                setAdded(null)
+                onOpenTask(added)
+              }}
+            >
+              <ArrowSquareOut size={12} aria-hidden />
+              Open
+            </button>
+          )}
+        </p>
+      )}
+      {shortcutsOpen && <TaskShortcuts onClose={() => setShortcutsOpen(false)} />}
       {modal}
     </div>
   )

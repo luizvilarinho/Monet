@@ -135,6 +135,7 @@
   color: var(--accent-warn, #ef9f27);
   font-size: 12px;
   margin: 0;
+  white-space: pre-line;
 }
 
 .empty {
@@ -193,20 +194,24 @@
 }
 
 .colName {
-  width: 44%;
+  width: 36%;
 }
 
 .colStatus {
-  width: 22%;
+  width: 18%;
 }
 
 .colCount {
-  width: 10%;
+  width: 8%;
   text-align: center;
 }
 
+.colUsedIn {
+  width: 16%;
+}
+
 .colActions {
-  width: 24%;
+  width: 22%;
   text-align: right;
 }
 
@@ -432,6 +437,9 @@
 
 .footerHint {
   margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0);
   font-size: 11px;
   color: var(--text-muted, #606070);
 }
@@ -439,6 +447,9 @@
 .primary,
 .secondary,
 .danger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   border-radius: var(--radius-md);
   padding: var(--space-1h) var(--space-3);
   font-size: 12px;
@@ -533,4 +544,178 @@
   height: 100%;
   background: var(--accent-ai, #5dcaa5);
   transition: width 0.3s ease;
+}
+
+/* Sem a chave da OpenRouter: nada é indexado. */
+.keyBanner,
+.addedBanner {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  line-height: var(--lh-ui);
+}
+
+.keyBanner {
+  border: 1px solid color-mix(in srgb, var(--accent-warn, #ef9f27) 40%, transparent);
+  background: color-mix(in srgb, var(--accent-warn, #ef9f27) 8%, transparent);
+  color: var(--accent-warn, #ef9f27);
+}
+
+.keyBanner > button {
+  flex-shrink: 0;
+}
+
+.addedBanner {
+  border: 1px solid rgba(93, 202, 165, 0.3);
+  background: rgba(93, 202, 165, 0.06);
+  color: var(--text-secondary, #a0a0b8);
+}
+
+.addedLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1h);
+  min-width: 0;
+  cursor: pointer;
+}
+
+.addedNotebook {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary, #e8e8f0);
+}
+
+.bannerClose {
+  flex-shrink: 0;
+  width: var(--control-sm);
+  height: var(--control-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted, #606070);
+  cursor: pointer;
+}
+
+.bannerClose:hover {
+  color: var(--text-primary, #e8e8f0);
+}
+
+.cellUsedIn {
+  max-width: 0;
+}
+
+.usedIn,
+.usedInNone {
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-0) var(--space-1h);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-secondary, #a0a0b8);
+  cursor: pointer;
+}
+
+.usedInNone {
+  color: var(--text-muted, #606070);
+  border-style: dashed;
+  border-color: var(--border, #333340);
+}
+
+.usedIn:hover,
+.usedInNone:hover,
+.usedIn[aria-expanded='true'],
+.usedInNone[aria-expanded='true'] {
+  color: var(--text-primary, #e8e8f0);
+  border-color: var(--accent-ai, #5dcaa5);
+}
+
+.usedInText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Acima do overlay do modal (1000). */
+.popover {
+  position: fixed;
+  z-index: 1100;
+  width: 260px;
+  max-height: 300px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1h);
+  padding: var(--space-2);
+  background: var(--bg-panel, #161618);
+  border: 1px solid var(--border, #333340);
+  border-radius: var(--radius-md);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.popoverTitle {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary, #e8e8f0);
+}
+
+.popoverList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.popoverItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-1h);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--text-secondary, #a0a0b8);
+  cursor: pointer;
+}
+
+.popoverItem:hover {
+  background: var(--surface-1, #1e1e22);
+  color: var(--text-primary, #e8e8f0);
+}
+
+.popoverName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.popoverOwn {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted, #606070);
+}
+
+.popoverHint {
+  margin: 0;
+  font-size: 11px;
+  line-height: var(--lh-ui);
+  color: var(--text-muted, #606070);
 }

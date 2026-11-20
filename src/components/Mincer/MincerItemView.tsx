@@ -3,6 +3,7 @@ import {
   ArrowClockwise,
   ChatCircleText,
   Check,
+  Copy,
   FloppyDisk,
   FolderOpen,
   Notebook as NotebookIcon,
@@ -10,6 +11,7 @@ import {
   Play,
   StopCircle,
   Trash,
+  Warning,
   X,
 } from '@phosphor-icons/react'
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
@@ -27,6 +29,7 @@ import {
   MINCER_SAVE_FOLDER_KEY,
   STAGE_LABELS,
   isTranscriptKind,
+  needsAttention,
   mincerCancel,
   mincerDelete,
   mincerGet,
@@ -55,6 +58,8 @@ interface MincerItemViewProps {
   itemId: string
   job: MincerJobState
   confirm: ReturnType<typeof useConfirm>['confirm']
+  // Posição na fila (1 = o próximo), calculada pela lista do histórico.
+  queuePosition: number | null
   onDeleted: () => void
   onChanged: () => void
   notebooks: Notebook[]
@@ -71,6 +76,13 @@ type Tab = 'summary' | 'text'
 function errorMessage(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err)
   return message === 'OPENROUTER_KEY_MISSING' ? 'Add your OpenRouter key in Settings.' : message
+}
+
+// "1st", "2nd", "3rd", "4th", "11th", "22nd"…
+function ordinal(n: number): string {
+  const tens = n % 100
+  if (tens >= 11 && tens <= 13) return `${n}th`
+  return `${n}${['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`
 }
 
 function readSaveFolder(): string | null {
@@ -112,6 +124,7 @@ export function MincerItemView({
   itemId,
   job,
   confirm,
+  queuePosition,
   onDeleted,
   onChanged,
   notebooks,
@@ -131,6 +144,7 @@ export function MincerItemView({
   const [regenSettings, setRegenSettings] = useState<SummarySettings | null>(null)
   const [noteModalOpen, setNoteModalOpen] = useState(false)
   const [includeTranscript, setIncludeTranscript] = useState(false)
+  const [copied, setCopied] = useState(false)
   const progress = useMincerProgress(itemId)
 
   const load = useCallback(async () => {
@@ -164,6 +178,12 @@ export function MincerItemView({
   // React 19 reescreve o innerHTML quando o objeto muda (quebra a seleção).
   const markup = useMemo(() => ({ __html: html }), [html])
 
+  useEffect(() => {
+    if (!copied) return
+    const timer = window.setTimeout(() => setCopied(false), 1500)
+    return () => window.clearTimeout(timer)
+  }, [copied])
+
   if (!item) {
     return actionError ? <p className={`${shared.error} ${styles.pad}`}>{actionError}</p> : null
   }
@@ -189,6 +209,16 @@ export function MincerItemView({
     } catch (err) {
       setActionError(errorMessage(err))
     }
+  }
+
+  // Copia o Markdown do resumo ou o texto da aba aberta.
+  function handleCopy() {
+    const content = activeTab === 'summary' && !isCapture ? summary : transcript
+    if (!content) return
+    navigator.clipboard
+      .writeText(content)
+      .then(() => setCopied(true))
+      .catch((err) => setActionError(errorMessage(err)))
   }
 
   async function handleRename() {
@@ -323,7 +353,13 @@ export function MincerItemView({
 
       {item.status === 'queued' && (
         <div className={styles.banner}>
-          <span className={shared.muted}>Queued — starts when the items ahead of it finish.</span>
+          <span className={shared.muted}>
+            {queuePosition
+              ? `${ordinal(queuePosition)} in queue — starts when ${
+                  queuePosition === 1 ? 'the current item finishes' : 'the items ahead of it finish'
+                }.`
+              : 'Queued — starts when the items ahead of it finish.'}
+          </span>
           <button type="button" className={shared.secondary} onClick={() => void act(() => mincerCancel(item.id))}>
             <X size={14} aria-hidden="true" />
             Remove from queue
@@ -354,10 +390,26 @@ export function MincerItemView({
       )}
 
       {(item.status === 'error' || item.status === 'cancelled' || item.status === 'interrupted') && (
-        // Cancelar é escolha do usuário: banner neutro, não o de erro.
-        <div className={item.status === 'cancelled' ? styles.banner : styles.errorBanner}>
+        // Cancelar é escolha do usuário: banner neutro. Interrompido ou recuperado
+        // não é falha do conteúdo: âmbar, "Needs attention".
+        <div
+          className={
+            item.status === 'cancelled'
+              ? styles.banner
+              : needsAttention(item)
+                ? styles.attentionBanner
+                : styles.errorBanner
+          }
+        >
           <div className={styles.bannerText}>
+            {needsAttention(item) && (
+              <span className={styles.attentionTitle}>
+                <Warning size={14} aria-hidden="true" />
+                Needs attention
+              </span>
+            )}
             <span>{errorParts ? errorParts.message : 'This item did not finish.'}</span>
+
             {errorParts?.detail && (
               <details className={styles.errorDetail}>
                 <summary>Technical details</summary>
@@ -440,7 +492,7 @@ export function MincerItemView({
             Open folder
           </button>
           <button type="button" className={shared.linkButton} onClick={() => void handleSave(true)}>
-            Change folder
+            Save to another folder…
           </button>
         </div>
       )}
@@ -448,7 +500,7 @@ export function MincerItemView({
       {regenSettings && (
         <div className={styles.regen}>
           <p className={shared.muted}>Current summary: {summary ? regenLabel : 'none'}</p>
-          <SummaryOptions value={regenSettings} onChange={setRegenSettings} />
+          <SummaryOptions value={regenSettings} onChange={setRegenSettings} confirm={confirm} />
           <div className={styles.regenActions}>
             <button type="button" className={shared.primary} onClick={() => void handleRegenerate()}>
               Regenerate summary
@@ -482,6 +534,16 @@ export function MincerItemView({
               onClick={() => setTab('text')}
             >
               {textLabel}
+            </button>
+            <button
+              type="button"
+              className={`${shared.ghost} ${styles.copyButton}`}
+              onClick={handleCopy}
+              disabled={activeTab === 'summary' && !isCapture ? !summary : !transcript}
+              title={activeTab === 'summary' && !isCapture ? 'Copy the summary (Markdown)' : `Copy the ${textLabel.toLowerCase()}`}
+            >
+              {copied ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
+              {copied ? 'Copied' : 'Copy'}
             </button>
           </div>
           {activeTab === 'summary' && !isCapture ? (

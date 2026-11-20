@@ -7,7 +7,8 @@
   background: var(--surface-1, #1e1e22);
   border: 1px solid var(--border, #333340);
   border-radius: 6px;
-  z-index: 200;
+  /* Portal no body: acima do modal da task (1000). */
+  z-index: 1100;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 

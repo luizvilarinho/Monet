@@ -1,5 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Brain, FileText, SidebarSimple } from '@phosphor-icons/react'
+import {
+  Brain,
+  CaretDown,
+  CaretRight,
+  FileText,
+  FolderPlus,
+  PencilSimple,
+  Plus,
+  SidebarSimple,
+  SignOut,
+  Trash,
+} from '@phosphor-icons/react'
 import { SystemPromptIcon } from './SystemPromptIcon'
 import { CLEAR_ALL_CONFIRM, ClearAllChatsTrigger, clearAllMessage } from './ChatClearActions'
 import {
@@ -44,7 +55,7 @@ export interface ChatSidebarProps {
   onCreateFolder: () => string
   onRenameFolder: (id: string, name: string) => void
   onDeleteFolder: (id: string) => void
-  // Clear all: limpa as mensagens de todas as conversas da pasta.
+  // Delete all chats: apaga as conversas da pasta (a pasta fica).
   onClearFolder: (id: string) => void
   onToggleFolderExpanded: (id: string, expanded: boolean) => void
   onNewConversationInFolder: (folderId: string) => void
@@ -72,52 +83,12 @@ const MIN_WIDTH = 180
 const MAX_WIDTH = 480
 
 const ChevronIcon = ({ open }: { open: boolean }) => (
-  <svg
-    viewBox="0 0 16 16"
-    width="12"
-    height="12"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
+  <CaretRight
+    size={12}
+    weight="bold"
     style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}
-    aria-hidden="true"
-  >
-    <polyline points="6 3.5 10.5 8 6 12.5" />
-  </svg>
-)
-
-const FolderIcon = () => (
-  <svg
-    viewBox="0 0 16 16"
-    width="13"
-    height="13"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.6"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    aria-hidden="true"
-  >
-    <path d="M2 4.5a1 1 0 0 1 1-1h3.5l1.5 1.5H13a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4.5z" />
-  </svg>
-)
-
-const PlusIcon = () => (
-  <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
-    <line x1="8" y1="3" x2="8" y2="13" />
-    <line x1="3" y1="8" x2="13" y2="8" />
-  </svg>
-)
-
-const RemoveFromFolderIcon = () => (
-  <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    {/* arrow exiting a small box */}
-    <path d="M9 3h-5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h5" />
-    <polyline points="11 5 14 8 11 11" />
-    <line x1="6" y1="8" x2="14" y2="8" />
-  </svg>
+    aria-hidden
+  />
 )
 
 type ActiveDragKind = 'folder' | 'conv' | null
@@ -373,7 +344,7 @@ export function ChatSidebar({
       : `Delete folder "${folder.name || 'unnamed'}"?`
     const ok = await confirm(message, {
       title: hasConvs ? 'Delete folder and conversations' : 'Delete folder',
-      confirmLabel: 'delete',
+      confirmLabel: 'Delete',
     })
     if (!ok) return
     onDeleteFolder(folder.id)
@@ -396,7 +367,7 @@ export function ChatSidebar({
     }
     const alsoDelete = await confirm(
       `Also delete the ${count} web source${count === 1 ? '' : 's'} saved for this folder? They will be removed from the Knowledge Base and deleted from disk.`,
-      { title: 'Delete web sources', confirmLabel: 'delete', cancelLabel: 'keep' },
+      { title: 'Delete web sources', confirmLabel: 'Delete', cancelLabel: 'Keep' },
     )
     if (!alsoDelete) return
     try {
@@ -585,7 +556,7 @@ export function ChatSidebar({
           aria-expanded={!isCollapsed}
           onClick={() => setGroupCollapsed({ ...groupCollapsed, [group]: !isCollapsed })}
         >
-          <span aria-hidden="true">{isCollapsed ? '▸' : '▾'}</span>
+          {isCollapsed ? <CaretRight size={10} weight="bold" aria-hidden /> : <CaretDown size={10} weight="bold" aria-hidden />}
           {label}
           <span className={styles.groupCount}>{list.length}</span>
         </button>
@@ -611,10 +582,19 @@ export function ChatSidebar({
             type="button"
             className={styles.toggleBtn}
             onClick={onToggleCollapsed}
-            aria-label="expand conversations"
-            title="expand conversations"
+            aria-label="Expand conversations"
+            title="Expand conversations"
           >
             <SidebarSimple size={16} aria-hidden />
+          </button>
+          <button
+            type="button"
+            className={styles.toggleBtn}
+            onClick={onNew}
+            aria-label="New conversation"
+            title="New conversation"
+          >
+            <Plus size={16} aria-hidden />
           </button>
         </div>
       ) : (
@@ -625,24 +605,23 @@ export function ChatSidebar({
           type="button"
           className={styles.toggleBtn}
           onClick={onToggleCollapsed}
-          aria-label="collapse conversations"
-          title="collapse conversations"
+          aria-label="Collapse conversations"
+          title="Collapse conversations"
         >
           <SidebarSimple size={16} aria-hidden />
         </button>
         <button type="button" className={styles.newBtn} onClick={onNew}>
-          <span className={styles.plus} aria-hidden="true">+</span>
+          <Plus size={13} weight="bold" aria-hidden />
           New conversation
         </button>
         <button
           type="button"
           className={styles.newFolderBtn}
           onClick={startCreateFolder}
-          aria-label="new folder"
-          title="new folder"
+          aria-label="New folder"
+          title="New folder"
         >
-          <FolderIcon />
-          <span className={styles.plus} aria-hidden="true">+</span>
+          <FolderPlus size={15} aria-hidden />
         </button>
       </div>
 
@@ -820,11 +799,17 @@ function SortableFolder({
         }}
         {...attributes}
         {...listeners}
+        aria-expanded={folder.expanded}
+        onKeyDown={(e) => {
+          // Enter/Espaço no próprio cabeçalho (não nos botões dele) expandem.
+          if (editing || e.target !== e.currentTarget) return
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            onToggleExpanded()
+          }
+        }}
       >
-        <span
-          className={styles.folderChevron}
-          aria-label={folder.expanded ? 'collapse folder' : 'expand folder'}
-        >
+        <span className={styles.folderChevron} aria-hidden="true">
           <ChevronIcon open={folder.expanded} />
         </span>
         {editing ? (
@@ -923,6 +908,20 @@ function SortableFolder({
               className={styles.folderActions}
               onPointerDown={(e) => e.stopPropagation()}
             >
+              {folder.name !== ASSISTANT_FOLDER_NAME && (
+                <button
+                  type="button"
+                  className={styles.folderActionBtn}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onStartEdit(folder)
+                  }}
+                  aria-label={`Rename folder ${folder.name || ''}`.trim()}
+                  title="Rename"
+                >
+                  <PencilSimple size={12} aria-hidden />
+                </button>
+              )}
               <button
                 type="button"
                 className={styles.folderActionBtn}
@@ -930,10 +929,10 @@ function SortableFolder({
                   e.stopPropagation()
                   onNewConversation()
                 }}
-                aria-label={`new conversation in ${folder.name || 'folder'}`}
-                title="new conversation in this folder"
+                aria-label={`New conversation in ${folder.name || 'folder'}`}
+                title="New conversation in this folder"
               >
-                <PlusIcon />
+                <Plus size={12} weight="bold" aria-hidden />
               </button>
               <ClearAllChatsTrigger
                 folderName={folder.name}
@@ -953,10 +952,10 @@ function SortableFolder({
                     e.stopPropagation()
                     onDeleteFolder()
                   }}
-                  aria-label={`delete folder ${folder.name || ''}`}
-                  title="delete folder"
+                  aria-label={`Delete folder ${folder.name || ''}`.trim()}
+                  title="Delete folder"
                 >
-                  ×
+                  <Trash size={12} aria-hidden />
                 </button>
               )}
             </span>
@@ -1232,6 +1231,18 @@ function SortableConversation({
             className={styles.convActions}
             onPointerDown={(e) => e.stopPropagation()}
           >
+            <button
+              type="button"
+              className={styles.convActionBtn}
+              onClick={(e) => {
+                e.stopPropagation()
+                onStartEdit(conv)
+              }}
+              aria-label="Rename conversation"
+              title="Rename"
+            >
+              <PencilSimple size={12} aria-hidden />
+            </button>
             {inFolder && onRemoveFromFolder && (
               <button
                 type="button"
@@ -1240,10 +1251,10 @@ function SortableConversation({
                   e.stopPropagation()
                   onRemoveFromFolder()
                 }}
-                aria-label="remove from folder"
-                title="remove from folder"
+                aria-label="Remove from folder"
+                title="Remove from folder"
               >
-                <RemoveFromFolderIcon />
+                <SignOut size={12} aria-hidden />
               </button>
             )}
             <button
@@ -1253,10 +1264,10 @@ function SortableConversation({
                 e.stopPropagation()
                 onDelete()
               }}
-              aria-label="delete conversation"
-              title="delete conversation"
+              aria-label="Delete conversation"
+              title="Delete conversation (Undo for a few seconds)"
             >
-              ×
+              <Trash size={12} aria-hidden />
             </button>
           </span>
         </>

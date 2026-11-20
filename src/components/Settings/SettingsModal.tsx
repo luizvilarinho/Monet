@@ -1,5 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { X } from '@phosphor-icons/react'
 import { getVersion } from '@tauri-apps/api/app'
+import { invoke } from '@tauri-apps/api/core'
+import { openUrl } from '@tauri-apps/plugin-opener'
 import { check } from '@tauri-apps/plugin-updater'
 import type { Update } from '@tauri-apps/plugin-updater'
 import {
@@ -26,6 +29,8 @@ import {
   MINCER_SILENCE_STOP_KEY,
   MINCER_SUMMARY_MODEL_KEY,
   MINCER_TRANSCRIPTION_MODEL_KEY,
+  MAX_RECORD_HOURS,
+  getMaxRecordHours,
   mincerListTranscriptionModels,
   type MincerModel,
 } from '../../lib/mincer'
@@ -38,7 +43,7 @@ import {
 } from '../../lib/workCapacity'
 import styles from './SettingsModal.module.css'
 
-export type SettingsSection = 'openrouter' | 'search' | 'agenda' | 'mincer' | 'about'
+export type SettingsSection = 'openrouter' | 'search' | 'knowledge' | 'agenda' | 'mincer' | 'about'
 
 export interface SettingsModalProps {
   open: boolean
@@ -52,10 +57,22 @@ export interface SettingsModalProps {
 const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: 'openrouter', label: 'OpenRouter Integration' },
   { id: 'search', label: 'Web Search' },
+  { id: 'knowledge', label: 'Knowledge Base' },
   { id: 'agenda', label: 'Agenda' },
   { id: 'mincer', label: 'Mincer' },
   { id: 'about', label: 'About & Updates' },
 ]
+
+// Verificação da chave salva (no Rust, que nunca devolve a chave).
+interface OpenRouterKeyInfo {
+  last4: string
+  ok: boolean
+  // Crédito restante do limite da chave; null sem limite.
+  limitRemaining: number | null
+  error: string | null
+}
+
+const MAX_RECORD_OPTIONS = [1, 2, 3, 4, 6]
 
 // Dias de trabalho na ordem seg→dom; valor como em Date.getDay().
 const WORK_DAY_OPTIONS: Array<{ day: number; label: string }> = [
@@ -91,6 +108,15 @@ export function SettingsModal({
   }>({ kind: 'idle', message: '' })
   // Modelo da reescrita da consulta do RAG (vazio = padrão do backend)
   const [rewriteModel, setRewriteModel] = useState('')
+  const [keyInfo, setKeyInfo] = useState<OpenRouterKeyInfo | null>(null)
+  const [keyChecking, setKeyChecking] = useState(false)
+  // Muda a cada save: confere a chave nova mesmo com outra já salva.
+  const [keyCheckNonce, setKeyCheckNonce] = useState(0)
+  // Remover uma chave pede confirmação em linha.
+  const [confirmingRemove, setConfirmingRemove] = useState<'openrouter' | 'tavily' | null>(null)
+  // "Saved" ao lado do campo gravado sozinho (some depois de 2 s).
+  const [savedField, setSavedField] = useState<string | null>(null)
+  const savedTimerRef = useRef<number | null>(null)
 
   // Agenda state (capacidade de trabalho do plan-week)
   const [workHours, setWorkHours] = useState('')
@@ -144,7 +170,7 @@ export function SettingsModal({
     setTranscriptionModel(localStorage.getItem(MINCER_TRANSCRIPTION_MODEL_KEY) ?? '')
     setSummaryModel(localStorage.getItem(MINCER_SUMMARY_MODEL_KEY) ?? '')
     setSilenceStop(localStorage.getItem(MINCER_SILENCE_STOP_KEY) ?? String(DEFAULT_SILENCE_STOP_MINUTES))
-    setMaxRecordHours(localStorage.getItem(MINCER_MAX_RECORD_KEY) ?? String(DEFAULT_MAX_RECORD_HOURS))
+    setMaxRecordHours(String(getMaxRecordHours()))
     const capacity = loadWorkCapacity()
     setWorkHours(String(capacity.hoursPerDay))
     setWorkDays(capacity.workDays)
@@ -156,6 +182,8 @@ export function SettingsModal({
       .then(setHasTavily)
       .catch(() => setHasTavily(false))
     setCheckStatus({ kind: 'idle', message: '' })
+    setConfirmingRemove(null)
+    setSavedField(null)
     setUpdatePref(getUpdatePreference())
     getVersion()
       .then(setAppVersion)
@@ -181,6 +209,40 @@ export function SettingsModal({
       cancelled = true
     }
   }, [open, section, hasKey])
+
+  // Ao salvar e ao abrir a seção: a OpenRouter diz se a chave funciona e o
+  // saldo do limite.
+  useEffect(() => {
+    if (!open || section !== 'openrouter' || !hasKey) {
+      setKeyInfo(null)
+      return
+    }
+    let cancelled = false
+    setKeyChecking(true)
+    invoke<OpenRouterKeyInfo | null>('openrouter_key_info')
+      .then((info) => {
+        if (!cancelled) setKeyInfo(info)
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setKeyInfo({ last4: '', ok: false, limitRemaining: null, error: err instanceof Error ? err.message : String(err) })
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setKeyChecking(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, section, hasKey, keyCheckNonce])
+
+  useEffect(() => () => {
+    if (savedTimerRef.current !== null) window.clearTimeout(savedTimerRef.current)
+  }, [])
+
+  useEffect(() => {
+    setConfirmingRemove(null)
+  }, [section])
 
   useEffect(() => {
     if (!open) return
@@ -211,7 +273,8 @@ export function SettingsModal({
       await saveOpenRouterKey(trimmed)
       setHasKey(true)
       setKeyValue('')
-      setStatus({ kind: 'success', message: 'Key saved securely.' })
+      setKeyCheckNonce((n) => n + 1)
+      setStatus({ kind: 'success', message: 'Key saved on this device.' })
       onApiKeyChanged(true)
     } catch (err) {
       setStatus({
@@ -224,6 +287,7 @@ export function SettingsModal({
   }
 
   async function handleClear() {
+    setConfirmingRemove(null)
     setSaving(true)
     try {
       await clearOpenRouterKey()
@@ -240,11 +304,26 @@ export function SettingsModal({
     }
   }
 
+  function markSaved(field: string) {
+    setSavedField(field)
+    if (savedTimerRef.current !== null) window.clearTimeout(savedTimerRef.current)
+    savedTimerRef.current = window.setTimeout(() => setSavedField(null), 2000)
+  }
+
+  function savedBadge(field: string) {
+    return savedField === field ? (
+      <span className={styles.saved} role="status">
+        Saved
+      </span>
+    ) : null
+  }
+
   function handleRewriteModelChange(value: string) {
     setRewriteModel(value)
     const trimmed = value.trim()
     if (trimmed) localStorage.setItem(RAG_REWRITE_MODEL_KEY, trimmed)
     else localStorage.removeItem(RAG_REWRITE_MODEL_KEY)
+    markSaved(RAG_REWRITE_MODEL_KEY)
   }
 
   function handleMincerSettingChange(key: string, value: string, set: (v: string) => void) {
@@ -252,6 +331,7 @@ export function SettingsModal({
     const trimmed = value.trim()
     if (trimmed) localStorage.setItem(key, trimmed)
     else localStorage.removeItem(key)
+    markSaved(key)
   }
 
   function handleWorkHoursChange(value: string) {
@@ -311,6 +391,7 @@ export function SettingsModal({
   }
 
   async function handleTavilyClear() {
+    setConfirmingRemove(null)
     try {
       await clearTavilyKey()
       setHasTavily(false)
@@ -358,10 +439,11 @@ export function SettingsModal({
           <button
             className={styles.close}
             onClick={onClose}
-            aria-label="close"
+            aria-label="Close"
+            title="Close"
             type="button"
           >
-            ×
+            <X size={16} aria-hidden />
           </button>
         </header>
         <div className={styles.body}>
@@ -374,6 +456,7 @@ export function SettingsModal({
                       s.id === section ? styles.sectionActive : styles.section
                     }
                     onClick={() => setSection(s.id)}
+                    aria-current={s.id === section ? 'page' : undefined}
                     type="button"
                   >
                     {s.label}
@@ -387,8 +470,8 @@ export function SettingsModal({
               <div className={styles.form}>
                 <h3 className={styles.formTitle}>OpenRouter Integration</h3>
                 <p className={styles.formHelp}>
-                  Your key is saved in a local file by the app. It is never
-                  exposed to the frontend after saving.
+                  Used by Chat, /commands, Knowledge Base indexing and Mincer. The key is saved in a local
+                  file on this device; Monet shows only its last 4 characters.
                 </p>
                 <label className={styles.label} htmlFor="or-key">
                   API Key
@@ -404,6 +487,7 @@ export function SettingsModal({
                       : 'sk-or-v1-...'
                   }
                   onChange={(e) => setKeyValue(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && !saving) void handleSave() }}
                   autoComplete="off"
                   spellCheck={false}
                 />
@@ -414,19 +498,30 @@ export function SettingsModal({
                     onClick={handleSave}
                     disabled={saving}
                   >
-                    {saving ? 'saving...' : 'save key'}
+                    {saving ? 'Saving…' : 'Save key'}
                   </button>
-                  {hasKey && (
+                  {hasKey && confirmingRemove !== 'openrouter' && (
                     <button
                       className={styles.secondary}
                       type="button"
-                      onClick={handleClear}
+                      onClick={() => setConfirmingRemove('openrouter')}
                       disabled={saving}
                     >
-                      remove key
+                      Remove key
                     </button>
                   )}
                 </div>
+                {confirmingRemove === 'openrouter' && (
+                  <div className={styles.confirmRow} role="alert">
+                    <span>Remove the key? AI features stop until you add one again.</span>
+                    <button className={styles.danger} type="button" onClick={() => void handleClear()} disabled={saving}>
+                      Remove key
+                    </button>
+                    <button className={styles.secondary} type="button" onClick={() => setConfirmingRemove(null)}>
+                      Cancel
+                    </button>
+                  </div>
+                )}
                 {status.kind !== 'idle' && (
                   <p
                     className={
@@ -438,27 +533,30 @@ export function SettingsModal({
                     {status.message}
                   </p>
                 )}
-                <p className={styles.footNote}>
-                  {hasKey
-                    ? 'A key is already configured in this app.'
-                    : 'No key configured. Without the key, the AI panel cannot start requests.'}
-                </p>
-                <label className={styles.label} htmlFor="rag-rewrite-model">
-                  Retrieval model (query rewrite)
-                </label>
-                <input
-                  id="rag-rewrite-model"
-                  className={styles.input}
-                  type="text"
-                  value={rewriteModel}
-                  placeholder="openai/gpt-4.1-mini"
-                  onChange={(e) => handleRewriteModelChange(e.target.value)}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-                <p className={styles.footNote}>
-                  OpenRouter model that rewrites your message into a search query for your documents. Leave empty to use the default.
-                </p>
+                {hasKey ? (
+                  <p
+                    className={
+                      keyChecking || !keyInfo ? styles.footNote : keyInfo.ok ? styles.keyOk : styles.keyError
+                    }
+                    role="status"
+                  >
+                    {keyChecking || !keyInfo
+                      ? 'Checking the key with OpenRouter…'
+                      : [
+                          keyInfo.ok ? 'Key works' : keyInfo.error,
+                          keyInfo.last4 ? `ending in …${keyInfo.last4}` : null,
+                          keyInfo.ok && keyInfo.limitRemaining !== null
+                            ? `$${keyInfo.limitRemaining.toFixed(2)} left`
+                            : null,
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')}
+                  </p>
+                ) : (
+                  <p className={styles.footNote}>
+                    No key configured. Chat, /commands, Knowledge Base indexing and Mincer need it.
+                  </p>
+                )}
               </div>
             )}
 
@@ -466,8 +564,12 @@ export function SettingsModal({
               <div className={styles.form}>
                 <h3 className={styles.formTitle}>Web Search (Tavily)</h3>
                 <p className={styles.formHelp}>
-                  The Tavily key enables the <code>/search</code> and <code>/profile</code> commands to query the internet before responding. Create a free account at{' '}
-                  <strong>tavily.com</strong> (1,000 searches/month free).
+                  Used by Web search, Deep research, <code>/search</code>, <code>/profile</code> and{' '}
+                  <code>/expand</code> to query the internet before responding. Create a free account at{' '}
+                  <button type="button" className={styles.linkBtn} onClick={() => void openUrl('https://tavily.com')}>
+                    tavily.com
+                  </button>{' '}
+                  (1,000 searches/month free).
                 </p>
                 <label className={styles.label} htmlFor="tav-key">
                   API Key
@@ -494,19 +596,30 @@ export function SettingsModal({
                     onClick={handleTavilySave}
                     disabled={tavSaving}
                   >
-                    save key
+                    {tavSaving ? 'Saving…' : 'Save key'}
                   </button>
-                  {hasTavily && (
+                  {hasTavily && confirmingRemove !== 'tavily' && (
                     <button
                       className={styles.secondary}
                       type="button"
-                      onClick={handleTavilyClear}
+                      onClick={() => setConfirmingRemove('tavily')}
                       disabled={tavSaving}
                     >
-                      remove key
+                      Remove key
                     </button>
                   )}
                 </div>
+                {confirmingRemove === 'tavily' && (
+                  <div className={styles.confirmRow} role="alert">
+                    <span>Remove the key? Web search and Deep research stop until you add one again.</span>
+                    <button className={styles.danger} type="button" onClick={() => void handleTavilyClear()}>
+                      Remove key
+                    </button>
+                    <button className={styles.secondary} type="button" onClick={() => setConfirmingRemove(null)}>
+                      Cancel
+                    </button>
+                  </div>
+                )}
                 {tavStatus.kind !== 'idle' && (
                   <p className={tavStatus.kind === 'error' ? styles.statusError : styles.statusOk}>
                     {tavStatus.message}
@@ -514,8 +627,39 @@ export function SettingsModal({
                 )}
                 <p className={styles.footNote}>
                   {hasTavily
-                    ? 'Web search active. /search and /profile commands query the internet.'
-                    : 'Without the key, /search and /profile use only the model\'s knowledge.'}
+                    ? 'Web search is on: Web search, Deep research, /search, /profile and /expand query the internet.'
+                    : 'Without the key, Web search and Deep research are off, and /search, /profile and /expand use only the model\'s knowledge.'}
+                </p>
+              </div>
+            )}
+
+            {section === 'knowledge' && (
+              <div className={styles.form}>
+                <h3 className={styles.formTitle}>Knowledge Base</h3>
+                <p className={styles.formHelp}>
+                  How the AI searches your documents and notes. Indexing and search use your OpenRouter key.
+                </p>
+                <label className={styles.label} htmlFor="rag-rewrite-model">
+                  Retrieval model (query rewrite) {savedBadge(RAG_REWRITE_MODEL_KEY)}
+                </label>
+                <input
+                  id="rag-rewrite-model"
+                  className={styles.input}
+                  type="text"
+                  value={rewriteModel}
+                  placeholder="openai/gpt-4.1-mini"
+                  onChange={(e) => handleRewriteModelChange(e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <p className={styles.footNote}>
+                  OpenRouter model that rewrites your message into a search query for your documents. Leave empty to use the default.
+                </p>
+                <span className={styles.label}>Watched folders</span>
+                <p className={styles.formHelp}>
+                  Monet checks watched folders for changes when it starts and when you return to its window, at
+                  most once a minute. Changes made while Monet is in front are picked up the next time you
+                  return. Rescan all in the Knowledge Base checks them right away.
                 </p>
               </div>
             )}
@@ -572,7 +716,7 @@ export function SettingsModal({
                   Models used by Mincer to transcribe audio and summarize content. Uses your OpenRouter key.
                 </p>
                 <label className={styles.label} htmlFor="mincer-transcription-model">
-                  Transcription model
+                  Transcription model {savedBadge(MINCER_TRANSCRIPTION_MODEL_KEY)}
                 </label>
                 <select
                   id="mincer-transcription-model"
@@ -604,12 +748,17 @@ export function SettingsModal({
                     </option>
                   ))}
                 </select>
+                {!hasKey && (
+                  <button type="button" className={styles.linkBtn} onClick={() => setSection('openrouter')}>
+                    Go to OpenRouter Integration
+                  </button>
+                )}
                 {modelsStatus === 'error' && <p className={styles.statusError}>{modelsError}</p>}
                 <p className={styles.footNote}>
                   Needed for audio, video, recordings and YouTube.
                 </p>
                 <label className={styles.label} htmlFor="mincer-summary-model">
-                  Summary model
+                  Summary model {savedBadge(MINCER_SUMMARY_MODEL_KEY)}
                 </label>
                 <input
                   id="mincer-summary-model"
@@ -627,7 +776,7 @@ export function SettingsModal({
                   OpenRouter model id that writes the summaries. Leave empty to use the Chat model.
                 </p>
                 <label className={styles.label} htmlFor="mincer-silence-stop">
-                  Stop recording after silence
+                  Stop recording after silence {savedBadge(MINCER_SILENCE_STOP_KEY)}
                 </label>
                 <select
                   id="mincer-silence-stop"
@@ -647,7 +796,7 @@ export function SettingsModal({
                   stops and is processed without the silent end. You get a Windows notice before it stops.
                 </p>
                 <label className={styles.label} htmlFor="mincer-max-record">
-                  Maximum recording length
+                  Maximum recording length {savedBadge(MINCER_MAX_RECORD_KEY)}
                 </label>
                 <select
                   id="mincer-max-record"
@@ -655,7 +804,11 @@ export function SettingsModal({
                   value={maxRecordHours}
                   onChange={(e) => handleMincerSettingChange(MINCER_MAX_RECORD_KEY, e.target.value, setMaxRecordHours)}
                 >
-                  {[1, 2, 3, 4, 6, 8].map((h) => (
+                  {/* Um teto salvo fora das opções (ex.: 5 h) aparece como está. */}
+                  {(MAX_RECORD_OPTIONS.includes(Number(maxRecordHours))
+                    ? MAX_RECORD_OPTIONS
+                    : [...MAX_RECORD_OPTIONS, Number(maxRecordHours)].sort((a, b) => a - b)
+                  ).map((h) => (
                     <option key={h} value={String(h)}>
                       {h} h
                     </option>
@@ -663,6 +816,7 @@ export function SettingsModal({
                 </select>
                 <p className={styles.footNote}>
                   A safety limit: the recording stops and is processed when it reaches this length.
+                  Recordings can last up to {MAX_RECORD_HOURS} hours.
                 </p>
               </div>
             )}

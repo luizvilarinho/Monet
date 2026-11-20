@@ -1,14 +1,9 @@
-import { useEffect, useState } from 'react'
+import { ArrowClockwise, CaretRight, ChatCircle, Check, Copy, FileText, GearSix, Stop, X } from '@phosphor-icons/react'
+import { useEffect, useMemo, useState } from 'react'
 import type { AiResponse, AiSource } from '../../types'
+import { findAgent } from '../../lib/agents'
 import { renderMarkdown } from '../../lib/markdown'
 import styles from './AiPanel.module.css'
-
-const SourceIcon = () => (
-  <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M3.5 2.5h6L12.5 5.5v8a1 1 0 0 1-1 1h-8a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1z" />
-    <polyline points="9.5 2.5 9.5 5.5 12.5 5.5" />
-  </svg>
-)
 
 function SourcesSection({ sources }: { sources: AiSource[] }) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
@@ -20,7 +15,7 @@ function SourcesSection({ sources }: { sources: AiSource[] }) {
   return (
     <details className={styles.sources}>
       <summary className={styles.sourcesSummary}>
-        <SourceIcon />
+        <FileText size={11} aria-hidden />
         Sources ({sources.length})
       </summary>
       <ul className={styles.sourcesList}>
@@ -35,7 +30,7 @@ function SourcesSection({ sources }: { sources: AiSource[] }) {
                 onClick={() => toggle(key)}
                 aria-expanded={isExpanded}
               >
-                <SourceIcon />
+                <FileText size={11} aria-hidden />
                 <span className={styles.sourceName}>{s.documentName}</span>
                 <span className={styles.sourceMeta}>· excerpt {s.chunkIndex + 1}</span>
               </button>
@@ -50,45 +45,65 @@ function SourcesSection({ sources }: { sources: AiSource[] }) {
   )
 }
 
-export interface AiCardProps {
-  response: AiResponse
-  execIndex: number
-  forceOpen?: boolean
-  globalExpand?: boolean | null
+// Seção do Settings que resolve o erro (chave ausente ou inválida).
+export type AiSettingsSection = 'openrouter' | 'search'
+
+function settingsSectionFor(message: string): AiSettingsSection | null {
+  if (/tavily/i.test(message)) return 'search'
+  if (/OPENROUTER_KEY_MISSING|openrouter key|api key/i.test(message)) return 'openrouter'
+  return null
+}
+
+export interface AiCardActions {
   onDelete?: (id: string) => void
-  hasApiKey?: boolean
   onOpenInChat?: (response: AiResponse) => void
+  // Erro ou interrupção: roda o mesmo comando de novo.
+  onRetry?: (response: AiResponse) => void
+  // Preparo ou streaming: para o pedido.
+  onStop?: (id: string) => void
+  onOpenSettings?: (section: AiSettingsSection) => void
 }
 
-const CopyIcon = () => (
-  <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-    <rect x="5" y="5" width="9" height="9" rx="1" />
-    <path d="M11 4V3a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h1" />
-  </svg>
-)
-
-const CheckIcon = () => (
-  <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <polyline points="3,8 6,11 13,4" />
-  </svg>
-)
-
-const ChatIcon = () => (
-  <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M2.5 3.5h11a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H6.5l-3 2.5v-2.5h-1a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1z" />
-  </svg>
-)
-
-const STATUS_LABEL: Record<AiResponse['status'], string> = {
-  streaming: 'responding...',
-  completed: 'completed',
-  interrupted: 'interrupted',
-  error: 'error',
+export interface AiCardProps extends AiCardActions {
+  response: AiResponse
+  globalExpand?: boolean | null
+  hasApiKey?: boolean
+  // A resposta está inserida como bloco de IA na nota aberta.
+  inNote?: boolean
 }
 
-export function AiCard({ response, execIndex, forceOpen, globalExpand, onDelete, hasApiKey, onOpenInChat }: AiCardProps) {
-  const [open, setOpen] = useState(response.status === 'streaming')
+// Só os status que pedem atenção; o concluído não leva rótulo.
+function statusLabel(r: AiResponse): string | null {
+  switch (r.status) {
+    case 'preparing':
+      return r.statusText || 'Preparing…'
+    case 'streaming':
+      return 'Responding…'
+    case 'interrupted':
+      return r.response ? 'Interrupted' : 'Stopped'
+    case 'error':
+      return 'Error'
+    default:
+      return null
+  }
+}
+
+export function AiCard({
+  response,
+  globalExpand,
+  hasApiKey,
+  inNote,
+  onDelete,
+  onOpenInChat,
+  onRetry,
+  onStop,
+  onOpenSettings,
+}: AiCardProps) {
+  const active = response.status === 'preparing' || response.status === 'streaming'
+  const [open, setOpen] = useState(active)
   const [renderedHtml, setRenderedHtml] = useState('')
+  // React 19 regrava o innerHTML se o objeto muda a cada render (perde a seleção).
+  const inner = useMemo(() => ({ __html: renderedHtml }), [renderedHtml])
   const [copied, setCopied] = useState(false)
 
   useEffect(() => {
@@ -106,27 +121,23 @@ export function AiCard({ response, execIndex, forceOpen, globalExpand, onDelete,
   }
 
   useEffect(() => {
-    if (forceOpen) setOpen(true)
-  }, [forceOpen])
-
-  useEffect(() => {
     if (globalExpand === null || globalExpand === undefined) return
-    if (response.status === 'streaming') return
+    if (active) return
     setOpen(globalExpand)
-  }, [globalExpand, response.status])
+  }, [globalExpand, active])
 
   useEffect(() => {
-    if (response.status === 'streaming') return
+    if (active) return
     if (!response.response) { setRenderedHtml(''); return }
     let cancelled = false
     renderMarkdown(response.response).then((html) => {
       if (!cancelled) setRenderedHtml(html)
     })
     return () => { cancelled = true }
-  }, [response.response, response.status])
+  }, [response.response, active])
 
   const statusClass =
-    response.status === 'streaming'
+    active
       ? styles.statusStreaming
       : response.status === 'interrupted'
         ? styles.statusInterrupted
@@ -135,19 +146,18 @@ export function AiCard({ response, execIndex, forceOpen, globalExpand, onDelete,
           : styles.statusCompleted
 
   const empty = response.response.length === 0
-  const showError = response.status === 'error' && empty
+  const showError = response.status === 'error'
   const hasBody = !showError && !empty
+  const label = statusLabel(response)
+  const failed = response.status === 'error' || response.status === 'interrupted'
+  const canRetry = failed && !!onRetry && !!findAgent(response.command)
+  const settingsSection = showError ? settingsSectionFor(response.response) : null
 
   return (
     <article
-      className={
-        response.status === 'streaming'
-          ? `${styles.card} ${styles.cardStreaming}`
-          : styles.card
-      }
-      aria-live={response.status === 'streaming' ? 'polite' : undefined}
+      className={active ? `${styles.card} ${styles.cardStreaming}` : styles.card}
+      aria-live={active ? 'polite' : undefined}
       data-status={response.status}
-      data-exec-index={execIndex}
     >
       <header
         className={`${styles.cardHeader} ${hasBody ? styles.cardHeaderClickable : ''}`}
@@ -155,30 +165,36 @@ export function AiCard({ response, execIndex, forceOpen, globalExpand, onDelete,
       >
         {hasBody && (
           <span className={`${styles.chevron} ${open ? styles.chevronOpen : ''}`} aria-hidden="true">
-            ›
+            <CaretRight size={12} />
           </span>
         )}
         <span className={styles.cmd}>{response.command}</span>
         {response.query && (
           <span className={styles.query}>{response.query}</span>
         )}
-        <span className={`${styles.status} ${statusClass}`}>
-          {response.status === 'streaming' && (
-            <span className={styles.streamDot} aria-hidden="true" />
-          )}
-          {STATUS_LABEL[response.status]}
-        </span>
-        {onDelete && response.status !== 'streaming' && (
+        {inNote && (
+          <span className={styles.inNoteBadge} title="This response is inserted as an AI block in the open note">
+            In note
+          </span>
+        )}
+        {label && (
+          <span className={`${styles.status} ${statusClass}`}>
+            {active && <span className={styles.streamDot} aria-hidden="true" />}
+            {label}
+          </span>
+        )}
+        {onDelete && !active && (
           <button
-            className={styles.deleteBtn}
+            className={`${styles.deleteBtn} ${failed ? styles.deleteBtnVisible : ''}`}
             onClick={(e) => {
               e.stopPropagation()
               onDelete(response.id)
             }}
-            aria-label="delete response"
+            aria-label="Delete response"
+            title="Delete response"
             type="button"
           >
-            ×
+            <X size={12} aria-hidden />
           </button>
         )}
       </header>
@@ -187,9 +203,9 @@ export function AiCard({ response, execIndex, forceOpen, globalExpand, onDelete,
       )}
       {showError ? (
         <div className={styles.errorBody}>
-          Failed to get response: {response.response || 'unknown error'}
+          {response.response || 'Unknown error.'}
         </div>
-      ) : (
+      ) : response.status === 'preparing' ? null : (
         <div className={`${styles.body} ${response.status !== 'streaming' ? styles.bodyMd : ''} ${!open ? styles.bodyCollapsed : ''}`}>
           {response.status === 'streaming' ? (
             <>
@@ -197,13 +213,51 @@ export function AiCard({ response, execIndex, forceOpen, globalExpand, onDelete,
               <span className={styles.caretBlink} aria-hidden="true">▍</span>
             </>
           ) : (
-            <div dangerouslySetInnerHTML={{ __html: renderedHtml }} />
+            <div dangerouslySetInnerHTML={inner} />
           )}
         </div>
       )}
-      {response.status === 'interrupted' && open && (
+      {response.status === 'interrupted' && (open || empty) && (
         <div className={styles.interruptedNote}>
-          Response interrupted before finishing.
+          {empty ? 'Stopped before the response started.' : 'Response interrupted before finishing.'}
+        </div>
+      )}
+      {active && onStop && (
+        <div className={styles.cardActions}>
+          <button
+            type="button"
+            className={styles.cardActionBtn}
+            onClick={() => onStop(response.id)}
+            title="Stop this request"
+          >
+            <Stop size={12} weight="fill" aria-hidden />
+            <span>Stop</span>
+          </button>
+        </div>
+      )}
+      {failed && (canRetry || (settingsSection && onOpenSettings)) && (
+        <div className={styles.cardActions}>
+          {settingsSection && onOpenSettings && (
+            <button
+              type="button"
+              className={styles.cardActionBtn}
+              onClick={() => onOpenSettings(settingsSection)}
+            >
+              <GearSix size={12} aria-hidden />
+              <span>Open Settings</span>
+            </button>
+          )}
+          {canRetry && (
+            <button
+              type="button"
+              className={styles.cardActionBtn}
+              onClick={() => onRetry?.(response)}
+              title="Run this command again"
+            >
+              <ArrowClockwise size={12} aria-hidden />
+              <span>Retry</span>
+            </button>
+          )}
         </div>
       )}
       {response.status === 'completed' && open && hasBody && (
@@ -212,10 +266,10 @@ export function AiCard({ response, execIndex, forceOpen, globalExpand, onDelete,
             type="button"
             className={`${styles.cardActionBtn} ${copied ? styles.cardActionBtnConfirmed : ''}`}
             onClick={handleCopy}
-            aria-label={copied ? 'response copied' : 'copy response'}
+            aria-label={copied ? 'Response copied' : 'Copy response'}
             title={copied ? 'Copied!' : 'Copy response'}
           >
-            {copied ? <CheckIcon /> : <CopyIcon />}
+            {copied ? <Check size={13} aria-hidden /> : <Copy size={13} aria-hidden />}
             <span>{copied ? 'Copied' : 'Copy'}</span>
           </button>
           <button
@@ -226,16 +280,16 @@ export function AiCard({ response, execIndex, forceOpen, globalExpand, onDelete,
               onOpenInChat?.(response)
             }}
             disabled={!hasApiKey}
-            aria-label="continue in Chat mode"
+            aria-label="Continue in chat"
             aria-disabled={!hasApiKey}
-            title={hasApiKey ? 'Continue conversation in Chat mode' : 'Add your OpenRouter key in Settings'}
+            title={hasApiKey ? 'Continue this conversation in the notebook chat' : 'Add your OpenRouter key in Settings'}
           >
-            <ChatIcon />
+            <ChatCircle size={13} aria-hidden />
             <span>Chat</span>
           </button>
         </div>
       )}
-      {response.sources && response.sources.length > 0 && response.status !== 'streaming' && (
+      {response.sources && response.sources.length > 0 && !active && (
         <SourcesSection sources={response.sources} />
       )}
     </article>

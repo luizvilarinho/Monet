@@ -36,6 +36,41 @@
   color: var(--text-muted);
 }
 
+/* Autocomplete do filtro em digitação (`#`, `tag:`, `type:`, `mark:`): o 1º
+   é o que o Tab completa. */
+.suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.suggestActive {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+.suggestHint,
+.suggestEmpty {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.suggestHint {
+  margin-left: auto;
+}
+
+.suggestHint kbd {
+  font-family: inherit;
+  font-size: 10px;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
 /* Filtros: caderno ativo e tipos clicáveis (alternam `type:` no texto). */
 .chips {
   display: flex;
@@ -161,8 +196,8 @@
   text-decoration: line-through;
 }
 
-/* TODOS da task, à direita do título. */
-.itemMeta {
+/* À direita do título: a TODOS da task e a data no MarkNotePicker. */
+.itemAside {
   flex-shrink: 1;
   min-width: 0;
   max-width: 40%;
@@ -248,6 +283,24 @@
   color: var(--text-secondary);
   overflow: hidden;
   white-space: nowrap;
+}
+
+/* Propriedade cujo valor casou com a busca ("Author: Kahneman"). */
+.itemProp {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 40%;
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* "Create note “…”" quando nada casa. */
+.createIcon {
+  flex-shrink: 0;
+  color: var(--accent);
 }
 
 .sectionHeader {

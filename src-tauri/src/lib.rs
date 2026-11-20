@@ -5,12 +5,13 @@ mod mincer;
 mod ocr;
 pub mod rag;
 mod screenshot;
+mod sse;
 mod vec_db;
 
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
@@ -251,6 +252,75 @@ fn get_tavily_key(app: AppHandle) -> Result<Option<String>, String> {
     Ok(read_key(&app, "tavily_key"))
 }
 
+// Verificação da chave salva (Settings). A chave não volta ao frontend: só os
+// 4 últimos caracteres.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenRouterKeyInfo {
+    last4: String,
+    ok: bool,
+    // Crédito restante do limite da chave; None quando a chave não tem limite.
+    limit_remaining: Option<f64>,
+    error: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct OpenRouterKeyResponse {
+    data: OpenRouterKeyData,
+}
+
+#[derive(Deserialize)]
+struct OpenRouterKeyData {
+    limit_remaining: Option<f64>,
+}
+
+fn key_suffix(key: &str) -> String {
+    let chars: Vec<char> = key.chars().collect();
+    chars[chars.len().saturating_sub(4)..].iter().collect()
+}
+
+fn key_check_error(status: reqwest::StatusCode) -> String {
+    match status.as_u16() {
+        401 | 403 => "OpenRouter rejected this key. Check it or create a new one.".to_string(),
+        402 => "This key has no credits left. Add credits on OpenRouter.".to_string(),
+        429 => "Too many requests to OpenRouter. Try again in a moment.".to_string(),
+        s if s >= 500 => "OpenRouter is having trouble right now. Try again later.".to_string(),
+        _ => format!("OpenRouter returned an error ({}).", status),
+    }
+}
+
+// None sem chave salva. Uma falha da verificação vem em `error`, não como Err.
+#[tauri::command]
+async fn openrouter_key_info(app: AppHandle) -> Result<Option<OpenRouterKeyInfo>, String> {
+    let Some(key) = read_key(&app, "openrouter_key") else {
+        return Ok(None);
+    };
+    let last4 = key_suffix(&key);
+    let resp = documents::http_client()
+        .get("https://openrouter.ai/api/v1/key")
+        .bearer_auth(&key)
+        .header("HTTP-Referer", "https://monet.local")
+        .header("X-Title", "Monet")
+        .send()
+        .await;
+    let result = match resp {
+        Err(e) => {
+            eprintln!("OpenRouter key check: {}", e);
+            Err("Could not reach OpenRouter to check the key. Check your connection.".to_string())
+        }
+        Ok(r) if r.status().is_success() => r
+            .json::<OpenRouterKeyResponse>()
+            .await
+            .map(|parsed| parsed.data.limit_remaining)
+            .map_err(|e| format!("OpenRouter sent an unexpected answer ({}).", e)),
+        Ok(r) => Err(key_check_error(r.status())),
+    };
+    Ok(Some(match result {
+        Ok(limit_remaining) => OpenRouterKeyInfo { last4, ok: true, limit_remaining, error: None },
+        Err(error) => OpenRouterKeyInfo { last4, ok: false, limit_remaining: None, error: Some(error) },
+    }))
+}
+
 #[tauri::command]
 async fn extract_pdf_text(bytes: Vec<u8>) -> Result<String, String> {
     pdf_text_from_mem(bytes).await
@@ -395,7 +465,7 @@ fn is_valid_model_id(model: &str) -> bool {
 #[tauri::command]
 async fn openrouter_list_models(app: AppHandle) -> Result<Vec<ModelInfo>, String> {
     let key = read_key(&app, "openrouter_key").ok_or_else(|| "OPENROUTER_KEY_MISSING".to_string())?;
-    let client = reqwest::Client::new();
+    let client = documents::http_client();
     let resp = client
         .get("https://openrouter.ai/api/v1/models")
         .bearer_auth(&key)
@@ -483,7 +553,7 @@ async fn deep_research_generate_sub_queries(
         },
     });
 
-    let client = reqwest::Client::new();
+    let client = documents::http_client();
     let resp = match client
         .post("https://openrouter.ai/api/v1/chat/completions")
         .bearer_auth(&key)
@@ -590,7 +660,7 @@ async fn librarian_decide(
         "response_format": { "type": "json_object" },
     });
 
-    let client = reqwest::Client::new();
+    let client = documents::http_client();
     let resp = match client
         .post("https://openrouter.ai/api/v1/chat/completions")
         .bearer_auth(&key)
@@ -788,7 +858,7 @@ async fn web_search_route(
         "max_tokens": 350,
     });
 
-    let client = reqwest::Client::new();
+    let client = documents::http_client();
     let resp = match client
         .post("https://openrouter.ai/api/v1/chat/completions")
         .bearer_auth(&key)
@@ -1075,6 +1145,24 @@ fn finish_tool_calls_fallback(
     StreamError::ToolCall
 }
 
+// Cliente do stream: sem timeout total, que mataria respostas longas. O
+// read_timeout cobre a espera pelos cabeçalhos (servidor que aceita a conexão e
+// não responde) e reinicia a cada leitura; é folgado porque modelos com
+// reasoning demoram a mandar o primeiro byte. A inatividade entre pacotes é
+// coberta pelo STREAM_CHUNK_TIMEOUT.
+const STREAM_READ_TIMEOUT: Duration = Duration::from_secs(180);
+
+fn stream_http_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .read_timeout(STREAM_READ_TIMEOUT)
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new())
+    })
+}
+
 async fn run_openrouter_stream(
     app: &AppHandle,
     request_id: &str,
@@ -1098,20 +1186,26 @@ async fn run_openrouter_stream(
         body["tool_choice"] = serde_json::json!("auto");
     }
 
-    let client = reqwest::Client::new();
-    let resp = client
+    let client = stream_http_client();
+    let send = client
         .post("https://openrouter.ai/api/v1/chat/completions")
         .bearer_auth(key)
         .header("Content-Type", "application/json")
         .header("HTTP-Referer", "https://monet.local")
         .header("X-Title", "Monet")
         .json(&body)
-        .send()
-        .await
-        .map_err(|e| StreamError::Failed {
+        .send();
+    // O Stop vale também na espera pelos cabeçalhos (modelos com reasoning
+    // podem levar minutos até o primeiro byte), não só durante o corpo.
+    let resp = tokio::select! {
+        _ = &mut cancel_rx => {
+            return Err(StreamError::Cancelled);
+        }
+        r = send => r.map_err(|e| StreamError::Failed {
             code: "NETWORK_ERROR".into(),
             message: format!("Could not connect to OpenRouter: {}", e),
-        })?;
+        })?,
+    };
 
     let status = resp.status();
     if !status.is_success() {
@@ -1124,7 +1218,7 @@ async fn run_openrouter_stream(
     }
 
     let mut stream = resp.bytes_stream();
-    let mut buffer = String::new();
+    let mut buffer = sse::SseLineBuffer::default();
     let mut completion_tokens: u64 = 0;
     let mut tool_calls: std::collections::BTreeMap<u64, (String, String)> =
         std::collections::BTreeMap::new();
@@ -1155,11 +1249,9 @@ async fn run_openrouter_stream(
                         });
                     }
                 };
-                buffer.push_str(&String::from_utf8_lossy(&bytes));
+                buffer.push(&bytes);
 
-                while let Some(pos) = buffer.find('\n') {
-                    let raw_line = buffer[..pos].to_string();
-                    buffer.drain(..=pos);
+                while let Some(raw_line) = buffer.next_line() {
                     let line = raw_line.trim();
                     if line.is_empty() || line.starts_with(':') {
                         continue;
@@ -1294,6 +1386,15 @@ async fn run_openrouter_stream(
         return Err(finish_tool_calls_fallback(app, request_id, &tool_calls));
     }
     Ok((completion_tokens,))
+}
+
+// Antes do install: no Windows o plugin do updater sai do processo
+// (std::process::exit) sem o RunEvent::Exit, então o shutdown do Mincer
+// roda aqui. A gravação vira item, e o job volta à frente da fila.
+#[tauri::command]
+async fn mincer_prepare_update(app: AppHandle) -> Result<(), String> {
+    mincer::shutdown(&app);
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1675,14 +1776,45 @@ pub fn run() {
                 }
             }
 
+            // ─── Atalho global Ctrl+M → toggle da janela assistant ─────────
+            // Falha de registro (ex.: atalho ja em uso) nao deve crashar o startup.
+            // Registrado antes do tray: o menu só mostra o atalho que funciona.
+            let (ctrl_m_ok, ctrl_k_ok) = {
+                use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
+                let ctrl_m = Shortcut::new(Some(Modifiers::CONTROL), Code::KeyM);
+                let ctrl_m_ok = match app.global_shortcut().register(ctrl_m) {
+                    Ok(()) => true,
+                    Err(err) => {
+                        eprintln!("failed to register Ctrl+M global shortcut: {err}");
+                        false
+                    }
+                };
+                // Ctrl+K → toggle da janela keep (nota do dia). Mesmo
+                // tratamento tolerante a falha do Ctrl+M.
+                let ctrl_k = Shortcut::new(Some(Modifiers::CONTROL), Code::KeyK);
+                let ctrl_k_ok = match app.global_shortcut().register(ctrl_k) {
+                    Ok(()) => true,
+                    Err(err) => {
+                        eprintln!("failed to register Ctrl+K global shortcut: {err}");
+                        false
+                    }
+                };
+                (ctrl_m_ok, ctrl_k_ok)
+            };
+
             // ─── System tray ───────────────────────────────────────────────
             let open_item = MenuItemBuilder::with_id("open", "Open").build(app)?;
+            // As janelas dos atalhos globais, com o atalho no rótulo.
+            let keep_label = if ctrl_k_ok { "Daily note (Ctrl+K)" } else { "Daily note" };
+            let keep_item = MenuItemBuilder::with_id("keep", keep_label).build(app)?;
+            let assistant_label = if ctrl_m_ok { "Assistant (Ctrl+M)" } else { "Assistant" };
+            let assistant_item = MenuItemBuilder::with_id("assistant", assistant_label).build(app)?;
             let mincer_stop_item = MenuItemBuilder::with_id(mincer::TRAY_STOP_ID, "Stop recording and process")
                 .enabled(false)
                 .build(app)?;
             let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
             let tray_menu = MenuBuilder::new(app)
-                .items(&[&open_item, &mincer_stop_item])
+                .items(&[&open_item, &keep_item, &assistant_item, &mincer_stop_item])
                 .separator()
                 .items(&[&quit_item])
                 .build()?;
@@ -1693,6 +1825,8 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "open" => show_and_focus_window(app, "main"),
+                    "keep" => toggle_keep_window(app),
+                    "assistant" => toggle_assistant_window(app),
                     mincer::TRAY_STOP_ID => mincer::stop_recording_from_outside(app),
                     "quit" => app.exit(0),
                     _ => {}
@@ -1737,22 +1871,6 @@ pub fn run() {
                 documents::rescan_watched_folders_on_startup(startup_handle).await;
             });
 
-            // ─── Atalho global Ctrl+M → toggle da janela assistant ─────────
-            // Falha de registro (ex.: atalho ja em uso) nao deve crashar o startup.
-            {
-                use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
-                let ctrl_m = Shortcut::new(Some(Modifiers::CONTROL), Code::KeyM);
-                if let Err(err) = app.global_shortcut().register(ctrl_m) {
-                    eprintln!("failed to register Ctrl+M global shortcut: {err}");
-                }
-                // Ctrl+K → toggle da janela keep (nota do dia). Mesmo
-                // tratamento tolerante a falha do Ctrl+M.
-                let ctrl_k = Shortcut::new(Some(Modifiers::CONTROL), Code::KeyK);
-                if let Err(err) = app.global_shortcut().register(ctrl_k) {
-                    eprintln!("failed to register Ctrl+K global shortcut: {err}");
-                }
-            }
-
             Ok(())
         })
         .plugin(
@@ -1792,6 +1910,7 @@ pub fn run() {
             save_openrouter_key,
             has_openrouter_key,
             clear_openrouter_key,
+            openrouter_key_info,
             save_tavily_key,
             has_tavily_key,
             clear_tavily_key,
@@ -1816,7 +1935,6 @@ pub fn run() {
             open_main_window,
             open_note_in_main,
             open_task_in_main,
-            vec_db::vec_db_smoke_test,
             documents::documents_upload_global,
             documents::documents_reindex,
             documents::documents_index_outdated_count,
@@ -1836,11 +1954,12 @@ pub fn run() {
             documents::documents_replace_notebook_visibility,
             documents::documents_get_notebook_visible_ids,
             documents::documents_get_notebooks_with_visible_docs,
+            documents::documents_list_visibility,
             documents::documents_search_by_ids,
             documents::documents_resolve_searchable_ids,
             rag::rag_retrieve,
             rag::rag_get_chunks,
-            documents::documents_pick_file,
+            documents::documents_pick_files,
             documents::documents_pick_folder,
             documents::documents_add_watched_folder,
             documents::documents_scan_watched_folder,
@@ -1882,7 +2001,10 @@ pub fn run() {
             mincer::mincer_record_stop,
             mincer::mincer_record_extend,
             mincer::mincer_record_discard,
-            mincer::mincer_record_status
+            mincer::mincer_record_status,
+            mincer::mincer_record_set_title,
+            mincer::mincer_record_devices,
+            mincer_prepare_update
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

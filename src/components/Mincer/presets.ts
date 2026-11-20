@@ -165,11 +165,28 @@ export function describeSummarySettings(s: SummarySettings): string {
   return s.mode === 'replace' ? 'Custom instructions' : `${label} + instructions`
 }
 
-export function loadSummarySettings(): SummarySettings {
+function isPresetId(value: string | null): value is MincerPresetId {
+  return MINCER_PRESETS.some((p) => p.id === value)
+}
+
+// O último preset de cada aba da tela New (reunião no Record, aula no YouTube…);
+// sem um, o último usado em qualquer aba.
+export function loadPresetForTab(tab: string): MincerPresetId {
   try {
-    const preset = localStorage.getItem(PRESET_KEY)
+    const own = localStorage.getItem(`${PRESET_KEY}:${tab}`)
+    if (isPresetId(own)) return own
+    const last = localStorage.getItem(PRESET_KEY)
+    return isPresetId(last) ? last : 'meeting'
+  } catch {
+    return 'meeting'
+  }
+}
+
+// As instruções extras são comuns às abas; o preset é por aba.
+export function loadSummarySettings(tab: string): SummarySettings {
+  try {
     return {
-      presetId: MINCER_PRESETS.some((p) => p.id === preset) ? (preset as MincerPresetId) : 'meeting',
+      presetId: loadPresetForTab(tab),
       extra: localStorage.getItem(EXTRA_KEY) ?? '',
       mode: localStorage.getItem(MODE_KEY) === 'replace' ? 'replace' : 'append',
     }
@@ -178,8 +195,9 @@ export function loadSummarySettings(): SummarySettings {
   }
 }
 
-export function saveSummarySettings(s: SummarySettings): void {
+export function saveSummarySettings(s: SummarySettings, tab: string): void {
   try {
+    localStorage.setItem(`${PRESET_KEY}:${tab}`, s.presetId)
     localStorage.setItem(PRESET_KEY, s.presetId)
     localStorage.setItem(EXTRA_KEY, s.extra)
     localStorage.setItem(MODE_KEY, s.mode)

@@ -18,13 +18,22 @@ export interface NewTaskInput {
   notebookId: string
   noteId: string | null
   sourceNoteId?: string | null
+  // My Day: criada no board de hoje já nasce planejada para hoje.
+  plannedDay?: string | null
+}
+
+export interface UseTasksOptions {
+  // Ocorrência nova de uma recorrente, depois de gravada (o App copia a nota-corpo).
+  onOccurrenceCreated?: (from: Task, occurrence: Task) => void
 }
 
 // Tabela de tasks. A nota-corpo e o caderno-projeto são orquestrados no App;
 // este hook só persiste a task. Toda mutação persistida emite `tasks-changed`, que faz
 // as outras janelas recarregarem. A emissora não recarrega: seu estado otimista já
 // está à frente do banco, e um reload em voo poderia trazer uma linha defasada.
-export function useTasks() {
+export function useTasks(opts?: UseTasksOptions) {
+  const onOccurrenceCreatedRef = useRef(opts?.onOccurrenceCreated)
+  onOccurrenceCreatedRef.current = opts?.onOccurrenceCreated
   const [tasks, setTasks] = useState<Task[]>([])
   const [saveError, setSaveError] = useState<string | null>(null)
   // Primeira leitura concluída com sucesso: antes disso `tasks=[]` não é
@@ -99,7 +108,7 @@ export function useTasks() {
           rescheduleCount: 0,
           sortOrder: order,
           doingSince: status === 'doing' ? now : null,
-          plannedDay: null,
+          plannedDay: i.plannedDay ?? null,
           metadata: {},
         }
       })
@@ -136,7 +145,7 @@ export function useTasks() {
       }
       if (nextById.size === 0) return true
       const existing = new Set(current.map((t) => t.id))
-      const generated: Task[] = []
+      const generated: Array<{ from: Task; occurrence: Task }> = []
       let order = current.reduce((m, t) => Math.max(m, t.sortOrder), 0)
       for (const [id, next] of nextById) {
         const becameDone = prevById.get(id)!.status !== 'done' && next.status === 'done'
@@ -144,17 +153,19 @@ export function useTasks() {
         if (!becameDone || !next.recurrence || alreadyGenerated) continue
         order += 1
         const occurrence = buildNextOccurrence(next, nanoid(), order, dateKeyFromMs(now), now)
-        generated.push(occurrence)
+        generated.push({ from: next, occurrence })
         nextById.set(id, { ...next, recurrenceNextId: occurrence.id })
       }
       setTasks((list) => [
         ...(opts?.freshBase ? current : list).map((t) => nextById.get(t.id) ?? t),
-        ...generated,
+        ...generated.map((g) => g.occurrence),
       ])
-      return persist(async () => {
+      const ok = await persist(async () => {
         for (const t of nextById.values()) await storage.saveTask(t)
-        for (const t of generated) await storage.saveTask(t)
+        for (const g of generated) await storage.saveTask(g.occurrence)
       }, 'save tasks')
+      if (ok) for (const g of generated) onOccurrenceCreatedRef.current?.(g.from, g.occurrence)
+      return ok
     },
     [persist]
   )

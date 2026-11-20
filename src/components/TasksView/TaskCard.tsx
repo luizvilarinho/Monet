@@ -1,10 +1,21 @@
 import { Fragment, useState, type CSSProperties } from 'react'
-import { CalendarBlank, Checks, Clock, Flag, Repeat, Sun, Target, Trash } from '@phosphor-icons/react'
+import {
+  ArrowClockwise,
+  CalendarBlank,
+  Checks,
+  Clock,
+  Flag,
+  Repeat,
+  Sun,
+  Target,
+  Trash,
+} from '@phosphor-icons/react'
 import { formatMetadataValue, visibleMetadata } from '../../lib/metadata'
 import {
   describeRecurrence,
-  formatDueShort,
+  formatDateLong,
   formatElapsed,
+  formatRelativeDay,
   isDone,
   isOpen,
   overdueKind,
@@ -22,7 +33,9 @@ import styles from './TaskCard.module.css'
 // Card de task das visões de Tasks (List, Today, Week, Kanban, Projects,
 // TODOS, Review): bloco de status sólido no topo, deadline à direita, título,
 // "Projeto | TODOS", metadados key/value e um rodapé com datas, checklist,
-// reagendamentos e ações. Na List vira uma linha (ver `list`).
+// reagendamentos e ações. Na List vira uma linha (ver `list`), e o status só
+// aparece quando não é o padrão (To do). Datas relativas ("Tomorrow"), com a
+// data completa no title.
 interface TaskCardProps {
   task: Task
   todayKey: string
@@ -53,7 +66,7 @@ interface TaskCardProps {
   onDelete?: () => void
   // Adia a data de planejamento; ausente = sem botão.
   onSnooze?: (kind: SnoozeKind) => void
-  // Plan today: adiciona/remove a task de hoje; ausente = sem botão.
+  // My Day: adiciona/remove a task de hoje; ausente = sem botão.
   planned?: boolean
   onTogglePlan?: () => void
 }
@@ -120,9 +133,9 @@ export function TaskCard({
         <button
           type="button"
           className={`${styles.action} ${planned ? styles.planned : ''}`}
-          aria-label={planned ? 'Remove from today' : 'Add to today'}
+          aria-label={planned ? 'Remove from My Day' : 'Add to My Day'}
           aria-pressed={planned}
-          title={planned ? 'Remove from today' : 'Add to today'}
+          title={planned ? 'Remove from My Day' : 'Add to My Day'}
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation()
@@ -193,9 +206,12 @@ export function TaskCard({
     </span>
   )
   const dueEl = task.dueDate && (
-    <span className={`${styles.due} ${late === 'deadline' ? styles.late : ''}`} title="Deadline">
+    <span
+      className={`${styles.due} ${late === 'deadline' ? styles.late : ''}`}
+      title={`${late === 'deadline' ? 'Deadline missed' : 'Deadline'}: ${formatDateLong(task.dueDate)}`}
+    >
       <Target size={11} aria-hidden />
-      {formatDueShort(task.dueDate)}
+      {formatRelativeDay(task.dueDate, todayKey)}
     </span>
   )
 
@@ -238,7 +254,7 @@ export function TaskCard({
         </div>
         {(list || projectName || todos) && (
           <div className={styles.ctx}>
-            {list && statusEl}
+            {list && task.status !== 'todo' && statusEl}
             {projectName && (
               <span className={styles.project}>
                 <span
@@ -291,9 +307,12 @@ export function TaskCard({
       {hasChips && (
         <div className={styles.foot}>
           {scheduled && (
-            <span className={`${styles.chip} ${late === 'plan' ? styles.latePlan : ''}`} title="Do date">
+            <span
+              className={`${styles.chip} ${late === 'plan' ? styles.latePlan : ''}`}
+              title={`Do date: ${formatDateLong(scheduled)}`}
+            >
               <CalendarBlank size={11} aria-hidden />
-              {formatDueShort(scheduled)}
+              {formatRelativeDay(scheduled, todayKey)}
             </span>
           )}
           {checklist && checklist.total > 0 && (
@@ -316,7 +335,8 @@ export function TaskCard({
               className={`${styles.chip} ${postponed >= 3 ? styles.postponedHigh : ''}`}
               title={`Postponed ${postponed}×`}
             >
-              ↻{postponed}
+              <ArrowClockwise size={11} aria-hidden />
+              {postponed}
             </span>
           )}
           {task.important && (

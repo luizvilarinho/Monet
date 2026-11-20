@@ -146,3 +146,73 @@ export function onOpenRouterToolCallStarted(
 ): Promise<UnlistenFn> {
   return listen<StreamToolCallStartedPayload>('openrouter://tool_call_started', (e) => handler(e.payload))
 }
+
+// Mensagem legível para os erros do chat, no padrão do Mincer. O Rust devolve
+// um código (INVALID_MODEL, HTTP_ERROR, …) e uma mensagem técnica; o status
+// HTTP vem dentro dela ("OpenRouter responded 402 Payment Required"). Quando o
+// invoke rejeita, só a string do código chega, por isso o código também é
+// aceito como mensagem. `settings` indica que a correção está no Settings.
+export interface ReadableChatError {
+  message: string
+  settings: boolean
+}
+
+const KNOWN_CODES = new Set([
+  OPENROUTER_KEY_MISSING,
+  'INVALID_MODEL',
+  'HTTP_ERROR',
+  'NETWORK_ERROR',
+  'STREAM_TIMEOUT',
+  'STREAM_ERROR',
+  'OPENROUTER_ERROR',
+  'TOOL_CALL_INCOMPLETE',
+])
+
+// Status só no formato de status ("OpenRouter responded 429", "status 429",
+// "HTTP 429"): um número solto ("max 500 tokens") não é erro HTTP.
+function httpStatusOf(message: string): number | null {
+  const m =
+    /OpenRouter responded (\d{3})/.exec(message) ?? /\b(?:HTTP|status)[\s:]+([45]\d\d)\b/i.exec(message)
+  return m ? Number(m[1]) : null
+}
+
+export function readableChatError(code: string | undefined, message: string): ReadableChatError {
+  const raw = (message ?? '').trim()
+  const effectiveCode = code ?? (KNOWN_CODES.has(raw) ? raw : undefined)
+
+  if (effectiveCode === OPENROUTER_KEY_MISSING) {
+    return { message: 'Add your OpenRouter key in Settings to chat with the AI.', settings: true }
+  }
+  if (effectiveCode === 'INVALID_MODEL') {
+    return { message: 'This model is not valid. Choose another model and try again.', settings: false }
+  }
+  if (effectiveCode === 'NETWORK_ERROR') {
+    return { message: 'Could not reach OpenRouter. Check your connection and try again.', settings: false }
+  }
+  if (effectiveCode === 'STREAM_TIMEOUT') {
+    return { message: 'The model stopped responding. Try again.', settings: false }
+  }
+  if (effectiveCode === 'STREAM_ERROR') {
+    return { message: 'The connection to OpenRouter was interrupted. Try again.', settings: false }
+  }
+
+  const status = effectiveCode === 'HTTP_ERROR' || effectiveCode === undefined ? httpStatusOf(raw) : null
+  if (status !== null) {
+    if (status === 401) {
+      return { message: 'OpenRouter rejected your API key. Check it in Settings.', settings: true }
+    }
+    if (status === 402) {
+      return { message: 'Your OpenRouter credits are out. Add credits, then try again.', settings: true }
+    }
+    if (status === 429) {
+      return { message: 'Too many requests to OpenRouter. Wait a moment, then try again.', settings: false }
+    }
+    if (status >= 500) {
+      return { message: 'OpenRouter is having trouble right now. Try again in a few minutes.', settings: false }
+    }
+    const detail = /OpenRouter responded (.+)$/.exec(raw)?.[1]?.trim() ?? String(status)
+    return { message: `OpenRouter returned an error (${detail}).`, settings: false }
+  }
+
+  return { message: raw || 'Something went wrong. Try again.', settings: false }
+}

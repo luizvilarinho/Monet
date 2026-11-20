@@ -59,28 +59,36 @@ async function rerankResults(
     .filter((r): r is SearchResult => r !== undefined)
 }
 
+// `signal` (Stop do chat): as buscas no Tavily são canceladas na hora e, entre
+// as etapas, o pipeline para com AbortError. As chamadas ao Rust (sub-queries e
+// rerank) não são canceláveis; o resultado delas é descartado.
 export async function runDeepResearch(
   query: string,
   onPhase: (phase: DeepResearchPhase) => void,
-  currentDate: string
+  currentDate: string,
+  signal?: AbortSignal
 ): Promise<DeepResearchResult> {
   // Stage 1: initial search
+  signal?.throwIfAborted()
   onPhase('searching')
-  const initialResults = await webSearch(query, 7, true)
+  const initialResults = await webSearch(query, 7, true, signal)
 
   // Stage 2: generate sub-queries
+  signal?.throwIfAborted()
   onPhase('expanding')
   const subQueries = await generateSubQueries(query, initialResults, currentDate).catch(() => [] as string[])
 
   // Stage 3: parallel searches
+  signal?.throwIfAborted()
   onPhase('broadening')
   let allResults = [...initialResults]
   if (subQueries.length > 0) {
     const parallel = await Promise.all(
-      subQueries.map((q) => webSearch(q, 6, true).catch(() => [] as SearchResult[]))
+      subQueries.map((q) => webSearch(q, 6, true, signal).catch(() => [] as SearchResult[]))
     )
     allResults = [...allResults, ...parallel.flat()]
   }
+  signal?.throwIfAborted()
 
   // Stage 4: deduplicate by URL
   const seen = new Set<string>()
@@ -96,6 +104,7 @@ export async function runDeepResearch(
   const topResults = await rerankResults(query, deduplicated, 8).catch(
     () => deduplicated.slice(0, 8)
   )
+  signal?.throwIfAborted()
 
   const formattedContext = topResults
     .map((r, i) => {

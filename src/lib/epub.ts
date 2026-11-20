@@ -589,6 +589,32 @@ export async function getEpubLocationText(
   }
 }
 
+// Texto do trecho visível (do início ao fim da tela, nas duas colunas do
+// spread) para o contexto do chat. `startCfi` e `endCfi` são os pontos que o
+// `relocated` reporta. null quando os dois não estão na mesma seção ou não
+// resolvem — o chamador cai na fatia da location.
+export async function getEpubRangeText(
+  book: EpubBookHandle,
+  startCfi: string,
+  endCfi: string,
+): Promise<string | null> {
+  try {
+    // Em sequência: as duas chamadas carregam a seção, e em paralelo a
+    // segunda carga poderia trocar o documento da primeira.
+    const start = await book.getRange(startCfi)
+    const end = await book.getRange(endCfi)
+    const doc = start?.startContainer.ownerDocument
+    if (!doc || !end || end.endContainer.ownerDocument !== doc) return null
+    const range = doc.createRange()
+    range.setStart(start.startContainer, start.startOffset)
+    range.setEnd(end.endContainer, end.endOffset)
+    const text = range.toString().replace(/\s+/g, ' ').trim()
+    return text.length > 0 ? text : null
+  } catch {
+    return null
+  }
+}
+
 interface FlatTocAnchor {
   label: string
   sectionIndex: number

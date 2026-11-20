@@ -195,6 +195,12 @@ export function collectNoteMarks(notes: Note[], opts?: { includeArchived?: boole
   return hits
 }
 
+// Conteúdo sem as tags de marca (e com o espaço colapsado): o "Undo" do
+// Resolve da lista Marks só restaura quando a nota não mudou além da marca.
+export function withoutNoteMarkTags(content: string): string {
+  return content.replace(/<mark\b[^>]*>|<\/mark>/g, '').replace(/\s+/g, ' ').trim()
+}
+
 // ─── IA ─────────────────────────────────────────────────────────────────────
 
 const MARK_TAG_RE = /<mark\b[^>]*?\bdata-mark(?:="([^"]*)")?[^>]*>([\s\S]*?)<\/mark>/g

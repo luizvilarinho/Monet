@@ -1,12 +1,13 @@
 import { useState } from 'react'
-import { CaretDown, PencilSimple, Trash } from '@phosphor-icons/react'
+import { CaretDown, Keyboard, PencilSimple, Trash } from '@phosphor-icons/react'
 import { useConfirm } from '../../hooks/useConfirm'
 import { useTasksEnv } from './TasksEnv'
 import { TASK_VIEWS, type TasksMainView } from './views'
+import { TASKS_SHORTCUTS_EVENT } from './TaskShortcuts'
 import styles from './ViewMenu.module.css'
 
 // Dropdown de visões ao lado do título "Tasks": visões built-in, visões salvas
-// (renomear/excluir) e "Save current view…".
+// (renomear/excluir), "Save current view…" e "Keyboard shortcuts".
 interface ViewMenuProps {
   mainView: TasksMainView
   onMainViewChange: (view: TasksMainView) => void
@@ -161,6 +162,17 @@ export function ViewMenu({ mainView, onMainViewChange }: ViewMenuProps) {
               Save current view…
             </button>
           )}
+          <button
+            type="button"
+            className={`${styles.item} ${styles.itemIcon}`}
+            onClick={() => {
+              close()
+              window.dispatchEvent(new Event(TASKS_SHORTCUTS_EVENT))
+            }}
+          >
+            <Keyboard size={12} aria-hidden />
+            Keyboard shortcuts
+          </button>
         </div>
       )}
       {modal}

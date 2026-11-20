@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { Plus, X } from '@phosphor-icons/react'
 import type { Book, Note, Notebook, NoteType } from '../../types'
 import { storage } from '../../storage'
 import { booksDeleteFile, importBook } from '../../lib/books'
 import { useConfirm } from '../../hooks/useConfirm'
 import {
+  countReaderBookChatConversations,
   deleteChatFolderById,
   getReaderChatFolderId,
   unlinkBookFromReaderFolder,
@@ -39,6 +41,8 @@ export interface LibraryProps {
     typeId?: string | null,
   ) => Promise<Note>
   onSaveNote: (note: Note) => Promise<void>
+  // Abre o Settings do app (repassado ao chat dos leitores).
+  onOpenSettings: () => void
 }
 
 // Mesma pasta escolhida duas vezes (Windows: caixa e barra final variam).
@@ -48,6 +52,30 @@ function normalizeRoot(root: string): string {
 
 function formatDate(ms: number): string {
   return new Date(ms).toLocaleDateString()
+}
+
+function plural(n: number, word: string): string {
+  return `${n} ${word}${n === 1 ? '' : 's'}`
+}
+
+// Progresso em % nos dois formatos (no EPUB, `lastPage`/`totalPages` são
+// locations, não páginas).
+function progressPercent(book: Book): number {
+  if (book.totalPages <= 0) return 0
+  return Math.min(100, Math.round((book.lastPage / book.totalPages) * 100))
+}
+
+// Mais recente primeiro: a última abertura, ou a importação para o livro
+// nunca aberto (o recém-importado aparece no topo).
+function recency(book: Book): number {
+  return book.lastOpenedAt ?? book.addedAt
+}
+
+// Acima disso a lista ganha o campo de filtro.
+const BOOK_FILTER_MIN = 10
+
+function foldText(s: string): string {
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
 }
 
 // Continuação de leitura: id do livro aberto no Reader. Gravado ao abrir um
@@ -62,6 +90,7 @@ export function Library({
   onCreateNotebook,
   onCreateNote,
   onSaveNote,
+  onOpenSettings,
 }: LibraryProps) {
   const [books, setBooks] = useState<Book[]>([])
   const [loading, setLoading] = useState(true)
@@ -71,6 +100,7 @@ export function Library({
   const [editingId, setEditingId] = useState<string | null>(null)
   const [titleDraft, setTitleDraft] = useState('')
   const [authorDraft, setAuthorDraft] = useState('')
+  const [bookFilter, setBookFilter] = useState('')
   // Pastas de documentação .md: persistidas em localStorage (id + root +
   // alias); o DocsReader abre como um modo próprio, como o Reader dos livros,
   // e é retomado ao voltar ao Library (mesmo regime do OPEN_BOOK_KEY).
@@ -158,12 +188,29 @@ export function Library({
     }
   }
 
-  async function handleDelete(book: Book) {
-    const ok = await confirm(
-      `Delete "${book.title}"? The book file will be removed.`,
-      { title: 'Delete book' },
+  // Devolve se o livro saiu da Library.
+  async function handleDelete(book: Book): Promise<boolean> {
+    // O que vai junto com o livro, para a confirmação dizer.
+    const highlightCount = await storage
+      .getHighlights(book.id)
+      .then((list) => list.length)
+      .catch(() => null)
+    const conversations = plural(
+      countReaderBookChatConversations(book.id),
+      'chat conversation',
     )
-    if (!ok) return
+    const highlights =
+      highlightCount === null ? 'highlights' : plural(highlightCount, 'highlight')
+    const ok = await confirm(
+      `Delete "${book.title}"? This also deletes its ${highlights} and ${conversations}. Quotes already saved in your notes are kept.`,
+      {
+        title: 'Delete book',
+        confirmLabel: 'Delete book',
+        cancelLabel: 'Cancel',
+        destructive: true,
+      },
+    )
+    if (!ok) return false
     setErrorMessage(null)
     try {
       await booksDeleteFile(book.filePath)
@@ -181,9 +228,16 @@ export function Library({
       // livro (diferente da pasta de chat, exclusiva do livro).
       unlinkBookFromReaderNote(book.id)
       setBooks((prev) => prev.filter((b) => b.id !== book.id))
+      return true
     } catch (e) {
       setErrorMessage(e instanceof Error ? e.message : String(e))
+      return false
     }
+  }
+
+  // "Remove from Library" na tela de livro sem arquivo.
+  async function handleRemoveOpenBook(book: Book) {
+    if (await handleDelete(book)) closeReader()
   }
 
   function openReader(book: Book) {
@@ -220,7 +274,7 @@ export function Library({
       }
       // Sugestão de alias: nome da pasta (editável antes de confirmar).
       setAliasDraft(
-        root.split(/[\\/]/).filter(Boolean).pop() ?? 'Documentation',
+        root.split(/[\\/]/).filter(Boolean).pop() ?? 'Docs',
       )
       setPendingDocsRoot(root)
       setRenamingDocsId(null)
@@ -231,7 +285,7 @@ export function Library({
 
   function confirmNewDocsFolder() {
     if (!pendingDocsRoot) return
-    const alias = aliasDraft.trim() || 'Documentation'
+    const alias = aliasDraft.trim() || 'Docs'
     updateDocsFolders([
       ...docsFolders,
       { id: crypto.randomUUID(), root: pendingDocsRoot, alias },
@@ -266,7 +320,7 @@ export function Library({
   async function handleRemoveDocs(folder: DocsFolder) {
     const ok = await confirm(
       `Remove "${folder.alias}"? The folder on disk is not touched.`,
-      { title: 'Remove documentation' },
+      { title: 'Remove docs folder', confirmLabel: 'Remove', cancelLabel: 'Cancel' },
     )
     if (!ok) return
     updateDocsFolders(docsFolders.filter((f) => f.id !== folder.id))
@@ -285,6 +339,14 @@ export function Library({
     setOpenDocsId(null)
   }
 
+  const visibleBooks = useMemo(() => {
+    const query = foldText(bookFilter.trim())
+    const filtered = query
+      ? books.filter((b) => foldText(`${b.title} ${b.author ?? ''}`).includes(query))
+      : books
+    return [...filtered].sort((a, b) => recency(b) - recency(a))
+  }, [books, bookFilter])
+
   // Um modo por vez: a pasta de docs abre no lugar do Library, como o Reader.
   const openDocsFolder = docsFolders.find((f) => f.id === openDocsId)
   if (openDocsFolder) {
@@ -301,35 +363,45 @@ export function Library({
   // que cada um só recebe o livro que sabe abrir.
   if (openBook?.format === 'epub') {
     return (
-      <EpubReader
-        book={openBook}
-        onBack={closeReader}
-        onBookChange={handleBookChange}
-        onLoadError={() => localStorage.removeItem(OPEN_BOOK_KEY)}
-        notebooks={notebooks}
-        notes={notes}
-        noteTypes={noteTypes}
-        onCreateNotebook={onCreateNotebook}
-        onCreateNote={onCreateNote}
-        onSaveNote={onSaveNote}
-      />
+      <>
+        <EpubReader
+          book={openBook}
+          onBack={closeReader}
+          onBookChange={handleBookChange}
+          onLoadError={() => localStorage.removeItem(OPEN_BOOK_KEY)}
+          notebooks={notebooks}
+          notes={notes}
+          noteTypes={noteTypes}
+          onCreateNotebook={onCreateNotebook}
+          onCreateNote={onCreateNote}
+          onSaveNote={onSaveNote}
+          onOpenSettings={onOpenSettings}
+          onRemoveBook={() => void handleRemoveOpenBook(openBook)}
+        />
+        {confirmModal}
+      </>
     )
   }
 
   if (openBook) {
     return (
-      <Reader
-        book={openBook}
-        onBack={closeReader}
-        onBookChange={handleBookChange}
-        onLoadError={() => localStorage.removeItem(OPEN_BOOK_KEY)}
-        notebooks={notebooks}
-        notes={notes}
-        noteTypes={noteTypes}
-        onCreateNotebook={onCreateNotebook}
-        onCreateNote={onCreateNote}
-        onSaveNote={onSaveNote}
-      />
+      <>
+        <Reader
+          book={openBook}
+          onBack={closeReader}
+          onBookChange={handleBookChange}
+          onLoadError={() => localStorage.removeItem(OPEN_BOOK_KEY)}
+          notebooks={notebooks}
+          notes={notes}
+          noteTypes={noteTypes}
+          onCreateNotebook={onCreateNotebook}
+          onCreateNote={onCreateNote}
+          onSaveNote={onSaveNote}
+          onOpenSettings={onOpenSettings}
+          onRemoveBook={() => void handleRemoveOpenBook(openBook)}
+        />
+        {confirmModal}
+      </>
     )
   }
 
@@ -344,7 +416,8 @@ export function Library({
             className={styles.secondary}
             onClick={() => void handlePickDocsFolder()}
           >
-            + Docs folder
+            <Plus size={12} aria-hidden />
+            Add docs folder
           </button>
           <button
             type="button"
@@ -352,7 +425,8 @@ export function Library({
             onClick={handleImport}
             disabled={importing}
           >
-            {importing ? 'Importing…' : '+ Import book'}
+            {!importing && <Plus size={12} aria-hidden />}
+            {importing ? 'Importing…' : 'Import book'}
           </button>
         </div>
       </header>
@@ -365,16 +439,17 @@ export function Library({
             className={styles.dismiss}
             onClick={() => setErrorMessage(null)}
             aria-label="Dismiss error"
+            title="Dismiss"
           >
-            ×
+            <X size={14} aria-hidden />
           </button>
         </div>
       )}
 
       <div className={styles.body}>
         {(pendingDocsRoot !== null || docsFolders.length > 0) && (
-          <section className={styles.docsSection} aria-label="Documentation">
-            <h3 className={styles.docsSectionTitle}>Documentation</h3>
+          <section className={styles.docsSection} aria-label="Docs folders">
+            <h3 className={styles.docsSectionTitle}>Docs folders</h3>
             <ul className={styles.docsList}>
               {docsFolders.map((folder) =>
                 renamingDocsId === folder.id ? (
@@ -387,7 +462,7 @@ export function Library({
                         if (e.key === 'Enter') saveRenameDocs(folder)
                         if (e.key === 'Escape') cancelRenameDocs()
                       }}
-                      aria-label="Documentation name"
+                      aria-label="Docs folder name"
                       autoFocus
                     />
                     <div className={styles.docsActions}>
@@ -396,14 +471,14 @@ export function Library({
                         className={styles.secondary}
                         onClick={() => saveRenameDocs(folder)}
                       >
-                        save
+                        Save
                       </button>
                       <button
                         type="button"
                         className={styles.secondary}
                         onClick={cancelRenameDocs}
                       >
-                        cancel
+                        Cancel
                       </button>
                     </div>
                   </li>
@@ -434,17 +509,17 @@ export function Library({
                         type="button"
                         className={styles.secondary}
                         onClick={() => startRenameDocs(folder)}
-                        aria-label={`rename ${folder.alias}`}
+                        aria-label={`Rename ${folder.alias}`}
                       >
-                        rename
+                        Rename
                       </button>
                       <button
                         type="button"
                         className={styles.danger}
                         onClick={() => void handleRemoveDocs(folder)}
-                        aria-label={`remove ${folder.alias}`}
+                        aria-label={`Remove ${folder.alias}`}
                       >
-                        remove
+                        Remove
                       </button>
                     </div>
                   </li>
@@ -461,7 +536,7 @@ export function Library({
                         if (e.key === 'Enter') confirmNewDocsFolder()
                         if (e.key === 'Escape') cancelNewDocsFolder()
                       }}
-                      aria-label="Documentation name"
+                      aria-label="Docs folder name"
                       autoFocus
                     />
                     <span className={styles.docsPath} title={pendingDocsRoot}>
@@ -474,14 +549,14 @@ export function Library({
                       className={styles.secondary}
                       onClick={confirmNewDocsFolder}
                     >
-                      save
+                      Save
                     </button>
                     <button
                       type="button"
                       className={styles.secondary}
                       onClick={cancelNewDocsFolder}
                     >
-                      cancel
+                      Cancel
                     </button>
                   </div>
                 </li>
@@ -507,20 +582,34 @@ export function Library({
             </p>
           </div>
         ) : (
-          <table className={styles.table}>
+          <>
+          {(books.length > BOOK_FILTER_MIN || bookFilter !== '') && (
+            <input
+              type="search"
+              className={styles.filterInput}
+              placeholder="Filter by title or author…"
+              value={bookFilter}
+              onChange={(e) => setBookFilter(e.target.value)}
+              aria-label="Filter books"
+            />
+          )}
+          {visibleBooks.length === 0 && (
+            <p className={styles.filterEmpty}>No books match this filter.</p>
+          )}
+          <table className={styles.table} hidden={visibleBooks.length === 0}>
             <thead>
               <tr>
-                <th className={styles.colTitle}>title</th>
-                <th className={styles.colAuthor}>author</th>
-                <th className={styles.colPages}>pages</th>
-                <th className={styles.colProgress}>progress</th>
-                <th className={styles.colDate}>added</th>
-                <th className={styles.colDate}>last opened</th>
-                <th className={styles.colActions}>actions</th>
+                <th className={styles.colTitle}>Title</th>
+                <th className={styles.colAuthor}>Author</th>
+                <th className={styles.colPages}>Pages</th>
+                <th className={styles.colProgress}>Progress</th>
+                <th className={styles.colDate}>Added</th>
+                <th className={styles.colDate}>Last opened</th>
+                <th className={styles.colActions}>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {books.map((book) => {
+              {visibleBooks.map((book) => {
                 const isEditing = editingId === book.id
                 return (
                   <tr
@@ -570,11 +659,18 @@ export function Library({
                         book.author ?? '—'
                       )}
                     </td>
-                    <td className={styles.cellMeta}>{book.totalPages}</td>
                     <td className={styles.cellMeta}>
-                      {book.lastOpenedAt === null
-                        ? '—'
-                        : `${book.lastPage} / ${book.totalPages}`}
+                      {book.format === 'epub' ? '—' : book.totalPages}
+                    </td>
+                    <td
+                      className={styles.cellMeta}
+                      title={
+                        book.format === 'pdf' && book.lastOpenedAt !== null
+                          ? `p. ${book.lastPage} of ${book.totalPages}`
+                          : undefined
+                      }
+                    >
+                      {book.lastOpenedAt === null ? '—' : `${progressPercent(book)}%`}
                     </td>
                     <td className={styles.cellMeta}>{formatDate(book.addedAt)}</td>
                     <td className={styles.cellMeta}>
@@ -593,33 +689,41 @@ export function Library({
                             className={styles.secondary}
                             onClick={() => void saveEdit(book)}
                           >
-                            save
+                            Save
                           </button>
                           <button
                             type="button"
                             className={styles.secondary}
                             onClick={cancelEdit}
                           >
-                            cancel
+                            Cancel
                           </button>
                         </>
                       ) : (
                         <>
                           <button
                             type="button"
+                            className={styles.primary}
+                            onClick={() => openReader(book)}
+                            aria-label={`Open ${book.title}`}
+                          >
+                            Open
+                          </button>
+                          <button
+                            type="button"
                             className={styles.secondary}
                             onClick={() => startEdit(book)}
-                            aria-label={`edit ${book.title}`}
+                            aria-label={`Edit ${book.title}`}
                           >
-                            edit
+                            Edit
                           </button>
                           <button
                             type="button"
                             className={styles.danger}
                             onClick={() => void handleDelete(book)}
-                            aria-label={`delete ${book.title}`}
+                            aria-label={`Delete ${book.title}`}
                           >
-                            delete
+                            Delete
                           </button>
                         </>
                       )}
@@ -629,6 +733,7 @@ export function Library({
               })}
             </tbody>
           </table>
+          </>
         )}
       </div>
     </div>

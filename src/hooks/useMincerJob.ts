@@ -4,6 +4,8 @@ import {
   mincerActiveJob,
   mincerList,
   mincerRecordStatus,
+  needsAttention,
+  onMincerChanged,
   onMincerDone,
   onMincerError,
   onMincerProgress,
@@ -20,6 +22,8 @@ export interface MincerJobState {
   recordingStartedAt: number | null
   // Itens terminados e ainda não abertos (ponto no botão Mincer).
   unseenCount: number
+  // Dos não abertos, os interrompidos ou recuperados ("needs your attention").
+  attentionCount: number
   refreshUnseen: () => void
   // Incrementa a cada evento relevante; as telas recarregam a lista/o item.
   revision: number
@@ -30,13 +34,18 @@ export function useMincerJob(): MincerJobState {
   const [recording, setRecording] = useState(false)
   const [recordingStartedAt, setRecordingStartedAt] = useState<number | null>(null)
   const [unseenCount, setUnseenCount] = useState(0)
+  const [attentionCount, setAttentionCount] = useState(0)
   const [revision, setRevision] = useState(0)
   // Os listeners são registrados uma vez; o ref espelha o item ativo.
   const activeRef = useRef<string | null>(null)
 
   const refreshUnseen = useCallback(() => {
     mincerList()
-      .then((items) => setUnseenCount(items.filter((i) => i.unseen).length))
+      .then((items) => {
+        const unseen = items.filter((i) => i.unseen)
+        setUnseenCount(unseen.length)
+        setAttentionCount(unseen.filter(needsAttention).length)
+      })
       .catch(() => {})
   }, [])
 
@@ -82,7 +91,16 @@ export function useMincerJob(): MincerJobState {
         void syncRecording()
         bump()
       }),
+      onMincerChanged(() => {
+        bump()
+        refreshUnseen()
+      }),
     ]
+    // O boot pode recuperar itens entre a leitura acima e o registro dos
+    // listeners: relê depois que eles estão ativos.
+    Promise.all(pending)
+      .then(() => refreshUnseen())
+      .catch(() => {})
     return () => {
       for (const promise of pending) {
         promise.then((unlisten) => unlisten()).catch(() => {})
@@ -90,7 +108,7 @@ export function useMincerJob(): MincerJobState {
     }
   }, [refreshUnseen])
 
-  return { activeItemId, recording, recordingStartedAt, unseenCount, refreshUnseen, revision }
+  return { activeItemId, recording, recordingStartedAt, unseenCount, attentionCount, refreshUnseen, revision }
 }
 
 // Último progresso do item, assinado só pela tela do item.

@@ -4,9 +4,9 @@ import { isTodosNote, typeDefs } from './noteTypes'
 import {
   compareTasks,
   isDone,
-  isInProgress,
   isOpen,
   isOverdue,
+  isStarted,
   isTaskBodyNote,
   taskLineForAi,
   todosProgressByNote,
@@ -173,7 +173,7 @@ export function selectAgenda(input: AgendaInput): AgendaSelection {
       (t) =>
         isOpen(t) &&
         (isOverdue(t, today) ||
-          isInProgress(t) ||
+          isStarted(t) ||
           inRange(t.scheduledDate, from, to) ||
           inRange(t.dueDate, from, to) ||
           inRange(t.plannedDay, from, to))

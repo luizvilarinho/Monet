@@ -48,6 +48,10 @@
   color: var(--text-secondary);
 }
 
+.hint kbd svg {
+  vertical-align: -1px;
+}
+
 .empty {
   margin: auto;
   padding: var(--space-4);

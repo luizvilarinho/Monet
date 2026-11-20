@@ -7,6 +7,7 @@ import styles from './FormattingToolbar.module.css'
 import {
   FORMATTING_GROUPS,
   TABLE_GROUPS,
+  buttonTitle,
   isActive,
   runAction,
   type ButtonDef,
@@ -32,6 +33,8 @@ interface Props {
   // Busca na nota (Ctrl+F) aberta: a barra fica escondida para não cobrir a
   // ocorrência e volta quando a busca fecha.
   searchOpen?: boolean
+  // Botão Link: abre a popover do link (o mesmo do Ctrl+Shift+K).
+  onEditLink?: () => void
 }
 
 const PLUGIN_KEY = 'monetFormattingMenu'
@@ -60,12 +63,13 @@ function tableAnchor(editor: Editor) {
 function renderGroups(
   editor: Editor,
   groups: ButtonDef[][],
-  startKey: string
+  startKey: string,
+  onEditLink?: () => void
 ) {
   return groups.map((group, gi) => (
     <div key={`${startKey}-${gi}`} className={styles.group}>
       {gi > 0 && <div className={styles.sep} />}
-      {group.map(({ id, label, title, cls }) => (
+      {group.map(({ id, label, icon: IconCmp, title, cls }) => (
         <button
           key={id}
           className={[
@@ -75,14 +79,16 @@ function renderGroups(
             cls === 'italic' ? styles.italic : '',
             cls === 'strike' ? styles.strike : '',
           ].join(' ')}
-          title={title}
+          title={buttonTitle(editor, id, title)}
+          aria-label={buttonTitle(editor, id, title)}
           onMouseDown={(e) => {
             e.preventDefault()
-            runAction(editor, id)
+            if (id === 'link') onEditLink?.()
+            else runAction(editor, id)
           }}
           type="button"
         >
-          {label}
+          {IconCmp ? <IconCmp size={15} aria-hidden /> : label}
         </button>
       ))}
     </div>
@@ -91,7 +97,7 @@ function renderGroups(
 
 const NO_LABELS: string[] = []
 
-export function FormattingToolbar({ editor, scrollEl, onAskAi, onAddToTasks, markLabels = NO_LABELS, showRelated = true, searchOpen = false }: Props) {
+export function FormattingToolbar({ editor, scrollEl, onAskAi, onAddToTasks, markLabels = NO_LABELS, showRelated = true, searchOpen = false, onEditLink }: Props) {
   const [hiddenByEscape, setHiddenByEscape] = useState(false)
   const hiddenByEscapeRef = useRef(hiddenByEscape)
   hiddenByEscapeRef.current = hiddenByEscape
@@ -155,10 +161,6 @@ export function FormattingToolbar({ editor, scrollEl, onAskAi, onAddToTasks, mar
 
   const showAddToTasks = Boolean(onAddToTasks) && eligibleCount > 0
 
-  const formattingGroups = inTable
-    ? FORMATTING_GROUPS.map((g) => g.filter((b) => b.id !== 'table'))
-    : FORMATTING_GROUPS
-
   return (
     <BubbleMenu
       editor={editor}
@@ -203,7 +205,7 @@ export function FormattingToolbar({ editor, scrollEl, onAskAi, onAddToTasks, mar
         className={styles.toolbar}
         onMouseDown={(e) => e.preventDefault()}
       >
-        {hasSelection && renderGroups(editor, formattingGroups, 'fmt')}
+        {hasSelection && renderGroups(editor, FORMATTING_GROUPS, 'fmt', onEditLink)}
         {inTable && hasSelection && <div className={styles.sep} />}
         {inTable && renderGroups(editor, TABLE_GROUPS, 'tbl')}
         {hasSelection && (

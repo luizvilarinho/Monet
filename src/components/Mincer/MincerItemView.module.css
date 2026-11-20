@@ -317,3 +317,28 @@
 .markdown :global(a) {
   color: var(--accent, #7b6ed4);
 }
+
+/* Interrompido ou recuperado: pede atenção, não é erro do conteúdo. */
+.attentionBanner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--pad-card);
+  border: 1px solid color-mix(in srgb, var(--accent-warn, #ef9f27) 50%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent-warn, #ef9f27) 8%, var(--bg-panel, #161625));
+}
+
+.attentionTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-weight: 500;
+  color: var(--accent-warn, #ef9f27);
+}
+
+.copyButton {
+  margin-left: auto;
+  align-self: center;
+}

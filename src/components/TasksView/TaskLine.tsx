@@ -1,10 +1,10 @@
-import { CalendarBlank, Checks, Flag, Repeat, Target } from '@phosphor-icons/react'
+import { ArrowClockwise, CalendarBlank, Checks, Flag, Repeat, Target } from '@phosphor-icons/react'
 import {
   describeRecurrence,
-  formatDueShort,
+  formatDateLong,
   formatElapsed,
+  formatRelativeDay,
   isDone,
-  isInProgress,
   isOpen,
   overdueKind,
   planDate,
@@ -118,13 +118,14 @@ function TaskMeta({ task, todayKey, projectName, checklist, showTodos }: TaskMet
   // Deadline à parte só quando difere da data de planejamento.
   const deadline = task.dueDate !== null && task.dueDate !== plan ? task.dueDate : null
   const postponed = task.rescheduleCount
-  const doing = isInProgress(task)
+  // Status aberto diferente do padrão (Doing, Waiting…): chip com a cor dele.
+  const showStatus = isOpen(task) && task.status !== 'todo'
   const todos = showTodos ? todosTitleOf(task, todosById) : null
   if (
     !date &&
     !deadline &&
     postponed < 1 &&
-    !doing &&
+    !showStatus &&
     !projectName &&
     !todos &&
     !task.important &&
@@ -138,20 +139,25 @@ function TaskMeta({ task, todayKey, projectName, checklist, showTodos }: TaskMet
       {date && (
         <span
           className={`${styles.chip} ${
-            late === 'deadline' ? styles.lateDeadline : late === 'plan' ? styles.latePlan : ''
+            late === 'deadline' && date === task.dueDate
+              ? styles.lateDeadline
+              : late !== null && date < todayKey
+                ? styles.latePlan
+                : ''
           }`}
+          title={`${date === task.dueDate ? 'Deadline' : 'Do date'}: ${formatDateLong(date)}`}
         >
           <CalendarBlank size={11} aria-hidden />
-          {formatDueShort(date)}
+          {formatRelativeDay(date, todayKey)}
         </span>
       )}
       {deadline && (
         <span
           className={`${styles.chip} ${late === 'deadline' ? styles.lateDeadline : ''}`}
-          title="Deadline"
+          title={`Deadline: ${formatDateLong(deadline)}`}
         >
           <Target size={11} aria-hidden />
-          {formatDueShort(deadline)}
+          {formatRelativeDay(deadline, todayKey)}
         </span>
       )}
       {postponed >= 1 && (
@@ -159,10 +165,11 @@ function TaskMeta({ task, todayKey, projectName, checklist, showTodos }: TaskMet
           className={`${styles.chip} ${postponed >= 3 ? styles.postponedHigh : ''}`}
           title={`Postponed ${postponed}×`}
         >
-          ↻{postponed}
+          <ArrowClockwise size={11} aria-hidden />
+          {postponed}
         </span>
       )}
-      {doing && (
+      {showStatus && (
         <span
           className={`${styles.chip} ${styles.doing}`}
           style={{ color: statusColor(task.status, statuses) }}

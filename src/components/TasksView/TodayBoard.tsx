@@ -4,14 +4,15 @@ import type { Task } from '../../types'
 import { BoardView, type BoardViewProps } from './BoardView'
 import type { BoardColumn } from './BoardColumns'
 
-// Visão My Day (Plan today): "My Day" = tasks planejadas para hoje; "Suggested"
+// Visão My Day: "My Day" = tasks planejadas para hoje; "Suggested"
 // = atrasadas, vencendo/planejadas para hoje e as planejadas em dias
 // anteriores e não concluídas (rollover). Sugerir não muta nada: arrastar para
 // Today grava `plannedDay`, sem tocar em Do date/Deadline. A lista esvazia sozinha
-// na virada do dia, porque compara `plannedDay` com a chave de hoje.
+// na virada do dia, porque compara `plannedDay` com a chave de hoje. Task
+// criada aqui já nasce no My Day.
 type TodayBoardProps = Omit<
   BoardViewProps,
-  'ariaLabel' | 'columnsFor' | 'onDrop' | 'showProject' | 'compactStatus'
+  'ariaLabel' | 'columnsFor' | 'onDrop' | 'showProject' | 'compactStatus' | 'newTaskPlannedDay'
 >
 
 const TODAY = 'today'
@@ -45,13 +46,21 @@ export function TodayBoard(props: TodayBoardProps) {
   const onDrop = useCallback(
     (id: string, key: string, tasksById: Map<string, Task>) => {
       const task = tasksById.get(id)
-      if (!task) return
+      if (!task) return false
       const plannedDay = key === TODAY ? todayKey : null
-      if (task.plannedDay === plannedDay) return
+      if (task.plannedDay === plannedDay) return false
       onUpdateTasks([{ id, patch: { plannedDay } }])
     },
     [todayKey, onUpdateTasks]
   )
 
-  return <BoardView {...props} ariaLabel="today board" columnsFor={columnsFor} onDrop={onDrop} />
+  return (
+    <BoardView
+      {...props}
+      ariaLabel="today board"
+      columnsFor={columnsFor}
+      onDrop={onDrop}
+      newTaskPlannedDay={todayKey}
+    />
+  )
 }

@@ -1,14 +1,18 @@
-import type { Note, Notebook, NoteType, Task } from '../types'
+import type { MetadataDef, Note, Notebook, NoteType, Task } from '../types'
+import { CALENDAR_NOTEBOOK_ID } from './calendar'
+import { formatMetadataValue, hasMetadataValue } from './metadata'
 import { cleanNoteContentForAi, decodeEntities } from './noteFileText'
 import { markLabelKey, noteMarksOf, type NoteMarkEntry } from './noteMarks'
 import { hasTag, tagKey } from './noteTags'
+import { typeDefs } from './noteTypes'
 import { compareTasks, findProjectByTag, isOpen, normalizeName, todosTitleOf, type TodosInfo } from './tasks'
 
 // Busca do Ctrl+P sobre as notas já em memória: texto limpo (sem base64, tags
 // internas e sintaxe Markdown), normalizado sem acentos, tokens com AND e
 // ranking por título. Filtros `#Caderno`, `type:Nome`, `tag:Nome`,
-// `is:archived`, `has:mark` e `mark:Rótulo`; arquivadas depois das ativas.
-// O nome do tipo da nota conta como texto. Tasks por título ou TODOS.
+// `is:archived`, `has:mark` e `mark:Rótulo` (nome inteiro ou prefixo único);
+// arquivadas depois das ativas. O nome do tipo da nota e os valores das
+// propriedades contam como texto. Tasks por título ou TODOS.
 
 export interface Snippet {
   before: string
@@ -23,6 +27,8 @@ export interface NoteSearchResult {
   // Tag da nota que casou com a consulta (ou a do filtro `tag:`): aparece no
   // resultado, para mostrar por que a nota veio.
   tag?: string
+  // Propriedade cujo valor casou com um termo que o título não explica.
+  property?: { name: string; value: string }
 }
 
 interface Entry {
@@ -167,6 +173,30 @@ function titleScore(entry: Entry, tokens: string[], query: string): number {
   return 100
 }
 
+// Termo achado só no valor de uma propriedade: abaixo do título, acima do corpo.
+const PROPERTY_SCORE = 150
+
+interface PropertyText {
+  name: string
+  value: string
+  norm: string
+}
+
+// Valores das propriedades do tipo atual da nota (nome da opção no select,
+// data formatada). O checkbox fica de fora: sim/não não é texto buscável.
+function propertyTexts(note: Note, defsOf: (typeId: string) => MetadataDef[]): PropertyText[] {
+  if (!note.typeId || !note.properties) return []
+  const out: PropertyText[] = []
+  for (const def of defsOf(note.typeId)) {
+    if (def.type === 'checkbox') continue
+    const value = note.properties[def.id]
+    if (value === undefined || !hasMetadataValue(value)) continue
+    const text = formatMetadataValue(def, value)
+    if (text) out.push({ name: def.name, value: text, norm: normalizeSearch(text) })
+  }
+  return out
+}
+
 function originalEnd(text: string, start: number): number {
   return start + ((text.codePointAt(start) ?? 0) > 0xffff ? 2 : 1)
 }
@@ -273,10 +303,19 @@ function typeTokenName(name: string): string {
   return normalizeName(name).replace(/\s+/g, '')
 }
 
+// O único nome que começa com o prefixo digitado (como token): o filtro vale
+// sem completar o nome ("#estat" = Estatística).
+function uniquePrefix<T>(items: T[], nameOf: (item: T) => string, wanted: string): T | undefined {
+  if (!wanted) return undefined
+  const found = items.filter((item) => typeTokenName(nameOf(item)).startsWith(wanted))
+  return found.length === 1 ? found[0] : undefined
+}
+
 // Separa os filtros do texto: `#Nome` (caderno, como no quick add),
 // `type:Nome` (tipo, sem espaços), `tag:Nome` (tag da nota), `is:archived`
 // (só arquivadas), `has:mark` (marcas) e `mark:Rótulo` (marcas com o rótulo).
-// Nome desconhecido, ou um segundo filtro do mesmo tipo, fica no texto.
+// Vale o nome inteiro ou um prefixo que só um nome tem. Nome desconhecido, ou
+// um segundo filtro do mesmo tipo, fica no texto.
 export function parseSearchQuery(
   raw: string,
   notebooks: Notebook[],
@@ -304,7 +343,8 @@ export function parseSearchQuery(
     }
     if (/^mark:./i.test(word) && !markLabel && vocab) {
       const wanted = typeTokenName(word.slice('mark:'.length))
-      const label = vocab.markLabels.find((l) => typeTokenName(l) === wanted)
+      const label =
+        vocab.markLabels.find((l) => typeTokenName(l) === wanted) ?? uniquePrefix(vocab.markLabels, (l) => l, wanted)
       if (label) {
         marked = true
         markLabel = label
@@ -314,7 +354,7 @@ export function parseSearchQuery(
     }
     if (/^tag:./i.test(word) && !tag && vocab) {
       const wanted = typeTokenName(word.slice('tag:'.length).replace(/^#/, ''))
-      const found = vocab.tags.find((t) => typeTokenName(t) === wanted)
+      const found = vocab.tags.find((t) => typeTokenName(t) === wanted) ?? uniquePrefix(vocab.tags, (t) => t, wanted)
       if (found) {
         tag = found
         chips.push({ raw: word, label: found, kind: 'tag' })
@@ -322,7 +362,13 @@ export function parseSearchQuery(
       }
     }
     if (word.startsWith('#') && word.length > 1 && !notebookId) {
-      const nb = findProjectByTag(notebooks, word.slice(1))
+      const nb =
+        findProjectByTag(notebooks, word.slice(1)) ??
+        uniquePrefix(
+          notebooks.filter((n) => n.id !== CALENDAR_NOTEBOOK_ID),
+          (n) => n.name,
+          typeTokenName(word.slice(1)),
+        )
       if (nb) {
         notebookId = nb.id
         chips.push({ raw: word, label: nb.name, kind: 'notebook' })
@@ -331,7 +377,8 @@ export function parseSearchQuery(
     }
     if (/^type:./i.test(word) && !typeId) {
       const wanted = normalizeName(word.slice('type:'.length))
-      const type = noteTypes.find((t) => typeTokenName(t.name) === wanted)
+      const type =
+        noteTypes.find((t) => typeTokenName(t.name) === wanted) ?? uniquePrefix(noteTypes, (t) => t.name, wanted)
       if (type) {
         typeId = type.id
         chips.push({ raw: word, label: type.name, kind: 'type' })
@@ -353,6 +400,69 @@ export function markLabelToken(label: string): string {
   return `mark:${typeTokenName(label)}`
 }
 
+export type FilterKind = 'notebook' | 'tag' | 'type' | 'markLabel'
+
+export interface FilterSuggestion {
+  kind: FilterKind
+  label: string
+  // Token canônico que substitui a palavra digitada.
+  token: string
+  type?: NoteType
+}
+
+export interface FilterSuggestions {
+  kind: FilterKind
+  // O que vem depois do prefixo, como digitado.
+  query: string
+  items: FilterSuggestion[]
+}
+
+const FILTER_PREFIXES: Array<{ prefix: string; kind: FilterKind }> = [
+  { prefix: '#', kind: 'notebook' },
+  { prefix: 'tag:', kind: 'tag' },
+  { prefix: 'type:', kind: 'type' },
+  { prefix: 'mark:', kind: 'markLabel' },
+]
+
+// Autocomplete da palavra de filtro sendo digitada (`#`, `tag:`, `type:`,
+// `mark:`): os nomes que começam com o texto (sem acentos, caixa e espaços)
+// primeiro, depois os que têm uma palavra que começa com ele. null quando a
+// palavra não é de filtro.
+export function filterSuggestions(
+  word: string,
+  notebooks: Notebook[],
+  noteTypes: NoteType[],
+  vocab: SearchVocabulary,
+  limit = 6,
+): FilterSuggestions | null {
+  const lower = word.toLowerCase()
+  const hit = FILTER_PREFIXES.find((p) => lower.startsWith(p.prefix))
+  if (!hit) return null
+  const query = word.slice(hit.prefix.length)
+  const wanted = typeTokenName(hit.kind === 'tag' ? query.replace(/^#/, '') : query)
+  const candidates: FilterSuggestion[] =
+    hit.kind === 'notebook'
+      ? notebooks
+          .filter((nb) => nb.id !== CALENDAR_NOTEBOOK_ID && nb.name.trim())
+          .map((nb): FilterSuggestion => ({ kind: 'notebook', label: nb.name, token: `#${nb.name.replace(/\s+/g, '')}` }))
+      : hit.kind === 'tag'
+        ? vocab.tags.map((t): FilterSuggestion => ({ kind: 'tag', label: t, token: `tag:${t.replace(/\s+/g, '')}` }))
+        : hit.kind === 'type'
+          ? noteTypes.map((t): FilterSuggestion => ({ kind: 'type', label: t.name, token: typeToken(t), type: t }))
+          : vocab.markLabels.map((l): FilterSuggestion => ({ kind: 'markLabel', label: l, token: markLabelToken(l) }))
+  const ranked: Array<{ item: FilterSuggestion; rank: number }> = []
+  for (const item of candidates) {
+    if (typeTokenName(item.label).startsWith(wanted)) ranked.push({ item, rank: 0 })
+    else if (normalizeName(item.label).split(WORD_SPLIT_RE).some((w) => w.startsWith(wanted))) {
+      ranked.push({ item, rank: 1 })
+    }
+  }
+  // Sort estável: dentro do mesmo nível, a ordem da fonte (coluna de
+  // cadernos, tags em ordem alfabética, rótulos mais usados primeiro).
+  ranked.sort((a, b) => a.rank - b.rank)
+  return { kind: hit.kind, query, items: ranked.slice(0, limit).map((r) => r.item) }
+}
+
 export interface SearchScope {
   limit?: number
   notebookId?: string | null
@@ -361,6 +471,8 @@ export interface SearchScope {
   tag?: string | null
   // typeId → nome do tipo normalizado: o nome do tipo conta como texto.
   typeNames?: Map<string, string>
+  // Propriedades dos tipos (scope 'note'): os valores contam como texto.
+  defs?: MetadataDef[]
 }
 
 function inScope(n: Note, scope: SearchScope | undefined): boolean {
@@ -396,11 +508,19 @@ export function searchNotes(notes: Note[], query: string, opts?: SearchScope): N
     }))
   }
   const normQuery = tokens.join(' ')
+  const allDefs = opts?.defs ?? []
+  const defsByType = new Map<string, MetadataDef[]>()
+  const defsOf = (typeId: string) => {
+    let list = defsByType.get(typeId)
+    if (!list) defsByType.set(typeId, (list = typeDefs(allDefs, typeId)))
+    return list
+  }
   const results: NoteSearchResult[] = []
   for (const note of scoped) {
     const entry = entryOf(note)
     const typeName = (note.typeId && opts?.typeNames?.get(note.typeId)) || ''
     const typeWords = typeName.split(WORD_SPLIT_RE).filter(Boolean)
+    const props = propertyTexts(note, defsOf)
     // Token coberto pelo tipo: prefixo de uma palavra do nome ("sum" casa
     // Summary; "ot" não casa Note).
     const missing = tokens.filter(
@@ -408,18 +528,23 @@ export function searchNotes(notes: Note[], query: string, opts?: SearchScope): N
         !entry.normTitle.includes(t) &&
         !entry.normText.includes(t) &&
         !entry.normTags.includes(t) &&
-        !typeWords.some((w) => w.startsWith(t)),
+        !typeWords.some((w) => w.startsWith(t)) &&
+        !props.some((p) => p.norm.includes(t)),
     )
     if (missing.length === 0) {
       let score = titleScore(entry, tokens, normQuery)
       // A consulta é o nome do tipo: depois do título com todas as palavras e
       // antes do título com só parte delas.
       if (typeName.startsWith(normQuery)) score = Math.max(score, 450)
+      const fromProps = tokens.filter((t) => !entry.normTitle.includes(t))
+      const prop = props.find((p) => fromProps.some((t) => p.norm.includes(t)))
+      if (prop) score = Math.max(score, PROPERTY_SCORE)
       results.push({
         note,
         score,
         snippet: snippetOf(entry, tokens),
         tag: matchedTag(note, entry, tokens, filterTag),
+        ...(prop && { property: { name: prop.name, value: prop.value } }),
       })
       continue
     }
@@ -481,11 +606,17 @@ export function searchMarks(
     .slice(0, opts?.limit ?? DEFAULT_LIMIT)
 }
 
-// Consulta vazia: troca rápida entre as notas mexidas por último (arquivadas
-// por último).
-export function recentNotes(notes: Note[], limit = 10): NoteSearchResult[] {
+// Consulta vazia: troca rápida. Primeiro as notas abertas por último
+// (`openedIds`, a mais recente primeiro), depois as mexidas por último;
+// arquivadas por último.
+export function recentNotes(notes: Note[], limit = 10, openedIds: string[] = []): NoteSearchResult[] {
+  const opened = new Map(openedIds.map((id, i) => [id, i]))
+  const rank = (n: Note) => opened.get(n.id) ?? openedIds.length
   return [...notes]
-    .sort((a, b) => Number(!!a.archivedAt) - Number(!!b.archivedAt) || b.updatedAt - a.updatedAt)
+    .sort(
+      (a, b) =>
+        Number(!!a.archivedAt) - Number(!!b.archivedAt) || rank(a) - rank(b) || b.updatedAt - a.updatedAt,
+    )
     .slice(0, limit)
     .map((note) => ({ note, score: 0, snippet: previewOf(entryOf(note).text) }))
 }

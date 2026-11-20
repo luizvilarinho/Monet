@@ -10,6 +10,8 @@ import {
   onOpenRouterReasoning,
   onOpenRouterToolCall,
   onOpenRouterToolCallStarted,
+  OPENROUTER_KEY_MISSING,
+  readableChatError,
   startOpenRouterStreamMessages,
   type ChatMessageInput,
   type ContentBlock,
@@ -250,6 +252,11 @@ const NOTEBOOK_CHAT_FOLDER_LINK_KEY = 'monet:notes-notebook-folder-link'
 const MINCER_ITEM_FOLDER_LINK_KEY = 'monet:mincer-item-folder-link'
 const NOTEBOOK_MEMORY_MIGRATION_KEY = 'monet:notebook-memory-default-migrated'
 const DAILY_NOTES_DEFAULT_MIGRATION_KEY = 'monet:chat-tools-daily-notes-default-migrated'
+// Thinking ligado/desligado (compartilhado entre os chats, como as tools).
+const THINKING_KEY = 'monet:chat-thinking'
+// Tempo do Undo depois de apagar uma conversa: os documentos anexados e os
+// vínculos de respostas só saem quando ele acaba.
+const DELETE_UNDO_MS = 6000
 
 // Texto do assistant quando o turno termina sem resposta.
 export const NO_RESPONSE_MESSAGE = "The model didn't return a response. Please try again."
@@ -258,7 +265,11 @@ export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
-  imageDataUrl?: string
+  // Imagens enviadas (data URLs); só em memória, saem ao gravar.
+  imageDataUrls?: string[]
+  // Quantas imagens a pergunta tinha (gravado): depois de reabrir o app, o
+  // Retry sabe que elas faltam.
+  imageCount?: number
   attachedDocs?: Array<{ name: string; path: string }>
   timestamp: string
   model?: string
@@ -269,12 +280,33 @@ export interface ChatMessage {
   // A busca na base não achou nada relevante.
   ragNothingFound?: true
   // Nota em que a mensagem do usuário foi escrita (chat do Notebook).
-  noteId?: string
   noteTitle?: string
-  // A seleção do editor entrou no contexto enviado.
-  hadSelection?: boolean
   // Agente (não General) que gerou esta resposta do assistant.
   agentId?: string
+  // URLs (fontes e imagens) da busca deste turno: as únicas imagens remotas
+  // que carregam sem clique.
+  allowedImageUrls?: string[]
+  // Turno que falhou sem texto: o content guarda "Error: <mensagem legível>"
+  // e o balão mostra Retry ('retry') ou Open Settings ('settings').
+  failed?: 'retry' | 'settings'
+  // Resposta que não terminou: Stop com texto parcial ('stopped') ou corte
+  // (troca de modo, queda da conexão: 'cut'). O corte é gravado por quem
+  // cortou, também na resposta vazia: vazia e sem a marca, ela ainda está
+  // sendo escrita (em outra janela).
+  interrupted?: 'stopped' | 'cut'
+  // A busca do turno falhou e a resposta saiu sem ela.
+  webSearchFailed?: true
+  kbSearchFailed?: true
+  // Nota em que a resposta foi salva (SaveToNoteModal).
+  savedToNote?: { notebookId: string; noteId: string; title: string }
+}
+
+// Retry do último turno: o par que o reenvio substitui e os anexos gravados da
+// pergunta, reaproveitados pelo send() (o arquivo não é apagado nem regravado).
+export interface RetryTurn {
+  questionId: string
+  answerId: string
+  attachedDocs: Array<{ name: string; path: string }>
 }
 
 // Tempos de uma resposta (linha compacta abaixo do assistant): efêmeros, não
@@ -521,12 +553,30 @@ function readChatKey(key: string): string | null {
 }
 
 // Retorna true se gravou (conteúdo mudou em relação ao último valor conhecido).
+// O cache só é atualizado depois do setItem: uma gravação que estourou a cota
+// (setItem lança) não conta como feita.
 function writeChatKey(key: string, serialized: string): boolean {
   const known = lastKnownValues.get(key) ?? localStorage.getItem(key)
-  lastKnownValues.set(key, serialized)
-  if (serialized === known) return false
+  if (serialized === known) {
+    lastKnownValues.set(key, serialized)
+    return false
+  }
   localStorage.setItem(key, serialized)
+  lastKnownValues.set(key, serialized)
   return true
+}
+
+// Erro gravado antes da flag `failed`: resposta "Error: …" sem modelo (toda
+// resposta do modelo grava o `model`). Vira `failed`, e o balão deixa de
+// tratá-la como resposta (Save to note, Sources). O content fica como o das
+// falhas novas (markTurnFailed); o balão tira o prefixo na exibição.
+function isLegacyError(m: ChatMessage): boolean {
+  return m.role === 'assistant' && !m.failed && !m.model && !m.interrupted && m.content.startsWith('Error:')
+}
+
+function migrateLegacyErrors(c: ChatConversation): ChatConversation {
+  if (!c.messages.some(isLegacyError)) return c
+  return { ...c, messages: c.messages.map((m) => (isLegacyError(m) ? { ...m, failed: 'retry' as const } : m)) }
 }
 
 function parseConversations(raw: string | null): ChatConversation[] {
@@ -534,7 +584,7 @@ function parseConversations(raw: string | null): ChatConversation[] {
     if (raw) {
       const parsed = JSON.parse(raw)
       if (Array.isArray(parsed) && parsed.every(isConversation)) {
-        return parsed as ChatConversation[]
+        return (parsed as ChatConversation[]).map(migrateLegacyErrors)
       }
     }
   } catch {
@@ -577,13 +627,14 @@ function loadConversations(): ChatConversation[] {
   return []
 }
 
-function saveConversations(list: ChatConversation[]) {
+// false = não gravou (cota do localStorage cheia).
+function saveConversations(list: ChatConversation[]): boolean {
   try {
     const stripped = list.map((c) => ({
       ...c,
       messages: c.messages.map((m) => {
-        if (!m.imageDataUrl) return m
-        const { imageDataUrl: _img, ...rest } = m
+        if (!m.imageDataUrls) return m
+        const { imageDataUrls: _img, ...rest } = m
         return rest
       }),
     }))
@@ -592,8 +643,10 @@ function saveConversations(list: ChatConversation[]) {
     // ultimo valor conhecido (caso tipico de hidratacao via evento `storage`),
     // nao re-grava — assim nao dispara um novo evento na outra janela.
     writeChatKey(CONVERSATIONS_KEY, serialized)
+    return true
   } catch (err) {
     console.error('failed to persist chat conversations', err)
+    return false
   }
 }
 
@@ -1008,6 +1061,26 @@ interface MountedChat {
 }
 const mountedChats = new Set<{ current: MountedChat | null }>()
 
+// ─── Respostas cortadas ao desmontar ─────────────────────────────────────────
+// Trocar de modo desmonta o chat no meio da resposta e o turno é cancelado. O
+// texto parcial já está gravado; a marca de corte (com ou sem texto) é gravada
+// direto no localStorage na desmontagem e chega também à instância que monta
+// no mesmo commit por este conjunto (o save-effect dela gravaria o estado
+// inicial sem a marca). Aplicar é idempotente, por isso os ids ficam.
+const cutMessageIds = new Set<string>()
+
+function withCutMarks(list: ChatConversation[]): ChatConversation[] {
+  if (cutMessageIds.size === 0) return list
+  const isCut = (m: ChatMessage) => cutMessageIds.has(m.id) && !m.interrupted && !m.failed
+  let changed = false
+  const next = list.map((c) => {
+    if (!c.messages.some(isCut)) return c
+    changed = true
+    return { ...c, messages: c.messages.map((m) => (isCut(m) ? { ...m, interrupted: 'cut' as const } : m)) }
+  })
+  return changed ? next : list
+}
+
 function chatFolderExists(folderId: string): boolean {
   const instances = [...mountedChats]
   if (instances.length > 0) return instances.some((i) => i.current?.hasFolder(folderId))
@@ -1117,6 +1190,27 @@ export function deleteChatFolderById(folderId: string): void {
   saveFolders(folders.filter((f) => f.id !== folderId))
   saveConversations(conversations.filter((c) => !convIdsToDelete.has(c.id)))
   saveLooseOrder(loadLooseOrder().filter((id) => !convIdsToDelete.has(id)))
+}
+
+// Número de conversas de uma pasta de chat, lido do localStorage (vale sem
+// `useChat` montado, ex.: a confirmação de excluir um livro na Library).
+// Pasta inexistente = 0.
+export function countChatFolderConversations(folderId: string): number {
+  try {
+    // Só leitura: sem as migrações de loadFolders/loadConversations.
+    const folders = parseFolders(readChatKey(FOLDERS_KEY))
+    const folder = folders.find((f) => f.id === folderId)
+    if (!folder) return 0
+    return folderConversationIds(folder, parseConversations(readChatKey(CONVERSATIONS_KEY)), folders).length
+  } catch {
+    return 0
+  }
+}
+
+// Conversas da pasta de chat de um livro do Reader (0 sem pasta vinculada).
+export function countReaderBookChatConversations(bookId: string): number {
+  const folderId = getReaderChatFolderId(bookId)
+  return folderId ? countChatFolderConversations(folderId) : 0
 }
 
 export function activateChatConversation(conversationId: string): void {
@@ -1264,7 +1358,8 @@ function makeNewFolder(name = 'New folder'): ChatFolder {
     visibleDocumentIds: [],
     expanded: true,
     systemPrompt: '',
-    systemPromptMode: 'replace',
+    // Pasta nova: o prompt dela complementa o padrão (as existentes ficam como estão).
+    systemPromptMode: 'append',
     memory: '',
     memoryEnabled: false,
     webResearchEnabled: false,
@@ -1466,18 +1561,24 @@ export interface UseChatResult {
   chatTimings: Record<string, ChatTimings>
   thinkingEnabled: boolean
   toggleThinking: () => void
+  // Faixa de erro (o erro de um turno fica no balão) e a seção do Settings que
+  // o resolve, quando há.
   error: string | null
+  errorSettings: 'openrouter' | 'search' | null
   send: (
     text: string,
-    imageDataUrl?: string,
+    // Uma imagem ou várias (data URLs).
+    imageDataUrl?: string | string[],
     documents?: Array<{ name: string; type: string; data: string }>,
     opts?: {
       ephemeralContext?: string
       excludeNoteId?: string | null
       // Nota em que a mensagem foi escrita (chip/registro do chat do Notebook).
-      noteContext?: { noteId: string; noteTitle: string; hadSelection: boolean }
+      noteContext?: { noteId: string; noteTitle: string }
       // Atalho "/agente texto": grava o agente na conversa antes do turno.
       agentId?: string
+      // Retry: o par antigo que este envio substitui (ver prepareRetry).
+      retry?: RetryTurn
     }
   ) => Promise<void>
   // Agente da conversa ativa (General quando não há agentes nesta conversa).
@@ -1495,7 +1596,30 @@ export interface UseChatResult {
   startAssistantConversation: (folderId?: string) => void
   ensureAssistantFolder: () => void
   ensureScopedFolder: (scope: ChatFolderScope) => string
+  // Abre uma conversa nova na pasta com uma pergunta e uma resposta já
+  // carregadas, e a deixa ativa nesta instância. Devolve o id da conversa.
+  openConversationWithExchange: (params: {
+    folderId: string
+    title: string
+    userMessage: string
+    assistantMessage: string
+  }) => string
+  // Retry: devolve o que foi enviado no último turno da conversa ativa, sem
+  // mexer nela (null se a resposta não é a última ou há streaming). O par sai
+  // no send() com `retry`, depois das checagens.
+  prepareRetry: (assistantId: string) => Promise<{
+    text: string
+    images: string[]
+    documents: Array<{ name: string; type: string; data: string }>
+    retry: RetryTurn
+  } | null>
+  markMessageSavedToNote: (messageId: string, target: { notebookId: string; noteId: string; title: string }) => void
   deleteConversation: (id: string) => void
+  // Apagar com Undo (toast): a conversa volta com undoDelete enquanto
+  // pendingDelete existir.
+  deleteConversationWithUndo: (id: string) => void
+  undoDelete: () => void
+  pendingDelete: { conversationId: string; title: string } | null
   // Clear: apaga as mensagens (a conversa fica). Clear all: apaga as conversas
   // da pasta (a pasta fica).
   clearConversations: (ids: string[]) => void
@@ -1958,7 +2082,7 @@ export function useChat(
     mode === 'assistant' ? ASSISTANT_FOLDER_NAME : null
   // Estado inicial reconciliado entre conversas + folders + looseOrder
   const [conversations, setConversations] = useState<ChatConversation[]>(
-    () => loadReconciledChatState().conversations
+    () => withCutMarks(loadReconciledChatState().conversations)
   )
   // Conversa-rascunho da janela assistant: vive SO em memoria ate a 1a mensagem.
   // Abrir/fechar o assistant sem enviar nada nao deixa rastro no localStorage.
@@ -2014,7 +2138,6 @@ export function useChat(
   const [folderMemoryUpdatedAt, setFolderMemoryUpdatedAt] = useState<number | null>(null)
   const [webSourcesSaved, setWebSourcesSaved] = useState<{ count: number; at: number } | null>(null)
   const toolCallHandlerRef = useRef<((p: StreamToolCallPayload) => void) | null>(null)
-  const toolCancelledRef = useRef<boolean>(false)
   // Contexto do bibliotecário capturado por turno (nos dois caminhos de busca),
   // consumido em onOpenRouterDone para disparar o pipeline em background.
   // Vive num ref por hook (o estado in-flight/serialização mora no singleton
@@ -2026,8 +2149,35 @@ export function useChat(
     question: string
     searchResults: SearchResult[]
   } | null>(null)
-  const [thinkingEnabled, setThinkingEnabled] = useState<boolean>(false)
-  const [error, setError] = useState<string | null>(null)
+  const [thinkingEnabled, setThinkingEnabled] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(THINKING_KEY) === '1'
+    } catch {
+      return false
+    }
+  })
+  const toggleThinking = useCallback(() => {
+    setThinkingEnabled((v) => {
+      const next = !v
+      try {
+        localStorage.setItem(THINKING_KEY, next ? '1' : '0')
+      } catch {
+        // sem storage: vale só nesta sessão
+      }
+      return next
+    })
+  }, [])
+  // Faixa de erro do chat (o erro de um turno vai no balão). `errorSettings`
+  // diz qual seção do Settings resolve o erro da faixa.
+  const [error, setErrorState] = useState<string | null>(null)
+  const [errorSettings, setErrorSettings] = useState<'openrouter' | 'search' | null>(null)
+  const setError = useCallback((message: string | null, settings: 'openrouter' | 'search' | null = null) => {
+    setErrorState(message)
+    setErrorSettings(message ? settings : null)
+  }, [])
+  // Turno em andamento antes e durante o stream: o Stop aborta a busca na web
+  // e o deep research do pré-turno, e o resto do send() para no próximo passo.
+  const turnAbortRef = useRef<{ convId: string; assistantId: string; controller: AbortController } | null>(null)
   const activeStreamRef = useRef<{
     requestId: string
     convId: string
@@ -2038,6 +2188,8 @@ export function useChat(
     roundText: string
     roundThinking: boolean
   } | null>(null)
+  // Hook desmontado (troca de painel): o turno em andamento não começa stream.
+  const unmountedRef = useRef(false)
   // Conversa do turno em andamento: fixada no envio, vale também antes do
   // stream começar (busca na web, RAG), quando a ativa pode já ser outra.
   const turnConvIdRef = useRef<string | null>(null)
@@ -2215,7 +2367,9 @@ export function useChat(
   }, [conversations, activeId, draftConversation, isDetached])
 
   useEffect(() => {
-    saveConversations(conversations)
+    if (!saveConversations(conversations)) {
+      setError('Chat history could not be saved: storage is full. Clear old conversations to free space.')
+    }
   }, [conversations])
 
   useEffect(() => {
@@ -2324,6 +2478,8 @@ export function useChat(
   }, [refreshApiKey])
 
   const selectConversation = useCallback((id: string) => {
+    // A faixa de erro é da conversa anterior.
+    setError(null)
     setActiveIdState(id)
     // Se a conversa esta em pasta colapsada, expande
     const folder = foldersRef.current.find((f) =>
@@ -2334,17 +2490,52 @@ export function useChat(
         prev.map((f) => (f.id === folder.id ? { ...f, expanded: true } : f))
       )
     }
-  }, [setFolders])
+  }, [setFolders, setError])
+
+  // "New conversation" reaproveita uma conversa vazia (sem mensagens, sem
+  // agente e sem título próprio) do mesmo lugar, a aberta primeiro, e a leva
+  // para o topo: clicar várias vezes não acumula conversas vazias.
+  const findBlankConversation = (folderId: string | null): ChatConversation | undefined => {
+    const blanks = conversationsRef.current.filter(
+      (c) =>
+        (c.folderId ?? null) === folderId &&
+        c.messages.length === 0 &&
+        !c.agentId &&
+        (!c.title || c.title === 'New conversation')
+    )
+    return blanks.find((c) => c.id === activeId) ?? blanks[0]
+  }
 
   const newConversation = useCallback(() => {
+    setError(null)
+    const blank = findBlankConversation(null)
+    if (blank) {
+      setLooseOrder((prev) => [blank.id, ...prev.filter((id) => id !== blank.id)])
+      setActiveIdState(blank.id)
+      return
+    }
     const conv = makeNewConversation()
     setConversations((prev) => [conv, ...prev])
     setLooseOrder((prev) => [conv.id, ...prev])
     setActiveIdState(conv.id)
-  }, [setLooseOrder])
+    // findBlankConversation lê refs e o activeId.
+  }, [setLooseOrder, setError, activeId])
 
   const newConversationInFolder = useCallback(
     (folderId: string) => {
+      setError(null)
+      const blank = findBlankConversation(folderId)
+      if (blank) {
+        setFolders((prev) =>
+          prev.map((f) =>
+            f.id === folderId
+              ? { ...f, conversationIds: [blank.id, ...f.conversationIds.filter((id) => id !== blank.id)], expanded: true }
+              : f
+          )
+        )
+        setActiveIdState(blank.id)
+        return
+      }
       const conv = makeNewConversation(folderId)
       setConversations((prev) => [conv, ...prev])
       setFolders((prev) =>
@@ -2361,7 +2552,43 @@ export function useChat(
       )
       setActiveIdState(conv.id)
     },
-    [setFolders]
+    // findBlankConversation lê refs e o activeId.
+    [setFolders, setError, activeId]
+  )
+
+  // Abre uma conversa nova na pasta, já com uma pergunta e uma resposta (ex.:
+  // "Continue in chat" de uma resposta de slash, na pasta do caderno: o
+  // chamador resolve a pasta com ensureScopedFolder). Vale para qualquer modo:
+  // a conversa fica ativa nesta instância e substitui um rascunho aberto.
+  const openConversationWithExchange = useCallback(
+    (params: { folderId: string; title: string; userMessage: string; assistantMessage: string }): string => {
+      const now = new Date().toISOString()
+      const conv: ChatConversation = {
+        id: nanoid(),
+        title: params.title.trim().slice(0, 100) || 'New conversation',
+        messages: [
+          { id: nanoid(), role: 'user', content: params.userMessage, timestamp: now },
+          { id: nanoid(), role: 'assistant', content: params.assistantMessage, timestamp: now },
+        ],
+        createdAt: now,
+        updatedAt: now,
+        folderId: params.folderId,
+      }
+      setError(null)
+      setConversations((prev) => [conv, ...prev])
+      setFolders((prev) =>
+        prev.map((f) =>
+          f.id === params.folderId
+            ? { ...f, conversationIds: [conv.id, ...f.conversationIds], expanded: true, updatedAt: now }
+            : f
+        )
+      )
+      setDraftConversation(null)
+      draftRef.current = null
+      setActiveIdState(conv.id)
+      return conv.id
+    },
+    [setFolders, setError]
   )
 
   // Inicia uma conversa NOVA e zerada para uma instancia dedicada
@@ -2861,6 +3088,30 @@ export function useChat(
     []
   )
 
+  // Erro do turno: sem texto, o balão vira o erro (legível, com Retry ou Open
+  // Settings) e a faixa fica limpa; com texto parcial, a resposta fica com a
+  // marca "Interrupted" e o motivo vai na faixa.
+  const markTurnFailed = useCallback(
+    (convId: string, assistantId: string, turnModel: string | undefined, readable: { message: string; settings: boolean }) => {
+      const msg = conversationsRef.current
+        .find((c) => c.id === convId)
+        ?.messages.find((m) => m.id === assistantId)
+      // O invoke que falha também emite o evento de erro: a 2ª chamada não mexe.
+      const hasText = !!msg && msg.content.length > 0 && !msg.failed
+      updateMessages(convId, (msgs) =>
+        msgs.map((m) => {
+          if (m.id !== assistantId || m.failed) return m
+          if (m.content === '') {
+            return { ...m, content: `Error: ${readable.message}`, failed: readable.settings ? 'settings' : 'retry' }
+          }
+          return { ...m, interrupted: 'cut', model: m.model ?? turnModel }
+        })
+      )
+      if (hasText) setError(readable.message, readable.settings ? 'openrouter' : null)
+    },
+    [updateMessages, setError]
+  )
+
   useEffect(() => {
     let cancelled = false
     const unlisteners: Array<() => void> = []
@@ -2937,6 +3188,7 @@ export function useChat(
         toolRoundsRef.current.delete(stream.assistantId)
         toolCallHandlerRef.current = null
         activeStreamRef.current = null
+        if (turnAbortRef.current?.assistantId === stream.assistantId) turnAbortRef.current = null
         setIsStreaming(false)
         setDeepResearchPhase(null)
         setWebSearchActive(false)
@@ -2990,23 +3242,17 @@ export function useChat(
           })
         }
       })
-      const err = await onOpenRouterError(({ requestId, message }) => {
+      const err = await onOpenRouterError(({ requestId, code, message }) => {
         const stream = activeStreamRef.current
         if (!stream || stream.requestId !== requestId) return
-        updateMessages(stream.convId, (msgs) =>
-          msgs.map((m) =>
-            m.id === stream.assistantId && m.content === ''
-              ? { ...m, content: `Error: ${message}` }
-              : m
-          )
-        )
-        setError(message)
+        markTurnFailed(stream.convId, stream.assistantId, stream.model, readableChatError(code, message))
         patchTimings(stream.assistantId, {
           totalMs: Date.now() - (turnStartedAtRef.current.get(stream.assistantId) ?? Date.now()),
           interrupted: true,
         })
         toolCallHandlerRef.current = null
         activeStreamRef.current = null
+        if (turnAbortRef.current?.assistantId === stream.assistantId) turnAbortRef.current = null
         setIsStreaming(false)
         setDeepResearchPhase(null)
         setWebSearchActive(false)
@@ -3031,6 +3277,7 @@ export function useChat(
           )
         )
         activeStreamRef.current = null
+        if (turnAbortRef.current?.assistantId === stream.assistantId) turnAbortRef.current = null
         setIsStreaming(false)
         setDeepResearchPhase(null)
         setWebSearchActive(false)
@@ -3051,30 +3298,41 @@ export function useChat(
       cancelled = true
       unlisteners.forEach((u) => u())
     }
-  }, [updateMessages, patchTimings])
+  }, [updateMessages, patchTimings, markTurnFailed])
 
   const send = useCallback(
     async (
       text: string,
-      imageDataUrl?: string,
+      imageDataUrl?: string | string[],
       documents?: Array<{ name: string; type: string; data: string }>,
       opts?: {
         ephemeralContext?: string
         excludeNoteId?: string | null
         // Nota em que a mensagem foi escrita (chip/registro do chat do Notebook).
-        noteContext?: { noteId: string; noteTitle: string; hadSelection: boolean }
+        noteContext?: { noteId: string; noteTitle: string }
         agentId?: string
+        retry?: RetryTurn
       }
     ) => {
       const trimmed = text.trim()
-      if (!trimmed && !imageDataUrl && (!documents || documents.length === 0)) return
+      const images = (Array.isArray(imageDataUrl) ? imageDataUrl : imageDataUrl ? [imageDataUrl] : []).filter(
+        (url) => url.length > 0
+      )
+      if (!trimmed && images.length === 0 && (!documents || documents.length === 0)) return
       if (isStreaming) return
+      // Retry: o par antigo ainda tem de ser o fim da conversa ativa. Ele só sai
+      // depois das checagens abaixo; se uma delas falha, a conversa fica igual.
+      const retry = opts?.retry
+      if (retry) {
+        const msgs = conversationsRef.current.find((c) => c.id === activeId)?.messages ?? []
+        if (msgs[msgs.length - 1]?.id !== retry.answerId || msgs[msgs.length - 2]?.id !== retry.questionId) return
+      }
+      const retryDrop = new Set(retry ? [retry.questionId, retry.answerId] : [])
       if (!model) {
         setError('Select a model before sending.')
         return
       }
       setError(null)
-      toolCancelledRef.current = false
       librarianContextRef.current = null
 
       // Garante uma conversa ativa
@@ -3160,6 +3418,16 @@ export function useChat(
         setActiveIdState(conv.id)
       }
       const targetId = convId
+      // O turno nasce aqui, antes dos awaits: o Stop e a desmontagem abortam
+      // este controller, e o send() para antes de inserir as mensagens e das
+      // chamadas pagas (busca na web, RAG). Ele sai do ref no fim do turno.
+      const assistantId = nanoid()
+      const controller = new AbortController()
+      turnAbortRef.current = { convId: targetId, assistantId, controller }
+      const signal = controller.signal
+      const endTurnAbort = () => {
+        if (turnAbortRef.current?.controller === controller) turnAbortRef.current = null
+      }
       // Atalho "/agente texto": grava o agente na conversa (as atualizações
       // funcionais em fila já incluem a conversa criada/materializada acima).
       if (opts?.agentId) {
@@ -3181,9 +3449,11 @@ export function useChat(
       // no ref.
       const turnAgentId =
         opts?.agentId ?? (currentConv ?? (draft && draft.id === targetId ? draft : null))?.agentId
+      // Mensagens anteriores ao turno, sem o par que o Retry substitui.
+      const convMessages = (currentConv?.messages ?? []).filter((m) => !retryDrop.has(m.id))
       // Balão do assistant vazio (app fechado durante a tool) fica fora: alguns
       // provedores recusam mensagem vazia.
-      const priorMessages = (currentConv?.messages ?? []).filter(
+      const priorMessages = convMessages.filter(
         (m) => !(m.role === 'assistant' && !m.content.trim())
       )
       const historyForApi: ChatMessageInput[] = await Promise.all(
@@ -3196,92 +3466,20 @@ export function useChat(
                 })
               )
             : []
-          const hasExtras = docBlocks.length > 0 || !!m.imageDataUrl
+          const msgImages = m.imageDataUrls ?? []
+          const hasExtras = docBlocks.length > 0 || msgImages.length > 0
           return {
             role: m.role,
             content: hasExtras
               ? ([
                   ...docBlocks,
-                  ...(m.imageDataUrl ? [{ type: 'image_url' as const, image_url: { url: m.imageDataUrl } }] : []),
+                  ...msgImages.map((url) => ({ type: 'image_url' as const, image_url: { url } })),
                   { type: 'text' as const, text: m.content },
                 ] as ContentBlock[])
               : m.content,
           }
         })
       )
-
-      // Verifica chave antes de persistir arquivos: evita leak de docs no disco
-      // quando a chave nao esta configurada.
-      const keyPresent = await hasOpenRouterKey()
-      if (!keyPresent) {
-        setHasApiKey(false)
-        setApiKeyChecked(true)
-        setError('API key not configured. Add your OpenRouter key in Settings.')
-        return
-      }
-      setHasApiKey(true)
-      setApiKeyChecked(true)
-
-      // Persiste os documentos anexados no filesystem para sobreviver ao reload da
-      // app. Apenas o path eh armazenado no ChatMessage.
-      const persistedDocs: Array<{ name: string; path: string }> = documents && documents.length > 0
-        ? await Promise.all(
-            documents.map(async (d) => {
-              const path = await invoke<string>('save_chat_doc', {
-                filename: `${nanoid()}.txt`,
-                content: d.data,
-              })
-              return { name: d.name, path }
-            })
-          )
-        : []
-
-      // Insere a mensagem do usuario + placeholder do assistant ANTES dos awaits
-      // (web search) para a UI responder imediatamente. Erros sao refletidos no
-      // proprio placeholder do assistant.
-      const userMsg: ChatMessage = {
-        id: nanoid(),
-        role: 'user',
-        content: trimmed,
-        imageDataUrl: imageDataUrl || undefined,
-        attachedDocs: persistedDocs.length > 0 ? persistedDocs : undefined,
-        timestamp: new Date().toISOString(),
-        ...(opts?.noteContext ?? {}),
-      }
-      const assistantId = nanoid()
-      const startedAt = Date.now()
-      turnStartedAtRef.current.delete(assistantId)
-      turnStartedAtRef.current.set(assistantId, startedAt)
-      const assistantMsg: ChatMessage = {
-        id: assistantId,
-        role: 'assistant',
-        content: '',
-        timestamp: new Date().toISOString(),
-      }
-      updateMessages(targetId, (msgs) => [...msgs, userMsg, assistantMsg])
-      turnConvIdRef.current = targetId
-      isStreamingRef.current = true
-      setIsStreaming(true)
-
-      const failOnAssistant = (message: string) => {
-        updateMessages(targetId, (msgs) =>
-          msgs.map((m) =>
-            m.id === assistantId && m.content === ''
-              ? { ...m, content: `Error: ${message}` }
-              : m
-          )
-        )
-        setError(message)
-        patchTimings(assistantId, {
-          totalMs: Date.now() - (turnStartedAtRef.current.get(assistantId) ?? Date.now()),
-          interrupted: true,
-        })
-        librarianContextRef.current = null
-        activeStreamRef.current = null
-        setIsStreaming(false)
-        setDeepResearchPhase(null)
-        setWebSearchActive(false)
-      }
 
       // Resolucao pela FONTE DE VERDADE (conversation.folderId). No turno da
       // 1a mensagem de uma instancia dedicada a conversa acabou de ser
@@ -3300,6 +3498,137 @@ export function useChat(
       const useDeepResearch = toolsRef.current.deepResearch && turnAgent.context.deepResearch
       const useWebSearch = toolsRef.current.webSearch && turnAgent.context.web
 
+      // Verifica chave antes de persistir arquivos: evita leak de docs no disco
+      // quando a chave nao esta configurada.
+      const keyPresent = await hasOpenRouterKey()
+      if (!keyPresent) {
+        endTurnAbort()
+        setHasApiKey(false)
+        setApiKeyChecked(true)
+        setError(readableChatError(OPENROUTER_KEY_MISSING, '').message, 'openrouter')
+        return
+      }
+      setHasApiKey(true)
+      setApiKeyChecked(true)
+      // Web search ou deep research ligados sem a chave do Tavily: o turno não
+      // começa (a mensagem não vira um balão de erro) e a faixa leva ao
+      // Settings. O composer já segura o envio; isto cobre a chave apagada
+      // depois da checagem dele.
+      if ((useDeepResearch || useWebSearch) && !(await hasTavilyKey())) {
+        endTurnAbort()
+        setError(
+          `${useDeepResearch ? 'Deep Research' : 'Web Search'} needs a Tavily key. Add it in Settings > Web Search, or turn it off.`,
+          'search'
+        )
+        return
+      }
+      // Desmontagem durante as checagens: o turno não começa.
+      if (signal.aborted) return
+
+      // Persiste os documentos anexados no filesystem para sobreviver ao reload da
+      // app. Apenas o path eh armazenado no ChatMessage. O Retry reaproveita os
+      // arquivos da pergunta original.
+      const persistedDocs: Array<{ name: string; path: string }> = retry
+        ? retry.attachedDocs
+        : documents && documents.length > 0
+          ? await Promise.all(
+              documents.map(async (d) => {
+                const path = await invoke<string>('save_chat_doc', {
+                  filename: `${nanoid()}.txt`,
+                  content: d.data,
+                })
+                return { name: d.name, path }
+              })
+            )
+          : []
+
+      // Insere a mensagem do usuario + placeholder do assistant ANTES dos awaits
+      // (web search) para a UI responder imediatamente. Erros sao refletidos no
+      // proprio placeholder do assistant.
+      const userMsg: ChatMessage = {
+        id: nanoid(),
+        role: 'user',
+        content: trimmed,
+        imageDataUrls: images.length > 0 ? images : undefined,
+        imageCount: images.length > 0 ? images.length : undefined,
+        attachedDocs: persistedDocs.length > 0 ? persistedDocs : undefined,
+        timestamp: new Date().toISOString(),
+        ...(opts?.noteContext ? { noteTitle: opts.noteContext.noteTitle } : {}),
+      }
+      const startedAt = Date.now()
+      turnStartedAtRef.current.delete(assistantId)
+      turnStartedAtRef.current.set(assistantId, startedAt)
+      const assistantMsg: ChatMessage = {
+        id: assistantId,
+        role: 'assistant',
+        content: '',
+        timestamp: new Date().toISOString(),
+      }
+      // Retry aceito: só agora o par antigo sai (e a linha de tempos dele).
+      updateMessages(targetId, (msgs) => [...msgs.filter((m) => !retryDrop.has(m.id)), userMsg, assistantMsg])
+      if (retry) {
+        setChatTimings((prev) => {
+          if (!(retry.answerId in prev)) return prev
+          const next = { ...prev }
+          delete next[retry.answerId]
+          return next
+        })
+      }
+      turnConvIdRef.current = targetId
+      isStreamingRef.current = true
+      setIsStreaming(true)
+
+      // Fontes e imagens da busca deste turno: gravadas na resposta, são as
+      // imagens remotas que carregam sem clique (renderMarkdown).
+      const turnImageUrls = new Set<string>()
+      const allowTurnImages = (urls: Array<string | undefined>) => {
+        const before = turnImageUrls.size
+        for (const url of urls) if (url) turnImageUrls.add(url)
+        if (turnImageUrls.size === before) return
+        updateMessages(targetId, (msgs) =>
+          msgs.map((m) => (m.id === assistantId ? { ...m, allowedImageUrls: [...turnImageUrls] } : m))
+        )
+      }
+      // Marca na resposta que a busca na web do turno falhou (aviso no balão).
+      const flagWebSearchFailed = () => {
+        updateMessages(targetId, (msgs) =>
+          msgs.map((m) => (m.id === assistantId ? { ...m, webSearchFailed: true } : m))
+        )
+      }
+      // Buscas nos documentos do turno (RAG automático e search_knowledge_base):
+      // o aviso só aparece quando todas falharam.
+      let kbSearches = 0
+      let kbFailures = 0
+      const noteKbSearch = (ok: boolean) => {
+        const flaggedBefore = kbSearches > 0 && kbFailures === kbSearches
+        kbSearches += 1
+        if (!ok) kbFailures += 1
+        const allFailed = kbFailures === kbSearches
+        if (allFailed === flaggedBefore) return
+        updateMessages(targetId, (msgs) =>
+          msgs.map((m) => (m.id === assistantId ? { ...m, kbSearchFailed: allFailed || undefined } : m))
+        )
+      }
+      const webSearchFailedMessage: ChatMessageInput = {
+        role: 'system',
+        content:
+          'The web search for this message failed, so there are no web results. Answer without them and do not cite web sources.',
+      }
+
+      const failOnAssistant = (message: string, code?: string) => {
+        endTurnAbort()
+        markTurnFailed(targetId, assistantId, model, readableChatError(code, message))
+        patchTimings(assistantId, {
+          totalMs: Date.now() - (turnStartedAtRef.current.get(assistantId) ?? Date.now()),
+          interrupted: true,
+        })
+        librarianContextRef.current = null
+        activeStreamRef.current = null
+        setIsStreaming(false)
+        setDeepResearchPhase(null)
+        setWebSearchActive(false)
+      }
+
       // Busca web — deep research tem prioridade sobre web search simples
       // Data LOCAL do usuário ("hoje", "ontem", "semana passada" nas tools).
       const currentDate = dateKeyFromMs(Date.now())
@@ -3309,70 +3638,67 @@ export function useChat(
       // Resultados da busca pré-turno (modelos SEM tools) para o bibliotecário;
       // consumidos abaixo, depois que containingFolder for resolvido.
       let preTurnSearchResults: SearchResult[] | null = null
-      if (useDeepResearch) {
-        const tavilyOk = await hasTavilyKey()
-        if (!tavilyOk) {
-          failOnAssistant(
-            'Deep Research is active but the Tavily key is not configured in Settings > Web Search.'
-          )
-          return
-        }
-        if (!supportsTools) {
-          try {
-            const route = await invoke<{ needsSearch: boolean; intent: string | null; queries: string[] }>(
-              'web_search_route',
-              { history: historyForApi, lastMessage: trimmed, currentDate }
-            ).catch(() => ({ needsSearch: true, intent: null, queries: [trimmed.slice(0, 380)] }))
-            const optimizedQuery = route.queries[0] ?? trimmed.slice(0, 380)
+      if (useDeepResearch && !supportsTools) {
+        try {
+          const route = await invoke<{ needsSearch: boolean; intent: string | null; queries: string[] }>(
+            'web_search_route',
+            { history: historyForApi, lastMessage: trimmed, currentDate }
+          ).catch(() => ({ needsSearch: true, intent: null, queries: [trimmed.slice(0, 380)] }))
+          if (signal.aborted) return
+          const optimizedQuery = route.queries[0] ?? trimmed.slice(0, 380)
 
-            const { formattedContext, sources } = await runDeepResearch(
-              optimizedQuery,
-              (phase) => setDeepResearchPhase(phase),
-              currentDate
-            )
-            setDeepResearchPhase('synthesizing')
-            const sourceList = sources
-              .map((s, i) => `${i + 1}. [${s.title}](${s.url})`)
-              .join('\n')
-            if (formattedContext) {
-              searchSystemMessage = {
-                role: 'system',
-                content: `You have access to the following deeply researched web sources. Synthesize them into a complete, well-structured answer. At the end of your response add a "Sources" section with these references:\n\n${sourceList}\n\n---\n\nResearch results:\n\n${formattedContext}`,
-              }
+          const { formattedContext, sources } = await runDeepResearch(
+            optimizedQuery,
+            (phase) => {
+              if (!signal.aborted) setDeepResearchPhase(phase)
+            },
+            currentDate,
+            signal
+          )
+          if (signal.aborted) return
+          allowTurnImages(sources.map((s) => s.url))
+          setDeepResearchPhase('synthesizing')
+          const sourceList = sources
+            .map((s, i) => `${i + 1}. [${s.title}](${s.url})`)
+            .join('\n')
+          if (formattedContext) {
+            searchSystemMessage = {
+              role: 'system',
+              content: `You have access to the following deeply researched web sources. Synthesize them into a complete, well-structured answer. At the end of your response add a "Sources" section with these references:\n\n${sourceList}\n\n---\n\nResearch results:\n\n${formattedContext}`,
             }
-          } catch (err) {
-            setDeepResearchPhase(null)
-            console.warn('deepResearch failed:', err)
-            setError(
-              `Deep Research failed: ${err instanceof Error ? err.message : 'unknown error'}. Sending without search context.`
-            )
           }
+        } catch (err) {
+          if (signal.aborted) return
+          setDeepResearchPhase(null)
+          console.warn('deepResearch failed:', err)
+          flagWebSearchFailed()
+          searchSystemMessage = webSearchFailedMessage
         }
-      } else if (useWebSearch) {
-        const tavilyOk = await hasTavilyKey()
-        if (!tavilyOk) {
-          failOnAssistant(
-            'Web Search is active but the Tavily key is not configured in Settings > Web Search.'
-          )
-          return
-        }
-        if (!supportsTools) {
-          try {
-            const route = await invoke<{ needsSearch: boolean; intent: string | null; queries: string[] }>(
-              'web_search_route',
-              { history: historyForApi, lastMessage: trimmed, currentDate }
-            ).catch(() => ({ needsSearch: true, intent: null, queries: [trimmed.slice(0, 380)] }))
+      } else if (useWebSearch && !useDeepResearch && !supportsTools) {
+        try {
+          const route = await invoke<{ needsSearch: boolean; intent: string | null; queries: string[] }>(
+            'web_search_route',
+            { history: historyForApi, lastMessage: trimmed, currentDate }
+          ).catch(() => ({ needsSearch: true, intent: null, queries: [trimmed.slice(0, 380)] }))
+          if (signal.aborted) return
 
-            if (route.needsSearch && route.queries.length > 0) {
-              const allResults = await Promise.all(
-                route.queries.map((q) => webSearch(q, 3).catch(() => []))
-              )
+          if (route.needsSearch && route.queries.length > 0) {
+            // null = a busca falhou (sem resultados é []).
+            const allResults = await Promise.all(
+              route.queries.map((q) => webSearch(q, 3, false, signal).catch(() => null))
+            )
+            if (signal.aborted) return
+            if (allResults.every((r) => r === null)) {
+              flagWebSearchFailed()
+              searchSystemMessage = webSearchFailedMessage
+            } else {
               const seen = new Set<string>()
-              const deduplicated = allResults.flat().filter((r) => {
+              const deduplicated = allResults.flatMap((r) => r ?? []).filter((r) => {
                 if (seen.has(r.url)) return false
                 seen.add(r.url)
                 return true
               })
+              allowTurnImages(deduplicated.flatMap((r) => [r.url, r.imageUrl]))
               preTurnSearchResults = deduplicated
               const formatted = formatSearchResults(deduplicated)
               if (formatted) {
@@ -3382,12 +3708,12 @@ export function useChat(
                 }
               }
             }
-          } catch (err) {
-            console.warn('webSearch failed:', err)
-            setError(
-              `Web search failed: ${err instanceof Error ? err.message : 'unknown error'}. Sending without search context.`
-            )
           }
+        } catch (err) {
+          if (signal.aborted) return
+          console.warn('webSearch failed:', err)
+          flagWebSearchFailed()
+          searchSystemMessage = webSearchFailedMessage
         }
       }
 
@@ -3573,7 +3899,7 @@ export function useChat(
           let selected: RagCandidate[] = []
           let trace: RagResponse | null = null
           if (ragGateResult === 'reuse') {
-            const prevSources = [...(currentConv?.messages ?? [])]
+            const prevSources = [...convMessages]
               .reverse()
               .find((m) => m.role === 'assistant' && m.ragSources && m.ragSources.length > 0)
               ?.ragSources
@@ -3581,6 +3907,7 @@ export function useChat(
             if (rowids.length > 0) {
               // O escopo (com a nota aberta excluida) e aplicado no backend.
               selected = await ragGetChunks(ragScope, rowids)
+              if (signal.aborted) return
             }
             if (import.meta.env.DEV)
               console.log(`[useChat] RAG reuse: ${selected.length}/${rowids.length} chunks from the previous turn`)
@@ -3595,7 +3922,7 @@ export function useChat(
                   notebookId: ragScope.notebookId,
                   openNoteId: opts?.noteContext?.noteId ?? null,
                   excludedNoteId: opts?.excludeNoteId ?? null,
-                  hasAttachment: !!imageDataUrl || (documents?.length ?? 0) > 0,
+                  hasAttachment: images.length > 0 || (documents?.length ?? 0) > 0,
                 })
               } catch (err) {
                 console.warn('RAG router tree failed (searching without it):', err)
@@ -3604,11 +3931,13 @@ export function useChat(
             trace = await ragRetrieve(
               ragScope,
               ragMessage(trimmed),
-              ragHistory(currentConv?.messages ?? []),
+              ragHistory(convMessages),
               localStorage.getItem(RAG_REWRITE_MODEL_KEY),
               null,
               router
             )
+            // A busca no Rust não é cancelável: depois do Stop o resultado é descartado.
+            if (signal.aborted) return
             selected = trace.selected
             // Tempos das etapas do RAG (independente do modo detalhado). No
             // turno do roteador, etapa pulada (0) fica fora da linha.
@@ -3631,13 +3960,14 @@ export function useChat(
           // Notas escolhidas pelo roteador, lidas no storage antes da resposta.
           // Stop durante o roteador: sem leitura (o turno termina depois do bloco).
           let reads: RoutedNoteRead[] = []
-          if (trace?.route?.notes.length && ragScope.notebookId && !toolCancelledRef.current) {
+          if (trace?.route?.notes.length && ragScope.notebookId) {
             const readStarted = Date.now()
             try {
               reads = await readRoutedNotes(trace.route.notes, ragScope.notebookId)
             } catch (err) {
               console.warn('RAG routed notes read failed (continuing without):', err)
             }
+            if (signal.aborted) return
             patchTimings(assistantId, {
               readMs: Date.now() - readStarted,
               routeNotes: reads.map((r) => `${r.title.slice(0, 40)}${r.excerpts ? ' (excerpts)' : ''}`),
@@ -3678,22 +4008,25 @@ export function useChat(
             const t = trace
             setRagTraces((prev) => ({ ...prev, [assistantId]: t }))
           }
+          noteKbSearch(true)
         } catch (err) {
+          if (signal.aborted) return
           console.warn('RAG search in chat failed (continuing without):', err)
+          noteKbSearch(false)
+          ragSystemMessage = {
+            role: 'system',
+            content:
+              "The search in the user's documents failed for this message, so no excerpts are available. Answer without them and do not cite [n] sources.",
+          }
         } finally {
-          setRagSearching(false)
+          // Depois do Stop o cancel() já limpou o status (e um turno novo pode tê-lo ligado).
+          if (!signal.aborted) setRagSearching(false)
         }
       }
 
-      // Stop durante a busca (web pre-turno ou RAG): ainda nao ha stream para
-      // cancelar, entao o turno termina aqui.
-      if (toolCancelledRef.current) {
-        updateMessages(targetId, (msgs) =>
-          msgs.filter((m) => !(m.id === assistantId && m.content === ''))
-        )
-        setIsStreaming(false)
-        return
-      }
+      // Stop durante a busca (web pre-turno ou RAG): o cancel() já encerrou o
+      // turno na UI; o resto do send() não roda.
+      if (signal.aborted) return
 
       // Documents arrive here already converted to plain text by ChatPanel
       // (PDFs have their text extracted in the backend before reaching send).
@@ -3703,16 +4036,23 @@ export function useChat(
         text: `[Attached file: ${doc.name}]\n${doc.data}`,
       }))
       const userContent: string | ContentBlock[] =
-        imageDataUrl || docBlocks.length > 0
+        images.length > 0 || docBlocks.length > 0
           ? [
               ...docBlocks,
-              ...(imageDataUrl ? [{ type: 'image_url' as const, image_url: { url: imageDataUrl } }] : []),
+              ...images.map((url) => ({ type: 'image_url' as const, image_url: { url } })),
               { type: 'text' as const, text: trimmed },
             ]
           : trimmed
 
       const requestId = assistantId
       activeStreamRef.current = { requestId, convId: targetId, assistantId, model, roundText: '', roundThinking: false }
+      // Troca de painel durante o RAG ou a busca desmonta o hook: o turno é
+      // abandonado antes do stream, que é a parte paga.
+      if (unmountedRef.current) {
+        activeStreamRef.current = null
+        isStreamingRef.current = false
+        return
+      }
 
       // Build tool definitions for models that support tool use
       const deepResearchToolParameters = {
@@ -3977,7 +4317,7 @@ export function useChat(
       // Stop enquanto as tools eram montadas (hasTavilyKey, snapshot de tasks):
       // o cancel() já limpou o turno (placeholder, isStreaming e
       // activeStreamRef), mas o stream ainda não tinha começado. Não começa.
-      if (activeStreamRef.current?.requestId !== requestId) return
+      if (signal.aborted || activeStreamRef.current?.requestId !== requestId) return
 
       // Register tool call handler for this turn. Single round: the tool runs,
       // then a 2nd request WITHOUT tools is dispatched to force the final text
@@ -4040,20 +4380,32 @@ export function useChat(
               if (tc.toolName === 'deep_research') {
                 const query = parsedArgs.query?.trim() || trimmed.slice(0, 380)
                 setDeepResearchPhase('searching')
-                const { formattedContext, sources } = await runDeepResearch(
-                  query,
-                  (phase) => setDeepResearchPhase(phase),
-                  currentDate
-                )
-                setDeepResearchPhase('synthesizing')
-                const sourceList = sources
-                  .map((s, i) => `${i + 1}. [${s.title}](${s.url})`)
-                  .join('\n')
-                if (formattedContext) {
-                  toolSearchMessage = {
-                    role: 'system',
-                    content: `You have access to the following deeply researched web sources. Synthesize them into a complete, well-structured answer. At the end of your response add a "Sources" section with these references:\n\n${sourceList}\n\n---\n\nResearch results:\n\n${formattedContext}`,
+                try {
+                  const { formattedContext, sources } = await runDeepResearch(
+                    query,
+                    (phase) => {
+                      if (isActive()) setDeepResearchPhase(phase)
+                    },
+                    currentDate,
+                    signal
+                  )
+                  if (!isActive()) return
+                  allowTurnImages(sources.map((s) => s.url))
+                  setDeepResearchPhase('synthesizing')
+                  const sourceList = sources
+                    .map((s, i) => `${i + 1}. [${s.title}](${s.url})`)
+                    .join('\n')
+                  if (formattedContext) {
+                    toolSearchMessage = {
+                      role: 'system',
+                      content: `You have access to the following deeply researched web sources. Synthesize them into a complete, well-structured answer. At the end of your response add a "Sources" section with these references:\n\n${sourceList}\n\n---\n\nResearch results:\n\n${formattedContext}`,
+                    }
                   }
+                } catch (err) {
+                  if (!isActive()) return
+                  console.warn('deep_research tool failed:', err)
+                  flagWebSearchFailed()
+                  toolSearchMessage = webSearchFailedMessage
                 }
                 setDeepResearchPhase(null)
               } else if (tc.toolName === 'web_search') {
@@ -4064,15 +4416,24 @@ export function useChat(
                   : []
                 const queries = rawQueries.length > 0 ? rawQueries : [trimmed.slice(0, 380)]
                 setWebSearchActive(true)
+                // null = a busca falhou (sem resultados é []).
                 const allResults = await Promise.all(
-                  queries.map((q) => webSearch(q, 3).catch(() => []))
+                  queries.map((q) => webSearch(q, 3, false, signal).catch(() => null))
                 )
+                if (!isActive()) return
+                if (allResults.every((r) => r === null)) {
+                  flagWebSearchFailed()
+                  toolSearchMessage = webSearchFailedMessage
+                  setWebSearchActive(false)
+                  continue
+                }
                 const seen = new Set<string>()
-                const deduplicated = allResults.flat().filter((r) => {
+                const deduplicated = allResults.flatMap((r) => r ?? []).filter((r) => {
                   if (seen.has(r.url)) return false
                   seen.add(r.url)
                   return true
                 })
+                allowTurnImages(deduplicated.flatMap((r) => [r.url, r.imageUrl]))
                 // Captura os resultados para o pipeline do bibliotecário (disparo
                 // no fim do turno, em onOpenRouterDone) — só quando a pasta tem
                 // web research ligado. Sobrescrever é aceitável: o pipeline roda
@@ -4156,12 +4517,15 @@ export function useChat(
                       ? `${label}:\n\n${ragChunkBlocks(res.selected, sources).join('\n---\n')}`
                       : `${label}: nothing relevant found.`
                   )
+                  noteKbSearch(true)
                 } catch (err) {
                   console.warn('search_knowledge_base failed:', err)
                   kbResults.push(`${label}: the search failed.`)
+                  noteKbSearch(false)
                 } finally {
-                  setRagSearching(false)
+                  if (isActive()) setRagSearching(false)
                 }
+                if (!isActive()) return
               } else if (tc.toolName === 'get_day' || tc.toolName === 'notes_by_date') {
                 const args = parsedArgs as Record<string, unknown>
                 const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
@@ -4219,6 +4583,7 @@ export function useChat(
               )
               toolCallHandlerRef.current = null
               activeStreamRef.current = null
+              endTurnAbort()
               setIsStreaming(false)
               return
             }
@@ -4335,31 +4700,89 @@ export function useChat(
         failOnAssistant(message)
       }
     },
-    [activeId, dedicatedFolderName, isDetached, mode, isStreaming, model, models, setFolders, setLooseOrder, updateMessages, thinkingEnabled]
+    [activeId, dedicatedFolderName, isDetached, mode, isStreaming, model, models, setFolders, setLooseOrder, updateMessages, thinkingEnabled, markTurnFailed, setError]
   )
 
+  // Apagar com Undo (chat principal): a conversa sai da lista na hora; os
+  // documentos anexados e os vínculos de respostas só saem quando o prazo do
+  // Undo acaba, num novo apagar ou ao desmontar.
+  const [pendingDelete, setPendingDelete] = useState<{ conversationId: string; title: string } | null>(null)
+  const pendingDeleteRef = useRef<{
+    conversation: ChatConversation
+    folderId: string | null
+    index: number
+    wasActive: boolean
+    timer: ReturnType<typeof setTimeout>
+  } | null>(null)
+  const finalizePendingDelete = useCallback(() => {
+    const pending = pendingDeleteRef.current
+    if (!pending) return
+    pendingDeleteRef.current = null
+    clearTimeout(pending.timer)
+    const targets = new Set([pending.conversation.id])
+    deleteAttachedDocs([pending.conversation], targets)
+    unlinkResponsesFromConversations(targets)
+    setPendingDelete(null)
+  }, [])
+
   useEffect(() => {
+    // StrictMode roda mount → cleanup → mount: o corpo desfaz o cleanup.
+    unmountedRef.current = false
+    // Resposta cortada pela desmontagem de outra instância no mesmo commit.
+    setConversations((prev) => withCutMarks(prev))
     return () => {
+      unmountedRef.current = true
+      const turn = turnAbortRef.current
+      turn?.controller.abort()
+      turnAbortRef.current = null
       const stream = activeStreamRef.current
+      // Turno em andamento (no stream ou ainda na busca): a resposta ganha a
+      // marca de corte, gravada já. Sem ela, a outra janela e a próxima
+      // montagem veriam uma resposta ainda sendo escrita.
+      const cutId = isStreamingRef.current ? (stream?.assistantId ?? turn?.assistantId) : undefined
+      if (cutId) {
+        cutMessageIds.add(cutId)
+        saveConversations(withCutMarks(parseConversations(readChatKey(CONVERSATIONS_KEY))))
+      }
       if (stream) {
         cancelOpenRouterStream(stream.requestId).catch((e) =>
           console.error('failed to cancel chat stream on unmount', e)
         )
         activeStreamRef.current = null
       }
+      finalizePendingDelete()
     }
-  }, [])
+  }, [finalizePendingDelete])
 
   const cancel = useCallback(() => {
-    // Signal tool handler to abort even if activeStreamRef is null (tool executing)
-    toolCancelledRef.current = true
+    // Aborta o pré-turno (busca na web, deep research, RAG) e a tool em
+    // execução: o send() e o handler da tool param no próximo passo.
+    const turn = turnAbortRef.current
+    turnAbortRef.current = null
+    turn?.controller.abort()
     toolCallHandlerRef.current = null
     setDeepResearchPhase(null)
     setWebSearchActive(false)
+    setRagSearching(false)
     librarianContextRef.current = null
 
     const stream = activeStreamRef.current
-    if (!stream) return
+    if (!stream) {
+      // Stop antes do stream: o turno termina aqui, sem esperar a busca.
+      if (!turn || !isStreamingRef.current) return
+      setChatTimings((prev) => {
+        if (!(turn.assistantId in prev)) return prev
+        const next = { ...prev }
+        delete next[turn.assistantId]
+        return next
+      })
+      updateMessages(turn.convId, (msgs) =>
+        msgs.filter((m) => !(m.id === turn.assistantId && m.content === ''))
+      )
+      isStreamingRef.current = false
+      setIsStreaming(false)
+      return
+    }
     void cancelOpenRouterStream(stream.requestId)
     // Placeholder vazio removido = a linha de tempos não tem o que mostrar;
     // com texto já no balão, a resposta fica marcada como interrompida.
@@ -4384,11 +4807,56 @@ export function useChat(
       if (last && last.id === stream.assistantId && last.content === '') {
         return msgs.slice(0, -1)
       }
-      return msgs
+      // Marca "Stopped" (e o modelo, para a linha de metadados aparecer).
+      return msgs.map((m) =>
+        m.id === stream.assistantId && m.content.length > 0
+          ? { ...m, interrupted: 'stopped' as const, model: m.model ?? stream.model }
+          : m
+      )
     })
     activeStreamRef.current = null
     setIsStreaming(false)
   }, [updateMessages, patchTimings])
+
+  // Retry do último turno (falha, sem resposta ou interrompido): devolve o que
+  // foi enviado, para o painel reenviar pelo caminho dele (contexto efêmero,
+  // agente), com `retry` no send(). Nada muda aqui: o par sai e os anexos são
+  // reaproveitados só quando o send() aceita o reenvio. Só vale para a última
+  // resposta da conversa ativa e fora do streaming.
+  const prepareRetry = useCallback(
+    async (assistantId: string) => {
+      if (isStreamingRef.current) return null
+      const conv = conversationsRef.current.find((c) => c.id === activeId)
+      if (!conv) return null
+      const n = conv.messages.length
+      const answer = conv.messages[n - 1]
+      const question = conv.messages[n - 2]
+      if (!answer || answer.id !== assistantId || answer.role !== 'assistant') return null
+      if (!question || question.role !== 'user') return null
+      const attached = question.attachedDocs ?? []
+      const documents = await Promise.all(
+        attached.map(async (d) => ({
+          name: d.name,
+          type: 'text/plain',
+          data: await invoke<string>('read_chat_doc', { path: d.path }).catch(() => '[content unavailable]'),
+        }))
+      )
+      if (isStreamingRef.current) return null
+      const retry: RetryTurn = { questionId: question.id, answerId: answer.id, attachedDocs: attached }
+      return { text: question.content, images: question.imageDataUrls ?? [], documents, retry }
+    },
+    [activeId]
+  )
+
+  // Marca "Saved to <nota>" na resposta salva pelo SaveToNoteModal.
+  const markMessageSavedToNote = useCallback(
+    (messageId: string, target: { notebookId: string; noteId: string; title: string }) => {
+      const conv = conversationsRef.current.find((c) => c.messages.some((m) => m.id === messageId))
+      if (!conv) return
+      updateMessages(conv.id, (msgs) => msgs.map((m) => (m.id === messageId ? { ...m, savedToNote: target } : m)))
+    },
+    [updateMessages]
+  )
 
   // Antes de limpar ou apagar conversas: cancela a resposta em andamento numa
   // delas e avisa as outras janelas (CLEARED_KEY), que fazem o mesmo com o
@@ -4418,35 +4886,95 @@ export function useChat(
     [cancel]
   )
 
-  // Apaga as conversas, com os documentos anexados. A conversa aberta que sai
+  // Tira as conversas do estado (sem os anexos). A conversa aberta que sai
   // dá lugar à primeira restante — instâncias detached (Assistant, Reader,
   // Anotações) não pulam para uma conversa alheia: ficam sem conversa e o
   // painel abre um rascunho.
+  const removeConversations = (ids: string[]) => {
+    const targets = new Set(ids)
+    beginConversationsChange(ids, 'delete')
+    setConversations((prev) => prev.filter((c) => !targets.has(c.id)))
+    setFolders((prev) =>
+      prev.map((f) =>
+        f.conversationIds.some((cid) => targets.has(cid))
+          ? { ...f, conversationIds: f.conversationIds.filter((cid) => !targets.has(cid)) }
+          : f
+      )
+    )
+    setLooseOrder((prev) => prev.filter((cid) => !targets.has(cid)))
+    setActiveIdState((current) => {
+      if (!current || !targets.has(current)) return current
+      if (isDetached) return null
+      return conversationsRef.current.find((c) => !targets.has(c.id))?.id ?? null
+    })
+  }
+
+  // Apaga as conversas, com os documentos anexados e os vínculos de respostas.
   const deleteConversations = useCallback(
     (ids: string[]) => {
       if (ids.length === 0) return
       const targets = new Set(ids)
-      beginConversationsChange(ids, 'delete')
       deleteAttachedDocs(conversationsRef.current, targets)
       unlinkResponsesFromConversations(targets)
-      setConversations((prev) => prev.filter((c) => !targets.has(c.id)))
-      setFolders((prev) =>
-        prev.map((f) =>
-          f.conversationIds.some((cid) => targets.has(cid))
-            ? { ...f, conversationIds: f.conversationIds.filter((cid) => !targets.has(cid)) }
-            : f
-        )
-      )
-      setLooseOrder((prev) => prev.filter((cid) => !targets.has(cid)))
-      setActiveIdState((current) => {
-        if (!current || !targets.has(current)) return current
-        if (isDetached) return null
-        return conversationsRef.current.find((c) => !targets.has(c.id))?.id ?? null
-      })
+      removeConversations(ids)
     },
-    // beginConversationsChange usa só cancel e refs.
+    // removeConversations usa só cancel, setters e refs.
     [cancel, setFolders, setLooseOrder, isDetached]
   )
+
+  // Apaga uma conversa com Undo: ela sai da lista na hora e volta ao mesmo
+  // lugar (pasta, posição e seleção) com undoDelete; os anexos só saem quando
+  // o prazo acaba. Um segundo apagar encerra o anterior.
+  const deleteConversationWithUndo = useCallback(
+    (id: string) => {
+      const found = conversationsRef.current.find((c) => c.id === id)
+      if (!found) return
+      finalizePendingDelete()
+      // Turno em andamento nela: o cancel() tira o balão vazio; a cópia também.
+      const wasStreaming = streamingConvId() === id
+      const conversation = wasStreaming
+        ? { ...found, messages: found.messages.filter((m) => !(m.role === 'assistant' && m.content === '')) }
+        : found
+      const folderId = found.folderId ?? null
+      const order = folderId
+        ? foldersRef.current.find((f) => f.id === folderId)?.conversationIds ?? []
+        : looseOrderRef.current
+      const index = Math.max(0, order.indexOf(id))
+      removeConversations([id])
+      const timer = setTimeout(() => finalizePendingDelete(), DELETE_UNDO_MS)
+      pendingDeleteRef.current = { conversation, folderId, index, wasActive: activeId === id, timer }
+      setPendingDelete({ conversationId: id, title: found.title })
+    },
+    // removeConversations usa só cancel, setters e refs.
+    [cancel, setFolders, setLooseOrder, isDetached, activeId, finalizePendingDelete]
+  )
+
+  const undoDelete = useCallback(() => {
+    const pending = pendingDeleteRef.current
+    if (!pending) return
+    pendingDeleteRef.current = null
+    clearTimeout(pending.timer)
+    setPendingDelete(null)
+    // A pasta pode ter sido apagada no prazo do Undo: a conversa volta solta.
+    const folderId =
+      pending.folderId && foldersRef.current.some((f) => f.id === pending.folderId) ? pending.folderId : null
+    const index = folderId === pending.folderId ? pending.index : 0
+    const restored: ChatConversation = { ...pending.conversation, folderId }
+    const insertAt = (list: string[]) => {
+      const next = list.filter((cid) => cid !== restored.id)
+      next.splice(Math.min(index, next.length), 0, restored.id)
+      return next
+    }
+    setConversations((prev) => (prev.some((c) => c.id === restored.id) ? prev : [restored, ...prev]))
+    if (folderId) {
+      setFolders((prev) =>
+        prev.map((f) => (f.id === folderId ? { ...f, conversationIds: insertAt(f.conversationIds) } : f))
+      )
+    } else {
+      setLooseOrder((prev) => insertAt(prev))
+    }
+    if (pending.wasActive) setActiveIdState(restored.id)
+  }, [setFolders, setLooseOrder])
 
   const deleteConversation = useCallback((id: string) => deleteConversations([id]), [deleteConversations])
 
@@ -4553,8 +5081,9 @@ export function useChat(
     ragTraces,
     chatTimings,
     thinkingEnabled,
-    toggleThinking: () => setThinkingEnabled((v) => !v),
+    toggleThinking,
     error,
+    errorSettings,
     send,
     activeAgentId,
     agentsAvailable,
@@ -4566,7 +5095,13 @@ export function useChat(
     startAssistantConversation,
     ensureAssistantFolder,
     ensureScopedFolder,
+    openConversationWithExchange,
+    prepareRetry,
+    markMessageSavedToNote,
     deleteConversation,
+    deleteConversationWithUndo,
+    undoDelete,
+    pendingDelete,
     clearConversations,
     deleteFolderConversations,
     renameConversation,

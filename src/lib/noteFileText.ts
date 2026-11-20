@@ -33,6 +33,13 @@ const TASK_REF_RE = /<task-ref\b[^>]*>\s*<\/task-ref>/g
 const TASKS_QUERY_RE = /<tasks-query\b[^>]*\bdata-filter="([^"]*)"[^>]*>\s*<\/tasks-query>/g
 const TOGGLE_START = '<div data-type="toggle-block"'
 const DIV_TAG_RE = /<div\b|<\/div>/g
+// Formato novo do toggle: a tag de abertura e o `</div>` ficam sozinhos na
+// linha, com o recuo da lista ou o `> ` da citação (o toggle nunca é o 1º
+// bloco do item de lista, então não há marcador antes dele).
+const TOGGLE_OPEN_LINE_RE = /^([ \t>]*)<div data-type="toggle-block"([^>]*)>[ \t]*$/
+const TOGGLE_CLOSE_LINE_RE = /^[ \t>]*<\/div>[ \t]*$/
+const TITLE_ATTR_RE = /\bdata-title="([^"]*)"/
+const FENCE_RE = /^[ \t>]*(`{3,}|~{3,})(.*)$/
 const EMBED_ID_RE = /<embed-block\b[^>]*\bdata-cmd="([^"]*)"/g
 const LINKED_NOTE_ID_RE = /<linked-note\b[^>]*\bdata-note-id="([^"]*)"/g
 const BR_RE = /<br\s*\/?>/gi
@@ -50,6 +57,9 @@ export function decodeEntities(text: string): string {
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
+    // Quebra de linha num título de toggle (`escapeAttr` do ToggleBlock).
+    .replace(/&#10;/g, ' ')
+    .replace(/&#13;/g, '')
     .replace(/&amp;/g, '&')
 }
 
@@ -63,30 +73,66 @@ export interface NoteAiTextOptions {
   resolveImageText?: (dataUrl: string) => string | undefined
 }
 
-// Troca cada toggle de topo pelo texto do walker. O fim do toggle é achado
-// contando a profundidade de <div>, porque o taskItem gera <div> interno.
+// Troca os toggles pelo texto, linha a linha, pulando as cercas de código.
+// - Formato novo: o miolo é markdown cru (código com `<` não é escapado), então
+//   não passa pelo parser de HTML. A abertura vira a linha do título, o
+//   `</div>` que a fecha sai e o miolo segue como o resto da nota.
+// - Formato antigo (HTML colado na tag): cada toggle vai pelo walker. O fim é
+//   achado contando a profundidade de <div>, porque o taskItem gera <div>
+//   interno.
 function replaceToggleBlocks(text: string, render: (el: Element) => string): string {
   let out = ''
   let pos = 0
-  for (;;) {
-    const start = text.indexOf(TOGGLE_START, pos)
-    if (start === -1) break
-    let end = text.length
-    let depth = 0
-    DIV_TAG_RE.lastIndex = start
-    for (let m = DIV_TAG_RE.exec(text); m; m = DIV_TAG_RE.exec(text)) {
-      depth += m[0] === '</div>' ? -1 : 1
-      if (depth === 0) {
-        end = m.index + m[0].length
-        break
+  let fence = '' // cerca de código aberta
+  let open = 0 // toggles do formato novo abertos
+  while (pos < text.length) {
+    const nl = text.indexOf('\n', pos)
+    const lineEnd = nl === -1 ? text.length : nl
+    const next = nl === -1 ? text.length : nl + 1
+    const line = text.slice(pos, lineEnd)
+    const f = FENCE_RE.exec(line)
+    if (fence) {
+      if (f && f[1][0] === fence[0] && f[1].length >= fence.length && !f[2].trim()) fence = ''
+    } else if (f && !(f[1][0] === '`' && f[2].includes('`'))) {
+      fence = f[1]
+    } else {
+      const openTag = TOGGLE_OPEN_LINE_RE.exec(line)
+      if (openTag) {
+        open++
+        const title = decodeEntities(TITLE_ATTR_RE.exec(openTag[2])?.[1] ?? '').trim()
+        if (title) out += openTag[1] + title + text.slice(lineEnd, next)
+        pos = next
+        continue
+      }
+      if (open > 0 && TOGGLE_CLOSE_LINE_RE.test(line)) {
+        open--
+        pos = next
+        continue
+      }
+      const legacy = line.indexOf(TOGGLE_START)
+      if (legacy !== -1) {
+        const start = pos + legacy
+        let end = text.length
+        let depth = 0
+        DIV_TAG_RE.lastIndex = start
+        for (let m = DIV_TAG_RE.exec(text); m; m = DIV_TAG_RE.exec(text)) {
+          depth += m[0] === '</div>' ? -1 : 1
+          if (depth === 0) {
+            end = m.index + m[0].length
+            break
+          }
+        }
+        const template = document.createElement('template')
+        template.innerHTML = text.slice(start, end)
+        out += text.slice(pos, start) + Array.from(template.content.children).map(render).join('\n')
+        pos = end
+        continue
       }
     }
-    const template = document.createElement('template')
-    template.innerHTML = text.slice(start, end)
-    out += text.slice(pos, start) + Array.from(template.content.children).map(render).join('\n')
-    pos = end
+    out += text.slice(pos, next)
+    pos = next
   }
-  return out + text.slice(pos)
+  return out
 }
 
 // Tira a marcação do termo do Related content (`<span data-related>`) e deixa

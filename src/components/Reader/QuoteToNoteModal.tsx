@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { ArrowLeft, Plus, X } from '@phosphor-icons/react'
 import type { BookQuote, Note, NoteType, Notebook } from '../../types'
 import { appendQuoteToContent, buildQuoteBlock } from '../../lib/bookQuotes'
 import { NoteTypePicker } from '../NoteTypes/NoteTypePicker'
@@ -32,6 +33,9 @@ export interface QuoteToNoteModalProps {
   positionLabel: string
   bookId: string
   onSaved: (quote: BookQuote) => void
+  // Checkbox "Send future quotes from this book here" do sucesso: vincula a
+  // nota ao livro ao fechar o modal.
+  onLinkNote: (notebookId: string, noteId: string) => void
   onClose: () => void
 }
 
@@ -86,6 +90,7 @@ export function QuoteToNoteModal({
   positionLabel,
   bookId,
   onSaved,
+  onLinkNote,
   onClose,
 }: QuoteToNoteModalProps) {
   const [stage, setStage] = useState<Stage>(() => initialStage(notebooks.length))
@@ -97,6 +102,7 @@ export function QuoteToNoteModal({
   >(null)
   // Tipo que será aplicado à nota nova criada por esta citação.
   const [pendingTypeId, setPendingTypeId] = useState<string | null>(null)
+  const [sendHere, setSendHere] = useState(false)
 
   const newNotebookInputRef = useRef<HTMLInputElement | null>(null)
   const newNoteTitleInputRef = useRef<HTMLInputElement | null>(null)
@@ -113,6 +119,7 @@ export function QuoteToNoteModal({
     setNewNoteTitle('')
     setTitleError(null)
     setRecentlyPickedNotebookId(null)
+    setSendHere(false)
   }, [open, notebooks.length])
 
   useEffect(() => {
@@ -124,14 +131,23 @@ export function QuoteToNoteModal({
     }
   }, [open, stage.kind])
 
+  // Toda saída do modal passa por aqui: no sucesso, aplica o checkbox
+  // "Send future quotes from this book here".
+  function handleClose() {
+    if (stage.kind === 'success' && sendHere) onLinkNote(stage.notebookId, stage.noteId)
+    onClose()
+  }
+  const handleCloseRef = useRef(handleClose)
+  handleCloseRef.current = handleClose
+
   useEffect(() => {
     if (!open) return
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') handleCloseRef.current()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
+  }, [open])
 
   const lastNotebookId = useMemo(() => {
     if (!open) return null
@@ -210,7 +226,7 @@ export function QuoteToNoteModal({
         notebookId,
         notebookName: nb?.name ?? '',
         noteId: note.id,
-        noteTitle: note.title.trim() || 'untitled',
+        noteTitle: note.title.trim() || 'Untitled',
         truncated,
       })
       onSaved(quote)
@@ -291,16 +307,16 @@ export function QuoteToNoteModal({
             onKeyDown={(e) => {
               if (e.key === 'Enter') void handleCreateNotebookFromEmpty()
             }}
-            placeholder="notebook name"
-            aria-label="notebook name"
+            placeholder="Notebook name"
+            aria-label="Notebook name"
           />
           <div className={styles.footerActions}>
             <button
               type="button"
               className={styles.btnSecondary}
-              onClick={onClose}
+              onClick={handleClose}
             >
-              cancel
+              Cancel
             </button>
             <button
               type="button"
@@ -308,7 +324,7 @@ export function QuoteToNoteModal({
               onClick={handleCreateNotebookFromEmpty}
               disabled={newNotebookName.trim().length === 0}
             >
-              create notebook
+              Create notebook
             </button>
           </div>
         </div>
@@ -318,7 +334,7 @@ export function QuoteToNoteModal({
     if (stage.kind === 'notebook-select') {
       return (
         <div className={styles.body}>
-          <p className={styles.stepLabel}>Step 1 of 2 · choose a notebook</p>
+          <p className={styles.stepLabel}>Step 1 of 2 · Choose a notebook</p>
           <ul className={styles.list} role="listbox">
             {orderedNotebooks.map((nb) => {
               const isLast = nb.id === lastNotebookId
@@ -357,13 +373,14 @@ export function QuoteToNoteModal({
               type="button"
               className={styles.linkBack}
               onClick={() => setStage({ kind: 'notebook-select' })}
-              aria-label="go back to notebook selection"
+              aria-label="Go back to notebook selection"
             >
-              ← back
+              <ArrowLeft size={12} aria-hidden />
+              Back
             </button>
             <span className={styles.breadcrumbName}>{selectedNotebookName}</span>
           </div>
-          <p className={styles.stepLabel}>Step 2 of 2 · choose a note</p>
+          <p className={styles.stepLabel}>Step 2 of 2 · Choose a note</p>
           <ul className={styles.list} role="listbox">
             <li>
               <button
@@ -371,7 +388,8 @@ export function QuoteToNoteModal({
                 className={`${styles.listItem} ${styles.listItemCreate}`}
                 onClick={() => setStage({ kind: 'new-note-title', notebookId })}
               >
-                <span className={styles.listItemLabel}>+ Create new note</span>
+                <Plus size={13} aria-hidden />
+                <span className={styles.listItemLabel}>Create new note</span>
               </button>
             </li>
             {notesOfSelected.length === 0 ? (
@@ -385,7 +403,7 @@ export function QuoteToNoteModal({
                     onClick={() => void appendToExistingNote(notebookId, n)}
                   >
                     <span className={styles.listItemLabel}>
-                      {n.title.trim() || 'untitled'}
+                      {n.title.trim() || 'Untitled'}
                     </span>
                   </button>
                 </li>
@@ -409,9 +427,10 @@ export function QuoteToNoteModal({
                 setTitleError(null)
                 setStage({ kind: 'note-select', notebookId })
               }}
-              aria-label="cancel note creation"
+              aria-label="Cancel note creation"
             >
-              ← back
+              <ArrowLeft size={12} aria-hidden />
+              Back
             </button>
             <span className={styles.breadcrumbName}>{selectedNotebookName}</span>
           </div>
@@ -428,7 +447,7 @@ export function QuoteToNoteModal({
               if (e.key === 'Enter') handleConfirmNewNoteTitle(notebookId)
             }}
             placeholder="e.g.: Quotes from this book"
-            aria-label="new note title"
+            aria-label="New note title"
             aria-invalid={!!titleError}
           />
           {titleError && (
@@ -455,14 +474,14 @@ export function QuoteToNoteModal({
                 setStage({ kind: 'note-select', notebookId })
               }}
             >
-              cancel
+              Cancel
             </button>
             <button
               type="button"
               className={styles.btnPrimary}
               onClick={() => handleConfirmNewNoteTitle(notebookId)}
             >
-              create and save
+              Create and save
             </button>
           </div>
         </div>
@@ -472,7 +491,7 @@ export function QuoteToNoteModal({
     if (stage.kind === 'saving') {
       return (
         <div className={styles.body}>
-          <p className={styles.stepLabel}>Saving...</p>
+          <p className={styles.stepLabel}>Saving…</p>
           <div className={styles.savingDots} aria-hidden="true">
             <span />
             <span />
@@ -497,11 +516,19 @@ export function QuoteToNoteModal({
               Excerpt truncated for the blockquote.
             </p>
           )}
+          <label className={styles.sendHere}>
+            <input
+              type="checkbox"
+              checked={sendHere}
+              onChange={(e) => setSendHere(e.target.checked)}
+            />
+            Send future quotes from this book here
+          </label>
           <div className={styles.footerActions}>
             <button
               type="button"
               className={styles.btnSecondary}
-              onClick={onClose}
+              onClick={handleClose}
             >
               Close
             </button>
@@ -519,7 +546,7 @@ export function QuoteToNoteModal({
             <button
               type="button"
               className={styles.btnSecondary}
-              onClick={onClose}
+              onClick={handleClose}
             >
               Close
             </button>
@@ -543,21 +570,21 @@ export function QuoteToNoteModal({
       className={styles.overlay}
       role="dialog"
       aria-modal="true"
-      aria-label="Copy quote to a note"
+      aria-label="Add quote to a note"
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose()
+        if (e.target === e.currentTarget) handleClose()
       }}
     >
       <div className={styles.modal}>
         <header className={styles.header}>
-          <h2 className={styles.title}>Copy quote to note</h2>
+          <h2 className={styles.title}>Add quote to note</h2>
           <button
             type="button"
             className={styles.close}
-            onClick={onClose}
-            aria-label="close"
+            onClick={handleClose}
+            aria-label="Close"
           >
-            ×
+            <X size={14} aria-hidden />
           </button>
         </header>
         {renderStage()}

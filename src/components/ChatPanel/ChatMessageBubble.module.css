@@ -137,19 +137,6 @@
   background-color: color-mix(in srgb, var(--nm) 22%, transparent);
 }
 
-
-.assistantBody :global([data-img-blocked]) {
-  /* URL bloqueada (localhost/rede privada) */
-  display: inline-block;
-  padding: var(--space-1h) var(--space-2);
-  background: var(--surface-2, #26262c);
-  border: 1px solid var(--border, #333340);
-  border-radius: var(--radius-sm);
-  font-size: 12px;
-  color: var(--text-muted, #606070);
-  font-style: italic;
-}
-
 .thinking {
   margin: 0 0 var(--space-3);
   border-left: 2px solid var(--border, #333340);
@@ -228,9 +215,47 @@
 .assistantActions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   align-self: flex-end;
-  margin-top: 8px;
+  margin-top: var(--space-2);
+  max-width: 100%;
+}
+
+/* Ações de um turno que não terminou (Retry, Open Settings) */
+.turnActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+/* Resposta que não chegou (troca de modo durante o turno) */
+.noResponse {
+  margin: 0;
+  font-size: 12px;
+  line-height: var(--lh-ui);
+  color: var(--text-muted, #606070);
+  font-style: italic;
+}
+
+/* Erro do turno, no próprio balão */
+.errorBox {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--accent-danger, #e05555) 45%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent-danger, #e05555) 10%, transparent);
+  color: var(--text-primary, #e8e8f0);
+  font-size: 13px;
+  line-height: var(--lh-ui);
+}
+
+.errorIcon {
+  flex-shrink: 0;
+  margin-top: var(--space-0);
+  color: var(--accent-danger, #e05555);
 }
 
 .copyBtn {
@@ -259,7 +284,7 @@
 .saveBtn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-1h);
   background: transparent;
   border: 1px solid var(--border, #333340);
   border-radius: var(--radius-md);
@@ -271,20 +296,76 @@
   transition: color 0.15s, border-color 0.15s, background 0.15s;
 }
 
-.saveBtn:hover {
+.saveBtn:hover:not(:disabled) {
   color: var(--accent-ai, #5dcaa5);
   border-color: var(--accent-ai, #5dcaa5);
   background: rgba(93, 202, 165, 0.08);
 }
 
+/* Retry sem o que reenviar (motivo no title) */
+.saveBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.msgMetaRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1h);
+  align-self: flex-start;
+}
+
 .msgMeta {
   display: flex;
-  gap: 12px;
+  gap: var(--space-3);
   font-size: 11px;
   color: var(--text-muted, #606070);
   opacity: 0.5;
-  margin-top: 6px;
-  align-self: flex-start;
+}
+
+/* Marcas "Stopped" e "Interrupted" da resposta parcial */
+.markStopped,
+.markCut {
+  font-size: 11px;
+  line-height: var(--lh-ui);
+  padding: 0 var(--space-1h);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border, #333340);
+  color: var(--text-secondary, #a0a0b8);
+}
+
+.markCut {
+  color: var(--accent-warn, #ef9f27);
+  border-color: color-mix(in srgb, var(--accent-warn, #ef9f27) 45%, transparent);
+}
+
+/* "Saved to <nota>": abre a nota em que a resposta foi salva */
+.savedMark {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 260px;
+  background: transparent;
+  border: none;
+  padding: var(--space-1) 0;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: var(--lh-ui);
+  color: var(--accent-ai, #5dcaa5);
+  cursor: pointer;
+  margin-right: auto;
+}
+
+.savedMark:hover .savedMarkTitle {
+  text-decoration: underline;
+}
+
+.savedMarkTitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agentLabel {
@@ -324,14 +405,25 @@
   padding: var(--space-0) var(--space-1h);
 }
 
-/* Imagem em mensagem do usuario */
+/* Imagens em mensagem do usuario */
+.userImages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1h);
+  margin-bottom: var(--space-1h);
+}
+
 .userMessageImage {
   max-width: 100%;
   max-height: 240px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   display: block;
-  margin-bottom: 6px;
   object-fit: contain;
+}
+
+.userImages .userMessageImage:not(:only-child) {
+  max-width: calc(50% - var(--space-1));
+  max-height: 160px;
 }
 
 /* Imagens abrem ampliadas com clique (anexo e imagens da resposta fora de

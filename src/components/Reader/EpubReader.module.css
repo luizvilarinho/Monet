@@ -15,14 +15,18 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 8px 16px;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--space-4);
   border-bottom: 1px solid var(--border, #333340);
   background: var(--bg-panel, #161625);
   flex-shrink: 0;
 }
 
 .backButton {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1h);
   background: transparent;
   border: 1px solid var(--border, #333340);
   border-radius: 6px;
@@ -47,12 +51,16 @@
 }
 
 .navButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: transparent;
   border: 1px solid var(--border, #333340);
   border-radius: 6px;
   color: var(--text-secondary, #9898a4);
   width: 28px;
   height: 28px;
+  padding: 0;
   font-size: 15px;
   line-height: 1;
   cursor: pointer;
@@ -70,6 +78,10 @@
 }
 
 .pageIndicator {
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: var(--space-1);
   font-size: 12px;
   color: var(--text-secondary, #9898a4);
   white-space: nowrap;
@@ -77,11 +89,24 @@
   text-align: center;
 }
 
+/* Capítulo atual na toolbar: o nome inteiro fica no title. */
+.chapterLabel {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .fontLabel {
   font-size: 12px;
   color: var(--text-secondary, #9898a4);
   min-width: 42px;
   text-align: center;
+}
+
+/* Ícone que dá nome ao grupo (tamanho do texto, margem). */
+.controlIcon {
+  flex-shrink: 0;
+  color: var(--text-muted, #7c7c93);
 }
 
 .readerBody {
@@ -210,6 +235,29 @@
 
 .primary:hover {
   filter: brightness(1.05);
+}
+
+.errorActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+.secondary {
+  background: transparent;
+  color: var(--text-secondary, #9898a4);
+  border: 1px solid var(--border, #333340);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.secondary:hover {
+  color: var(--accent-danger, #e05555);
+  border-color: var(--accent-danger, #e05555);
 }
 
 /* ─── Coluna de navegação (sumário) ─────────────────────────────────────── */
@@ -747,6 +795,24 @@
   text-align: center;
 }
 
+.highlightsSearch {
+  flex-shrink: 0;
+  margin: var(--space-2) var(--space-3) 0;
+  background: var(--surface-1, #1d1d34);
+  border: 1px solid var(--border, #333340);
+  border-radius: var(--radius-md);
+  color: var(--text-primary, #ddddf1);
+  font-family: inherit;
+  font-size: 12px;
+  min-height: var(--control-md);
+  padding: var(--space-1) var(--space-2);
+}
+
+.highlightsSearch:focus {
+  outline: none;
+  border-color: var(--accent, #7b6ed4);
+}
+
 /* ─── Filtro de cor no painel de grifos ──────────────────────────────── */
 .highlightsColorFilter {
   display: flex;
@@ -756,21 +822,4 @@
   padding: var(--space-2) var(--space-3);
   border-top: 1px solid var(--border, #333340);
   flex-shrink: 0;
-}
-
-/* ─── Toast de confirmação de citação ─────────────────────────────────── */
-.saveToast {
-  position: fixed;
-  bottom: 24px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: var(--accent-ai, #5dcaa5);
-  color: #0e0e10;
-  font-size: 12px;
-  font-weight: 500;
-  padding: 8px 16px;
-  border-radius: 6px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
-  z-index: 50;
-  pointer-events: none;
 }

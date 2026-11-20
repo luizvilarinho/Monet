@@ -18,18 +18,22 @@ use uuid::Uuid;
 use zerocopy::AsBytes;
 
 #[tauri::command]
-pub async fn documents_pick_file() -> Result<Option<String>, String> {
+pub async fn documents_pick_files() -> Result<Vec<String>, String> {
     let result = spawn_blocking(|| {
         rfd::FileDialog::new()
             .add_filter("Documents", &["pdf", "txt", "md"])
             .add_filter("PDF", &["pdf"])
             .add_filter("Text", &["txt", "md"])
-            .pick_file()
+            .pick_files()
     })
     .await
     .map_err(|e| e.to_string())?;
 
-    Ok(result.map(|p| p.to_string_lossy().to_string()))
+    Ok(result
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect())
 }
 
 #[tauri::command]
@@ -203,23 +207,14 @@ fn reject_notes_origin(conn: &Connection, document_id: &str) -> Result<(), Strin
     }
 }
 
-fn open_doc_db(app: &AppHandle) -> Result<Connection, String> {
-    let path = doc_db_path(app)?;
-    let conn = Connection::open(&path).map_err(|e| format!("failed to open monet.db: {}", e))?;
-    // O frontend (tauri-plugin-sql) abre o MESMO monet.db. Sem busy_timeout, uma
-    // contenção de lock no startup falha na hora com "database is locked" — aqui
-    // esperamos até 5s pelo lock em vez de falhar, reduzindo a corrida entre as
-    // duas conexões (scan de watched folders vs migrations/queries do plugin).
-    conn.busy_timeout(Duration::from_secs(5))
-        .map_err(|e| format!("failed to set busy_timeout: {}", e))?;
-    conn.pragma_update(None, "journal_mode", &"WAL")
-        .map_err(|e| format!("failed to configure WAL: {}", e))?;
-
-    // notebook_document_visibility é gerenciada exclusivamente aqui, sem FK
-    // constraints. A migration v6 do tauri-plugin-sql pode tê-la criado WITH
-    // FOREIGN KEY — detectamos isso via sqlite_master e recriamos limpa.
-    // Não usamos migration externa para evitar race condition com Database.load()
-    // do frontend (migrations do plugin rodam lazily, depois do open_doc_db).
+// notebook_document_visibility é gerenciada exclusivamente aqui, sem FK
+// constraints. A migration v6 do tauri-plugin-sql pode tê-la criado WITH
+// FOREIGN KEY — detectamos isso via sqlite_master e recriamos limpa.
+// A tabela é conferida a cada uso (with_doc_db), não só na abertura: num banco
+// novo, a migration v7 do plugin (DROP TABLE) pode rodar depois que esta
+// conexão em cache já abriu. A v7 não pode ser editada, porque o sqlx recusa
+// uma migration aplicada que mudou.
+fn ensure_visibility_table(conn: &Connection) -> Result<(), String> {
     let existing_ddl: Option<String> = conn
         .query_row(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='notebook_document_visibility'",
@@ -252,6 +247,22 @@ fn open_doc_db(app: &AppHandle) -> Result<Connection, String> {
         )
         .map_err(|e| format!("failed to create visibility table: {}", e))?;
     }
+    Ok(())
+}
+
+fn open_doc_db(app: &AppHandle) -> Result<Connection, String> {
+    let path = doc_db_path(app)?;
+    let conn = Connection::open(&path).map_err(|e| format!("failed to open monet.db: {}", e))?;
+    // O frontend (tauri-plugin-sql) abre o MESMO monet.db. Sem busy_timeout, uma
+    // contenção de lock no startup falha na hora com "database is locked" — aqui
+    // esperamos até 5s pelo lock em vez de falhar, reduzindo a corrida entre as
+    // duas conexões (scan de watched folders vs migrations/queries do plugin).
+    conn.busy_timeout(Duration::from_secs(5))
+        .map_err(|e| format!("failed to set busy_timeout: {}", e))?;
+    conn.pragma_update(None, "journal_mode", &"WAL")
+        .map_err(|e| format!("failed to configure WAL: {}", e))?;
+
+    ensure_visibility_table(&conn)?;
 
     // Toggle durável de indexação das notas por caderno: presença da linha =
     // indexação desligada para aquele caderno.
@@ -384,6 +395,7 @@ where
         *guard = Some(open_doc_db(app)?);
     }
     let conn = guard.as_mut().expect("doc_db connection initialized");
+    ensure_visibility_table(conn)?;
     f(conn)
 }
 
@@ -1845,6 +1857,36 @@ pub async fn documents_get_notebook_visible_ids(
     })
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotebookVisibilityRow {
+    notebook_id: String,
+    document_id: String,
+}
+
+// Todas as linhas de visibilidade: a coluna "Used in" da KB.
+#[tauri::command]
+pub async fn documents_list_visibility(
+    app: AppHandle,
+    state: State<'_, DocDb>,
+) -> Result<Vec<NotebookVisibilityRow>, String> {
+    with_doc_db(&app, &state, |conn| {
+        let mut stmt = conn
+            .prepare("SELECT notebook_id, document_id FROM notebook_document_visibility")
+            .map_err(|e| format!("failed to query: {}", e))?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(NotebookVisibilityRow {
+                    notebook_id: r.get(0)?,
+                    document_id: r.get(1)?,
+                })
+            })
+            .map_err(|e| format!("failed to list: {}", e))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("invalid row: {}", e))
+    })
+}
+
 #[tauri::command]
 pub async fn documents_get_notebooks_with_visible_docs(
     app: AppHandle,
@@ -2176,7 +2218,10 @@ fn collect_files_recursive(dir: &Path, files: &mut Vec<(PathBuf, i64)>, unreadab
             }
         };
         let path = entry.path();
-        let meta = match std::fs::metadata(&path) {
+        // symlink_metadata: o metadata seguia o link, e o is_symlink() nunca era
+        // verdadeiro. No Windows, junctions também contam como symlink aqui,
+        // como no docs_folder.rs.
+        let meta = match std::fs::symlink_metadata(&path) {
             Ok(m) => m,
             Err(e) => {
                 eprintln!("scan_watched_folder: cannot stat {:?}: {}", path, e);
@@ -3733,5 +3778,71 @@ mod tests {
         assert!(!auto_rescan_due(0, now));
         assert!(!auto_rescan_due(now - 59 * 1000, now));
         assert!(auto_rescan_due(now - 60 * 1000, now));
+    }
+
+    fn visibility_ddl(conn: &Connection) -> Option<String> {
+        conn.query_row(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='notebook_document_visibility'",
+            [],
+            |r| r.get(0),
+        )
+        .ok()
+    }
+
+    fn visibility_rows(conn: &Connection) -> i64 {
+        count(conn, "SELECT COUNT(*) FROM notebook_document_visibility")
+    }
+
+    #[test]
+    fn visibility_table_is_created_without_foreign_keys() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_visibility_table(&conn).unwrap();
+        let ddl = visibility_ddl(&conn).expect("table created");
+        assert!(!ddl.to_uppercase().contains("FOREIGN KEY"));
+        assert_eq!(visibility_rows(&conn), 0);
+    }
+
+    #[test]
+    fn visibility_table_with_foreign_keys_is_recreated() {
+        let conn = Connection::open_in_memory().unwrap();
+        // DDL da migration v6.
+        conn.execute_batch(
+            "CREATE TABLE notebook_document_visibility (
+                 notebook_id TEXT NOT NULL,
+                 document_id TEXT NOT NULL,
+                 PRIMARY KEY (notebook_id, document_id),
+                 FOREIGN KEY (notebook_id) REFERENCES notebooks(id) ON DELETE CASCADE,
+                 FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+             );",
+        )
+        .unwrap();
+        ensure_visibility_table(&conn).unwrap();
+        assert!(!visibility_ddl(&conn).unwrap().to_uppercase().contains("FOREIGN KEY"));
+    }
+
+    #[test]
+    fn visibility_table_keeps_rows_and_is_idempotent() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_visibility_table(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO notebook_document_visibility (notebook_id, document_id) VALUES ('nb', 'doc')",
+            [],
+        )
+        .unwrap();
+        ensure_visibility_table(&conn).unwrap();
+        ensure_visibility_table(&conn).unwrap();
+        assert_eq!(visibility_rows(&conn), 1);
+    }
+
+    #[test]
+    fn visibility_table_is_recreated_after_drop() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_visibility_table(&conn).unwrap();
+        // A migration v7 do plugin, rodando depois da abertura em cache.
+        conn.execute_batch("DROP TABLE IF EXISTS notebook_document_visibility;").unwrap();
+        assert!(visibility_ddl(&conn).is_none());
+        ensure_visibility_table(&conn).unwrap();
+        assert!(visibility_ddl(&conn).is_some());
+        assert_eq!(visibility_rows(&conn), 0);
     }
 }

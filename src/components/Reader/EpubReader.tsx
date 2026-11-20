@@ -1,13 +1,19 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
+  ArrowLeft,
+  ArrowsOutLineHorizontal,
   ArrowUUpLeft,
   CaretLeft,
   CaretRight,
   Highlighter,
   ListBullets,
+  Minus,
+  Plus,
   Quotes,
   SidebarSimple,
   Sparkle,
+  TextAa,
+  Trash,
 } from '@phosphor-icons/react'
 import type {
   Book,
@@ -28,6 +34,7 @@ import {
   epubHighlightScreenRect,
   epubLocationOrdinal,
   getEpubLocationText,
+  getEpubRangeText,
   loadEpubToc,
   onEpubHighlightClick,
   onEpubSelection,
@@ -46,10 +53,12 @@ import {
 } from '../../lib/epub'
 import { useBookQuotes } from '../../hooks/useBookQuotes'
 import { useConfirm } from '../../hooks/useConfirm'
-import { useHighlights } from '../../hooks/useHighlights'
+import { loadHighlightColor, saveHighlightColor, useHighlights } from '../../hooks/useHighlights'
 import { QuoteToNoteModal } from './QuoteToNoteModal'
 import { ReaderChatPanel } from './ReaderChatPanel'
 import { ReaderNotesPanel } from './ReaderNotesPanel'
+import { useReaderToast } from './ReaderToast'
+import { placeSelectionToolbar } from './toolbarPlacement'
 import styles from './EpubReader.module.css'
 
 export interface EpubReaderProps {
@@ -74,6 +83,10 @@ export interface EpubReaderProps {
     typeId?: string | null,
   ) => Promise<Note>
   onSaveNote: (note: Note) => Promise<void>
+  // Abre o Settings do app (ModelSelector e faixa sem chave do chat).
+  onOpenSettings: () => void
+  // Tela de livro sem arquivo: tira o livro da Library (com confirmação).
+  onRemoveBook?: () => void
 }
 
 // Tamanho do texto, não escala de imagem: a faixa do leitor de PDF (0,5–3,0)
@@ -103,7 +116,8 @@ const HIGHLIGHT_COLOR_NAMES: Record<string, string> = {
   '#90CAF9': 'blue',
   '#F48FB1': 'pink',
 }
-const DEFAULT_HIGHLIGHT_COLOR = HIGHLIGHT_COLORS[0]
+// Acima disso o painel de grifos ganha o campo de busca.
+const HIGHLIGHT_SEARCH_MIN = 15
 
 // Toggle da coluna lateral (Chat/Notes): mesmas chaves do leitor de PDF — os
 // painéis são idênticos nos dois formatos, então a preferência é a mesma.
@@ -229,6 +243,8 @@ export function EpubReader({
   onCreateNotebook,
   onCreateNote,
   onSaveNote,
+  onOpenSettings,
+  onRemoveBook,
 }: EpubReaderProps) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -244,18 +260,24 @@ export function EpubReader({
     () => localStorage.getItem(SIDE_PANEL_COLLAPSED_KEY) !== '0',
   )
 
+  const { toast, showToast } = useReaderToast()
   const {
     highlights,
     orderedHighlights,
     filteredHighlights,
     colorFilter,
     setColorFilter,
+    textFilter,
+    setTextFilter,
     persistHighlight,
     removeHighlight,
     changeColor,
-  } = useHighlights(book.id)
+  } = useHighlights(book.id, (message) => showToast({ message, tone: 'error' }))
   const [selection, setSelection] = useState<SelectionState | null>(null)
-  const [activeColor, setActiveColor] = useState<string>(DEFAULT_HIGHLIGHT_COLOR)
+  // Última cor usada (comum aos leitores): é a do atalho H.
+  const [activeColor, setActiveColor] = useState<string>(() =>
+    loadHighlightColor(HIGHLIGHT_COLORS),
+  )
   const [removalCandidate, setRemovalCandidate] =
     useState<RemovalCandidate | null>(null)
   const [sidePanelTab, setSidePanelTab] = useState<SidePanelTab>('contents')
@@ -295,16 +317,24 @@ export function EpubReader({
   const [positionCfi, setPositionCfi] = useState<string | null>(book.cfi)
   // Capítulo da posição atual (nome do TOC), para o rótulo de posição do chat.
   const [chapter, setChapter] = useState<string | null>(null)
+  const showNotesTab = useCallback(() => {
+    setSideTab('notes')
+    setSideOpen(true)
+  }, [])
   const {
-    copyCitationAbout,
+    addQuoteToNote,
+    addToNoteTitle,
+    openNote,
+    linkVersion,
     modal: quoteModal,
-    toast: saveToast,
   } = useBookQuotes({
     bookId: book.id,
     bookTitle: book.title,
     notes,
     notebooks,
     onSaveNote,
+    showToast,
+    onShowNotes: showNotesTab,
   })
   const { confirm, modal: confirmModal } = useConfirm()
 
@@ -322,6 +352,9 @@ export function EpubReader({
   // Última posição reportada pelo epubjs. É a âncora usada para reposicionar
   // depois de repaginar (mudança de tamanho de fonte).
   const currentCfiRef = useRef<string | null>(null)
+  // Início e fim do que está na tela (as duas colunas, no spread): é o texto
+  // que vai no contexto do chat.
+  const visibleRangeRef = useRef<{ start: string; end: string } | null>(null)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pendingPositionRef = useRef<{ cfi: string; page: number | null } | null>(
     null,
@@ -406,30 +439,43 @@ export function EpubReader({
     void renditionRef.current?.prev().catch(() => {})
   }, [])
 
-  const handleArrowKey = useCallback(
-    (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null
-      if (
-        target &&
-        (target.tagName === 'INPUT' ||
-          target.tagName === 'TEXTAREA' ||
-          target.isContentEditable)
-      ) {
-        return
-      }
-      if (e.key === 'ArrowLeft') goPrevious()
-      else if (e.key === 'ArrowRight') goNext()
-    },
-    [goNext, goPrevious],
-  )
-  // O listener dentro do iframe é registrado uma vez, na carga; a ref mantém
-  // o handler atual sem precisar reregistrar.
-  const handleArrowKeyRef = useRef(handleArrowKey)
-  handleArrowKeyRef.current = handleArrowKey
+  // Atalhos do leitor (ignorando inputs/textarea/contenteditable): ←/→ trocam
+  // de página, Esc fecha a toolbar de seleção e o popover do grifo, H grifa a
+  // seleção com a última cor. O listener dentro do iframe é registrado uma
+  // vez, na carga; a ref, trocada a cada render, mantém o handler atual (e a
+  // seleção atual) sem precisar reregistrar.
+  const handleKeyRef = useRef<(e: KeyboardEvent) => void>(() => {})
+  handleKeyRef.current = (e: KeyboardEvent) => {
+    const target = e.target as HTMLElement | null
+    if (
+      target &&
+      (target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable)
+    ) {
+      return
+    }
+    if (e.key === 'ArrowLeft') goPrevious()
+    else if (e.key === 'ArrowRight') goNext()
+    else if (e.key === 'Escape' && (selection || removalCandidate)) {
+      setSelection(null)
+      setRemovalCandidate(null)
+      clearIframeSelection()
+    } else if (
+      (e.key === 'h' || e.key === 'H') &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.altKey &&
+      selection
+    ) {
+      e.preventDefault()
+      void handleHighlight(activeColor)
+    }
+  }
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      handleArrowKeyRef.current(e)
+      handleKeyRef.current(e)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -517,6 +563,8 @@ export function EpubReader({
           const start = location?.start
           if (cancelled || !start) return
           currentCfiRef.current = start.cfi
+          const end = location.end?.cfi
+          visibleRangeRef.current = end ? { start: start.cfi, end } : null
           setAtStart(location.atStart === true)
           setAtEnd(location.atEnd === true)
           setPercent(
@@ -542,7 +590,7 @@ export function EpubReader({
         })
         // O texto do livro vive num iframe: sem isto, as setas param de
         // funcionar assim que o foco entra nele.
-        rendition.on('keydown', handleArrowKeyRef.current)
+        rendition.on('keydown', (e: KeyboardEvent) => handleKeyRef.current(e))
 
         // ─── Seleção e clique em grifo (eventos do epubjs sobre o iframe) ──
         offSelection = onEpubSelection(rendition, (sel) => {
@@ -833,6 +881,11 @@ export function EpubReader({
   }
 
   // ─── Ações da toolbar de seleção ───────────────────────────────────────
+  function chooseColor(color: string) {
+    setActiveColor(color)
+    saveHighlightColor(color)
+  }
+
   async function handleHighlight(color: string) {
     if (!selection) return
     const handle = bookHandleRef.current
@@ -894,14 +947,14 @@ export function EpubReader({
     setSideOpen(true)
   }
 
-  function handleCopyCitation() {
+  function handleAddToNote() {
     if (!selection) return
     const { text, cfiRange } = selection
     const page = pageOfCfi(cfiRange)
     setSelection(null)
     clearIframeSelection()
     void citationLabelFor(cfiRange).then((label) =>
-      copyCitationAbout(text, page, label),
+      addQuoteToNote(text, page, label),
     )
   }
 
@@ -926,8 +979,13 @@ export function EpubReader({
 
   async function handleConfirmRemove(h: BookHighlight) {
     const ok = await confirm(
-      'Remove this highlight? The text in the book is not affected.',
-      { title: 'Remove highlight', confirmLabel: 'Remove', cancelLabel: 'Cancel' },
+      'Delete this highlight? The text in the book is not affected.',
+      {
+        title: 'Delete highlight',
+        confirmLabel: 'Delete',
+        cancelLabel: 'Cancel',
+        destructive: true,
+      },
     )
     if (!ok) return
     setRemovalCandidate(null)
@@ -942,10 +1000,11 @@ export function EpubReader({
     h: BookHighlight,
   ) {
     e.stopPropagation()
-    const ok = await confirm('Delete this highlight?', {
+    const ok = await confirm('Delete this highlight? The text in the book is not affected.', {
       title: 'Delete highlight',
       confirmLabel: 'Delete',
       cancelLabel: 'Cancel',
+      destructive: true,
     })
     if (!ok) return
     await removeHighlight(h.id)
@@ -964,12 +1023,19 @@ export function EpubReader({
   }
 
   // ─── Texto da "página" para o contexto do chat ─────────────────────────
-  // A fatia da location corrente (~1600 chars), nunca o item de spine
-  // inteiro — ver getEpubLocationText em lib/epub.ts.
+  // O que está na tela, do início ao fim (as duas colunas no spread); o
+  // orçamento do readerContext corta o excesso. Sem o intervalo (tela que
+  // cruza duas seções, ou antes do primeiro `relocated`), cai na fatia da
+  // location corrente (~1600 chars) — nunca o item de spine inteiro.
   const getPageText = useCallback(
     async (n: number): Promise<string | null> => {
       const handle = bookHandleRef.current
       if (!handle) return null
+      const visible = visibleRangeRef.current
+      if (visible) {
+        const text = await getEpubRangeText(handle, visible.start, visible.end)
+        if (text) return text
+      }
       return getEpubLocationText(handle, n)
     },
     [],
@@ -990,16 +1056,22 @@ export function EpubReader({
   }
 
   // ─── Posicionamento da toolbar e popover ──────────────────────────────
-  // Mesmas regras do leitor de PDF: toolbar acima da seleção, popover abaixo
-  // da marca — os anchors já vêm traduzidos para coordenadas da .pageArea.
-  function toolbarStyle(): React.CSSProperties {
-    if (!selection) return { display: 'none' }
-    const { anchor } = selection
-    return {
-      left: `${Math.max(8, anchor.x)}px`,
-      top: `${Math.max(8, anchor.y - 40)}px`,
-    }
-  }
+  // Mesmas regras do leitor de PDF: toolbar acima da seleção (abaixo quando
+  // não cabe) e dentro da .pageArea, popover abaixo da marca — os anchors já
+  // vêm traduzidos para coordenadas da .pageArea. A toolbar é medida depois
+  // de montada, antes da pintura.
+  useLayoutEffect(() => {
+    const el = toolbarRef.current
+    const area = pageAreaRef.current
+    if (!selection || !el || !area) return
+    const { left, top } = placeSelectionToolbar(
+      selection.anchor,
+      { width: el.offsetWidth, height: el.offsetHeight },
+      { left: 0, top: 0, right: area.clientWidth, bottom: area.clientHeight },
+    )
+    el.style.left = `${left}px`
+    el.style.top = `${top}px`
+  }, [selection])
 
   function popoverStyle(): React.CSSProperties {
     if (!removalCandidate) return { display: 'none' }
@@ -1047,9 +1119,16 @@ export function EpubReader({
       <div className={styles.reader}>
         <div className={styles.errorState}>
           <p className={styles.errorMessage}>{error}</p>
-          <button type="button" className={styles.primary} onClick={onBack}>
-            Back to Library
-          </button>
+          <div className={styles.errorActions}>
+            <button type="button" className={styles.primary} onClick={onBack}>
+              Back to Library
+            </button>
+            {onRemoveBook && (
+              <button type="button" className={styles.secondary} onClick={onRemoveBook}>
+                Remove from Library
+              </button>
+            )}
+          </div>
         </div>
       </div>
     )
@@ -1059,7 +1138,8 @@ export function EpubReader({
     <div className={styles.reader}>
       <div className={styles.toolbar}>
         <button type="button" className={styles.backButton} onClick={onBack}>
-          ← Library
+          <ArrowLeft size={13} aria-hidden />
+          Library
         </button>
 
         <div className={styles.pageControls}>
@@ -1069,11 +1149,23 @@ export function EpubReader({
             onClick={goPrevious}
             disabled={loading || atStart}
             aria-label="Previous page"
+            title="Previous page"
           >
-            ‹
+            <CaretLeft size={14} aria-hidden />
           </button>
-          <span className={styles.pageIndicator}>
-            {loading ? 'Loading…' : `${percent}%`}
+          <span
+            className={styles.pageIndicator}
+            title={!loading && chapter ? `${chapter} · ${percent}%` : undefined}
+          >
+            {loading ? (
+              'Loading…'
+            ) : (
+              <>
+                {chapter && <span className={styles.chapterLabel}>{chapter}</span>}
+                {chapter && <span aria-hidden>·</span>}
+                <span>{percent}%</span>
+              </>
+            )}
           </span>
           <button
             type="button"
@@ -1081,20 +1173,23 @@ export function EpubReader({
             onClick={goNext}
             disabled={loading || atEnd}
             aria-label="Next page"
+            title="Next page"
           >
-            ›
+            <CaretRight size={14} aria-hidden />
           </button>
         </div>
 
-        <div className={styles.fontControls}>
+        <div className={styles.fontControls} role="group" aria-label="Text size" title="Text size">
+          <TextAa size={16} className={styles.controlIcon} aria-hidden />
           <button
             type="button"
             className={styles.navButton}
             onClick={() => changeFontScale(fontScale - FONT_SCALE_STEP)}
             disabled={fontScale <= MIN_FONT_SCALE}
             aria-label="Decrease text size"
+            title="Smaller text"
           >
-            −
+            <Minus size={12} aria-hidden />
           </button>
           <span className={styles.fontLabel}>{fontSizeCss(fontScale)}</span>
           <button
@@ -1103,20 +1198,23 @@ export function EpubReader({
             onClick={() => changeFontScale(fontScale + FONT_SCALE_STEP)}
             disabled={fontScale >= MAX_FONT_SCALE}
             aria-label="Increase text size"
+            title="Larger text"
           >
-            +
+            <Plus size={12} aria-hidden />
           </button>
         </div>
 
-        <div className={styles.fontControls}>
+        <div className={styles.fontControls} role="group" aria-label="Page margins" title="Page margins">
+          <ArrowsOutLineHorizontal size={16} className={styles.controlIcon} aria-hidden />
           <button
             type="button"
             className={styles.navButton}
             onClick={() => changeMargin(marginPx - MARGIN_STEP_PX)}
             disabled={marginPx <= MIN_MARGIN_PX}
             aria-label="Decrease margin"
+            title="Narrower margins"
           >
-            −
+            <Minus size={12} aria-hidden />
           </button>
           <span className={styles.fontLabel}>{marginPx}px</span>
           <button
@@ -1125,8 +1223,9 @@ export function EpubReader({
             onClick={() => changeMargin(marginPx + MARGIN_STEP_PX)}
             disabled={marginPx >= MAX_MARGIN_PX}
             aria-label="Increase margin"
+            title="Wider margins"
           >
-            +
+            <Plus size={12} aria-hidden />
           </button>
         </div>
 
@@ -1311,13 +1410,25 @@ export function EpubReader({
                 </div>
               ) : (
                 <>
+                  {(orderedHighlights.length > HIGHLIGHT_SEARCH_MIN || textFilter !== '') && (
+                    <input
+                      type="search"
+                      className={styles.highlightsSearch}
+                      placeholder="Search highlights…"
+                      value={textFilter}
+                      onChange={(e) => setTextFilter(e.target.value)}
+                      aria-label="Search highlights"
+                    />
+                  )}
                   {orderedHighlights.length === 0 ? (
                     <p className={styles.highlightsPanelEmpty}>
-                      No highlights yet
+                      Select text in the book to highlight it.
                     </p>
                   ) : filteredHighlights.length === 0 ? (
                     <p className={styles.highlightsPanelEmpty}>
-                      No highlights match this color
+                      {textFilter.trim()
+                        ? 'No highlights match this search'
+                        : 'No highlights match this color'}
                     </p>
                   ) : (
                     <ul className={styles.highlightsPanelList}>
@@ -1379,11 +1490,11 @@ export function EpubReader({
                                 const cfi = h.cfi
                                 if (!cfi) return
                                 void citationLabelFor(cfi).then((label) =>
-                                  copyCitationAbout(h.text, h.page, label),
+                                  addQuoteToNote(h.text, h.page, label),
                                 )
                               }}
-                              aria-label="Copy citation"
-                              title="Copy citation"
+                              aria-label="Add to note"
+                              title={addToNoteTitle}
                             >
                               <Quotes size={12} aria-hidden />
                             </button>
@@ -1394,23 +1505,7 @@ export function EpubReader({
                               aria-label="Delete highlight"
                               title="Delete highlight"
                             >
-                              <svg
-                                width="12"
-                                height="12"
-                                viewBox="0 0 16 16"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="1.6"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                aria-hidden="true"
-                              >
-                                <path d="M3 4h10" />
-                                <path d="M5.5 4V2.5h5V4" />
-                                <path d="M4.5 4l.6 9a1 1 0 0 0 1 .9h3.8a1 1 0 0 0 1-.9l.6-9" />
-                                <path d="M7 7v5" />
-                                <path d="M9 7v5" />
-                              </svg>
+                              <Trash size={12} aria-hidden />
                             </button>
                           </div>
                         </li>
@@ -1477,7 +1572,6 @@ export function EpubReader({
             <div
               ref={toolbarRef}
               className={styles.highlightToolbar}
-              style={toolbarStyle()}
               onMouseDown={(e) => e.stopPropagation()}
             >
               {HIGHLIGHT_COLORS.map((c) => (
@@ -1489,10 +1583,11 @@ export function EpubReader({
                   }`}
                   style={{ background: c }}
                   onClick={() => {
-                    setActiveColor(c)
+                    chooseColor(c)
                     void handleHighlight(c)
                   }}
-                  aria-label={`Highlight with ${c}`}
+                  aria-label={`Highlight with ${HIGHLIGHT_COLOR_NAMES[c] ?? c}`}
+                  title={c === activeColor ? 'Highlight (H)' : undefined}
                 />
               ))}
               <span className={styles.highlightToolbarDivider} />
@@ -1506,9 +1601,10 @@ export function EpubReader({
               <button
                 type="button"
                 className={styles.highlightToolbarButton}
-                onClick={handleCopyCitation}
+                onClick={handleAddToNote}
+                title={addToNoteTitle}
               >
-                Copy citation
+                Add to note
               </button>
               <button
                 type="button"
@@ -1553,12 +1649,13 @@ export function EpubReader({
                     setRemovalCandidate(null)
                     if (!h.cfi) return
                     void citationLabelFor(h.cfi).then((label) =>
-                      copyCitationAbout(h.text, h.page, label),
+                      addQuoteToNote(h.text, h.page, label),
                     )
                   }}
+                  title={addToNoteTitle}
                 >
                   <Quotes size={13} aria-hidden />
-                  Copy citation
+                  Add to note
                 </button>
               </div>
               <div className={styles.removalPopoverColors}>
@@ -1595,7 +1692,7 @@ export function EpubReader({
                     void handleConfirmRemove(removalCandidate.highlight)
                   }
                 >
-                  Remove
+                  Delete
                 </button>
               </div>
             </div>
@@ -1618,18 +1715,29 @@ export function EpubReader({
               : `${percent}% (location ${pageNum} of ${book.totalPages})`
           }
           highlightLabel={chatHighlightLabel}
+          contextChipLabel={`${percent}%`}
           open={sideOpen && sideTab === 'chat'}
           onClose={() => setSideOpen(false)}
           pendingQuote={pendingQuote}
           onPendingQuoteConsumed={() => setPendingQuote(null)}
+          notebooks={notebooks}
+          notes={notes}
+          onCreateNotebook={onCreateNotebook}
+          onCreateNote={onCreateNote}
+          onSaveNote={onSaveNote}
+          onOpenNote={openNote}
+          showToast={showToast}
+          onOpenSettings={onOpenSettings}
         />
         <ReaderNotesPanel
           book={book}
           notebooks={notebooks}
           notes={notes}
           noteTypes={noteTypes}
+          onCreateNotebook={onCreateNotebook}
           onCreateNote={onCreateNote}
           onSaveNote={onSaveNote}
+          linkVersion={linkVersion}
           open={sideOpen && sideTab === 'notes'}
           onClose={() => setSideOpen(false)}
         />
@@ -1650,15 +1758,12 @@ export function EpubReader({
           positionLabel={quoteModal.positionLabel}
           bookId={book.id}
           onSaved={quoteModal.onSaved}
+          onLinkNote={quoteModal.onLinkNote}
           onClose={quoteModal.onClose}
         />
       )}
 
-      {saveToast && (
-        <div className={styles.saveToast} role="status">
-          {saveToast}
-        </div>
-      )}
+      {toast}
 
       {confirmModal}
     </div>

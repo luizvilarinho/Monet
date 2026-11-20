@@ -8,23 +8,18 @@ import styles from './HighlightPicker.module.css'
 
 interface HighlightPickerProps {
   editor: Editor
-  /** Classe CSS do botão (vem da barra flutuante ou do menu de contexto). */
+  /** Classe CSS do botão (vem da barra flutuante). */
   className?: string
   /** Classe CSS do botão quando há destaque ativo na seleção. */
   activeClassName?: string
   title?: string
-  /** Chamado antes de aplicar a cor — no menu de contexto, cria a linha nova. */
-  prepare?: (editor: Editor) => void
-  /** Chamado depois de aplicar a cor — o menu de contexto fecha depois disso. */
-  onPick?: () => void
 }
 
 // Botão de destaque (R1) + popover com as amostras de cor.
 //
 // A popover é renderizada por portal no `document.body` e posicionada em
 // `fixed`: assim ela não fica presa dentro da barra flutuante (que o
-// Floating UI move com `transform`) e continua clicável por cima do menu de
-// contexto.
+// Floating UI move com `transform`).
 //
 // O `mousedown` dos botões faz `preventDefault()` para não perder a seleção
 // (o mesmo cuidado dos outros botões do editor) — por isso a cor é aplicada
@@ -34,8 +29,6 @@ export function HighlightPicker({
   className,
   activeClassName,
   title = 'Highlight',
-  prepare,
-  onPick,
 }: HighlightPickerProps) {
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
@@ -92,10 +85,8 @@ export function HighlightPicker({
   }, [open])
 
   function pick(colorId: string) {
-    prepare?.(editor)
     toggleHighlight(editor, colorId)
     setOpen(false)
-    onPick?.()
   }
 
   return (

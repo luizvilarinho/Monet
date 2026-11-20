@@ -432,8 +432,8 @@
 }
 
 .rowDelete:hover {
-  color: #ff6b6b;
-  background: rgba(255, 107, 107, 0.1);
+  color: var(--accent-danger);
+  background: color-mix(in srgb, var(--accent-danger) 10%, transparent);
 }
 
 .rowDocs:hover {
@@ -470,6 +470,12 @@
 .active {
   background: var(--surface-2, #26262c) !important;
   color: var(--text-primary, #e8e8f0) !important;
+}
+
+.row:focus-visible,
+.subjectRow:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
 }
 
 .empty {
@@ -519,14 +525,39 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* "All notes": entrada comum (não parece desabilitada), com ícone como as views. */
 .allNotes {
-  color: var(--text-muted, #606070);
-  font-style: italic;
+  color: var(--text-secondary);
 }
 
 .active .allNotes {
   color: var(--text-primary, #e8e8f0);
+}
+
+.allNotesIcon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  padding: var(--space-0);
+}
+
+/* Lista vazia: a linha que cria o primeiro caderno. */
+.list .newNotebookRow {
+  color: var(--text-muted);
+}
+
+.list .newNotebookRow:hover {
+  color: var(--accent);
+}
+
+/* Estado vazio que ensina (quebra linha, sem itálico). */
+.list .emptyHint {
   font-style: normal;
+  white-space: normal;
+  line-height: var(--lh-ui);
+  font-size: 12px;
 }
 
 .calendarIcon {
@@ -751,8 +782,8 @@
 }
 
 .subjectDelete:hover {
-  color: #ff6b6b;
-  background: rgba(255, 107, 107, 0.1);
+  color: var(--accent-danger);
+  background: color-mix(in srgb, var(--accent-danger) 10%, transparent);
 }
 
 .subjectRenameInput {

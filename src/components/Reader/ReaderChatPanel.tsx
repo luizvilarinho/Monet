@@ -1,5 +1,5 @@
 import { openUrl } from '@tauri-apps/plugin-opener'
-import { Stop, Sliders, Files, Brain } from '@phosphor-icons/react'
+import { Stop, Sliders, Files, Brain, X, NotePencil, Copy, Check, WarningCircle } from '@phosphor-icons/react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   useChat,
@@ -8,17 +8,27 @@ import {
   type ChatConversation,
   type ChatTimings,
 } from '../../hooks/useChat'
+import { announceAppendedBlock } from '../../hooks/useBookQuotes'
 import { useStickToBottom } from '../../hooks/useStickToBottom'
+import {
+  appendBlockToNote,
+  buildAiResponseBlock,
+  noteDestinationLabel,
+  resolveLinkedNote,
+} from '../../lib/bookQuotes'
 import { renderMarkdown } from '../../lib/markdown'
 import { linkNoteMarks } from '../../lib/noteMarks'
 import {
   listOpenRouterModels,
   OPENROUTER_KEY_MISSING,
 } from '../../lib/openrouter'
-import type { AiModel, Book, BookHighlight } from '../../types'
+import type { AiModel, Book, BookHighlight, Note, Notebook } from '../../types'
 import { ModelSelector } from '../AiPanel/ModelSelector'
 import { ChatToolsMenu } from '../ChatPanel/ChatToolsMenu'
 import { ClearAllChatsButton, ClearChatButton } from '../ChatPanel/ChatClearActions'
+import { emptyAnswerState } from '../ChatPanel/ChatMessageBubble'
+import bubbleStyles from '../ChatPanel/ChatMessageBubble.module.css'
+import { SaveToNoteModal } from '../ChatPanel/SaveToNoteModal'
 import { clickedImage, useImageViewer } from '../ImageViewer/ImageViewer'
 import { useMermaidDiagrams } from '../MermaidDiagram/useMermaidDiagrams'
 import { FolderSystemPromptModal } from '../ChatPanel/FolderSystemPromptModal'
@@ -28,7 +38,8 @@ import { RagSearchStatus } from '../ChatPanel/RagSearchStatus'
 import { MessageSources } from '../ChatPanel/MessageSources'
 import { ScrollToBottomButton } from '../ChatPanel/ScrollToBottomButton'
 import type { RagResponse } from '../../lib/rag'
-import { buildReaderContext } from './readerContext'
+import { buildReaderContext, MAX_HIGHLIGHTS } from './readerContext'
+import type { ShowReaderToast } from './ReaderToast'
 import styles from './ReaderChatPanel.module.css'
 
 // Versão compacta do chat para a coluna do Reader, no padrão AssistantPanel:
@@ -59,12 +70,31 @@ interface ReaderChatPanelProps {
   // ("page N of M" / "p. N") — o leitor de EPUB passa os seus.
   positionLabel?: string
   highlightLabel?: (h: BookHighlight) => string
+  // O que o chip "AI sees" diz da posição. Ausente = PDF ("p. N").
+  contextChipLabel?: string
   // Visual apenas — o painel permanece montado quando fechado.
   open: boolean
   onClose: () => void
   // Trecho vindo do "Ask AI" da toolbar de seleção do Reader.
   pendingQuote: { text: string; page: number; positionLabel?: string } | null
   onPendingQuoteConsumed: () => void
+  // "Save to note" das respostas: direto na nota vinculada ao livro ou pelo
+  // SaveToNoteModal.
+  notebooks: Notebook[]
+  notes: Note[]
+  onCreateNotebook: (name: string) => Promise<Notebook>
+  onCreateNote: (
+    notebookId: string,
+    title: string,
+    content: string,
+    requestId?: string,
+    typeId?: string | null,
+  ) => Promise<Note>
+  onSaveNote: (note: Note) => Promise<void>
+  // Mostra a nota na aba Notes do leitor (que passa a ser a vinculada).
+  onOpenNote: (notebookId: string, noteId: string) => void
+  showToast: ShowReaderToast
+  onOpenSettings: () => void
 }
 
 export function ReaderChatPanel({
@@ -75,10 +105,19 @@ export function ReaderChatPanel({
   getPageText,
   positionLabel,
   highlightLabel,
+  contextChipLabel,
   open,
   onClose,
   pendingQuote,
   onPendingQuoteConsumed,
+  notebooks,
+  notes,
+  onCreateNotebook,
+  onCreateNote,
+  onSaveNote,
+  onOpenNote,
+  showToast,
+  onOpenSettings,
 }: ReaderChatPanelProps) {
   const [models, setModels] = useState<AiModel[]>([])
   const [modelsLoading, setModelsLoading] = useState(false)
@@ -120,6 +159,10 @@ export function ReaderChatPanel({
   const [promptOpen, setPromptOpen] = useState(false)
   const [docsOpen, setDocsOpen] = useState(false)
   const [memoryOpen, setMemoryOpen] = useState(false)
+  // Bloco da resposta a gravar pelo SaveToNoteModal (livro sem nota vinculada).
+  const [saveBlock, setSaveBlock] = useState<string | null>(null)
+  const notesRef = useRef(notes)
+  notesRef.current = notes
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const { historyRef, atBottom, onScroll, scrollToBottom } = useStickToBottom({ messages, isStreaming, activeId })
 
@@ -294,20 +337,49 @@ export function ReaderChatPanel({
     setModel(next)
   }, [models, model, setModel])
 
-  // "Ask AI": pré-preenche o composer com o trecho selecionado como citação.
-  // NÃO envia automaticamente — o usuário complementa e envia.
+  // "Ask AI": põe o trecho selecionado como citação no início do composer,
+  // antes do que já estava digitado. NÃO envia automaticamente — o usuário
+  // complementa e envia.
   useEffect(() => {
     if (!pendingQuote) return
     const text =
       pendingQuote.text.length > ASK_AI_QUOTE_BUDGET
         ? pendingQuote.text.slice(0, ASK_AI_QUOTE_BUDGET).trimEnd() + '…'
         : pendingQuote.text
-    setDraft(
-      `> "${text}"\n> — ${pendingQuote.positionLabel ?? `p. ${pendingQuote.page}`}\n\n`,
-    )
+    const quote = `> "${text}"\n> — ${pendingQuote.positionLabel ?? `p. ${pendingQuote.page}`}\n\n`
+    setDraft((prev) => quote + prev)
     inputRef.current?.focus()
     onPendingQuoteConsumed()
   }, [pendingQuote, onPendingQuoteConsumed])
+
+  // "Save to note" de uma resposta: com nota vinculada ao livro (a da aba
+  // Notes), anexa direto com toast Open/Undo; sem vínculo, ou se a gravação
+  // falhar, abre o SaveToNoteModal com o mesmo bloco.
+  function handleSaveToNote(content: string) {
+    const block = buildAiResponseBlock(content, book.title)
+    const linked = resolveLinkedNote(book.id, notesRef.current)
+    if (!linked) {
+      setSaveBlock(block)
+      return
+    }
+    appendBlockToNote(onSaveNote, linked, block)
+      .then((appended) =>
+        announceAppendedBlock({
+          showToast,
+          destination: noteDestinationLabel(linked, notebooks),
+          appended,
+          getNotes: () => notesRef.current,
+          onSaveNote,
+          onOpen: () => {
+            if (linked.notebookId) onOpenNote(linked.notebookId, linked.id)
+          },
+        }),
+      )
+      .catch((err) => {
+        console.error('reader: failed to append response to linked note', err)
+        setSaveBlock(block)
+      })
+  }
 
   const streamingMessageId = useMemo(() => {
     if (!isStreaming) return null
@@ -370,8 +442,8 @@ export function ReaderChatPanel({
           <button
             type="button"
             className={styles.iconBtn}
-            aria-label="Documents"
-            title="Documents"
+            aria-label="Book documents"
+            title="Book documents"
             onClick={() => setDocsOpen(true)}
           >
             <Files size={14} />
@@ -379,8 +451,8 @@ export function ReaderChatPanel({
           <button
             type="button"
             className={styles.iconBtn}
-            aria-label="Folder memory"
-            title="Folder memory"
+            aria-label="Book memory"
+            title="Book memory"
             onClick={() => setMemoryOpen(true)}
           >
             <Brain size={14} />
@@ -412,15 +484,16 @@ export function ReaderChatPanel({
             models={models}
             selectedId={model}
             onSelect={setModel}
-            onOpenSettings={() => {}}
+            onOpenSettings={onOpenSettings}
           />
           <button
             type="button"
             className={styles.closeBtn}
             onClick={onClose}
             aria-label="Close chat panel"
+            title="Close"
           >
-            ×
+            <X size={14} aria-hidden />
           </button>
         </div>
       </div>
@@ -475,7 +548,10 @@ export function ReaderChatPanel({
 
       {apiKeyChecked && !hasApiKey && (
         <div className={styles.keyBanner} role="alert">
-          Add your OpenRouter key in Settings to chat about this book.
+          <span>Add your OpenRouter key in Settings to chat about this book.</span>
+          <button type="button" className={styles.keyBannerBtn} onClick={onOpenSettings}>
+            Open Settings
+          </button>
         </div>
       )}
 
@@ -494,6 +570,7 @@ export function ReaderChatPanel({
                 isStreaming={m.id === streamingMessageId}
                 trace={ragTraces[m.id]}
                 timings={chatTimings[m.id]}
+                onSaveToNote={handleSaveToNote}
               />
             ))
           )}
@@ -510,6 +587,16 @@ export function ReaderChatPanel({
 
       <div className={styles.composer}>
         {ragSearching && <RagSearchStatus />}
+        <p
+          className={styles.contextChip}
+          title={`Sent with each message: the text you are reading and your ${MAX_HIGHLIGHTS} most recent highlights.`}
+        >
+          AI sees: {contextChipLabel ?? `p. ${pageNum}`}
+          {highlights.length > 0 &&
+            ` · ${Math.min(highlights.length, MAX_HIGHLIGHTS)} highlight${
+              Math.min(highlights.length, MAX_HIGHLIGHTS) === 1 ? '' : 's'
+            }`}
+        </p>
         <textarea
           ref={inputRef}
           className={styles.input}
@@ -570,6 +657,20 @@ export function ReaderChatPanel({
         onConfirm={(folderId, text) => setFolderMemory(folderId, text)}
         onClose={() => setMemoryOpen(false)}
       />
+      {/* `plain`: o bloco já vem com o rótulo "AI · <livro>" do
+          buildAiResponseBlock, igual ao do caminho direto. */}
+      <SaveToNoteModal
+        open={saveBlock !== null}
+        content={saveBlock ?? ''}
+        notebooks={notebooks}
+        notes={notes}
+        onCreateNotebook={onCreateNotebook}
+        onCreateNote={onCreateNote}
+        onSaveNote={onSaveNote}
+        onNavigateToNote={onOpenNote}
+        onClose={() => setSaveBlock(null)}
+        plain
+      />
     </aside>
   )
 }
@@ -579,27 +680,38 @@ interface ReaderChatBubbleProps {
   isStreaming: boolean
   trace?: RagResponse
   timings?: ChatTimings
+  onSaveToNote: (content: string) => void
 }
 
-function ReaderChatBubble({ message, isStreaming, trace, timings }: ReaderChatBubbleProps) {
+function ReaderChatBubble({ message, isStreaming, trace, timings, onSaveToNote }: ReaderChatBubbleProps) {
   const isUser = message.role === 'user'
   const [html, setHtml] = useState('')
-  const isStreamingPlaceholder = !isUser && message.content.length === 0
+  const [copied, setCopied] = useState(false)
+  // Mesmas regras do ChatMessageBubble: pontinhos só enquanto o turno roda,
+  // resposta vazia parada e erro do turno pela flag `failed`.
+  const emptyState = emptyAnswerState(message, isStreaming)
+  const isErrorMessage = !isUser && !!message.failed
+  const canSaveToNote =
+    !isUser &&
+    !isStreaming &&
+    emptyState === null &&
+    !isErrorMessage &&
+    message.content.trim().length > 0
 
   useEffect(() => {
-    if (isUser) return
+    if (isUser || isErrorMessage) return
     if (!message.content) {
       setHtml('')
       return
     }
     let cancelled = false
-    renderMarkdown(message.content).then((out) => {
+    renderMarkdown(message.content, { allowedImageUrls: message.allowedImageUrls }).then((out) => {
       if (!cancelled) setHtml(linkNoteMarks(out))
     })
     return () => {
       cancelled = true
     }
-  }, [isUser, message.content])
+  }, [isUser, isErrorMessage, message.content, message.allowedImageUrls?.join('\n')])
   // Memoizado: o React 19 compara `__html` por identidade e um objeto novo a
   // cada render reescreveria o DOM, desfazendo a seleção do usuário.
   const inner = useMemo(() => ({ __html: html }), [html])
@@ -607,17 +719,45 @@ function ReaderChatBubble({ message, isStreaming, trace, timings }: ReaderChatBu
   useMermaidDiagrams(bodyRef, html, isStreaming)
   const imageViewer = useImageViewer()
 
+  function handleCopy() {
+    navigator.clipboard
+      .writeText(message.content)
+      .then(() => {
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+      })
+      .catch((err) => console.error('clipboard write failed', err))
+  }
+
   if (isUser) {
     return <div className={styles.bubbleUser}>{message.content}</div>
   }
 
-  if (isStreamingPlaceholder) {
+  if (emptyState === 'streaming') {
     return (
       <span className={styles.streamingDots} aria-hidden="true">
         <span />
         <span />
         <span />
       </span>
+    )
+  }
+
+  if (emptyState) {
+    return (
+      <p className={bubbleStyles.noResponse} role={emptyState === 'elsewhere' ? 'status' : undefined}>
+        {emptyState === 'elsewhere' ? 'Responding in another window…' : 'No response (interrupted)'}
+      </p>
+    )
+  }
+
+  // Erro do turno: só a mensagem, sem Save to note, Copy e Sources.
+  if (isErrorMessage) {
+    return (
+      <div className={bubbleStyles.errorBox} role="alert">
+        <WarningCircle size={14} aria-hidden className={bubbleStyles.errorIcon} />
+        <span>{message.content.replace(/^Error:\s*/, '')}</span>
+      </div>
     )
   }
 
@@ -642,6 +782,28 @@ function ReaderChatBubble({ message, isStreaming, trace, timings }: ReaderChatBu
           void openUrl(href)
         }}
       />
+      {canSaveToNote && (
+        <div className={styles.assistantActions}>
+          <button
+            type="button"
+            className={styles.saveBtn}
+            onClick={() => onSaveToNote(message.content)}
+            title="Save this response to a note"
+          >
+            <NotePencil size={13} aria-hidden />
+            Save to note
+          </button>
+          <button
+            type="button"
+            className={styles.copyBtn}
+            onClick={handleCopy}
+            title={copied ? 'Copied!' : 'Copy response'}
+            aria-label="Copy response"
+          >
+            {copied ? <Check size={14} aria-hidden /> : <Copy size={14} aria-hidden />}
+          </button>
+        </div>
+      )}
       <MessageSources message={message} trace={trace} timings={timings} />
       {imageViewer.viewer}
     </>

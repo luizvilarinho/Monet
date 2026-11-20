@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import { emit, listen } from '@tauri-apps/api/event'
+import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { check } from '@tauri-apps/plugin-updater'
 import type { Update } from '@tauri-apps/plugin-updater'
@@ -23,7 +23,7 @@ import { Editor } from './components/Editor/Editor'
 import { EmptyEditor } from './components/Editor/EmptyEditor'
 import { ArchivedBadge } from './components/Editor/ArchivedBadge'
 import { NotebookList } from './components/NotebookList/NotebookList'
-import { NotesChatPanel } from './components/NotesChat/NotesChatPanel'
+import { NotesChatPanel, type NotesChatExchange } from './components/NotesChat/NotesChatPanel'
 import type { NoteMetaForAi } from './components/NotesChat/notesContext'
 import { NotebookTasksSection } from './components/Sidebar/NotebookTasksSection'
 import { codeFence, type NoteInsert } from './components/NotesChat/noteBlocks'
@@ -34,7 +34,7 @@ import { SettingsModal, type SettingsSection } from './components/Settings/Setti
 import { UpdaterDialog } from './components/UpdaterDialog/UpdaterDialog'
 import { SearchPalette } from './components/SearchPalette/SearchPalette'
 import { MarkNotePicker } from './components/SearchPalette/MarkNotePicker'
-import { MarksView } from './components/MarksView/MarksView'
+import { MarksView, type UndoResolveResult } from './components/MarksView/MarksView'
 import { TagView } from './components/TagView/TagView'
 import { Sidebar } from './components/Sidebar/Sidebar'
 import { TasksView } from './components/TasksView/TasksView'
@@ -66,6 +66,9 @@ import { TaskEditorModal } from './components/TasksView/TaskEditorModal'
 import { TaskModalEditor } from './components/TasksView/TaskModalEditor'
 import type { TaskChanges } from './components/TasksView/useTaskKeyboard'
 import { Toolbar, type ActiveMode } from './components/Toolbar/Toolbar'
+import { ShortcutsOverlay } from './components/ShortcutsOverlay/ShortcutsOverlay'
+import { ShellToast, type ShellNotice } from './components/ShellToast/ShellToast'
+import { X as XIcon } from '@phosphor-icons/react'
 import { useAi } from './hooks/useAi'
 import {
   activateChatConversation,
@@ -156,12 +159,13 @@ import {
   collectNoteMarks,
   stripMarkCitations,
   summarizeMarks,
+  withoutNoteMarkTags,
   type MarkLabelFilter,
   type NoteMarkEntry,
   type NoteMarkHit,
 } from './lib/noteMarks'
 import { normalizeSearch } from './lib/noteSearch'
-import { summarizeTags } from './lib/noteTags'
+import { summarizeTags, tagKey } from './lib/noteTags'
 import { ocrTextsForContent } from './lib/imageOcr'
 import { RemindersProvider } from './components/Editor/RemindersContext'
 import { TasksProvider } from './components/Editor/TasksContext'
@@ -186,6 +190,7 @@ import {
   taskRefIds,
   tasksSubjectId,
   todosProgressByNote,
+  uncheckChecklist,
   type ProjectChoice,
   type TaskGroupBy,
   type TaskPatch,
@@ -241,6 +246,7 @@ import type {
   MetadataValue,
   Note,
   Notebook,
+  Subject,
   Task,
   TaskViewConfig,
 } from './types'
@@ -413,6 +419,36 @@ function isReservedNotebookName(name: string): boolean {
   return name.trim().toLowerCase() === QUICK_NOTES_NAME.toLowerCase()
 }
 
+const PANEL_OPEN_KEY = 'monet:panel-open'
+// Onde a pessoa estava (caderno, subject e nota), retomado ao abrir o app.
+const LAST_LOCATION_KEY = 'monet:last-location'
+
+interface LastLocation {
+  notebookId: string | null
+  subjectId: string | null
+  noteId: string | null
+}
+
+function readLastLocation(): LastLocation | null {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(LAST_LOCATION_KEY) ?? 'null') as Partial<LastLocation> | null
+    if (!parsed || typeof parsed !== 'object') return null
+    const str = (v: unknown) => (typeof v === 'string' ? v : null)
+    return { notebookId: str(parsed.notebookId), subjectId: str(parsed.subjectId), noteId: str(parsed.noteId) }
+  } catch {
+    return null
+  }
+}
+
+// Campo de texto ou editor com o foco: os atalhos de uma tecla (`?`) não valem.
+function isTypingTarget(target: EventTarget | null): boolean {
+  const el = target instanceof HTMLElement ? target : null
+  if (!el) return false
+  return el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT'
+}
+
+const MODE_KEYS: Record<string, ActiveMode> = { '1': 'notebook', '2': 'chat', '3': 'library', '4': 'mincer' }
+
 function App() {
   const {
     notebooks,
@@ -465,7 +501,18 @@ function App() {
   // fica fora, mas continua no banco e no state.
   const columnSubjects = useMemo(() => subjects.filter((s) => !isTasksSubject(s)), [subjects])
   const [search, setSearch] = useState('')
-  const [aiOpen, setAiOpen] = useState(true)
+  // Painel direito: o estado que o usuário escolhe no botão "Panel" fica salvo.
+  const [aiOpen, setAiOpen] = useState(() => {
+    try {
+      return localStorage.getItem(PANEL_OPEN_KEY) !== '0'
+    } catch {
+      return true
+    }
+  })
+  // Overlay "Keyboard shortcuts" (`?` ou Ctrl+/) e aviso curto da casca.
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [notice, setNotice] = useState<ShellNotice | null>(null)
+  const dismissNotice = useCallback(() => setNotice(null), [])
   // Aba da coluna direita (AI = cards dos slash commands; Chat = chat do
   // caderno; Open = notas abertas hoje e a nota lateral).
   const [rightTab, setRightTabState] = useState<RightTab>(() => {
@@ -486,6 +533,8 @@ function App() {
   }, [])
   // Trecho do "Ask AI" da toolbar de seleção, consumido pelo NotesChatPanel.
   const [pendingNotesQuote, setPendingNotesQuote] = useState<string | null>(null)
+  // "Chat" de um card da aba AI, consumido pelo NotesChatPanel (IA-03).
+  const [pendingChatExchange, setPendingChatExchange] = useState<NotesChatExchange | null>(null)
   // Pedido sobre uma marca da nota (lista Marks, Ctrl+P, `==` do chat):
   // `reveal` abre a nota na marca (cursor, menu e flash); `resolve` desfaz a
   // marca pelo Editor, que confere a marca pelo índice e pelo texto.
@@ -555,6 +604,20 @@ function App() {
     () => localStorage.getItem('monet:sidebar-collapsed') === '1'
   )
   const [focusMode, setFocusMode] = useState(false)
+  const focusModeRef = useRef(focusMode)
+  focusModeRef.current = focusMode
+  // Botão "Panel": o modo foco esconde o painel direito, então no foco o
+  // botão sai do foco e mostra o painel. A escolha fica salva.
+  function handleTogglePanel() {
+    const next = focusMode ? true : !aiOpen
+    if (focusMode) setFocusMode(false)
+    setAiOpen(next)
+    try {
+      localStorage.setItem(PANEL_OPEN_KEY, next ? '1' : '0')
+    } catch {
+      /* sem storage: vale só nesta sessão */
+    }
+  }
   // Caderno-projeto filtrado na TasksView (null = todos).
   const [tasksFilter, setTasksFilter] = useState<string | null>(null)
   // Filtro da faixa de resumo da TasksView (null = lista agrupada por data).
@@ -627,9 +690,20 @@ function App() {
     autoStart: boolean
   } | null>(null)
 
-  const { responses, start, addErrorCard, removeResponse } = useAi(activeId)
+  // Erro de um slash da nota aberta com a coluna direita fechada: a coluna
+  // abre na aba AI (com ela aberta, a aba AI ganha o indicador).
+  const { responses, prepare, setPrepareStatus, start, stopResponse, addErrorCard, removeResponse } = useAi(activeId, {
+    onError: () => {
+      if (aiOpenRef.current && !focusModeRef.current) return
+      setFocusMode(false)
+      setAiOpen(true)
+      setRightTab('ai')
+    },
+  })
 
   const today = useToday()
+  // Cópia da nota-corpo para a ocorrência nova de uma recorrente (definida abaixo).
+  const copyBodyNoteRef = useRef<(from: Task, occurrence: Task) => void>(() => {})
   const {
     tasks,
     tasksById,
@@ -643,7 +717,7 @@ function App() {
     stripMetadata,
     reload: reloadTasks,
     saveError: tasksSaveError,
-  } = useTasks()
+  } = useTasks({ onOccurrenceCreated: (from, occurrence) => copyBodyNoteRef.current(from, occurrence) })
   // Registro de status e visões salvas (SQLite, compartilhados entre janelas).
   const {
     statuses: statusRegistry,
@@ -667,6 +741,7 @@ function App() {
     create: createSavedView,
     rename: renameSavedView,
     remove: removeSavedView,
+    saveError: viewsSaveError,
   } = useTaskViews()
   const { disabledNotebookIds, setNotebookIndexEnabled } = useNotesIndexSync({
     notes,
@@ -807,7 +882,7 @@ function App() {
   )
 
   const createTaskNote = useCallback(
-    async (notebookId: string, title: string): Promise<Note> => {
+    async (notebookId: string, title: string, content = ''): Promise<Note> => {
       const subjectId = await ensureTasksSubject(notebookId)
       const now = Date.now()
       const note: Note = {
@@ -815,20 +890,32 @@ function App() {
         notebookId,
         subjectId,
         title,
-        content: '',
+        content,
         tags: [],
         createdAt: now,
         updatedAt: now,
       }
-      await saveNote(note)
+      if (!(await saveNote(note))) throw new Error('Failed to create the task note.')
       return note
     },
     [ensureTasksSubject, saveNote]
   )
 
+  // Recorrente concluída: a ocorrência nova leva uma cópia da nota-corpo, com o
+  // checklist desmarcado. Corpo vazio não é copiado (a nota nasce ao abrir).
+  copyBodyNoteRef.current = (from, occurrence) => {
+    const body = from.noteId ? notesRef.current.find((n) => n.id === from.noteId) : undefined
+    if (!body?.content.trim()) return
+    void createTaskNote(occurrence.notebookId, occurrence.title, uncheckChecklist(body.content))
+      .then((note) => updateTask(occurrence.id, { noteId: note.id }))
+      .catch((err) => console.error('failed to copy the body note', err))
+  }
+
   // Falha na criação (caderno, subject ou nota-corpo) vira banner e `[]`.
   const [taskCreateError, setTaskCreateError] = useState<string | null>(null)
-  const [subjectConvertError, setSubjectConvertError] = useState<string | null>(null)
+  const [structureError, setStructureError] = useState<string | null>(null)
+  // Conjunto de erros que a pessoa dispensou no banner (some até mudar).
+  const [dismissedBannerKey, setDismissedBannerKey] = useState('')
   const createProjectTasks = useCallback(
     async (
       inputs: Array<{
@@ -839,14 +926,17 @@ function App() {
         important?: boolean
         sourceNoteId?: string | null
         parentNoteId?: string | null
+        plannedDay?: string | null
       }>,
       project: ProjectChoice
     ): Promise<Task[]> => {
+      const createdNoteIds: string[] = []
       try {
         const notebookId = await resolveProject(project)
         const withNotes = []
         for (const input of inputs) {
           const note = await createTaskNote(notebookId, input.title)
+          createdNoteIds.push(note.id)
           withNotes.push({ ...input, notebookId, noteId: note.id })
         }
         const created = await createTasks(withNotes)
@@ -854,11 +944,13 @@ function App() {
         return created
       } catch (err) {
         console.error('failed to create tasks', err)
+        // Nenhuma task foi criada: as notas-corpo já gravadas não ficam órfãs.
+        for (const id of createdNoteIds) await removeNote(id)
         setTaskCreateError('Failed to create task.')
         return []
       }
     },
-    [resolveProject, createTaskNote, createTasks]
+    [resolveProject, createTaskNote, createTasks, removeNote]
   )
 
   // O título da nota-corpo acompanha o título da task.
@@ -924,8 +1016,7 @@ function App() {
         const saved = await saveNote({ ...note, notebookId, subjectId, updatedAt: Date.now() })
         if (!saved) return false
       }
-      await updateTask(task.id, { notebookId })
-      return true
+      return await updateTask(task.id, { notebookId })
     },
     [ensureTasksSubject, saveNote, updateTask]
   )
@@ -981,9 +1072,13 @@ function App() {
         showTaskNote(task.noteId)
         return
       }
-      const note = await createTaskNote(task.notebookId, task.title)
-      await updateTask(task.id, { noteId: note.id })
-      showTaskNote(note.id)
+      try {
+        const note = await createTaskNote(task.notebookId, task.title)
+        await updateTask(task.id, { noteId: note.id })
+        showTaskNote(note.id)
+      } catch (err) {
+        console.error('failed to create task note', err)
+      }
     },
     [showTaskNote, createTaskNote, updateTask]
   )
@@ -1046,6 +1141,7 @@ function App() {
             dueDate: draft.dueDate,
             important: draft.important,
             parentNoteId,
+            plannedDay: draft.plannedDay ?? null,
           },
         ],
         { notebookId }
@@ -1203,8 +1299,8 @@ function App() {
 
   // Espelho (task → item): uma gravação por nota, sobre a base mais nova (a
   // keep e o assistant gravam por fora); item que já mostra o título não é
-  // regravado (rewriteTaskRefItemTitle). O `calendar-note-updated` manda a
-  // keep recarregar a nota se estiver nela.
+  // regravado (rewriteTaskRefItemTitle). O saveNote avisa a keep
+  // (`calendar-note-updated`) quando a nota é do Calendar.
   useEffect(() => {
     const timer = setTimeout(async () => {
       const seen = seenTaskTitlesRef.current
@@ -1246,9 +1342,7 @@ function App() {
         }
         const updatedAt = Date.now()
         mirrorWritesRef.current.set(noteId, updatedAt)
-        if (await saveNote({ ...base, content, updatedAt })) {
-          void emit('calendar-note-updated', { noteId })
-        }
+        await saveNote({ ...base, content, updatedAt })
       }
     }, 1000)
     return () => clearTimeout(timer)
@@ -1323,16 +1417,27 @@ function App() {
   const quickNoteRef = useRef<() => void>(() => {})
   // Alt+←: versão atual da volta para a nota anterior (definida com a aba Open).
   const previousNoteRef = useRef<() => void>(() => {})
+  const activeModeRef = useRef(activeMode)
+  activeModeRef.current = activeMode
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl+Space: modo foco, só no modo de notas (nos outros não tem efeito).
       if (e.ctrlKey && e.key === ' ') {
         e.preventDefault()
-        setFocusMode((v) => !v)
+        if (activeModeRef.current === 'notebook') setFocusMode((v) => !v)
       }
-      if (e.ctrlKey && e.key === 'p') {
+      // Ctrl+P: abre e fecha o palette; com outro modal aberto, não abre.
+      if (e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'p') {
         e.preventDefault()
-        setSearchPaletteOpen((v) => !v)
+        const modalOpen = !!document.querySelector('[aria-modal="true"]')
+        setSearchPaletteOpen((v) => (v ? false : !modalOpen))
+      }
+      // Ctrl+1…4: Notebook, Chat, Library e Mincer.
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && MODE_KEYS[e.key]) {
+        e.preventDefault()
+        if (e.repeat || document.querySelector('[aria-modal="true"]')) return
+        setActiveMode(MODE_KEYS[e.key])
       }
       // Ctrl+N: nota nova no Quick Notes, de qualquer modo do app. Captura +
       // preventDefault: o editor não trata a tecla e o WebView2 não abre janela.
@@ -1351,8 +1456,24 @@ function App() {
         previousNoteRef.current()
       }
     }
+    // `?` (fora de campo de texto) ou Ctrl+/: lista de atalhos. Na fase de
+    // bolha e só se ninguém tratou a tecla antes (uma área com o próprio `?`).
+    const handleHelpKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.repeat) return
+      const ctrlSlash = (e.ctrlKey || e.metaKey) && !e.altKey && e.key === '/'
+      const question = e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey
+      if (!ctrlSlash && !question) return
+      if (question && isTypingTarget(e.target)) return
+      if (document.querySelector('[aria-modal="true"]')) return
+      e.preventDefault()
+      setShortcutsOpen(true)
+    }
     document.addEventListener('keydown', handleKeyDown, true)
-    return () => document.removeEventListener('keydown', handleKeyDown, true)
+    document.addEventListener('keydown', handleHelpKey)
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown, true)
+      document.removeEventListener('keydown', handleHelpKey)
+    }
   }, [])
 
   const refreshApiKey = useCallback(async () => {
@@ -1474,7 +1595,11 @@ function App() {
 
   async function handleRenameNotebook(id: string, name: string) {
     const nb = notebooks.find((n) => n.id === id)
-    if (!nb || id === INBOX_NOTEBOOK_ID || isReservedNotebookName(name)) return
+    if (!nb || id === INBOX_NOTEBOOK_ID) return
+    if (isReservedNotebookName(name)) {
+      setNotice({ message: `${QUICK_NOTES_NAME} is a built-in notebook. Pick another name.` })
+      return
+    }
     await saveNotebook({ ...nb, name: name.trim() || nb.name, updatedAt: Date.now() })
   }
 
@@ -1490,13 +1615,6 @@ function App() {
   const allMarkHits = useMemo(() => collectNoteMarks(notes), [notes])
   const markSummary = useMemo(() => summarizeMarks(allMarkHits.map((h) => h.entry)), [allMarkHits])
   const markLabels = useMemo(() => markSummary.labels.map((l) => l.label), [markSummary])
-
-  const notebookNotes = useMemo(
-    () => activeNotebookId === null
-      ? notes
-      : notes.filter((n) => n.notebookId === activeNotebookId),
-    [notes, activeNotebookId]
-  )
 
   // Notas-corpo de task não aparecem na lista (vivem na TasksView).
   const subjectFilteredNotes = useMemo(() => {
@@ -1625,6 +1743,11 @@ function App() {
       return [{ kind: 'note', note, notebookName: notebookNameOf(note.notebookId), type, openedAt: entry.openedAt }]
     })
   }, [openEntries, notes, notebooks, noteTypes.types, tasksById])
+  // "Recent" do Ctrl+P: notas abertas hoje, na ordem de abertura.
+  const recentOpenedNoteIds = useMemo(
+    () => openEntries.filter((e) => e.kind === 'note').map((e) => e.id),
+    [openEntries]
+  )
 
   // Alt+←: a última nota aberta antes da atual (só notas).
   previousNoteRef.current = () => {
@@ -1632,6 +1755,59 @@ function App() {
     const previous = openCards.find((c) => c.kind === 'note' && c.note.id !== activeId)
     if (previous?.kind === 'note') handleNoteLinkNavigation(previous.note.id)
   }
+
+  // Retoma caderno, subject e nota da última sessão, depois do 1º load, se
+  // ainda existirem (nota apagada, arquivada ou de outro caderno não abre).
+  // Sem posição salva, a 1ª nota do Opened today. Se a pessoa já navegou
+  // (atalho, keep), nada muda.
+  const locationRestoredRef = useRef(false)
+  useEffect(() => {
+    if (locationRestoredRef.current || !notesLoaded || !notebooksLoaded) return
+    locationRestoredRef.current = true
+    if (activeNotebookId !== null || activeId !== null) return
+    const openable = (n: Note | undefined): n is Note => !!n && !n.archivedAt && !isTaskBodyNote(n)
+    const saved = readLastLocation()
+    if (saved) {
+      if (saved.notebookId !== null && !notebooks.some((nb) => nb.id === saved.notebookId)) return
+      const note = notes.find((n) => n.id === saved.noteId)
+      const noteOk = openable(note) && (saved.notebookId === null || note.notebookId === saved.notebookId)
+      // O Calendar sem nota abre pelo fluxo do dia (clique no caderno), não aqui.
+      if (saved.notebookId === CALENDAR_NOTEBOOK_ID && !noteOk) return
+      const subjectOk =
+        saved.notebookId !== null &&
+        saved.subjectId !== null &&
+        (noteOk ? note.subjectId === saved.subjectId : notes.some((n) => n.subjectId === saved.subjectId))
+      setActiveNotebookId(saved.notebookId)
+      setActiveSubjectId(subjectOk ? saved.subjectId : null)
+      if (noteOk) autoOpenNote(note.id)
+      return
+    }
+    const byId = new Map(notes.map((n) => [n.id, n]))
+    const first = openEntries
+      .map((e) => (e.kind === 'note' ? byId.get(e.id) : undefined))
+      .find((n): n is Note => openable(n) && !!n.notebookId)
+    if (!first) return
+    setActiveNotebookId(first.notebookId)
+    setActiveSubjectId(null)
+    autoOpenNote(first.id)
+  // Só no 1º load: depois, a navegação é da pessoa.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notesLoaded, notebooksLoaded])
+
+  useEffect(() => {
+    if (!locationRestoredRef.current) return
+    try {
+      const location: LastLocation = { notebookId: activeNotebookId, subjectId: activeSubjectId, noteId: activeId }
+      localStorage.setItem(LAST_LOCATION_KEY, JSON.stringify(location))
+    } catch {
+      /* sem storage: a posição vale só nesta sessão */
+    }
+  }, [activeNotebookId, activeSubjectId, activeId])
+
+  // O campo da Toolbar filtra a lista atual: trocar de caderno limpa o filtro.
+  useEffect(() => {
+    setSearch('')
+  }, [activeNotebookId])
 
   // Nota lateral da aba Open: a segunda nota aberta, editável ao lado da
   // principal. Apagada por fora, a lateral volta para a lista.
@@ -1674,6 +1850,7 @@ function App() {
       }
       setSideNoteId(noteId)
       setRightTab('open')
+      setFocusMode(false)
       setAiOpen(true)
       const main = notesEditorRef.current
       if (focusMain && main && !main.isDestroyed) main.commands.focus(null, { scrollIntoView: false })
@@ -1760,8 +1937,12 @@ function App() {
     // `noteTaskModalNote` (e não `task.noteId`): a nota-corpo apagada por fora
     // deixa o id velho na task, e o "Add body note" precisa recriá-la.
     if (!task || noteTaskModalNote) return
-    const note = await createTaskNote(task.notebookId, task.title)
-    await updateTask(task.id, { noteId: note.id })
+    try {
+      const note = await createTaskNote(task.notebookId, task.title)
+      await updateTask(task.id, { noteId: note.id })
+    } catch (err) {
+      console.error('failed to create task body note', err)
+    }
   }, [noteTaskModalTask, noteTaskModalNote, createTaskNote, updateTask])
   // Provider do corpo do modal: sem `onOpenTask`/`onOpenTaskModal` (nada
   // navega atrás do modal).
@@ -2043,6 +2224,9 @@ function App() {
   const openTaskRef = useRef(openTask)
   openTaskRef.current = openTask
   const openMarkRef = useRef<(text: string) => void>(() => {})
+  // "Settings" da janela assistant: o mesmo caminho do App (handleOpenSettings,
+  // atribuído mais abaixo), que respeita o onboarding.
+  const openSettingsRef = useRef<() => void>(() => {})
   useEffect(() => {
     let cancelled = false
     const unlisteners: Array<() => void> = []
@@ -2076,6 +2260,14 @@ function App() {
         const main = getCurrentWindow()
         void main.unminimize().then(() => main.show()).then(() => main.setFocus()).catch(() => {})
         openMarkRef.current(event.payload)
+      })
+    )
+    // "Settings" da janela assistant: a main aparece com o Settings aberto.
+    track(
+      listen('assistant-open-settings', () => {
+        const main = getCurrentWindow()
+        void main.unminimize().then(() => main.show()).then(() => main.setFocus()).catch(() => {})
+        openSettingsRef.current()
       })
     )
     return () => {
@@ -2199,8 +2391,11 @@ function App() {
       if (def.takesQuery && !def.optionalQuery && query.trim().length === 0) {
         return false
       }
-      // O card nasce na aba AI; se o Chat estiver aberto, troca para ela.
-      setRightTab('ai')
+      // O card nasce no Enter, com a etapa do preparo, sem trocar a aba da
+      // coluna direita; os erros do preparo viram esse mesmo card (commandId).
+      // Comando sem query: o card (do preparo, de erro ou a resposta) guarda ''.
+      const cardQuery = def.takesQuery ? query : ''
+      prepare({ noteId: activeId, command: cmd, query: cardQuery, commandId, statusText: 'Preparing…' })
       const present = await hasOpenRouterKey()
       setHasApiKey(present)
       setApiKeyChecked(true)
@@ -2208,8 +2403,9 @@ function App() {
         addErrorCard(
           activeId,
           cmd,
-          query,
-          'API key not configured. Add your OpenRouter key in Settings to start requests.'
+          cardQuery,
+          'API key not configured. Add your OpenRouter key in Settings to start requests.',
+          commandId
         )
         return true
       }
@@ -2217,8 +2413,9 @@ function App() {
         addErrorCard(
           activeId,
           cmd,
-          query,
-          'No model available to select. Check your OpenRouter account.'
+          cardQuery,
+          'No model available to select. Check your OpenRouter account.',
+          commandId
         )
         return true
       }
@@ -2227,8 +2424,9 @@ function App() {
           addErrorCard(
             activeId,
             cmd,
-            query,
-            'Web search not configured. Add your Tavily key in Settings > Web Search to use this command.'
+            cardQuery,
+            'Web search not configured. Add your Tavily key in Settings > Web Search to use this command.',
+            commandId
           )
           return true
         }
@@ -2254,8 +2452,9 @@ function App() {
         addErrorCard(
           activeId,
           cmd,
-          query,
-          "This note's title is not a valid calendar date (DD/MM/YYYY)."
+          cardQuery,
+          "This note's title is not a valid calendar date (DD/MM/YYYY).",
+          commandId
         )
         return true
       }
@@ -2294,6 +2493,7 @@ function App() {
         ...datedNotes.map((e) => e.note.content),
       ]
       const embeds = await loadEmbedResponses(contextContents, resolveNoteContent)
+      if (contextContents.some((c) => c.includes('data:image/'))) setPrepareStatus(commandId, 'Reading images…')
       const imageTexts = await ocrTextsForContent(contextContents.join('\n'))
       const toAiText = (content: string) =>
         cleanNoteContentForAi(content, {
@@ -2326,7 +2526,7 @@ function App() {
 
       // Nota quase vazia (só blocos de IA também conta): aviso sem chamar o modelo.
       if (policy.minUserTextChars && userText.trim().length < policy.minUserTextChars) {
-        addErrorCard(activeId, cmd, query, CRITIQUE_TOO_SHORT)
+        addErrorCard(activeId, cmd, cardQuery, CRITIQUE_TOO_SHORT, commandId)
         return true
       }
 
@@ -2382,6 +2582,7 @@ function App() {
 
       let searchContext: string | undefined
       if (policy.web === 'required' && query.trim()) {
+        setPrepareStatus(commandId, 'Searching the web…')
         try {
           const results = await webSearch(query)
           searchContext = formatSearchResults(results)
@@ -2390,6 +2591,7 @@ function App() {
         }
       } else if (policy.web === 'withQuery' && query.trim()) {
         if (await hasTavilyKey()) {
+          setPrepareStatus(commandId, 'Searching the web…')
           try {
             const results = await webSearch(query)
             searchContext = formatSearchResults(results)
@@ -2408,6 +2610,7 @@ function App() {
       const rag = policy.rag
       if (rag?.pipeline === 'vector' && notebookId) {
         // Opcional: qualquer falha segue sem os trechos.
+        setPrepareStatus(commandId, 'Searching notebook sources…')
         try {
           const rawIds = await getNotebookVisibleDocumentIds(notebookId)
           const visibleDocIds = await resolveSearchableIds(rawIds, {
@@ -2439,11 +2642,13 @@ function App() {
           addErrorCard(
             activeId,
             cmd,
-            query,
-            'This note does not belong to a notebook. /docs requires a notebook with indexed documents.'
+            cardQuery,
+            'This note does not belong to a notebook. /docs requires a notebook with indexed documents.',
+            commandId
           )
           return true
         }
+        setPrepareStatus(commandId, 'Searching notebook sources…')
         const scope = { notebookId, excludeNoteId: activeNote?.id ?? null, includeAiFolders: true }
         let rawIds: string[]
         let searchableIds: string[]
@@ -2452,15 +2657,16 @@ function App() {
           searchableIds = await resolveSearchableIds(rawIds, scope)
         } catch (err) {
           console.warn('getNotebookVisibleDocumentIds failed:', err)
-          addErrorCard(activeId, cmd, query, 'Failed to query notebook documents.')
+          addErrorCard(activeId, cmd, cardQuery, 'Failed to query notebook documents.', commandId)
           return true
         }
         if (searchableIds.length === 0) {
           addErrorCard(
             activeId,
             cmd,
-            query,
-            'No documents visible in this notebook. Open the notebook documents selector to select documents from the Knowledge Base.'
+            cardQuery,
+            'No documents visible in this notebook. Open the notebook documents selector to select documents from the Knowledge Base.',
+            commandId
           )
           return true
         }
@@ -2478,13 +2684,14 @@ function App() {
           addErrorCard(
             activeId,
             cmd,
-            query,
-            'Could not retrieve relevant document excerpts. Check your connection and try again.'
+            cardQuery,
+            'Could not retrieve relevant document excerpts. Check your connection and try again.',
+            commandId
           )
           return true
         }
         if (selected.length === 0) {
-          addErrorCard(activeId, cmd, query, DOCS_NOT_FOUND)
+          addErrorCard(activeId, cmd, cardQuery, DOCS_NOT_FOUND, commandId)
           return true
         }
         ragContext = formatDocsContext(selected)
@@ -2561,7 +2768,7 @@ function App() {
         noteId: activeId,
         model: modelId,
         command: cmd,
-        query: def.takesQuery ? query : '',
+        query: cardQuery,
         commandId,
         systemPrompt,
         userMessage,
@@ -2569,7 +2776,25 @@ function App() {
       })
       return true
     },
-    [activeId, activeNote, modelId, models.length, start, addErrorCard, notes, tasks, notebooks, statusRegistry, taskChecklist, noteTypes.defs, noteTypes.types, disabledNotebookIds, setRightTab, resolveAiNoteTitle, resolveAiNoteContent]
+    [activeId, activeNote, modelId, models.length, prepare, setPrepareStatus, start, addErrorCard, notes, tasks, notebooks, statusRegistry, taskChecklist, noteTypes.defs, noteTypes.types, disabledNotebookIds, resolveAiNoteTitle, resolveAiNoteContent]
+  )
+
+  // Falha inesperada no preparo: o card do Enter vira card de erro (não fica
+  // preparando para sempre). Também é o Retry dos cards.
+  const runCommand = useCallback(
+    async (request: CommandExecutionRequest) => {
+      try {
+        return await handleCommand(request)
+      } catch (err) {
+        console.error('command execution failed', err)
+        if (activeId) {
+          const query = findAgent(request.cmd)?.command.takesQuery ? request.query : ''
+          addErrorCard(activeId, request.cmd, query, 'Could not prepare the request. Try again.', request.commandId)
+        }
+        return true
+      }
+    },
+    [handleCommand, addErrorCard, activeId]
   )
 
   const effectiveNotebookWidth = notebookCollapsed ? COLLAPSED_PANEL_WIDTH : notebookWidth
@@ -2586,13 +2811,14 @@ function App() {
     void saveNote({ ...activeNote, ...patch, updatedAt: Date.now() })
   }
 
-  async function handleCreateNotebook() {
-    const name = window.prompt('Notebook name')
-    if (name === null) return
-    // Nome reservado: abre o Quick Notes em vez de criar outro.
+  // Nome vem do campo inline da lista de cadernos (vazio já é recusado lá).
+  async function handleCreateNotebook(name: string) {
+    if (!name.trim()) return
+    // Nome reservado: abre o Quick Notes em vez de criar outro, e avisa.
     if (isReservedNotebookName(name)) {
       setActiveNotebookId(await ensureInbox())
       setActiveId(null)
+      setNotice({ message: `${QUICK_NOTES_NAME} already exists. Opened it.` })
       return
     }
     const nb = await createNotebook(name)
@@ -2626,6 +2852,27 @@ function App() {
     if (!activeNotebookId) return
     const note = await createTypedNote(activeNotebookId, activeSubjectId, typeId)
     setActiveId(note.id)
+  }
+
+  // Ctrl+P sem resultado: "Create note “…”" no caderno do `#` (senão o ativo,
+  // senão o Quick Notes), com o tipo do `type:` (e o template) e a tag do `tag:`.
+  async function handleCreateNoteFromSearch(
+    title: string,
+    { notebookId, typeId, tag }: { notebookId: string; typeId: string | null; tag: string | null }
+  ) {
+    const target =
+      notebookId === INBOX_NOTEBOOK_ID || notebookId === calendarNotebookId ? await ensureInbox() : notebookId
+    const note = await createTypedNote(target, null, typeId)
+    const template = typeId ? noteTypes.types.find((t) => t.id === typeId)?.template : undefined
+    await saveNote({
+      ...note,
+      title,
+      content: template ?? note.content,
+      tags: tag ? [tag] : note.tags,
+      updatedAt: Date.now(),
+    })
+    setSearchPaletteOpen(false)
+    handleNavigateToNote(target, note.id)
   }
 
   // Ctrl+N: nota vazia no Quick Notes, aberta com o foco no título (o Editor
@@ -2721,7 +2968,11 @@ function App() {
     // As tasks do caderno (com as notas-corpo) vão para o Quick Notes ANTES da
     // exclusão em cascata das notas do caderno.
     const { movedNoteIds, ok } = await relocateNotebookTasks(id, await ensureInbox())
-    if (!ok) return
+    if (!ok) {
+      setStructureError("Failed to move the notebook's tasks to Quick Notes. The notebook was kept.")
+      return
+    }
+    setStructureError(null)
     if (tasksFilter === id) setTasksFilter(null)
     // Falhou no banco: o caderno volta no próximo load, então o chat, as fontes
     // web e as notas ficam.
@@ -2794,11 +3045,11 @@ function App() {
     await setNoteArchived(noteId, true)
   }
 
-  async function handleCreateSubject() {
-    if (!activeNotebookId) return
-    const name = window.prompt('Subject name')
-    if (name === null) return
-    await createSubject(name)
+  // Nome vem do campo inline da lista; o subject criado fica selecionado.
+  async function handleCreateSubject(name: string) {
+    if (!activeNotebookId || !name.trim()) return
+    const subject = await createSubject(name)
+    if (subject) handleSelectSubject(subject.id)
   }
 
   // Visão Tasks filtrada por um caderno ("Show all" da seção de tasks da
@@ -2819,8 +3070,58 @@ function App() {
     autoOpenNote(first?.id ?? null)
   }
 
+  // Apagar subject pergunta o destino das notas: ficam no caderno (sem
+  // subject) ou são apagadas. As notas mantidas são gravadas ANTES do
+  // deleteSubject, que cascade-deleta as notas do subject; falha aborta.
   async function handleDeleteSubject(id: string) {
+    const subject = subjects.find((s) => s.id === id)
+    if (!subject) return
     const childNotes = notes.filter((n) => n.subjectId === id)
+    const subjectName = subject.name.trim() || 'unnamed'
+    const count = childNotes.length
+    if (count === 0) {
+      const ok = await confirm(`The subject "${subjectName}" has no notes.`, {
+        title: 'Delete subject',
+        confirmLabel: 'Delete subject',
+      })
+      if (!ok) return
+    } else {
+      const plural = count === 1 ? '' : 's'
+      const choice = await choose(
+        `"${subjectName}" has ${count} note${plural}. Keep them in the notebook, without a subject, or delete them with the subject. Deleted notes can't be recovered.`,
+        {
+          title: 'Delete subject',
+          confirmLabel: `Delete ${count} note${plural}`,
+          altLabel: 'Keep notes in notebook',
+          cancelLabel: 'Cancel',
+          destructive: true,
+        }
+      )
+      if (choice === 'cancel') return
+      if (choice === 'alt') {
+        let failed = false
+        try {
+          for (const n of childNotes) {
+            // Nota-corpo de task reatribuída volta ao subject "Tasks".
+            const subjectId =
+              n.notebookId && tasks.some((t) => t.noteId === n.id) ? tasksSubjectId(n.notebookId) : null
+            if (!(await saveNote({ ...n, subjectId, updatedAt: Date.now() }))) failed = true
+          }
+        } catch (err) {
+          console.error('failed to keep subject notes', err)
+          failed = true
+        }
+        if (failed) {
+          void refreshNotes().catch((err) => console.error('failed to reload notes', err))
+          setStructureError('Failed to keep the notes. The subject was kept.')
+          return
+        }
+        setStructureError(null)
+        await removeSubject(id)
+        if (activeSubjectId === id) setActiveSubjectId(null)
+        return
+      }
+    }
     await removeSubject(id)
     await detachTodosChildren(new Set(childNotes.filter(isTodosNote).map((n) => n.id)))
     await Promise.all(childNotes.map((n) => removeNote(n.id)))
@@ -2866,21 +3167,21 @@ function App() {
           continue
         }
         const next = { ...n, notebookId: destId, subjectId: null, updatedAt: Date.now() }
-        await storage.saveNote(next)
-        moved.push(next)
+        if (!(await saveNote(next))) failed = true
+        else moved.push(next)
       }
     } catch (err) {
       console.error('failed to move subject notes', err)
       failed = true
     }
-    // Leva ao state o que já foi gravado (useNotes.save engole erro, por isso
-    // a gravação de verdade acima é feita direto no storage).
-    await Promise.all(moved.map((n) => saveNote(n)))
     if (failed) {
-      setSubjectConvertError('Failed to turn subject into notebook. The subject was kept.')
+      // O saveNote atualiza a memória antes de gravar e devolve false na
+      // falha, por isso a falha relê do banco.
+      void refreshNotes().catch((err) => console.error('failed to reload notes', err))
+      setStructureError('Failed to turn subject into notebook. The subject was kept.')
       return
     }
-    setSubjectConvertError(null)
+    setStructureError(null)
     await removeSubject(id)
     if (destId === sourceId) {
       if (activeSubjectId === id) setActiveSubjectId(null)
@@ -3007,9 +3308,10 @@ function App() {
   // sobrescreve). `askAi` acrescenta também uma linha `/week-review` e abre a
   // nota para o usuário executá-la com Enter — a IA nunca roda sozinha.
   const saveWeeklyReview = useCallback(
-    async (markdown: string, askAi: boolean) => {
+    // false = não gravou (o Review mantém a reflexão e mostra o erro).
+    async (markdown: string, askAi: boolean): Promise<boolean> => {
       const note = await ensureCalendarNote(new Date())
-      if (!note || !calendarNotebookId) return
+      if (!note || !calendarNotebookId) return false
       // A keep salva a nota de hoje direto no banco sem passar pelo estado da
       // main: parte da versão mais recente entre o banco e o estado local.
       const local = notesRef.current.find((n) => n.id === note.id) ?? note
@@ -3019,14 +3321,15 @@ function App() {
         ? `${markdown}\n\n/week-review`
         : markdown
       const content = current.content.trim() ? `${current.content.trimEnd()}\n\n${block}` : block
-      await saveNote({ ...current, content, updatedAt: Date.now() })
-      // A keep recarrega a nota, senão o próximo autosave dela apagaria o review.
-      void emit('calendar-note-updated', { noteId: note.id })
+      // O saveNote avisa a keep, que recarrega a nota; senão o próximo autosave
+      // dela apagaria o review.
+      if (!(await saveNote({ ...current, content, updatedAt: Date.now() }))) return false
       if (askAi) {
         setMainArea(NOTES_AREA)
         setActiveNotebookId(calendarNotebookId)
         setActiveId(note.id)
       }
+      return true
     },
     [ensureCalendarNote, calendarNotebookId, saveNote]
   )
@@ -3036,30 +3339,71 @@ function App() {
       const source = notes.find((n) => n.id === sourceId)
       const target = notes.find((n) => n.id === targetId)
       if (!source || !target) return
-      const mergedContent = target.content
-        ? target.content + '\n\n---\n\n' + source.content
-        : source.content
-      await saveNote({ ...target, content: mergedContent, updatedAt: Date.now() })
+      // A origem entra no fim, sob um título com o nome dela; as tags somam.
+      const sourceTitle = source.title.trim()
+      const sourceBlock = sourceTitle ? `## ${sourceTitle}\n\n${source.content}` : source.content
+      const mergedContent = target.content ? target.content + '\n\n---\n\n' + sourceBlock : sourceBlock
+      const tagKeys = new Set(target.tags.map(tagKey))
+      const mergedTags = [...target.tags, ...source.tags.filter((t) => !tagKeys.has(tagKey(t)))]
+      if (!(await saveNote({ ...target, content: mergedContent, tags: mergedTags, updatedAt: Date.now() }))) {
+        setStructureError('Failed to merge notes. Both notes were kept.')
+        void refreshNotes().catch((err) => console.error('failed to reload notes', err))
+        return
+      }
       // Tasks da TODOS de origem: passam para o destino se ele também é TODOS;
       // senão ficam sem TODOS.
+      let tasksOk: boolean
       if (isTodosNote(target)) {
         const changes = tasks
           .filter((t) => t.parentNoteId === sourceId)
           .map((t) => ({ id: t.id, patch: { parentNoteId: targetId } }))
-        if (changes.length > 0) await updateTasks(changes)
+        tasksOk = changes.length > 0 ? await updateTasks(changes) : true
       } else {
-        await detachTodosChildren(new Set([sourceId]))
+        tasksOk = await detachTodosChildren(new Set([sourceId]))
       }
+      // Falhou nas tasks: o destino volta ao conteúdo e às tags de antes, para
+      // uma nova tentativa não duplicar o texto da origem.
+      if (!tasksOk) {
+        const reverted = await saveNote({ ...target, updatedAt: Date.now() })
+        setStructureError(
+          reverted
+            ? 'Failed to merge notes: the tasks could not be moved. Both notes were kept.'
+            : `Failed to merge notes: the tasks could not be moved. Both notes were kept, but "${target.title.trim() || 'Untitled'}" already has the text of "${sourceTitle || 'Untitled'}".`
+        )
+        if (!reverted) void refreshNotes().catch((err) => console.error('failed to reload notes', err))
+        return
+      }
+      setStructureError(null)
       await removeNote(sourceId)
       if (activeId === sourceId) setActiveId(targetId)
     },
-    [notes, saveNote, removeNote, activeId, tasks, updateTasks, detachTodosChildren]
+    [notes, saveNote, removeNote, activeId, tasks, updateTasks, detachTodosChildren, refreshNotes]
+  )
+
+  // Subjects oferecidos no seletor de uma linha da coluna: os do caderno da
+  // própria nota (em All notes, cada linha pode ser de um caderno).
+  const subjectsForNotebook = useCallback(
+    (notebookId: string): Subject[] | Promise<Subject[]> =>
+      notebookId === activeNotebookId
+        ? columnSubjects
+        : storage
+            .getSubjects(notebookId)
+            .then((list) => list.filter((s) => !isTasksSubject(s)))
+            .catch(() => []),
+    [activeNotebookId, columnSubjects]
   )
 
   const handleAssignNoteToSubject = useCallback(
     async (noteId: string, subjectId: string | null) => {
       const note = notes.find((n) => n.id === noteId)
       if (!note) return
+      // Em All notes a linha pode ser de outro caderno: só aceita subject do
+      // caderno da própria nota.
+      if (subjectId !== null) {
+        if (!note.notebookId) return
+        const own = await storage.getSubjects(note.notebookId).catch(() => [])
+        if (!own.some((s) => s.id === subjectId)) return
+      }
       await saveNote({ ...note, subjectId, updatedAt: Date.now() })
     },
     [notes, saveNote]
@@ -3070,9 +3414,14 @@ function App() {
       const note = notes.find((n) => n.id === noteId)
       if (!note) return
       if (note.notebookId === destNotebookId) return
-      await saveNote({ ...note, notebookId: destNotebookId, subjectId: null, updatedAt: Date.now() })
+      if (!(await saveNote({ ...note, notebookId: destNotebookId, subjectId: null, updatedAt: Date.now() }))) return
+      const destName = notebooks.find((nb) => nb.id === destNotebookId)?.name ?? 'notebook'
+      setNotice({
+        message: `Moved to ${destName}`,
+        action: { label: 'Open', onClick: () => handleNavigateToNote(destNotebookId, noteId) },
+      })
     },
-    [notes, saveNote]
+    [notes, notebooks, saveNote, handleNavigateToNote]
   )
 
   // Mover caderno inteiro: a origem vira um subject no destino (mesclando se
@@ -3104,14 +3453,23 @@ function App() {
       // Tasks (e notas-corpo) seguem para o subject "Tasks" do destino; só as
       // notas comuns são achatadas no subject com o nome da origem.
       const { movedNoteIds, ok } = await relocateNotebookTasks(sourceId, destId)
-      if (!ok) return
+      if (!ok) {
+        setStructureError("Failed to move the notebook's tasks. The notebook was kept.")
+        return
+      }
       if (tasksFilter === sourceId) setTasksFilter(null)
       const childNotes = notes.filter((n) => n.notebookId === sourceId && !movedNoteIds.has(n.id))
-      await Promise.all(
+      const results = await Promise.all(
         childNotes.map((n) =>
           saveNote({ ...n, notebookId: destId, subjectId: target.id, updatedAt: Date.now() })
         )
       )
+      if (results.includes(false)) {
+        setStructureError(`Failed to move all notes. The notebook "${source.name}" was kept.`)
+        void refreshNotes().catch((err) => console.error('failed to reload notes', err))
+        return
+      }
+      setStructureError(null)
       // Documentos visíveis: o destino fica com a união das duas seleções
       // (lida antes do removeNotebook, que apaga a da origem). As pastas de
       // notas dos dois cadernos ficam de fora: são implícitas no destino.
@@ -3149,7 +3507,7 @@ function App() {
         return next
       })
     },
-    [notebooks, notes, saveNote, removeNotebook, activeNotebookId, refreshSubjects, relocateNotebookTasks, tasksFilter]
+    [notebooks, notes, saveNote, removeNotebook, activeNotebookId, refreshSubjects, relocateNotebookTasks, tasksFilter, refreshNotes]
   )
 
   const handleCreateNotebookFromChat = useCallback(
@@ -3281,10 +3639,9 @@ function App() {
           content: appendToggleToContent(current.content, request.block),
           updatedAt: Date.now(),
         }
+        // O saveNote avisa a keep, que recarrega a nota se for a aberta nela;
+        // senão o autosave dela apagaria o bloco.
         if (!(await saveNote(note))) throw new Error('Failed to save note.')
-        // A keep recarrega a nota se for a aberta nela, senão o autosave dela
-        // apagaria o bloco.
-        void emit('calendar-note-updated', { noteId: note.id })
         return { note }
       }),
     [handleCreateNotebookFromChat, handleCreateNoteFromChat, handleCreateAgentNoteFromChat, saveNote]
@@ -3332,6 +3689,31 @@ function App() {
     [chatNotebookId, disabledNotebookIds, tasks, today]
   )
 
+  // "Chat" de um card da aba AI (IA-03): abre o chat do caderno na própria
+  // coluna, na pasta do caderno, com a pergunta e a resposta. Sem caderno,
+  // segue para o modo Chat.
+  const handleContinueResponseInChat = useCallback(
+    (response: AiResponse) => {
+      if (!chatNotebook) {
+        handleOpenResponseInChat(response)
+        return
+      }
+      const cmd = response.command.trim()
+      const q = response.query.trim()
+      const fullCommand = q ? `${cmd} ${q}` : cmd
+      setPendingChatExchange({
+        responseId: response.id,
+        title: fullCommand,
+        userMessage: fullCommand,
+        assistantMessage: response.response,
+      })
+      setAiOpen(true)
+      setRightTab('chat')
+    },
+    [chatNotebook, handleOpenResponseInChat, setRightTab]
+  )
+  const handleChatExchangeConsumed = useCallback(() => setPendingChatExchange(null), [])
+
   const handleEditorReady = useCallback((editor: TiptapEditor | null) => {
     notesEditorRef.current = editor
     setHasEditor(!!editor)
@@ -3346,6 +3728,7 @@ function App() {
 
   const handleAskAi = useCallback(
     (text: string) => {
+      setFocusMode(false)
       setAiOpen(true)
       setRightTab('chat')
       setPendingNotesQuote(text)
@@ -3381,12 +3764,48 @@ function App() {
     [requestMarkAction]
   )
 
+  // Resolve da lista Marks: o conteúdo de antes (para o "Undo") e a marca
+  // seguinte da lista, aberta quando o Editor consumir o resolve.
+  const resolvedMarkRef = useRef<{ noteId: string; index: number; before: string } | null>(null)
+  const nextMarkRef = useRef<{ nonce: number; hit: NoteMarkHit } | null>(null)
+
   const handleResolveMark = useCallback(
-    (hit: NoteMarkHit) => requestMarkAction(hit.note, hit.entry, 'resolve'),
+    (hit: NoteMarkHit, next: NoteMarkHit | null = null) => {
+      resolvedMarkRef.current = { noteId: hit.note.id, index: hit.entry.index, before: hit.note.content }
+      requestMarkAction(hit.note, hit.entry, 'resolve')
+      // Na mesma nota, depois da resolvida, o índice cai 1 (a marca sai).
+      const shifted = next && next.note.id === hit.note.id && next.entry.index > hit.entry.index
+      nextMarkRef.current = next && {
+        nonce: revealSeqRef.current,
+        hit: shifted ? { note: next.note, entry: { ...next.entry, index: next.entry.index - 1 } } : next,
+      }
+    },
     [requestMarkAction]
   )
 
-  const handleNoteRevealConsumed = useCallback(() => setPendingNoteReveal(null), [])
+  // "Undo" do Resolve: volta o conteúdo de antes, só se a nota não mudou além
+  // da marca (o histórico do Editor não serve: ele remonta na troca de nota).
+  const handleUndoResolveMark = useCallback(async (): Promise<UndoResolveResult> => {
+    const last = resolvedMarkRef.current
+    resolvedMarkRef.current = null
+    nextMarkRef.current = null
+    if (!last) return 'changed'
+    const current = notesRef.current.find((n) => n.id === last.noteId)
+    if (!current || withoutNoteMarkTags(current.content) !== withoutNoteMarkTags(last.before)) return 'changed'
+    if (!(await saveNote({ ...current, content: last.before, updatedAt: Date.now() }))) return 'failed'
+    setSelectedMark({ noteId: last.noteId, index: last.index })
+    return 'undone'
+  }, [saveNote])
+
+  // Pedido consumido; se era o resolve da lista (nenhum pedido depois dele),
+  // abre a marca seguinte.
+  const handleNoteRevealConsumed = useCallback(() => {
+    setPendingNoteReveal(null)
+    const next = nextMarkRef.current
+    if (!next) return
+    nextMarkRef.current = null
+    if (next.nonce === revealSeqRef.current) handleSelectMark(next.hit.note, next.hit.entry)
+  }, [handleSelectMark])
 
   const openMarksView = useCallback((filter: MarkLabelFilter) => {
     setMarksFilter(filter)
@@ -3504,12 +3923,10 @@ function App() {
 
   const canInsertIntoNote = !!activeNote && hasEditor && !previewMode
 
+  // Concluir ou pular (Skip) o onboarding: os dois ficam gravados, para ele
+  // não voltar a cada abertura.
   const handleCompleteOnboarding = useCallback(() => {
     localStorage.setItem('onboarding_completed', '1')
-    setOnboardingActive(false)
-  }, [])
-
-  const handleSkipOnboarding = useCallback(() => {
     setOnboardingActive(false)
   }, [])
 
@@ -3518,6 +3935,7 @@ function App() {
     setSettingsSection(undefined)
     setSettingsOpen(true)
   }, [onboardingActive])
+  openSettingsRef.current = handleOpenSettings
 
   const handleOpenMincerSettings = useCallback((section: SettingsSection) => {
     if (onboardingActive) return
@@ -3700,6 +4118,7 @@ function App() {
     savedViews,
     currentViewConfig,
     activeSavedViewId,
+    viewsError: viewsSaveError,
     onApplyView: (view) => {
       const { base, project, summary, text, groupBy } = view.config
       setTasksMainView(base)
@@ -3735,13 +4154,10 @@ function App() {
     onMainViewChange: setTasksMainView,
     filter: tasksFilter,
     onFilterChange: setTasksFilter,
-    onSummaryFilterChange: (key: TaskSummaryKey | null) => {
-      setTasksSummaryFilter(key)
-      setTasksMainView('list')
-    },
-    onCreateTask: async (draft: NewTaskDraft) => {
-      await createNewTask(draft)
-    },
+    // O chip de resumo filtra o próprio board (sem trocar para a List).
+    summaryFilter: tasksSummaryFilter,
+    onSummaryFilterChange: setTasksSummaryFilter,
+    onCreateTask: (draft: NewTaskDraft) => createNewTask(draft),
     onOpenTask: openTaskModal,
     onToggleTask: handleToggleLinkedTask,
     onUpdateTasks: (changes: TaskChanges) => void updateTasks(changes),
@@ -3772,20 +4188,13 @@ function App() {
       onDateChange={activeTask ? undefined : (date) => updateActive({ date })}
       value={activeNote.content}
       onChange={(content) => updateActive({ content })}
-      onCommand={handleCommand}
+      onCommand={runCommand}
       executedCommandTexts={executedCommandTexts}
       responses={responses}
-      onRemoveResponse={(id) => {
-        removeResponse(id)
-        unlinkResponseFromChat(id)
-      }}
-      notebookNotes={
-        activeNote.notebookId === calendarNotebookId
-          ? notes.filter((n) => n.id !== activeId)
-          : activeTask
-            ? notes.filter((n) => n.notebookId === activeTask.notebookId && n.id !== activeId)
-            : notebookNotes.filter((n) => n.id !== activeId)
-      }
+      // `[[`: notas de todos os cadernos, as do caderno da nota primeiro.
+      notebookNotes={notes.filter((n) => n.id !== activeId)}
+      notebooks={notebooks}
+      currentNotebookId={activeTask ? activeTask.notebookId : activeNote.notebookId}
       onNavigateToNote={handleNoteLinkNavigation}
       relatedContent={
         <RelatedContent
@@ -3853,12 +4262,18 @@ function App() {
               type={null}
               onChange={(typeId) => void handleSetNoteType(typeId)}
               onManage={() => setNoteTypesOpen({ focusTypeId: null })}
-              archived={activeArchived}
-              onSetArchived={(archived) => void handleSetArchived(activeNote.id, archived)}
             />
           )}
         </>
       ) : undefined}
+      // "Archive" com rótulo no cabeçalho, com ou sem tipo. Na TODOS com tasks
+      // abertas, o handleSetArchived pergunta antes; o "All done · Archive" do
+      // painel é só o atalho de quando tudo terminou.
+      onArchive={
+        canTypeActive && !activeArchived
+          ? () => void handleSetArchived(activeNote.id, true)
+          : undefined
+      }
       topSlot={activeTask ? (
         <TaskPropertiesBar
           task={activeTask}
@@ -3886,6 +4301,7 @@ function App() {
           dayKey={activeCalendarDay}
           todayKey={today}
           onOpenTask={openTask}
+          onToggleTask={handleToggleLinkedTask}
         />
       ) : activeNoteType ? (
         <>
@@ -3903,13 +4319,12 @@ function App() {
                     ? () => openNoteBoard(activeNoteType.id)
                     : undefined
                 }
-                archived={activeArchived}
-                onSetArchived={(archived) => void handleSetArchived(activeNote.id, archived)}
               />
             }
             defs={typeDefs(noteTypes.defs, activeNoteType.id)}
             properties={activeNote.properties ?? {}}
             onChange={handleNotePropertyChange}
+            onCreateOption={async (defId, name) => (await noteTypes.createOption(defId, name)).id}
             onInsertTemplate={handleInsertTemplate}
           />
           {activeNoteType.id === TODOS_TYPE_ID && (
@@ -3952,7 +4367,10 @@ function App() {
         value={sideNote.content}
         onChange={(content) => updateSideNote({ content })}
         responses={sideNoteResponses}
-        notebookNotes={notes.filter((n) => n.notebookId === sideNote.notebookId && n.id !== sideNote.id)}
+        // `[[`: como no editor principal, notas de todos os cadernos.
+        notebookNotes={notes.filter((n) => n.id !== sideNote.id)}
+        notebooks={notebooks}
+        currentNotebookId={sideNote.notebookId}
         onNavigateToNote={navigateFromSideNote}
         isCalendarNote={sideNote.notebookId === calendarNotebookId}
         disableSlashCommands
@@ -3984,6 +4402,51 @@ function App() {
     />
   )
 
+  // Banner de erros: mostra todos (sem repetir). Falha de gravação (risco de
+  // perder dado) fica em vermelho. Dismiss limpa os erros de ação e esconde os
+  // de gravação até aparecer um erro novo.
+  const saveErrors = [
+    noteSaveError, notebookSaveError, subjectSaveError, tasksSaveError,
+    statusSaveError, metadata.saveError, noteTypes.saveError,
+  ].filter((e): e is string => !!e)
+  const bannerErrors = [...new Set([structureError, taskCreateError, ...saveErrors].filter((e): e is string => !!e))]
+  const bannerKey = bannerErrors.join('\n')
+  const showErrorBanner = bannerErrors.length > 0 && bannerKey !== dismissedBannerKey
+  // Sem erros, o Dismiss deixa de valer: a mesma falha, se voltar, é nova.
+  useEffect(() => {
+    if (!bannerKey) setDismissedBannerKey('')
+  }, [bannerKey])
+
+  // Cabeçalho da coluna de notas: de onde vêm as notas listadas.
+  const headingNotebook = activeNotebookId ? notebooks.find((nb) => nb.id === activeNotebookId) : undefined
+  const headingSubject = activeSubjectId ? columnSubjects.find((s) => s.id === activeSubjectId) : undefined
+  const notesHeading = !activeNotebookId
+    ? 'All notes'
+    : [headingNotebook?.name.trim() || 'Notebook', headingSubject?.name.trim()].filter(Boolean).join(' / ')
+  const dismissErrorBanner = () => {
+    setStructureError(null)
+    setTaskCreateError(null)
+    setDismissedBannerKey([...new Set(saveErrors)].join('\n'))
+  }
+
+  // Retry do card de IA: o comando roda de novo no mesmo card e com o mesmo id,
+  // que a linha do /comando conhece (o Enter na linha verde não roda de novo).
+  // Card parado ainda no preparo (sem modelo): o preparo dele pode não ter
+  // terminado e o useAi descarta esse id, então o card sai e o id é novo.
+  async function handleRetryResponse(r: AiResponse) {
+    if (r.status === 'interrupted' && r.response.trim()) {
+      const ok = await confirm('Replace the partial response?', { title: 'Retry', confirmLabel: 'Replace' })
+      if (!ok) return
+    }
+    unlinkResponseFromChat(r.id)
+    if (r.status === 'interrupted' && !r.model) {
+      removeResponse(r.id)
+      void runCommand({ cmd: r.command, query: r.query, commandId: nanoid() })
+      return
+    }
+    void runCommand({ cmd: r.command, query: r.query, commandId: r.id })
+  }
+
   return (
     <TasksEnvProvider value={tasksEnv}>
     <div className="app">
@@ -3992,11 +4455,12 @@ function App() {
         onSetMode={handleSetMode}
         search={search}
         onSearchChange={setSearch}
+        onOpenSearch={() => setSearchPaletteOpen(true)}
         onExport={handleExport}
         hasNote={!!activeNote}
         exportSuccess={exportSuccess}
-        aiOpen={aiOpen}
-        onToggleAi={() => setAiOpen((v) => !v)}
+        aiOpen={aiOpen && !focusMode}
+        onToggleAi={handleTogglePanel}
         focusMode={focusMode}
         onToggleFocus={() => setFocusMode((v) => !v)}
         previewMode={previewMode}
@@ -4004,10 +4468,19 @@ function App() {
         mincerBusy={mincerJob.activeItemId !== null}
         mincerRecordingStartedAt={mincerJob.recording ? (mincerJob.recordingStartedAt ?? Date.now()) : null}
         mincerUnseen={mincerJob.unseenCount > 0}
+        mincerAttention={mincerJob.attentionCount}
       />
-      {(noteSaveError || notebookSaveError || subjectSaveError || tasksSaveError || statusSaveError || metadata.saveError || noteTypes.saveError || taskCreateError || subjectConvertError) && (
-        <div className="saveErrorBanner" role="alert">
-          {noteSaveError || notebookSaveError || subjectSaveError || tasksSaveError || statusSaveError || metadata.saveError || noteTypes.saveError || taskCreateError || subjectConvertError}
+      {showErrorBanner && (
+        <div className={saveErrors.length > 0 ? 'saveErrorBanner danger' : 'saveErrorBanner'} role="alert">
+          <ul className="saveErrorList">
+            {bannerErrors.map((message) => (
+              <li key={message}>{message}</li>
+            ))}
+          </ul>
+          <button type="button" className="saveErrorDismiss" onClick={dismissErrorBanner} title="Dismiss these errors">
+            <XIcon size={11} aria-hidden />
+            Dismiss
+          </button>
         </div>
       )}
       {activeMode === 'mincer' ? (
@@ -4021,7 +4494,7 @@ function App() {
             onCreateNotebook={handleCreateNotebookFromChat}
             onCreateNote={handleCreateNoteFromChat}
             onSaveNote={async (note) => {
-              await saveNote(note)
+              if (!(await saveNote(note))) throw new Error('Failed to save note.')
             }}
             onNavigateToNote={handleNavigateToNote}
             onOpenChat={() => setActiveMode('chat')}
@@ -4036,8 +4509,9 @@ function App() {
             onCreateNotebook={handleCreateNotebookFromChat}
             onCreateNote={handleCreateNoteFromChat}
             onSaveNote={async (note) => {
-              await saveNote(note)
+              if (!(await saveNote(note))) throw new Error('Failed to save note.')
             }}
+            onOpenSettings={handleOpenSettings}
           />
         </div>
       ) : activeMode === 'chat' ? (
@@ -4046,14 +4520,14 @@ function App() {
             models={models}
             modelsLoading={modelsLoading}
             modelsError={modelsError}
-            onOpenSettings={handleOpenSettings}
+            onOpenSettings={(section) => (section ? handleOpenMincerSettings(section) : handleOpenSettings())}
             notebooks={orderedNotebooks}
             notes={notes}
             onCreateNotebook={handleCreateNotebookFromChat}
             onCreateNote={handleCreateNoteFromChat}
             onCreateAgentNote={handleCreateAgentNoteFromChat}
             onSaveNote={async (note) => {
-              await saveNote(note)
+              if (!(await saveNote(note))) throw new Error('Failed to save note.')
             }}
             onNavigateToNote={handleNavigateToNote}
             tasks={tasks}
@@ -4082,7 +4556,7 @@ function App() {
               autoOpenNote(notebookNotes[0]?.id ?? null)
             }
           }}
-          onCreate={handleCreateNotebook}
+          onCreate={(name) => void handleCreateNotebook(name)}
           onDelete={handleDeleteNotebook}
           onMoveNotebook={handleMoveNotebook}
           onRename={handleRenameNotebook}
@@ -4127,8 +4601,8 @@ function App() {
           subjects={columnSubjects}
           activeSubjectId={activeSubjectId}
           onSelectSubject={handleSelectSubject}
-          onCreateSubject={handleCreateSubject}
-          onDeleteSubject={handleDeleteSubject}
+          onCreateSubject={(name) => void handleCreateSubject(name)}
+          onDeleteSubject={(id) => void handleDeleteSubject(id)}
           onTurnSubjectIntoNotebook={handleTurnSubjectIntoNotebook}
           onRenameSubject={handleRenameSubject}
           onReorderSubjects={handleReorderSubjects}
@@ -4163,13 +4637,12 @@ function App() {
               setTasksSummaryFilter(key)
               setTasksMainView('list')
             }}
-            onCreateTask={async (draft) => {
-              await createNewTask(draft)
-            }}
+            onCreateTask={(draft) => createNewTask(draft)}
             onConvertPipeTitles={(list) => void convertPipeTitles(list)}
             onOpenTask={openTaskModal}
             onToggleTask={handleToggleLinkedTask}
             onUpdateTasks={(changes) => void updateTasks(changes)}
+            onDeleteTasks={(ids) => void deleteProjectTasks(ids)}
             checklist={taskChecklist}
             onSaveReview={saveWeeklyReview}
           />
@@ -4190,16 +4663,11 @@ function App() {
             onMainViewChange={setTasksMainView}
             filter={tasksFilter}
             onFilterChange={setTasksFilter}
-            onSummaryFilterChange={(key) => {
-              setTasksSummaryFilter(key)
-              setTasksMainView('list')
-            }}
-            onCreateTask={async (draft) => {
-              await createNewTask(draft)
-            }}
+            summaryFilter={tasksSummaryFilter}
+            onSummaryFilterChange={setTasksSummaryFilter}
+            onCreateTask={(draft) => createNewTask(draft)}
             onOpenTask={openTaskModal}
             onToggleTask={handleToggleLinkedTask}
-            onSchedule={(id, scheduledDate) => void updateTask(id, { scheduledDate })}
             onUpdateTasks={(changes) => void updateTasks(changes)}
             onConvertPipeTitles={(list) => void convertPipeTitles(list)}
             onDeleteTasks={(ids) => void deleteProjectTasks(ids)}
@@ -4227,6 +4695,7 @@ function App() {
             onCreateTask={async (draft) => {
               const task = await createNewTask(draft)
               if (task?.noteId) showTaskNote(task.noteId)
+              return task
             }}
             onToggleTask={handleToggleLinkedTask}
             onUpdateTasks={(changes) => void updateTasks(changes)}
@@ -4244,6 +4713,7 @@ function App() {
             selected={selectedMark}
             onSelect={(hit) => handleSelectMark(hit.note, hit.entry)}
             onResolve={handleResolveMark}
+            onUndoResolve={handleUndoResolveMark}
             onClose={closeMainArea}
             width={effectiveSidebarWidth}
             wide={notebookCollapsed}
@@ -4300,8 +4770,11 @@ function App() {
             onSetArchived={(id, archived) => void handleSetArchived(id, archived)}
             activeId={activeId}
             notebookSelected={activeNotebookId !== null}
+            heading={notesHeading}
+            filterText={search}
+            onClearFilter={() => setSearch('')}
             onSelect={setActiveId}
-            onCreate={() => void handleCreateNote()}
+            onCreate={activeNotebookId ? () => void handleCreateNote() : () => void handleQuickNote()}
             noteTypes={noteTypes.types}
             onCreateTyped={(typeId) => void handleCreateNote(typeId)}
             noteDefs={noteTypes.defs}
@@ -4326,7 +4799,7 @@ function App() {
             collapsed={sidebarCollapsed}
             onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
             onWidthChange={setColumnWidth}
-            subjects={effectiveSubjects.filter((s) => !isTasksSubject(s))}
+            subjectsFor={subjectsForNotebook}
             onAssignSubject={handleAssignNoteToSubject}
             tasksSection={activeNotebookId !== null && tasksLoaded ? (
               <NotebookTasksSection
@@ -4352,10 +4825,12 @@ function App() {
           <EmptyEditor
             hasNotebook={activeNotebookId !== null}
             onCreate={() => void handleCreateNote()}
+            hasNotebooks={notebooks.some((nb) => nb.id !== calendarNotebookId && nb.id !== INBOX_NOTEBOOK_ID)}
+            onCreateNotebook={(name) => void handleCreateNotebook(name)}
           />
         )}
         <AiPanel
-          open={aiOpen}
+          open={aiOpen && !focusMode}
           noteId={activeId}
           responses={responses}
           hasApiKey={hasApiKey}
@@ -4366,12 +4841,19 @@ function App() {
           modelId={modelId}
           onModelChange={setModelId}
           onOpenSettings={handleOpenSettings}
-          navigateToCard={null}
           onDeleteResponse={(id) => {
             removeResponse(id)
             unlinkResponseFromChat(id)
           }}
-          onOpenInChat={handleOpenResponseInChat}
+          onRetryResponse={(r) => void handleRetryResponse(r)}
+          onStopResponse={stopResponse}
+          onOpenSettingsSection={handleOpenMincerSettings}
+          openNoteContent={activeNote?.content ?? ''}
+          blockNoteTitle={(id) => {
+            const holder = notes.find((n) => n.content.includes(`data-cmd="${id}"`))
+            return holder ? holder.title.trim() || 'Untitled' : null
+          }}
+          onOpenInChat={handleContinueResponseInChat}
           activeTab={rightTab}
           onTabChange={setRightTab}
           openPanel={openPanel}
@@ -4390,9 +4872,12 @@ function App() {
               tasks={tasks}
               notebooks={orderedNotebooks}
               getSelectionText={getNotesSelectionText}
-              visible={aiOpen && rightTab === 'chat'}
+              visible={aiOpen && !focusMode && rightTab === 'chat'}
               pendingQuote={pendingNotesQuote}
               onPendingQuoteConsumed={handleNotesQuoteConsumed}
+              pendingExchange={pendingChatExchange}
+              onPendingExchangeConsumed={handleChatExchangeConsumed}
+              onOpenSettings={handleOpenSettings}
               canInsert={canInsertIntoNote}
               onInsertIntoNote={handleInsertIntoNote}
               onOpenMark={handleOpenMark}
@@ -4438,14 +4923,17 @@ function App() {
       />
       <KnowledgeBaseModal
         open={kbOpen}
-        onClose={() => setKbOpen(false)}
+        onClose={() => { setKbOpen(false); void refreshNotebooksWithDocs() }}
         onFolderErrorsChange={setKbFolderErrors}
         hasApiKey={hasApiKey}
+        onOpenSettings={() => { setKbOpen(false); void refreshNotebooksWithDocs(); handleOpenMincerSettings('openrouter') }}
+        notebooks={orderedNotebooks}
+        activeNotebookId={activeNotebookId}
       />
       {onboardingActive && (
         <Onboarding
           onComplete={handleCompleteOnboarding}
-          onSkip={handleSkipOnboarding}
+          onSkip={handleCompleteOnboarding}
           onApiKeyChanged={handleApiKeyChanged}
         />
       )}
@@ -4486,6 +4974,12 @@ function App() {
         statuses={statusRegistry}
         hasApiKey={hasApiKey}
         disabledNotebookIds={disabledNotebookIds}
+        noteDefs={noteTypes.defs}
+        recentNoteIds={recentOpenedNoteIds}
+        newNoteNotebookId={
+          activeNotebookId && activeNotebookId !== calendarNotebookId ? activeNotebookId : INBOX_NOTEBOOK_ID
+        }
+        onCreateNote={(title, target) => void handleCreateNoteFromSearch(title, target)}
       />
       <MarkNotePicker
         open={markPicker !== null}
@@ -4621,6 +5115,8 @@ function App() {
           onClose={() => setTodosMigration(null)}
         />
       )}
+      {shortcutsOpen && <ShortcutsOverlay onClose={() => setShortcutsOpen(false)} />}
+      {notice && <ShellToast notice={notice} onDismiss={dismissNotice} />}
       {confirmModal}
     </div>
     </TasksEnvProvider>

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Checks } from '@phosphor-icons/react'
+import { CaretRight, Checks } from '@phosphor-icons/react'
 import type { Note, Notebook, NoteType, Task } from '../../types'
-import { scoreRelatedNotes } from './scoreNotes'
+import { scoreRelatedNotes, type ScoredNote } from './scoreNotes'
 import { findTermLinkedNotes, relatedTermsKey, relatedTermsOf, type TermReason } from '../../lib/relatedTerms'
 import { notePreview } from '../../lib/noteSearch'
 import { isOpen, isTaskBodyNote, statusColor, statusName, taskRefIds, todosTitleOf } from '../../lib/tasks'
@@ -30,6 +30,31 @@ const TASKS_VISIBLE = 5
 // Espera do termo editado antes de recalcular (digitar dentro de um termo).
 const TERMS_DEBOUNCE_MS = 400
 
+// Aberto/fechado vale para todas as notas e sobrevive ao reinício.
+const OPEN_KEY = 'monet:related-open'
+
+function readOpen(): boolean {
+  try {
+    return localStorage.getItem(OPEN_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function writeOpen(open: boolean): void {
+  try {
+    localStorage.setItem(OPEN_KEY, open ? '1' : '0')
+  } catch {
+    // Sem storage: só esta sessão lembra.
+  }
+}
+
+const LINK_REASON: Record<NonNullable<ScoredNote['linked']>, string> = {
+  out: 'linked in this note',
+  in: 'links to this note',
+  both: 'linked both ways',
+}
+
 function reasonText(r: TermReason): string {
   return r.found ? `mentions "${r.term}" ≈ "${r.found}"` : `mentions "${r.term}"`
 }
@@ -56,9 +81,8 @@ export function RelatedContent({
   onSelectTask,
 }: Props) {
   const { statuses, todosById } = useTasksEnv()
-  // Começa fechado: a lista ocupa muito espaço. O App remonta por nota
-  // (key = id), então cada nota aberta volta fechada.
-  const [open, setOpen] = useState(false)
+  // Lembra o último aberto/fechado (o App remonta por nota, key = id).
+  const [open, setOpen] = useState(readOpen)
   const [showAllTerms, setShowAllTerms] = useState(false)
   const [showAllTasks, setShowAllTasks] = useState(false)
   // Chip de termo ativo (RelatedTerm.key): o grupo e as tasks achadas por
@@ -95,7 +119,7 @@ export function RelatedContent({
   // (origem, TODOS ou pill nela). Entram todas as do termo e, como as notas do
   // "Suggested", só as primeiras sugeridas. Abertas primeiro; fechadas depois,
   // riscadas, como no Ctrl+P.
-  const { noteTermHits, relatedNotes, taskHits } = useMemo(() => {
+  const { noteTermHits, linkedNotes, relatedNotes, taskHits } = useMemo(() => {
     const taskByNoteId = new Map<string, Task>()
     for (const task of tasks) if (task.noteId) taskByNoteId.set(task.noteId, task)
     const isBody = (note: Note) => isTaskBodyNote(note) || taskByNoteId.has(note.id)
@@ -115,9 +139,12 @@ export function RelatedContent({
       if (suggested === SUGGESTED_VISIBLE) break
       if (add(s.note, null)) suggested++
     }
+    const notesOnly = scored.filter((s) => !isBody(s.note))
     return {
       noteTermHits: termHits.filter((h) => !isBody(h.note)),
-      relatedNotes: scored.filter((s) => !isBody(s.note)).slice(0, SUGGESTED_VISIBLE),
+      // Notas com bloco de link entre elas e a ativa: todas, no grupo "Linked".
+      linkedNotes: notesOnly.filter((s) => s.linked),
+      relatedNotes: notesOnly.filter((s) => !s.linked).slice(0, SUGGESTED_VISIBLE),
       taskHits: [...found.filter((h) => isOpen(h.task)), ...found.filter((h) => !isOpen(h.task))],
     }
   }, [termHits, scored, tasks, refIds, activeNote.id])
@@ -136,7 +163,7 @@ export function RelatedContent({
 
   // Com termo na nota, o painel aparece mesmo sem nenhuma nota achada.
   const showTermsGroup = terms.length > 0 || noteTermHits.length > 0
-  if (!showTermsGroup && relatedNotes.length === 0 && taskHits.length === 0) return null
+  if (!showTermsGroup && linkedNotes.length === 0 && relatedNotes.length === 0 && taskHits.length === 0) return null
 
   // O filtro cai sozinho se o termo sai da nota ou fica sem notas e tasks.
   const filter = termCounts.some((c) => c.term.key === termFilter && c.count > 0) ? termFilter : null
@@ -149,7 +176,7 @@ export function RelatedContent({
   const visibleTasks = showAllTasks ? shownTasks : shownTasks.slice(0, TASKS_VISIBLE)
   const hiddenTasks = shownTasks.length - visibleTasks.length
 
-  const renderItem = (note: Note, reasons?: TermReason[]) => {
+  const renderItem = (note: Note, reasons?: TermReason[], linkReason?: string) => {
     const preview = notePreview(note)
     const notebookName = notebooks.find((n) => n.id === note.notebookId)?.name
     const type = note.typeId ? typeById.get(note.typeId) : undefined
@@ -172,6 +199,7 @@ export function RelatedContent({
           {reasons && reasons.length > 0 && (
             <div className={styles.itemReason}>{reasons.map(reasonText).join(' · ')}</div>
           )}
+          {linkReason && <div className={styles.itemReason}>{linkReason}</div>}
           {preview && <div className={styles.itemSnippet}>{preview}</div>}
           {note.tags.length > 0 && (
             <div className={styles.itemTags}>
@@ -220,14 +248,24 @@ export function RelatedContent({
       <button
         type="button"
         className={styles.header}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          writeOpen(!open)
+          setOpen(!open)
+        }}
+        aria-expanded={open}
       >
-        <span className={`${styles.chevron} ${open ? styles.chevronOpen : ''}`}>›</span>
+        <span className={`${styles.chevron} ${open ? styles.chevronOpen : ''}`} aria-hidden>
+          <CaretRight size={12} weight="bold" />
+        </span>
         <span className={styles.title}>Related content</span>
-        <span className={styles.count}>{noteTermHits.length + relatedNotes.length + taskHits.length}</span>
+        <span className={styles.count}>
+          {noteTermHits.length + linkedNotes.length + relatedNotes.length + taskHits.length}
+        </span>
       </button>
       {open && (
         <ul className={styles.list}>
+          {linkedNotes.length > 0 && <li className={styles.section}>Linked</li>}
+          {linkedNotes.map(({ note, linked }) => renderItem(note, undefined, linked && LINK_REASON[linked]))}
           {showTermsGroup && <li className={styles.section}>Linked by terms</li>}
           {terms.length > 0 && (
             <li className={styles.termChips}>
@@ -269,7 +307,9 @@ export function RelatedContent({
               </button>
             </li>
           )}
-          {showTermsGroup && relatedNotes.length > 0 && <li className={styles.section}>Suggested</li>}
+          {(showTermsGroup || linkedNotes.length > 0) && relatedNotes.length > 0 && (
+            <li className={styles.section}>Suggested</li>
+          )}
           {relatedNotes.map(({ note }) => renderItem(note))}
           {visibleTasks.length > 0 && <li className={styles.section}>Tasks</li>}
           {visibleTasks.map(renderTask)}

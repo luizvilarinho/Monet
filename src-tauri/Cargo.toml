@@ -1,6 +1,6 @@
 [package]
 name = "monet"
-version = "0.1.0"
+version = "1.5.0"
 description = "Monet — impressão do conhecimento no momento em que ele passa"
 authors = ["you"]
 edition = "2021"

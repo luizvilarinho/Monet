@@ -7,6 +7,8 @@ import { emitTasksChanged, loadAndSyncWithRetry } from '../lib/tasksEvents'
 // Visões salvas da TasksView (SQLite, compartilhadas entre janelas).
 export function useTaskViews() {
   const [views, setViews] = useState<TaskView[]>([])
+  // Falha da última gravação (salvar, renomear, apagar), visível no cabeçalho.
+  const [saveError, setSaveError] = useState<string | null>(null)
   const viewsRef = useRef(views)
   viewsRef.current = views
 
@@ -27,11 +29,15 @@ export function useTaskViews() {
   const persist = useCallback(async (op: () => Promise<void>, what: string) => {
     try {
       await op()
+      setSaveError(null)
       emitTasksChanged()
     } catch (err) {
       console.error(`failed to ${what}`, err)
+      setSaveError(`Couldn't ${what}. Try again.`)
+      // A lista volta ao que está gravado (desfaz a mudança otimista).
+      void reload()
     }
-  }, [])
+  }, [reload])
 
   const create = useCallback(
     async (name: string, config: TaskViewConfig): Promise<TaskView> => {
@@ -63,5 +69,5 @@ export function useTaskViews() {
     [persist]
   )
 
-  return { views, reload, create, rename, remove }
+  return { views, reload, create, rename, remove, saveError }
 }

@@ -1,9 +1,24 @@
 import { NodeViewContent, NodeViewWrapper, type NodeViewProps } from '@tiptap/react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Code, FlowArrow } from '@phosphor-icons/react'
+import { ArrowsOut, Code, FlowArrow } from '@phosphor-icons/react'
 import { fitDiagram, renderMermaid } from '../../lib/mermaid'
+import { useImageViewer } from '../ImageViewer/ImageViewer'
 import diagramStyles from '../MermaidDiagram/MermaidDiagram.module.css'
 import styles from './MermaidBlock.module.css'
+
+// SVG do desenho como imagem para o visualizador: com largura e altura do
+// viewBox (o SVG do Mermaid vem com width 100% e max-width no style, e numa
+// <img> encolheria para o tamanho padrão).
+function svgDataUrl(svg: string): string {
+  const el = new DOMParser().parseFromString(svg, 'image/svg+xml').documentElement
+  const box = el.getAttribute('viewBox')?.split(/[\s,]+/).map(Number)
+  if (box && box.length === 4 && box[2] > 0 && box[3] > 0) {
+    el.setAttribute('width', String(box[2]))
+    el.setAttribute('height', String(box[3]))
+    el.removeAttribute('style')
+  }
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(new XMLSerializer().serializeToString(el))}`
+}
 
 // Código mudou com o desenho na tela (desfazer, a mesma nota editada em outro
 // lugar): redesenha quando ele para de mudar.
@@ -33,6 +48,7 @@ export function MermaidBlockView({ node, editor, getPos }: NodeViewProps) {
   const focusCodeRef = useRef(false)
   // React 19 regrava o innerHTML se o objeto muda a cada render.
   const svgHtml = useMemo(() => ({ __html: svg }), [svg])
+  const imageViewer = useImageViewer()
 
   useEffect(() => {
     if (mode !== 'diagram' || empty) return
@@ -102,9 +118,20 @@ export function MermaidBlockView({ node, editor, getPos }: NodeViewProps) {
       <div className={styles.toolbar} contentEditable={false}>
         <span className={styles.label}>Mermaid</span>
         {!inDiagram && empty && <span className={styles.hint}>Paste or type the diagram code below</span>}
+        {inDiagram && svg && !empty && (
+          <button
+            type="button"
+            className={styles.toggle}
+            onClick={() => imageViewer.open(svgDataUrl(svg), 'Mermaid diagram')}
+            title="Open the diagram full screen"
+          >
+            <ArrowsOut size={13} aria-hidden />
+            Expand
+          </button>
+        )}
         <button
           type="button"
-          className={styles.toggle}
+          className={`${styles.toggle} ${inDiagram && svg && !empty ? styles.afterExpand : ''}`}
           onClick={inDiagram ? showCode : showDiagram}
           title={inDiagram ? 'Show the Mermaid code' : 'Draw the diagram'}
         >
@@ -131,6 +158,7 @@ export function MermaidBlockView({ node, editor, getPos }: NodeViewProps) {
       <pre className={inDiagram ? styles.hidden : styles.code}>
         <NodeViewContent<'code'> as="code" />
       </pre>
+      {imageViewer.viewer}
     </NodeViewWrapper>
   )
 }

@@ -8,27 +8,25 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from 'react'
-import { CalendarBlank, X } from '@phosphor-icons/react'
+import { Archive, CalendarBlank, Tag, X } from '@phosphor-icons/react'
 import { nanoid } from 'nanoid'
 import type { Editor as TiptapEditor } from '@tiptap/core'
 import { Selection, TextSelection } from '@tiptap/pm/state'
 import { Mapping } from '@tiptap/pm/transform'
-import { formatLocalTimestamp, getWeekdayName, parseCalendarTitle } from '../../lib/calendar'
+import { getWeekdayName, parseCalendarTitle } from '../../lib/calendar'
 import { findClosestHeading, parseHeadings, type Heading } from '../../lib/headingParser'
 import { attachSpellCheckEnforcer } from '../../lib/spellcheck'
 import { HeadingNavigator } from '../HeadingNavigator/HeadingNavigator'
 import { attachNoteImageOpener, useImageViewer } from '../ImageViewer/ImageViewer'
 import styles from './Editor.module.css'
-import contextMenuStyles from './ContextMenu.module.css'
 import { FormattingToolbar } from './FormattingToolbar'
-import {
-  FORMATTING_GROUPS,
-  insertNewFormattedLine,
-  type FormatId,
-} from './formattingActions'
+import { InsertMenu } from './InsertMenu'
+import { LinkPopover, openLink, type LinkPopoverState } from './LinkPopover'
+import { anchorFromCoords, type PopoverAnchor } from './anchoredPosition'
 import { CommandAutocomplete, type AutocompleteState } from './CommandAutocomplete'
 import {
   CommandExtension,
+  canRunAgain,
   commandPluginKey,
   getCurrentCommandLine,
 } from './CommandExtension'
@@ -59,9 +57,8 @@ import {
 } from './NoteMark'
 import { BlockGutter } from './BlockGutter'
 import { BlockHandle } from './BlockHandle'
-import { HighlightPicker } from './HighlightPicker'
 import { getCommandSuggestions } from './commandParser'
-import { DIAGRAM_COMMAND, TASKS_COMMAND } from '../../lib/commands'
+import { DIAGRAM_COMMAND, TASKS_COMMAND, findCommand } from '../../lib/commands'
 import { MERMAID_LANGUAGE } from './MermaidCodeBlock'
 import type {
   AiResponse,
@@ -87,9 +84,11 @@ export interface EditorProps {
   onCommand?: (request: CommandExecutionRequest) => Promise<boolean> | boolean
   executedCommandTexts?: Set<string>
   responses?: AiResponse[]
-  onRemoveResponse?: (id: string) => void
   relatedContent?: ReactNode
+  // Notas do seletor `[[` (todos os cadernos); as do caderno atual vêm antes.
   notebookNotes?: Note[]
+  notebooks?: Notebook[]
+  currentNotebookId?: string | null
   onNavigateToNote?: (noteId: string) => void
   isCalendarNote?: boolean
   disableSlashCommands?: boolean
@@ -128,6 +127,8 @@ export interface EditorProps {
   topSlot?: ReactNode
   // Início da linha de data/tags: selo "Archived" e "+ type" da nota sem tipo.
   tagsRowSlot?: ReactNode
+  // Botão "Archive" no fim da linha das tags (nota não arquivada).
+  onArchive?: () => void
   onToggleLinkedTask?: (taskId: string, checked: boolean) => void
   // Pedido sobre uma marca da nota (lista de marcas, Ctrl+P, `==` do chat):
   // `reveal` rola até ela, põe o cursor nela, abre o menu e pisca; `resolve`
@@ -201,9 +202,10 @@ export function Editor({
   onCommand,
   executedCommandTexts,
   responses,
-  onRemoveResponse,
   relatedContent,
   notebookNotes = [],
+  notebooks,
+  currentNotebookId,
   onNavigateToNote,
   isCalendarNote = false,
   disableSlashCommands,
@@ -223,6 +225,7 @@ export function Editor({
   onToggleLinkedTask,
   topSlot,
   tagsRowSlot,
+  onArchive,
   revealRequest,
   onRevealConsumed,
   viewStateKey,
@@ -236,14 +239,16 @@ export function Editor({
   const [activeOffset, setActiveOffset] = useState<number | null>(null)
   const [autocomplete, setAutocomplete] = useState<AutocompleteState>(HIDDEN_AUTOCOMPLETE)
   const [searchVisible, setSearchVisible] = useState(false)
-  const [notePickerVisible, setNotePickerVisible] = useState(false)
-  const [notePickerPos, setNotePickerPos] = useState<{ top: number; left: number } | undefined>(undefined)
+  const [notePickerAnchor, setNotePickerAnchor] = useState<PopoverAnchor | null>(null)
   const notePickerInsertPosRef = useRef<number>(0)
-  const [timePickerPos, setTimePickerPos] = useState<{ top: number; left: number } | null>(null)
+  // Aberto pelo `[[`: cancelar devolve o `[[` digitado.
+  const notePickerFromBracketsRef = useRef(false)
+  const [timePickerPos, setTimePickerPos] = useState<PopoverAnchor | null>(null)
   const timePickerInsertPosRef = useRef<number>(0)
-  const [addTaskPos, setAddTaskPos] = useState<{ top: number; left: number } | null>(null)
+  const [addTaskPos, setAddTaskPos] = useState<PopoverAnchor | null>(null)
   const addTaskItemsRef = useRef<EligibleTaskItem[]>([])
-  const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null)
+  const [insertMenuAnchor, setInsertMenuAnchor] = useState<PopoverAnchor | null>(null)
+  const [linkPopover, setLinkPopover] = useState<LinkPopoverState | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   // O BubbleMenu precisa do elemento de scroll (.body) como scrollTarget; o
   // ref é null no primeiro render, então o elemento também vai para o state.
@@ -266,11 +271,6 @@ export function Editor({
 
   const responsesRef = useRef<AiResponse[]>(responses ?? [])
   responsesRef.current = responses ?? []
-  const onRemoveResponseRef = useRef(onRemoveResponse)
-  onRemoveResponseRef.current = onRemoveResponse
-  const handleGutterRemoveResponse = useCallback((id: string) => {
-    onRemoveResponseRef.current?.(id)
-  }, [])
   const onNavigateToNoteRef = useRef(onNavigateToNote)
   onNavigateToNoteRef.current = onNavigateToNote
   const isCalendarNoteRef = useRef(isCalendarNote)
@@ -296,7 +296,7 @@ export function Editor({
   const editor = useEditor({
     immediatelyRender: false,
     extensions: [
-      ...buildBaseExtensions('Capture your thoughts...'),
+      ...buildBaseExtensions('Capture your thoughts...', { linkOpenOnClick: false }),
       PreviewMode,
       SearchHighlight,
       ...(disableSlashCommands
@@ -304,9 +304,6 @@ export function Editor({
         : [
             CommandExtension.configure({
               getResponses: () => responsesRef.current,
-              onRemoveResponse: (id) => {
-                onRemoveResponseRef.current?.(id)
-              },
             }),
           ]),
       // Marca do bloco sob o handle do gutter (arrasto/menu). Fora de
@@ -394,7 +391,22 @@ export function Editor({
           }
         }
 
-        if (event.key === '[') {
+        // Ctrl+Shift+K: popover do link (editar o link do cursor ou criar um).
+        // O Ctrl+K não chega aqui: é o atalho global da janela keep.
+        if ((event.ctrlKey || event.metaKey) && !event.altKey && event.shiftKey && event.key.toLowerCase() === 'k') {
+          event.preventDefault()
+          const coords = view.coordsAtPos(view.state.selection.from)
+          setLinkPopover({ mode: 'edit', anchor: anchorFromCoords(coords) })
+          return true
+        }
+
+        // `[[` e `@` não abrem nada dentro de código (bloco, Mermaid ou
+        // código inline): ali são texto.
+        const { $from: $cursor, empty } = view.state.selection
+        const inCode =
+          !!$cursor.parent.type.spec.code || $cursor.marks().some((m) => m.type.spec.code)
+
+        if (event.key === '[' && empty && !inCode) {
           const { from } = view.state.selection
           if (from > 0) {
             const textBefore = view.state.doc.textBetween(Math.max(0, from - 1), from)
@@ -403,23 +415,27 @@ export function Editor({
               const deleteTr = view.state.tr.delete(from - 1, from)
               view.dispatch(deleteTr)
               notePickerInsertPosRef.current = from - 1
-              const coords = view.coordsAtPos(from - 1)
-              setNotePickerPos({ top: coords.bottom + 4, left: coords.left })
-              setNotePickerVisible(true)
+              notePickerFromBracketsRef.current = true
+              setNotePickerAnchor(anchorFromCoords(view.coordsAtPos(from - 1)))
               return true
             }
           }
         }
 
         // Gatilho "@" nas notas diárias do Calendar: abre o seletor de horário
-        // para inserir um chip de lembrete. Fora do Calendar, "@" digita normal.
-        if (event.key === '@' && isCalendarNoteRef.current) {
-          event.preventDefault()
-          const { from } = view.state.selection
-          timePickerInsertPosRef.current = from
-          const coords = view.coordsAtPos(from)
-          setTimePickerPos({ top: coords.bottom + 4, left: coords.left })
-          return true
+        // para inserir um chip de lembrete. Só no começo de palavra (e-mail e
+        // "a@b" digitam normal). Fora do Calendar, "@" digita normal.
+        if (event.key === '@' && isCalendarNoteRef.current && empty && !inCode) {
+          const charBefore = $cursor.parentOffset > 0
+            ? view.state.doc.textBetween($cursor.pos - 1, $cursor.pos, '\n', '\n')
+            : ''
+          if (charBefore === '' || /[\s([{"'“‘]/.test(charBefore)) {
+            event.preventDefault()
+            const { from } = view.state.selection
+            timePickerInsertPosRef.current = from
+            setTimePickerPos(anchorFromCoords(view.coordsAtPos(from)))
+            return true
+          }
         }
 
         if (event.key === 'Enter' && !event.shiftKey) {
@@ -463,24 +479,33 @@ export function Editor({
             return true
           }
 
-          const pluginState = commandPluginKey.getState(view.state)
-          const existingMark = pluginState?.marks.get(info.paragraphPos)
-          if (existingMark?.status === 'executed') {
+          // Linha já executada: o Enter só abre linha nova, a menos que a
+          // execução desta sessão tenha falhado (aí roda de novo).
+          if (!canRunAgain(view.state, info.paragraphPos, responsesRef.current)) {
             return false
           }
 
           if (info.status === 'valid') {
+            const commandId = nanoid()
+            // A linha fica "em andamento" até o onCommand terminar e, depois,
+            // segue o status da resposta (verde só no sucesso).
             view.dispatch(
               view.state.tr.setMeta(commandPluginKey, {
                 type: 'setMark',
                 pos: info.paragraphPos,
                 text: info.text,
                 status: 'executed',
+                run: { commandId, pending: true },
               })
             )
-            const commandId = nanoid()
+            const settle = (ok: boolean) => {
+              if (view.isDestroyed) return
+              view.dispatch(view.state.tr.setMeta(commandPluginKey, { type: 'settleRun', commandId, ok }))
+            }
             const fn = onCommandRef.current
-            if (fn) {
+            if (!fn) {
+              settle(false)
+            } else {
               try {
                 const result = fn({
                   cmd: info.cmd,
@@ -488,12 +513,19 @@ export function Editor({
                   commandId,
                 })
                 if (result && typeof (result as Promise<boolean>).then === 'function') {
-                  ;(result as Promise<boolean>).catch((err) =>
-                    console.error('command execution failed', err)
+                  ;(result as Promise<boolean>).then(
+                    (ok) => settle(ok !== false),
+                    (err) => {
+                      console.error('command execution failed', err)
+                      settle(false)
+                    }
                   )
+                } else {
+                  settle(result !== false)
                 }
               } catch (err) {
                 console.error('command execution failed', err)
+                settle(false)
               }
             }
           } else if (info.status === 'invalid' || info.status === 'incomplete') {
@@ -537,8 +569,10 @@ export function Editor({
     }
     const from = info.paragraphPos + 1
     const to = info.paragraphEnd - 1
-    const tr = editor.state.tr.insertText(suggestion, from, to)
-    const newPos = from + suggestion.length
+    // Comando que pede query entra com o espaço: é só digitar o termo.
+    const text = findCommand(suggestion)?.takesQuery ? `${suggestion} ` : suggestion
+    const tr = editor.state.tr.insertText(text, from, to)
+    const newPos = from + text.length
     tr.setSelection(TextSelection.create(tr.doc, newPos))
     editor.view.dispatch(tr)
     editor.view.focus()
@@ -583,14 +617,13 @@ export function Editor({
       const selectedIdx = sameSuggestions
         ? Math.min(prev.selectedIdx, suggestions.length - 1)
         : 0
-      const nextTop = coords.bottom + 4
-      const nextLeft = coords.left
+      const anchor = anchorFromCoords(coords)
       if (
         sameSuggestions &&
         prev.filter === info.text &&
         prev.selectedIdx === selectedIdx &&
-        prev.top === nextTop &&
-        prev.left === nextLeft
+        prev.top === anchor.top &&
+        prev.left === anchor.left
       ) {
         return prev
       }
@@ -599,8 +632,7 @@ export function Editor({
         filter: info.text,
         suggestions,
         selectedIdx,
-        top: nextTop,
-        left: nextLeft,
+        ...anchor,
       }
     })
   }, [editor, disableSlashCommands, previewMode])
@@ -786,6 +818,16 @@ export function Editor({
     // muda (o clique simples abre o menu da marca).
     const listHandler = (e: MouseEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return
+      // Ctrl+clique num link da web: abre no navegador (o mesmo cuidado com o
+      // modificador de seleção de nó do ProseMirror).
+      const link = (e.target as Element).closest('a[href]')
+      const linkHref = link?.getAttribute('href') ?? ''
+      if (link && dom.contains(link) && /^https?:/i.test(linkHref)) {
+        e.preventDefault()
+        e.stopPropagation()
+        openLink(linkHref)
+        return
+      }
       if (!onShowMarkInListRef.current) return
       const markEl = (e.target as Element).closest('mark[data-mark]')
       if (!markEl || !dom.contains(markEl)) return
@@ -805,6 +847,13 @@ export function Editor({
         e.stopPropagation()
         const noteId = href.slice('monet://note/'.length)
         if (noteId) onNavigateToNoteRef.current?.(noteId)
+        return
+      }
+      // Clique simples num link da web: o cursor entra no link (o PM já pôs)
+      // e a popover mostra o endereço com Open, Edit e Remove.
+      if (/^https?:/i.test(href) && !(e.ctrlKey || e.metaKey) && editor.state.selection.empty) {
+        const rect = anchor.getBoundingClientRect()
+        setLinkPopover({ mode: 'view', anchor: { top: rect.bottom + 4, left: rect.left, lineTop: rect.top } })
       }
     }
     const detachImageOpener = attachNoteImageOpener(dom, openImage)
@@ -841,23 +890,58 @@ export function Editor({
       const selection = window.getSelection()
       const hasSelection = selection && selection.toString().length > 0
       if (hasSelection) {
-        // Let the native context menu appear for spell-check; clear any stale custom menu
-        setContextMenuPos(null)
+        // Com texto selecionado fica o menu nativo (corretor ortográfico).
+        setInsertMenuAnchor(null)
         return
       }
       e.preventDefault()
-      setContextMenuPos({ x: e.clientX, y: e.clientY })
+      // O que o menu insere entra no ponto do clique.
+      const at = editor.view.posAtCoords({ left: e.clientX, top: e.clientY })
+      if (at) {
+        const { doc } = editor.state
+        editor.view.dispatch(editor.state.tr.setSelection(TextSelection.near(doc.resolve(at.pos))))
+      }
+      setInsertMenuAnchor({ top: e.clientY, left: e.clientX, lineTop: e.clientY })
     }
     dom.addEventListener('contextmenu', handler)
     return () => dom.removeEventListener('contextmenu', handler)
   }, [editor])
 
+  // A popover do link no modo "ver" segue o cursor: sai do link ou o texto
+  // muda, ela fecha.
   useEffect(() => {
-    if (!contextMenuPos) return
-    const handler = () => setContextMenuPos(null)
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [contextMenuPos])
+    if (!editor || linkPopover?.mode !== 'view') return
+    const onSelection = () => {
+      if (!editor.isActive('link')) setLinkPopover(null)
+    }
+    const onUpdate = () => setLinkPopover(null)
+    editor.on('selectionUpdate', onSelection)
+    editor.on('update', onUpdate)
+    return () => {
+      editor.off('selectionUpdate', onSelection)
+      editor.off('update', onUpdate)
+    }
+  }, [editor, linkPopover?.mode])
+
+  function openLinkEditor() {
+    if (!editor) return
+    const coords = editor.view.coordsAtPos(editor.state.selection.from)
+    setLinkPopover({ mode: 'edit', anchor: anchorFromCoords(coords) })
+  }
+
+  function closeLinkPopover(refocus: boolean) {
+    setLinkPopover(null)
+    if (refocus) editor?.commands.focus()
+  }
+
+  function openNotePickerAtCursor() {
+    if (!editor) return
+    const { from } = editor.state.selection
+    notePickerInsertPosRef.current = from
+    notePickerFromBracketsRef.current = false
+    setNotePickerAnchor(anchorFromCoords(editor.view.coordsAtPos(from)))
+    setInsertMenuAnchor(null)
+  }
 
   function handleTimePickerConfirm(time: string) {
     setTimePickerPos(null)
@@ -885,8 +969,7 @@ export function Editor({
     if (!editor) return
     addTaskItemsRef.current = findEligibleTaskItems(editor.state)
     if (addTaskItemsRef.current.length === 0) return
-    const coords = editor.view.coordsAtPos(editor.state.selection.to)
-    setAddTaskPos({ top: coords.bottom + 4, left: coords.left })
+    setAddTaskPos(anchorFromCoords(editor.view.coordsAtPos(editor.state.selection.to)))
   }
 
   function handleAddTaskCancel() {
@@ -955,15 +1038,22 @@ export function Editor({
   }
 
   function handleNotePickerSelect(note: Note) {
+    setNotePickerAnchor(null)
     if (!editor) return
     const pos = notePickerInsertPosRef.current
     editor.chain().focus().insertContentAt(pos, {
       type: 'linkedNoteBlock',
       attrs: { noteId: note.id, collapsed: false },
     }).run()
-    setNotePickerVisible(false)
-    setNotePickerPos(undefined)
-    setContextMenuPos(null)
+  }
+
+  // Cancelou o seletor: o `[[` digitado volta (do menu Insert, nada entra).
+  function handleNotePickerCancel() {
+    setNotePickerAnchor(null)
+    if (!editor) return
+    const chain = editor.chain().focus()
+    if (notePickerFromBracketsRef.current) chain.insertContentAt(notePickerInsertPosRef.current, '[[')
+    chain.run()
   }
 
   const headings: Heading[] = parseHeadings(value)
@@ -1073,7 +1163,14 @@ export function Editor({
           className={`${styles.title} ${weekdayLabel ? styles.titleCompact : ''}`}
           value={title}
           onChange={(e) => onTitleChange(e.target.value)}
-          placeholder="note title"
+          onKeyDown={(e) => {
+            // Enter e ↓ descem para o começo do corpo.
+            if ((e.key === 'Enter' || e.key === 'ArrowDown') && !e.nativeEvent.isComposing && editor) {
+              e.preventDefault()
+              editor.chain().focus('start').run()
+            }
+          }}
+          placeholder="Note title"
         />
         {weekdayLabel && <span className={styles.weekday}>— {weekdayLabel}</span>}
       </div>
@@ -1081,7 +1178,11 @@ export function Editor({
       <div className={styles.tagsRow}>
         {tagsRowSlot}
         {onDateChange && (
-          <span className={styles.dateWrapper} onClick={() => dateInputRef.current?.showPicker()}>
+          <span
+            className={styles.dateWrapper}
+            onClick={() => dateInputRef.current?.showPicker()}
+            title="Date of the note: it shows on that day in the Calendar"
+          >
             <CalendarBlank size={14} className={styles.dateIcon} aria-hidden />
             <input
               ref={dateInputRef}
@@ -1090,30 +1191,32 @@ export function Editor({
               value={date ?? ''}
               onChange={(e) => onDateChange(e.target.value || null)}
               onClick={(e) => e.stopPropagation()}
-              aria-label="note date"
+              aria-label="Note date"
             />
+            {date && (
+              <button
+                type="button"
+                className={styles.dateClear}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onDateChange(null)
+                }}
+                title="Clear the date"
+                aria-label="Clear the date"
+              >
+                <X size={10} weight="bold" aria-hidden />
+              </button>
+            )}
           </span>
         )}
         <button
           className={styles.tagAdd}
           onClick={() => setAdding(true)}
-          aria-label="add tag"
+          aria-label="Add tag"
+          title="Add a tag"
           type="button"
         >
-          <svg
-            viewBox="0 0 24 24"
-            width="14"
-            height="14"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <path d="M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
-            <line x1="7" y1="7" x2="7.01" y2="7" />
-          </svg>
+          <Tag size={14} aria-hidden />
           <span>tag</span>
         </button>
         {tags.map((t) => (
@@ -1148,7 +1251,12 @@ export function Editor({
               autoFocus
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
-              onBlur={() => commitTag()}
+              // Sair do campo descarta o digitado: a tag só entra com Enter ou
+              // com o clique numa sugestão.
+              onBlur={() => {
+                setDraft('')
+                setAdding(false)
+              }}
               onKeyDown={(e: ReactKeyboardEvent<HTMLInputElement>) => {
                 if (e.key === 'ArrowDown' && tagOptions.length > 0) {
                   e.preventDefault()
@@ -1163,7 +1271,7 @@ export function Editor({
                   setAdding(false)
                 }
               }}
-              placeholder="new tag"
+              placeholder="New tag"
               role="combobox"
               aria-expanded={tagOptions.length > 0}
               aria-autocomplete="list"
@@ -1190,6 +1298,17 @@ export function Editor({
             )}
           </span>
         )}
+        {onArchive && (
+          <button
+            type="button"
+            className={styles.archiveBtn}
+            onClick={onArchive}
+            title="Archive this note: it leaves the lists and stays in Archived"
+          >
+            <Archive size={14} aria-hidden />
+            <span>Archive</span>
+          </button>
+        )}
       </div>
       <div className={styles.bodyWrap}>
         <div className={styles.body} ref={setScrollNode}>
@@ -1208,7 +1327,6 @@ export function Editor({
             scrollEl={scrollEl}
             disabled={previewMode}
             blockHandles={!disableBlockHandles}
-            onRemoveResponse={handleGutterRemoveResponse}
           />
         </div>
         <HeadingNavigator
@@ -1234,111 +1352,31 @@ export function Editor({
           onCancel={handleAddTaskCancel}
         />
       )}
-      {notePickerVisible && (
+      {notePickerAnchor && (
         <NotePicker
           notes={notebookNotes}
+          notebooks={notebooks}
+          currentNotebookId={currentNotebookId}
           onSelect={handleNotePickerSelect}
-          onClose={() => { setNotePickerVisible(false); setNotePickerPos(undefined) }}
-          position={notePickerPos}
+          onClose={handleNotePickerCancel}
+          anchor={notePickerAnchor}
         />
       )}
-      {contextMenuPos && (
-        <div
-          className={contextMenuStyles.menu}
-          style={{
-            position: 'fixed',
-            // Se não houver espaço suficiente abaixo do cursor, ancora no
-            // fundo da viewport e deixa o menu crescer para cima.
-            ...(contextMenuPos.y > window.innerHeight - 120
-              ? { bottom: window.innerHeight - contextMenuPos.y, top: 'auto' as const }
-              : { top: contextMenuPos.y }),
-            // Garante que o menu não ultrapasse a borda direita.
-            left: Math.min(contextMenuPos.x, window.innerWidth - 290),
-            zIndex: 300,
-          }}
-          onMouseDown={(e) => {
-            e.stopPropagation()
-            // Os botões não tiram o foco do editor: o cursor fica logo após o
-            // conteúdo inserido (ex.: data e hora) e a digitação continua.
-            e.preventDefault()
-          }}
-        >
-          {/* Inserir link de nota */}
-          <div className={contextMenuStyles.group}>
-            <button
-              className={contextMenuStyles.btn}
-              title="Link note"
-              onMouseDown={() => {
-                if (!editor) return
-                const { from } = editor.state.selection
-                notePickerInsertPosRef.current = from
-                const coords = editor.view.coordsAtPos(from)
-                setNotePickerPos({ top: coords.bottom + 4, left: coords.left })
-                setNotePickerVisible(true)
-                setContextMenuPos(null)
-              }}
-              type="button"
-            >
-              📎
-            </button>
-            <button
-              className={contextMenuStyles.btn}
-              title="Date and time"
-              onMouseDown={() => {
-                if (!editor) return
-                editor
-                  .chain()
-                  .focus()
-                  .insertContent(formatLocalTimestamp(new Date(), { hour24: true, separator: ' - ' }))
-                  .run()
-                setContextMenuPos(null)
-              }}
-              type="button"
-            >
-              🕒
-            </button>
-          </div>
-          <div className={contextMenuStyles.sep} />
-          {/* Formatação: mesmos ícones da BubbleMenu, layout horizontal compacto */}
-          {FORMATTING_GROUPS.map((group, gi) => (
-            <div key={`grp-${gi}`} className={contextMenuStyles.group}>
-              {gi > 0 && <div className={contextMenuStyles.sep} />}
-              {group.map(({ id, label, title, cls }) => (
-                <button
-                  key={id}
-                  className={[
-                    contextMenuStyles.btn,
-                    cls === 'bold' ? contextMenuStyles.bold : '',
-                    cls === 'italic' ? contextMenuStyles.italic : '',
-                    cls === 'strike' ? contextMenuStyles.strike : '',
-                  ].join(' ')}
-                  title={title}
-                  onMouseDown={() => {
-                    if (!editor) return
-                    insertNewFormattedLine(editor as TiptapEditor, id as FormatId)
-                    setContextMenuPos(null)
-                  }}
-                  type="button"
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          ))}
-          <div className={contextMenuStyles.sep} />
-          {/* Destaque com cor (R1): abre a paleta e aplica na posição do cursor. */}
-          {editor && (
-            <div className={contextMenuStyles.group}>
-              <HighlightPicker
-                editor={editor as TiptapEditor}
-                className={contextMenuStyles.btn}
-                activeClassName={contextMenuStyles.active}
-                prepare={(ed) => insertNewFormattedLine(ed, 'highlight')}
-                onPick={() => setContextMenuPos(null)}
-              />
-            </div>
-          )}
-        </div>
+      {insertMenuAnchor && editor && (
+        <InsertMenu
+          editor={editor as TiptapEditor}
+          anchor={insertMenuAnchor}
+          onLinkNote={openNotePickerAtCursor}
+          onClose={() => setInsertMenuAnchor(null)}
+        />
+      )}
+      {linkPopover && editor && (
+        <LinkPopover
+          editor={editor as TiptapEditor}
+          state={linkPopover}
+          onEdit={() => setLinkPopover((prev) => (prev ? { ...prev, mode: 'edit' } : prev))}
+          onClose={closeLinkPopover}
+        />
       )}
       {relatedContent}
       {editor && <FormattingToolbar
@@ -1349,6 +1387,7 @@ export function Editor({
           markLabels={markLabels}
           showRelated={!disableRelatedTerms}
           searchOpen={searchVisible}
+          onEditLink={openLinkEditor}
         />}
       {editor && (
         <NoteMarkMenu

@@ -99,7 +99,7 @@ const TASK_PROPERTY_ROWS: TaskProperty[][] = [
         kind: 'date',
         get: (t) => t.scheduledDate,
         set: (value) => ({ scheduledDate: value }),
-        warning: (t) => (scheduledAfterDeadline(t) ? { text: 'After deadline', short: '⚠' } : null),
+        warning: (t) => (scheduledAfterDeadline(t) ? { text: 'After deadline', short: 'After DL' } : null),
       },
     },
     {
@@ -111,7 +111,7 @@ const TASK_PROPERTY_ROWS: TaskProperty[][] = [
         set: (value) => ({ dueDate: value }),
         hint: (t) =>
           t.rescheduleCount > 0
-            ? { text: `Postponed ${t.rescheduleCount}×`, short: `↻${t.rescheduleCount}×` }
+            ? { text: `Postponed ${t.rescheduleCount}×`, short: `Moved ${t.rescheduleCount}×` }
             : null,
       },
     },
@@ -455,8 +455,9 @@ function ProjectControl({
 const NEW_TODOS = '__new__'
 
 // TODOS da task: as do caderno da task primeiro, depois as demais com o
-// caderno; "＋ New TODOS…" troca o select por um input (Enter cria no caderno
-// da task e vincula, Esc cancela). Pai apagado por fora aparece como "No TODOS".
+// caderno; "New TODOS…" troca o select por um input (Enter cria no caderno
+// da task e vincula, Esc cancela; a falha aparece ao lado). Pai apagado por
+// fora aparece como "No TODOS".
 // TODOS arquivadas só aparecem quando já são a da task.
 function TodosControl({
   task,
@@ -474,6 +475,7 @@ function TodosControl({
   onCreate: (notebookId: string, title: string) => Promise<string>
 }) {
   const [draft, setDraft] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const current = options.find((o) => o.id === task.parentNoteId) ?? null
   const nameById = new Map(notebooks.map((nb) => [nb.id, nb.name || 'unnamed']))
   const byTitle = (a: TodosInfo, b: TodosInfo) => a.title.localeCompare(b.title)
@@ -484,11 +486,13 @@ function TodosControl({
   async function commit() {
     const title = draft?.trim() ?? ''
     setDraft(null)
+    setError(null)
     if (!title) return
     try {
       onChange(await onCreate(task.notebookId, title))
     } catch (err) {
       console.error('failed to create TODOS', err)
+      setError('Failed to create TODOS.')
     }
   }
 
@@ -534,7 +538,7 @@ function TodosControl({
             {o.archived ? ' · archived' : ''}
           </option>
         ))}
-        <option value={NEW_TODOS}>＋ New TODOS…</option>
+        <option value={NEW_TODOS}>New TODOS…</option>
       </select>
       {current && (
         <button
@@ -546,6 +550,11 @@ function TodosControl({
         >
           <ArrowSquareOut size={13} aria-hidden />
         </button>
+      )}
+      {error && (
+        <span className={styles.error} role="alert">
+          {error}
+        </span>
       )}
     </span>
   )

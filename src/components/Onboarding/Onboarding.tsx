@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Check, Warning } from '@phosphor-icons/react'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import logoUrl from '../../assets/logo_monet_vector.svg'
 import { saveOpenRouterKey } from '../../lib/openrouter'
@@ -14,6 +15,19 @@ export interface OnboardingProps {
 type Status = { kind: 'idle' | 'success' | 'error'; message: string }
 
 const IDLE: Status = { kind: 'idle', message: '' }
+
+function StatusLine({ status }: { status: Status }) {
+  if (status.kind === 'idle') return null
+  const ok = status.kind === 'success'
+  return (
+    <p className={ok ? styles.statusOk : styles.statusError} role={ok ? 'status' : 'alert'}>
+      <span className={styles.statusIcon} aria-hidden>
+        {ok ? <Check size={10} weight="bold" /> : <Warning size={10} weight="bold" />}
+      </span>
+      {status.message}
+    </p>
+  )
+}
 
 async function validateOpenRouterKey(key: string): Promise<{ ok: boolean; message: string }> {
   try {
@@ -72,12 +86,14 @@ export function Onboarding({ onComplete, onSkip, onApiKeyChanged }: OnboardingPr
 
   const goNext = () => setStep((s) => (s < 3 ? ((s + 1) as 1 | 2 | 3) : s))
 
-  async function handleSaveOpenRouter() {
+  // true quando a chave foi validada e gravada.
+  async function handleSaveOpenRouter(): Promise<boolean> {
     const trimmed = orKey.trim()
     if (!trimmed) {
       setOrStatus({ kind: 'error', message: 'Please paste your API key.' })
-      return
+      return false
     }
+    let saved = false
     setOrSaving(true)
     setOrStatus(IDLE)
     const result = await validateOpenRouterKey(trimmed)
@@ -87,6 +103,7 @@ export function Onboarding({ onComplete, onSkip, onApiKeyChanged }: OnboardingPr
         setOrSaved(true)
         setOrStatus({ kind: 'success', message: result.message })
         onApiKeyChanged(true)
+        saved = true
       } catch (err) {
         setOrStatus({
           kind: 'error',
@@ -97,14 +114,16 @@ export function Onboarding({ onComplete, onSkip, onApiKeyChanged }: OnboardingPr
       setOrStatus({ kind: 'error', message: result.message })
     }
     setOrSaving(false)
+    return saved
   }
 
-  async function handleSaveTavily() {
+  async function handleSaveTavily(): Promise<boolean> {
     const trimmed = tavKey.trim()
     if (!trimmed) {
       setTavStatus({ kind: 'error', message: 'Please paste your API key.' })
-      return
+      return false
     }
+    let saved = false
     setTavSaving(true)
     setTavStatus(IDLE)
     const result = await validateTavilyKey(trimmed)
@@ -113,6 +132,7 @@ export function Onboarding({ onComplete, onSkip, onApiKeyChanged }: OnboardingPr
         await saveTavilyKey(trimmed)
         setTavSaved(true)
         setTavStatus({ kind: 'success', message: result.message })
+        saved = true
       } catch (err) {
         setTavStatus({
           kind: 'error',
@@ -123,6 +143,19 @@ export function Onboarding({ onComplete, onSkip, onApiKeyChanged }: OnboardingPr
       setTavStatus({ kind: 'error', message: result.message })
     }
     setTavSaving(false)
+    return saved
+  }
+
+  // "Next" com uma chave digitada e ainda não gravada: valida e grava antes de
+  // avançar; se falhar, fica no passo com o erro.
+  async function handleNextFromOpenRouter() {
+    if (orKey.trim() && !orSaved && !(await handleSaveOpenRouter())) return
+    goNext()
+  }
+
+  async function handleFinish() {
+    if (tavKey.trim() && !tavSaved && !(await handleSaveTavily())) return
+    onComplete()
   }
 
   const openExternal = (url: string) => {
@@ -253,11 +286,7 @@ export function Onboarding({ onComplete, onSkip, onApiKeyChanged }: OnboardingPr
                 onKeyDown={(e) => { if (e.key === 'Enter') void handleSaveOpenRouter() }}
               />
 
-              {orStatus.kind !== 'idle' && (
-                <p className={orStatus.kind === 'success' ? styles.statusOk : styles.statusError}>
-                  {orStatus.message}
-                </p>
-              )}
+              <StatusLine status={orStatus} />
 
               <p className={styles.note}>
                 Your key is stored only on this computer, in a file managed by the app. Monet
@@ -272,12 +301,17 @@ export function Onboarding({ onComplete, onSkip, onApiKeyChanged }: OnboardingPr
                   <button
                     type="button"
                     className={styles.secondaryBtn}
-                    onClick={handleSaveOpenRouter}
+                    onClick={() => void handleSaveOpenRouter()}
                     disabled={orSaving}
                   >
                     {orSaving ? 'Testing...' : orSaved ? 'Saved' : 'Save key'}
                   </button>
-                  <button type="button" className={styles.primaryBtn} onClick={goNext}>
+                  <button
+                    type="button"
+                    className={styles.primaryBtn}
+                    onClick={() => void handleNextFromOpenRouter()}
+                    disabled={orSaving}
+                  >
                     Next
                   </button>
                 </div>
@@ -289,7 +323,8 @@ export function Onboarding({ onComplete, onSkip, onApiKeyChanged }: OnboardingPr
             <section className={styles.section}>
               <h1 className={styles.title}>Enable web search <span className={styles.optional}>(optional)</span></h1>
               <p className={styles.lead}>
-                The <code>/search</code> and <code>/profile</code> commands rely on{' '}
+                Web search and Deep research in the Chat, and the <code>/search</code>,{' '}
+                <code>/profile</code> and <code>/expand</code> commands, rely on{' '}
                 <strong>Tavily</strong> to look things up on the web. The free tier includes{' '}
                 <strong>1,000 searches/month</strong> and does not require a credit card.
               </p>
@@ -327,15 +362,11 @@ export function Onboarding({ onComplete, onSkip, onApiKeyChanged }: OnboardingPr
                 onKeyDown={(e) => { if (e.key === 'Enter') void handleSaveTavily() }}
               />
 
-              {tavStatus.kind !== 'idle' && (
-                <p className={tavStatus.kind === 'success' ? styles.statusOk : styles.statusError}>
-                  {tavStatus.message}
-                </p>
-              )}
+              <StatusLine status={tavStatus} />
 
               <p className={styles.note}>
-                Without a Tavily key, <code>/search</code> and <code>/profile</code> still work,
-                but they rely only on what the model already knows. No live results.
+                Without a Tavily key, these features answer only with what the model already
+                knows: no live web results. You can add the key later in Settings.
               </p>
 
               <div className={styles.actions}>
@@ -347,17 +378,20 @@ export function Onboarding({ onComplete, onSkip, onApiKeyChanged }: OnboardingPr
                     <button
                       type="button"
                       className={styles.secondaryBtn}
-                      onClick={handleSaveTavily}
+                      onClick={() => void handleSaveTavily()}
                       disabled={tavSaving}
                     >
                       {tavSaving ? 'Testing...' : 'Save key'}
                     </button>
                   )}
-                  {tavSaved && (
-                    <button type="button" className={styles.primaryBtn} onClick={onComplete}>
-                      Get started
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    className={styles.primaryBtn}
+                    onClick={() => void handleFinish()}
+                    disabled={tavSaving}
+                  >
+                    Finish
+                  </button>
                 </div>
               </div>
             </section>

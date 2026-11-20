@@ -9,9 +9,12 @@ import {
   Notebook as NotebookIcon,
   PlusCircle,
   SidebarSimple,
+  Target,
+  Trash,
   X,
 } from '@phosphor-icons/react'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import {
   DndContext,
   closestCenter,
@@ -50,7 +53,7 @@ interface SortableNoteItemProps {
   // título, numa linha que quebra, o progresso da TODOS e as propriedades
   // "show in list". O título fica com a largura toda.
   type: NoteType | null
-  meta: { text: string; tone: 'overdue' | 'complete' | null } | null
+  meta: { progress: string; due: string | null; tone: 'overdue' | 'complete' | null } | null
   properties: Array<{ def: MetadataDef; text: string }>
   isActive: boolean
   // Lista ordenada (não manual): sem arrastar.
@@ -60,29 +63,163 @@ interface SortableNoteItemProps {
   onArchive?: (id: string) => void
   onMerge?: (id: string) => void
   onMoveNote?: (id: string) => void
-  subjects?: Subject[]
+  // Subjects do caderno da própria nota (em "All notes", cada linha é de um
+  // caderno): lista pronta ou lida na hora em que o menu abre.
+  subjectsFor?: (notebookId: string) => Subject[] | Promise<Subject[]>
   onAssignSubject?: (noteId: string, subjectId: string | null) => void
   currentSubjectId?: string | null
 }
 
-function SortableNoteItem({ note, type, meta, properties, isActive, dragDisabled, onSelect, onDelete, onArchive, onMerge, onMoveNote, subjects, onAssignSubject, currentSubjectId }: SortableNoteItemProps) {
+// Menu "Assign to subject": portal com posição fixa (a lista rola e cortaria
+// um dropdown absoluto), z-index acima de 1000, ↑↓ entre os itens e Esc.
+function SubjectMenu({
+  anchor,
+  subjects,
+  currentSubjectId,
+  onPick,
+  onClose,
+}: {
+  anchor: HTMLElement
+  subjects: Subject[] | null
+  currentSubjectId: string | null
+  onPick: (subjectId: string | null) => void
+  onClose: () => void
+}) {
+  const menuRef = useRef<HTMLDivElement>(null)
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
+
+  useLayoutEffect(() => {
+    const menu = menuRef.current
+    if (!menu) return
+    const rect = anchor.getBoundingClientRect()
+    const height = menu.offsetHeight
+    const width = menu.offsetWidth
+    // Perto do rodapé, abre para cima.
+    const below = rect.bottom + 4
+    const top = below + height > window.innerHeight - 8 ? Math.max(8, rect.top - 4 - height) : below
+    const left = Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))
+    setPos({ top, left })
+  }, [anchor, subjects])
+
+  useEffect(() => {
+    if (!pos) return
+    const current = menuRef.current?.querySelector<HTMLButtonElement>('[aria-checked="true"]')
+    ;(current ?? menuRef.current?.querySelector<HTMLButtonElement>('button'))?.focus()
+  }, [pos])
+
+  useEffect(() => {
+    function onDown(e: MouseEvent) {
+      const target = e.target as Node
+      if (menuRef.current?.contains(target) || anchor.contains(target)) return
+      onClose()
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      e.stopPropagation()
+      onClose()
+      anchor.focus()
+    }
+    // A posição é calculada uma vez: rolar a lista (fora do menu, que tem a
+    // própria rolagem) ou mudar o tamanho da janela fecha o menu.
+    function onScroll(e: Event) {
+      if (menuRef.current?.contains(e.target as Node)) return
+      onClose()
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey, true)
+    document.addEventListener('scroll', onScroll, true)
+    window.addEventListener('resize', onClose)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey, true)
+      document.removeEventListener('scroll', onScroll, true)
+      window.removeEventListener('resize', onClose)
+    }
+  }, [anchor, onClose])
+
+  function onMenuKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+    e.preventDefault()
+    const items = [...(menuRef.current?.querySelectorAll<HTMLButtonElement>('button') ?? [])]
+    const i = items.indexOf(document.activeElement as HTMLButtonElement)
+    const next = e.key === 'ArrowDown' ? Math.min(items.length - 1, i + 1) : Math.max(0, i - 1)
+    items[next]?.focus()
+  }
+
+  return createPortal(
+    <div
+      ref={menuRef}
+      className={styles.subjectMenu}
+      style={pos ? { top: pos.top, left: pos.left } : { visibility: 'hidden', top: 0, left: 0 }}
+      role="menu"
+      aria-label="Assign to subject"
+      onKeyDown={onMenuKeyDown}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {subjects === null ? (
+        <div className={styles.subjectMenuEmpty}>Loading…</div>
+      ) : (
+        <>
+          <button
+            type="button"
+            role="menuitemradio"
+            aria-checked={currentSubjectId === null}
+            onClick={() => onPick(null)}
+          >
+            No subject
+          </button>
+          {subjects.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              role="menuitemradio"
+              aria-checked={currentSubjectId === s.id}
+              onClick={() => onPick(s.id)}
+            >
+              {s.name || 'unnamed'}
+            </button>
+          ))}
+          {subjects.length === 0 && (
+            <div className={styles.subjectMenuEmpty}>This notebook has no subjects yet.</div>
+          )}
+        </>
+      )}
+    </div>,
+    document.body
+  )
+}
+
+function SortableNoteItem({ note, type, meta, properties, isActive, dragDisabled, onSelect, onDelete, onArchive, onMerge, onMoveNote, subjectsFor, onAssignSubject, currentSubjectId }: SortableNoteItemProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: note.id,
     disabled: dragDisabled,
   })
-  const [dropdownOpen, setDropdownOpen] = useState(false)
-  const dropdownRef = useRef<HTMLDivElement>(null)
+  const assignButtonRef = useRef<HTMLButtonElement>(null)
+  // Menu aberto: os subjects do caderno da nota (null enquanto carrega).
+  const [menuSubjects, setMenuSubjects] = useState<Subject[] | null | undefined>(undefined)
+  const menuOpen = menuSubjects !== undefined
 
-  useEffect(() => {
-    if (!dropdownOpen) return
-    function handleMouseDown(e: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setDropdownOpen(false)
-      }
+  function openSubjectMenu() {
+    if (menuOpen) {
+      setMenuSubjects(undefined)
+      return
     }
-    document.addEventListener('mousedown', handleMouseDown)
-    return () => document.removeEventListener('mousedown', handleMouseDown)
-  }, [dropdownOpen])
+    if (!subjectsFor || !note.notebookId) return
+    const result = subjectsFor(note.notebookId)
+    if (Array.isArray(result)) {
+      setMenuSubjects(result)
+      return
+    }
+    setMenuSubjects(null)
+    result.then(
+      (list) => setMenuSubjects((cur) => (cur === undefined ? cur : list)),
+      (err) => {
+        console.error('failed to load subjects', err)
+        setMenuSubjects((cur) => (cur === undefined ? cur : []))
+      }
+    )
+  }
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -96,6 +233,15 @@ function SortableNoteItem({ note, type, meta, properties, isActive, dragDisabled
       style={style}
       className={`${styles.row} ${type || meta || properties.length > 0 ? styles.rowWrap : ''} ${isActive ? styles.active : ''}`}
       onClick={() => onSelect(note.id)}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onSelect(note.id)
+        }
+      }}
+      tabIndex={0}
+      aria-current={isActive ? 'page' : undefined}
     >
       <span
         className={`${styles.dragHandle} ${dragDisabled ? styles.dragHandleOff : ''}`}
@@ -117,35 +263,38 @@ function SortableNoteItem({ note, type, meta, properties, isActive, dragDisabled
         <button
           className={styles.rowMerge}
           onClick={(e) => { e.stopPropagation(); onMerge(note.id) }}
-          aria-label={`merge note ${note.title || 'untitled'}`}
+          aria-label={`merge note ${note.title || 'untitled'} into another note`}
           type="button"
-          title="merge into another note"
+          title="Merge into another note…"
         >
           <ArrowsMerge size={11} aria-hidden />
         </button>
       )}
-      {onAssignSubject && (
-        <div className={styles.rowAssignWrap} ref={dropdownRef}>
+      {onAssignSubject && subjectsFor && (
+        <div className={styles.rowAssignWrap}>
           <button
-            className={`${styles.rowAssign} ${currentSubjectId ? styles.rowAssignActive : ''}`}
-            onClick={(e) => { e.stopPropagation(); setDropdownOpen((v) => !v) }}
+            ref={assignButtonRef}
+            className={`${styles.rowAssign} ${currentSubjectId || menuOpen ? styles.rowAssignActive : ''}`}
+            onClick={(e) => { e.stopPropagation(); openSubjectMenu() }}
             aria-label={`assign subject to note ${note.title || 'untitled'}`}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
             type="button"
-            title="assign to subject"
+            title="Assign to subject"
           >
             <FolderSimple size={11} aria-hidden />
           </button>
-          {dropdownOpen && (
-            <div className={styles.subjectDropdown} onClick={(e) => e.stopPropagation()}>
-              <button onClick={() => { onAssignSubject(note.id, null); setDropdownOpen(false) }}>
-                No subject
-              </button>
-              {subjects?.map(s => (
-                <button key={s.id} onClick={() => { onAssignSubject(note.id, s.id); setDropdownOpen(false) }}>
-                  {s.name}
-                </button>
-              ))}
-            </div>
+          {menuOpen && assignButtonRef.current && (
+            <SubjectMenu
+              anchor={assignButtonRef.current}
+              subjects={menuSubjects}
+              currentSubjectId={currentSubjectId ?? null}
+              onPick={(subjectId) => {
+                setMenuSubjects(undefined)
+                onAssignSubject(note.id, subjectId)
+              }}
+              onClose={() => setMenuSubjects(undefined)}
+            />
           )}
         </div>
       )}
@@ -156,7 +305,7 @@ function SortableNoteItem({ note, type, meta, properties, isActive, dragDisabled
           onDoubleClick={(e) => e.stopPropagation()}
           aria-label={`move note ${note.title || 'untitled'} to another notebook`}
           type="button"
-          title="move to another notebook"
+          title="Move to another notebook…"
         >
           <NotebookIcon size={11} aria-hidden />
         </button>
@@ -167,7 +316,7 @@ function SortableNoteItem({ note, type, meta, properties, isActive, dragDisabled
           onClick={(e) => { e.stopPropagation(); onArchive(note.id) }}
           aria-label={`archive note ${note.title || 'untitled'}`}
           type="button"
-          title="archive note"
+          title="Archive note"
         >
           <Archive size={11} aria-hidden />
         </button>
@@ -177,8 +326,9 @@ function SortableNoteItem({ note, type, meta, properties, isActive, dragDisabled
         onClick={(e) => { e.stopPropagation(); onDelete(note.id) }}
         aria-label={`delete note ${note.title || 'untitled'}`}
         type="button"
+        title="Delete note…"
       >
-        <X size={12} weight="bold" aria-hidden />
+        <Trash size={12} aria-hidden />
       </button>
       {(meta || properties.length > 0) && (
         <div className={styles.rowDetails}>
@@ -187,9 +337,17 @@ function SortableNoteItem({ note, type, meta, properties, isActive, dragDisabled
               className={`${styles.rowDetail} ${
                 meta.tone === 'overdue' ? styles.rowMetaOverdue : meta.tone === 'complete' ? styles.rowMetaComplete : ''
               }`}
-              title={meta.text}
+              title={meta.due ? `${meta.progress} · next deadline ${meta.due}` : meta.progress}
             >
-              {meta.text}
+              {meta.progress}
+              {meta.due && (
+                <>
+                  {' · '}
+                  <Target size={10} className={styles.rowDetailIcon} aria-label="deadline" />
+                  {' '}
+                  {meta.due}
+                </>
+              )}
             </span>
           )}
           {properties.map(({ def, text }) => (
@@ -210,7 +368,13 @@ export interface SidebarProps {
   archivedNotes?: Note[]
   onSetArchived?: (id: string, archived: boolean) => void
   activeId: string | null
+  // Sem caderno ("All notes"), o "+" cria no Quick Notes (como o Ctrl+N).
   notebookSelected: boolean
+  // De onde são as notas ("Caderno › Subject" ou "All notes").
+  heading?: string
+  // Filtro da Toolbar ativo: aviso no cabeçalho e estado vazio que o nomeia.
+  filterText?: string
+  onClearFilter?: () => void
   onSelect: (id: string) => void
   onCreate: () => void
   onDelete: (id: string) => void
@@ -224,7 +388,7 @@ export interface SidebarProps {
   collapsed?: boolean
   onToggleCollapsed?: () => void
   onWidthChange?: (w: number) => void
-  subjects?: Subject[]
+  subjectsFor?: (notebookId: string) => Subject[] | Promise<Subject[]>
   onAssignSubject?: (noteId: string, subjectId: string | null) => void
   // Seção de tasks do caderno ativo, abaixo da lista de notas.
   tasksSection?: ReactNode
@@ -260,9 +424,9 @@ function noteMeta(
   if (!isTodosNote(note)) return null
   const p = todosProgress.get(note.id)
   if (!p || p.total === 0) return null
-  const due = p.nextDeadline ? ` · ⚑ ${formatDueShort(p.nextDeadline)}` : ''
   return {
-    text: `${p.done}/${p.total}${due}`,
+    progress: `${p.done}/${p.total}`,
+    due: p.nextDeadline ? formatDueShort(p.nextDeadline) : null,
     tone: p.overdue ? 'overdue' : p.done === p.total ? 'complete' : null,
   }
 }
@@ -273,6 +437,9 @@ export function Sidebar({
   onSetArchived,
   activeId,
   notebookSelected,
+  heading = 'Notes',
+  filterText = '',
+  onClearFilter,
   onSelect,
   onCreate,
   onDelete,
@@ -285,7 +452,7 @@ export function Sidebar({
   collapsed = false,
   onToggleCollapsed,
   onWidthChange,
-  subjects,
+  subjectsFor,
   onAssignSubject,
   tasksSection,
   noteTypes = [],
@@ -346,13 +513,13 @@ export function Sidebar({
     }
   }, [sortMenuOpen])
 
-  async function handleDeleteNote(id: string, title: string) {
+  async function handleDeleteNote(id: string, title: string, archived = false) {
     const linked = todosTaskCount.get(id) ?? 0
     const ok = await confirm(
-      `Delete note "${title || 'untitled'}"?${
+      `Delete note "${title || 'untitled'}"? This can't be undone.${archived ? '' : ' To keep it out of the list, archive it instead.'}${
         linked > 0 ? ` ${linked} task${linked === 1 ? '' : 's'} will have no TODOS (they are not deleted).` : ''
       }`,
-      { title: 'Delete note' }
+      { title: 'Delete note', confirmLabel: 'Delete note' }
     )
     if (ok) onDelete(id)
   }
@@ -425,7 +592,7 @@ export function Sidebar({
             onSelect(id)
           }}
           onUnarchive={(id) => onSetArchived?.(id, false)}
-          onDelete={(id) => void handleDeleteNote(id, archivedNotes.find((n) => n.id === id)?.title ?? '')}
+          onDelete={(id) => void handleDeleteNote(id, archivedNotes.find((n) => n.id === id)?.title ?? '', true)}
           onClose={() => setArchivedOpen(false)}
         />
       )}
@@ -445,7 +612,7 @@ export function Sidebar({
       ) : (
         <>
           <div className={styles.header}>
-            <span>Notes</span>
+            <span className={styles.headerTitle} title={heading}>{heading}</span>
             <div className={styles.headerActions}>
               {onTypeFilterChange && (typeFilterOptions.length > 0 || (onSubjectFilterChange && subjectFilterOptions.length > 0)) && (
                 <select
@@ -539,19 +706,10 @@ export function Sidebar({
                 </div>
               )}
               <button
-                className={styles.headerToggle}
-                onClick={onToggleCollapsed}
-                aria-label="collapse notes"
-                title="collapse notes"
-                type="button"
-              >
-                <SidebarSimple size={16} aria-hidden />
-              </button>
-              <button
                 className={styles.headerAdd}
                 onClick={onCreate}
-                disabled={!notebookSelected}
-                aria-label="new note"
+                aria-label={notebookSelected ? 'new note' : 'new quick note'}
+                title={notebookSelected ? 'New note' : 'New quick note (Ctrl+N)'}
                 type="button"
               >
                 <PlusCircle size={16} weight="fill" aria-hidden />
@@ -565,7 +723,7 @@ export function Sidebar({
                     aria-label="new note of a type"
                     aria-haspopup="menu"
                     aria-expanded={newMenuOpen}
-                    title="new note of a type"
+                    title={notebookSelected ? 'New note of a type' : 'Pick a notebook to create a note of a type'}
                     type="button"
                   >
                     <CaretDown size={10} weight="bold" aria-hidden />
@@ -603,11 +761,35 @@ export function Sidebar({
                   )}
                 </div>
               )}
+              <button
+                className={styles.headerToggle}
+                onClick={onToggleCollapsed}
+                aria-label="collapse notes"
+                title="Collapse notes"
+                type="button"
+              >
+                <SidebarSimple size={16} aria-hidden />
+              </button>
             </div>
           </div>
+          {filterText.trim() && (
+            <div className={styles.filterChip} role="status">
+              <span className={styles.filterChipText} title={`Filtered by “${filterText.trim()}”`}>
+                Filtered: &ldquo;{filterText.trim()}&rdquo;
+              </span>
+              {onClearFilter && (
+                <button type="button" className={styles.filterChipClear} onClick={onClearFilter}>
+                  <X size={11} aria-hidden />
+                  Clear
+                </button>
+              )}
+            </div>
+          )}
           <ul className={styles.list}>
             {notes.length === 0 ? (
-              <li className={styles.empty}>no notes</li>
+              <li className={styles.empty}>
+                {filterText.trim() ? `No notes match “${filterText.trim()}”` : 'No notes'}
+              </li>
             ) : (
               <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
                 <SortableContext items={notes.map((n) => n.id)} strategy={verticalListSortingStrategy}>
@@ -625,7 +807,7 @@ export function Sidebar({
                       onArchive={onSetArchived ? (id) => onSetArchived(id, true) : undefined}
                       onMerge={onMerge ? setMergeSourceId : undefined}
                       onMoveNote={onMoveNote ? setMoveNoteId : undefined}
-                      subjects={subjects}
+                      subjectsFor={subjectsFor}
                       onAssignSubject={onAssignSubject}
                       currentSubjectId={n.subjectId}
                     />

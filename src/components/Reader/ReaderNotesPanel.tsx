@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Plus, X } from '@phosphor-icons/react'
 import type { Book, Note, NoteType, Notebook } from '../../types'
 import {
   getReaderNoteLink,
@@ -32,6 +33,7 @@ interface ReaderNotesPanelProps {
   // Tipos de nota (vêm da janela principal): o escolhido aqui vale para a
   // PRÓXIMA nota criada.
   noteTypes: NoteType[]
+  onCreateNotebook: (name: string) => Promise<Notebook>
   // `requestId` fica no 4º lugar (mesma assinatura do Chat) e o `typeId` no 5º.
   onCreateNote: (
     notebookId: string,
@@ -41,6 +43,9 @@ interface ReaderNotesPanelProps {
     typeId?: string | null
   ) => Promise<Note>
   onSaveNote: (note: Note) => Promise<void>
+  // Sobe quando o vínculo livro → nota muda fora daqui (checkbox do modal de
+  // citação, "Open" de um toast): a aba relê o vínculo e mostra a nota.
+  linkVersion: number
   open: boolean
   onClose: () => void
 }
@@ -50,8 +55,10 @@ export function ReaderNotesPanel({
   notebooks,
   notes,
   noteTypes,
+  onCreateNotebook,
   onCreateNote,
   onSaveNote,
+  linkVersion,
   open,
   onClose,
 }: ReaderNotesPanelProps) {
@@ -59,8 +66,11 @@ export function ReaderNotesPanel({
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null)
   // Tipo que será aplicado à próxima nota criada neste painel.
   const [pendingTypeId, setPendingTypeId] = useState<string | null>(null)
+  const [newNotebookName, setNewNotebookName] = useState('')
+  const [notebookError, setNotebookError] = useState<string | null>(null)
   const notebookRestoreDoneRef = useRef(false)
   const noteRestoreDoneRef = useRef(false)
+  const seenLinkVersionRef = useRef(linkVersion)
 
   // ─── Largura redimensionável (padrão do ReaderChatPanel) ────────────────
   const [width, setWidth] = useState(() => {
@@ -173,6 +183,19 @@ export function ReaderNotesPanel({
     }
   }, [book.id, selectedNotebookId, notes])
 
+  // Vínculo trocado fora da aba: passa a mostrar a nota vinculada (e encerra
+  // a restauração inicial, que leria o mesmo vínculo).
+  useEffect(() => {
+    if (linkVersion === seenLinkVersionRef.current) return
+    seenLinkVersionRef.current = linkVersion
+    const link = getReaderNoteLink(book.id)
+    if (!link) return
+    notebookRestoreDoneRef.current = true
+    noteRestoreDoneRef.current = true
+    setSelectedNotebookId(link.notebookId)
+    setSelectedNoteId(link.noteId)
+  }, [linkVersion, book.id])
+
   // Efeito C — recuperação "notebook apagado em outra sessão/janela".
   useEffect(() => {
     if (!selectedNotebookId) return
@@ -203,6 +226,21 @@ export function ReaderNotesPanel({
     if (selectedNotebookId) setReaderNoteLink(book.id, selectedNotebookId, id)
   }
 
+  // Primeiro caderno criado aqui mesmo, sem sair do livro.
+  async function handleCreateNotebook() {
+    const name = newNotebookName.trim()
+    if (!name) return
+    setNotebookError(null)
+    try {
+      const nb = await onCreateNotebook(name)
+      setNewNotebookName('')
+      handleSelectNotebook(nb.id)
+    } catch (err) {
+      console.error('reader: failed to create notebook', err)
+      setNotebookError("Couldn't create the notebook. Try again.")
+    }
+  }
+
   async function handleCreateNote() {
     if (!selectedNotebookId) return
     // O 4º parâmetro é o `requestId` (a assinatura do Chat) — aqui não existe.
@@ -216,7 +254,9 @@ export function ReaderNotesPanel({
   // app hoje) e o Reader é desmontado/remontado inteiro a cada troca de livro.
   function handleUpdateActive(patch: Partial<Note>) {
     if (!activeNote) return
-    void onSaveNote({ ...activeNote, ...patch, updatedAt: Date.now() })
+    onSaveNote({ ...activeNote, ...patch, updatedAt: Date.now() }).catch((err) =>
+      console.error('reader: failed to save note', err)
+    )
   }
 
   return (
@@ -233,8 +273,9 @@ export function ReaderNotesPanel({
           className={styles.closeBtn}
           onClick={onClose}
           aria-label="Close notes panel"
+          title="Close"
         >
-          ×
+          <X size={14} aria-hidden />
         </button>
       </div>
 
@@ -260,10 +301,35 @@ export function ReaderNotesPanel({
       </div>
 
       {notebooks.length === 0 ? (
-        <p className={styles.empty}>
-          You have no notebooks yet. Create one in the Notebook screen to start
-          taking notes here.
-        </p>
+        <div className={styles.createNotebook}>
+          <p className={styles.createNotebookHelp}>
+            You have no notebooks yet. Create one to start taking notes here.
+          </p>
+          <input
+            className={styles.createNotebookInput}
+            value={newNotebookName}
+            onChange={(e) => setNewNotebookName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void handleCreateNotebook()
+            }}
+            placeholder="Notebook name"
+            aria-label="Notebook name"
+          />
+          <button
+            type="button"
+            className={styles.newNoteBtn}
+            onClick={() => void handleCreateNotebook()}
+            disabled={newNotebookName.trim().length === 0}
+          >
+            <Plus size={12} aria-hidden />
+            New notebook
+          </button>
+          {notebookError && (
+            <p className={styles.createNotebookError} role="alert">
+              {notebookError}
+            </p>
+          )}
+        </div>
       ) : !selectedNotebookId ? (
         <p className={styles.empty}>Select a notebook to see its notes.</p>
       ) : (
@@ -282,7 +348,7 @@ export function ReaderNotesPanel({
               </option>
               {notesOfSelectedNotebook.map((n) => (
                 <option key={n.id} value={n.id}>
-                  {n.title.trim() || 'untitled'}
+                  {n.title.trim() || 'Untitled'}
                 </option>
               ))}
             </select>
@@ -291,7 +357,8 @@ export function ReaderNotesPanel({
               className={styles.newNoteBtn}
               onClick={() => void handleCreateNote()}
             >
-              + New note
+              <Plus size={12} aria-hidden />
+              New note
             </button>
             {/* Tipo da PRÓXIMA nota criada (o que já existe fica com o tipo
                 que tem). Sem "Manage types…": os tipos se gerenciam na janela

@@ -1,5 +1,5 @@
 import { dateKeyFromMs } from '../../lib/calendar'
-import { cleanNoteContentForAi, noteDate } from '../../lib/noteFileText'
+import { cleanNoteContentForAi, noteDate, type NoteAiTextOptions } from '../../lib/noteFileText'
 import { isOpen, taskLineForAi, type ChecklistProgress } from '../../lib/tasks'
 import type { AiResponse, Note, Task, TaskStatusDef } from '../../types'
 
@@ -8,7 +8,7 @@ import type { AiResponse, Note, Task, TaskStatusDef } from '../../types'
 // anexado a cada envio do chat das Anotações (nota aberta + seleção). Os
 // orçamentos garantem que o bloco nunca estoura tokens.
 
-const NOTE_TEXT_BUDGET = 8000
+export const NOTE_TEXT_BUDGET = 8000
 const SELECTION_BUDGET = 2000
 const PROJECT_TASKS_LIMIT = 100
 
@@ -49,6 +49,15 @@ export interface NotesContextInput {
 function truncateWithMarker(s: string, budget: number): string {
   if (s.length <= budget) return s
   return s.slice(0, budget) + ' [truncated]'
+}
+
+// A nota passa do orçamento: a IA só vê o começo (o chip do chat avisa).
+export function noteTruncatedForAi(
+  content: string,
+  opts: Pick<NoteAiTextOptions, 'resolveNoteTitle' | 'resolveLinkedNoteContent'>
+): boolean {
+  if (!content) return false
+  return cleanNoteContentForAi(content, opts).length > NOTE_TEXT_BUDGET
 }
 
 export function buildNotesContext(input: NotesContextInput): string {

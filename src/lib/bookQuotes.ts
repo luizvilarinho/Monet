@@ -4,6 +4,8 @@
 // exibi-la é o chamador.
 import type { BookQuote, Note, Notebook } from '../types'
 import { storage } from '../storage'
+import { formatLocalTimestamp } from './calendar'
+import { stripMarkCitations } from './noteMarks'
 import { getReaderNoteLink } from './readerNoteLink'
 
 const QUOTE_BLOCKQUOTE_LIMIT = 2000
@@ -48,6 +50,30 @@ export function appendQuoteToContent(existing: string, block: string): string {
   return `${trimmedEnd}\n\n${block}`
 }
 
+// Inverso do appendQuoteToContent para o Undo: tira a última ocorrência do
+// bloco e a linha em branco que o separava. null quando o bloco não está mais
+// na nota (o usuário o editou).
+export function removeAppendedBlock(content: string, block: string): string | null {
+  const i = content.lastIndexOf(block)
+  if (i < 0) return null
+  return content.slice(0, i).replace(/\n+$/, '') + content.slice(i + block.length)
+}
+
+// Bloco de uma resposta do chat do Reader anexada a uma nota: o rótulo diz
+// que veio da IA e de qual livro.
+export function buildAiResponseBlock(rawMarkdown: string, bookTitle: string): string {
+  // A citação `==texto==` de uma marca vira texto simples: a IA não cria marcas.
+  const body = stripMarkCitations(rawMarkdown).trim()
+  return `**AI · ${bookTitle} — ${formatLocalTimestamp()}**\n\n${body}`
+}
+
+// "Notebook · Note" para tooltips e toasts.
+export function noteDestinationLabel(note: Note, notebooks: Notebook[]): string {
+  const notebook = notebooks.find((nb) => nb.id === note.notebookId)
+  const title = note.title.trim() || 'Untitled'
+  return notebook ? `${notebook.name} · ${title}` : title
+}
+
 // Nota vinculada ao livro pela aba "Notes" do leitor, se o vínculo ainda
 // apontar para uma nota existente.
 export function resolveLinkedNote(bookId: string, notes: Note[]): Note | null {
@@ -70,26 +96,53 @@ export async function registerSavedQuote(
     console.error('failed to save quote', err)
   }
   const note = deps.getNotes().find((n) => n.id === quote.targetNoteId)
-  const notebookId = note?.notebookId ?? null
-  if (!notebookId) return { toastMessage: null }
-  const notebook = deps.getNotebooks().find((x) => x.id === notebookId)
-  const noteTitle = note?.title.trim() || 'note'
-  const nbName = notebook?.name ?? 'notebook'
-  return { toastMessage: `Saved to ${nbName} / ${noteTitle}` }
+  if (!note?.notebookId) return { toastMessage: null }
+  return { toastMessage: `Added to ${noteDestinationLabel(note, deps.getNotebooks())}` }
+}
+
+// Bloco anexado a uma nota, guardado para o Undo do toast.
+export interface AppendedBlock {
+  noteId: string
+  block: string
+}
+
+export async function appendBlockToNote(
+  onSaveNote: (note: Note) => Promise<void>,
+  note: Note,
+  block: string,
+): Promise<AppendedBlock> {
+  const content = appendQuoteToContent(note.content, block)
+  await onSaveNote({ ...note, content, updatedAt: Date.now() })
+  return { noteId: note.id, block }
+}
+
+// Desfaz um appendBlockToNote na versão atual da nota. false quando a nota
+// sumiu ou o bloco não está mais nela.
+export async function undoAppendedBlock(
+  getNotes: () => Note[],
+  onSaveNote: (note: Note) => Promise<void>,
+  appended: AppendedBlock,
+): Promise<boolean> {
+  const note = getNotes().find((n) => n.id === appended.noteId)
+  if (!note) return false
+  const content = removeAppendedBlock(note.content, appended.block)
+  if (content === null) return false
+  await onSaveNote({ ...note, content, updatedAt: Date.now() })
+  return true
 }
 
 // Anexa a citação direto numa nota já existente, sem passar pelo
 // QuoteToNoteModal. Usa as mesmas funções de montagem de bloco/conteúdo deste
 // arquivo — as mesmas que o modal importa daqui — e o mesmo registro de
 // BookQuote, para manter paridade de comportamento entre os dois caminhos.
+// O registro do BookQuote fica mesmo depois de um Undo: a tabela só é escrita.
 export async function appendQuoteToNote(
   deps: BookQuoteDeps,
   note: Note,
   { text, page, positionLabel }: QuoteTarget,
-): Promise<{ toastMessage: string | null }> {
+): Promise<AppendedBlock> {
   const { content: block } = buildQuoteBlock(text, deps.bookTitle, positionLabel)
-  const newContent = appendQuoteToContent(note.content, block)
-  await deps.onSaveNote({ ...note, content: newContent, updatedAt: Date.now() })
+  const appended = await appendBlockToNote(deps.onSaveNote, note, block)
   const quote: BookQuote = {
     id: crypto.randomUUID(),
     bookId: deps.bookId,
@@ -98,5 +151,6 @@ export async function appendQuoteToNote(
     targetNoteId: note.id,
     createdAt: Date.now(),
   }
-  return registerSavedQuote(deps, quote)
+  await registerSavedQuote(deps, quote)
+  return appended
 }

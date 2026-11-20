@@ -48,9 +48,7 @@
   background: transparent;
   border: none;
   color: var(--text-muted, #606070);
-  font-size: 20px;
   cursor: pointer;
-  line-height: 1;
 }
 
 .close:hover {
@@ -149,6 +147,12 @@
   margin: 0;
   font-size: 13px;
   color: var(--accent-ai, #5dcaa5);
+}
+
+.confirmText {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-primary, #e8e8f0);
 }
 
 .errorText {
