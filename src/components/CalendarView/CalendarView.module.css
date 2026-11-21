@@ -204,6 +204,9 @@
   padding: 0 0 var(--space-1h);
 }
 
+/* Altura fixa: o pior caso (número 11px + ponto de nota 4px + barra de task 2px +
+   pontos de tracker 4px + 3 gaps de 2px) tem 27px e cabe nos 28px sem
+   padding, então marcar um tracker não muda a altura da linha da semana. */
 .cell {
   position: relative;
   display: flex;
@@ -212,8 +215,8 @@
   justify-content: center;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  padding: var(--space-0) 0;
-  min-height: var(--control-md);
+  padding: 0;
+  height: var(--control-md);
   gap: var(--space-0);
 }
 
@@ -293,6 +296,34 @@
 .taskBarDue {
   width: 14px;
   opacity: 1;
+}
+
+/* Trackers feitos no dia: um ponto na cor de cada tracker (inline), até
+   MAX_CELL_DOTS, e um "+" para o resto. A altura é a dos pontos (4px): o "+" de
+   5px a excede 0,5px acima e abaixo, então na célula mais cheia (27px de conteúdo
+   nos 28px) ele termina na base da célula, sem passar dela, e sem empurrá-la. O
+   gap de 1px (fora da escala) cabe 3 pontos e o "+" nos ~25px úteis da célula a
+   220px. */
+.trackerDots {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  height: 4px;
+  color: var(--text-muted, #606070);
+  flex-shrink: 0;
+}
+
+.trackerDot {
+  display: block;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* Legenda: sem cor de tracker, o ponto neutro. */
+.trackerDotLegend {
+  background: var(--text-secondary, #a0a0b8);
 }
 
 /* Legenda dos marcadores (recolhível). */

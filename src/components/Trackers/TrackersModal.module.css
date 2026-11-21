@@ -1,0 +1,257 @@
+/* Base (backdrop, card, header, inputs) em StatusManagerModal.module.css;
+   aqui só o layout em duas colunas do "Trackers". */
+.card {
+  max-width: 720px;
+  /* Cabe na janela: só as colunas rolam; cabeçalho e erro ficam fixos. */
+  max-height: calc(100vh - 48px);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.columns {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: 224px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  gap: var(--space-6);
+  min-height: 0;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-0);
+  border-radius: var(--radius-md);
+}
+
+.rowActive {
+  background: var(--surface-1);
+}
+
+.rowButton {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1h);
+  height: var(--control-md);
+  background: transparent;
+  border: none;
+  padding: 0 var(--space-2);
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-align: left;
+  cursor: pointer;
+}
+
+/* Arquivado: esmaecido, sem setas. */
+.rowArchived {
+  opacity: 0.6;
+}
+
+.rowIcon {
+  flex-shrink: 0;
+  display: inline-flex;
+}
+
+.rowName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowMeta {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.move {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-sm);
+  height: var(--control-sm);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  padding: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.move:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.move:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.groupLabel {
+  margin: var(--space-2) 0 0;
+  padding: 0 var(--space-2);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: var(--space-1);
+}
+
+/* Com altura limitada, os blocos não encolhem: o .detail rola. */
+.detail > * {
+  flex-shrink: 0;
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-md);
+}
+
+.label {
+  flex: 0 0 92px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Seletor de ícone: o rótulo alinha com a primeira linha (a busca). */
+.iconField {
+  align-items: flex-start;
+}
+
+.iconField .label {
+  line-height: var(--control-md);
+}
+
+.select {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  height: var(--control-md);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-1h);
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-primary);
+  outline: none;
+}
+
+.select:focus {
+  border-color: var(--accent);
+}
+
+.empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Dica sob o campo, alinhada com o controle (largura do rótulo + gap). */
+.hint {
+  margin: 0;
+  padding-left: calc(92px + var(--space-2));
+  font-size: 12px;
+  line-height: var(--lh-ui);
+  color: var(--text-muted);
+}
+
+/* Retorno do atalho "Create 'Practice' type": o que foi criado e o "Open log". */
+.status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1h) var(--space-2);
+  margin: 0;
+  padding-left: calc(92px + var(--space-2));
+  font-size: 12px;
+  line-height: var(--lh-ui);
+  color: var(--text-secondary);
+}
+
+.statusBtn {
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.statusBtn:hover {
+  text-decoration: underline;
+}
+
+.statusBtn:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Aviso do "Practice" (propriedade existente com outro tipo de dado). */
+.warning {
+  margin: 0;
+  font-size: 12px;
+  color: var(--accent-warn);
+}
+
+/* Arquivar e excluir com rótulo, no fim do detalhe. */
+.actions {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--hair);
+}
+
+.action,
+.deleteBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1h);
+  min-height: var(--control-md);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.action {
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+
+.action:hover {
+  color: var(--text-primary);
+}
+
+.deleteBtn {
+  border: 1px solid color-mix(in srgb, var(--accent-danger) 45%, transparent);
+  color: var(--accent-danger);
+}
+
+.deleteBtn:hover {
+  background: color-mix(in srgb, var(--accent-danger) 12%, transparent);
+}

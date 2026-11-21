@@ -161,6 +161,8 @@ export interface NoteType {
   createdAt: number
   // Board em cards do tipo (`note_types.board`, JSON); null = sem board.
   board: NoteBoardConfig | null
+  // Log do tipo (`note_types.log`, JSON); null = Log desligado.
+  log: NoteLogConfig | null
 }
 
 // Config do board de um tipo: colunas = valores de uma propriedade select ou
@@ -173,6 +175,41 @@ export interface NoteBoardConfig {
   showTags: boolean
   hideEmpty: boolean
   filterDefId: string | null
+}
+
+// Config do Log de um tipo: soma e tendência de propriedades Number, agrupamento
+// por Select ou Text; tudo opcional (lido com resolveLog).
+export interface NoteLogConfig {
+  sumDefId: string | null
+  trendDefId: string | null
+  groupDefId: string | null
+}
+
+// Hábito com meta semanal (trackers de constância). Não é task. Ordem = sortOrder.
+export interface Tracker {
+  id: string // `tr_${nanoid(8)}`
+  // Aparado, 1..MAX_TRACKER_NAME, único sem caixa/acentos.
+  name: string
+  // Inteiro 1..7.
+  weeklyTarget: number
+  // Um valor de TASK_COLOR_PALETTE.
+  color: string
+  // Nome do TypeIcon (TYPE_ICONS).
+  icon: string
+  sortOrder: number
+  // Tipo de nota vinculado (os dias vêm das notas do tipo); tipo inexistente = sem vínculo.
+  linkedTypeId: string | null
+  // Epoch ms; arquivado sai da faixa, da nota do dia e dos agentes.
+  archivedAt: number | null
+  createdAt: number
+  updatedAt: number
+}
+
+// Uma marca manual por tracker por dia (`day` = YYYY-MM-DD local).
+export interface TrackerMark {
+  trackerId: string
+  day: string
+  createdAt: number
 }
 
 export type DocumentStatus = 'indexing' | 'available' | 'error'

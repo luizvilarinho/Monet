@@ -3,6 +3,7 @@ import { Plus, X } from '@phosphor-icons/react'
 import type { Book, Note, Notebook, NoteType } from '../../types'
 import { storage } from '../../storage'
 import { booksDeleteFile, importBook } from '../../lib/books'
+import { filterBooks, showBookFilter } from '../../lib/bookList'
 import { useConfirm } from '../../hooks/useConfirm'
 import {
   countReaderBookChatConversations,
@@ -10,6 +11,7 @@ import {
   getReaderChatFolderId,
   unlinkBookFromReaderFolder,
 } from '../../hooks/useChat'
+import { OPEN_BOOK_KEY } from '../../lib/libraryOpen'
 import { unlinkBookFromReaderNote } from '../../lib/readerNoteLink'
 import {
   clearOpenDoc,
@@ -64,24 +66,6 @@ function progressPercent(book: Book): number {
   if (book.totalPages <= 0) return 0
   return Math.min(100, Math.round((book.lastPage / book.totalPages) * 100))
 }
-
-// Mais recente primeiro: a última abertura, ou a importação para o livro
-// nunca aberto (o recém-importado aparece no topo).
-function recency(book: Book): number {
-  return book.lastOpenedAt ?? book.addedAt
-}
-
-// Acima disso a lista ganha o campo de filtro.
-const BOOK_FILTER_MIN = 10
-
-function foldText(s: string): string {
-  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
-}
-
-// Continuação de leitura: id do livro aberto no Reader. Gravado ao abrir um
-// livro e limpo no "Back to Library" — entrar no modo Library retoma o último
-// livro direto na última página, mesmo após fechar/reabrir o app.
-const OPEN_BOOK_KEY = 'monet:reader-open-book'
 
 export function Library({
   notebooks,
@@ -339,13 +323,7 @@ export function Library({
     setOpenDocsId(null)
   }
 
-  const visibleBooks = useMemo(() => {
-    const query = foldText(bookFilter.trim())
-    const filtered = query
-      ? books.filter((b) => foldText(`${b.title} ${b.author ?? ''}`).includes(query))
-      : books
-    return [...filtered].sort((a, b) => recency(b) - recency(a))
-  }, [books, bookFilter])
+  const visibleBooks = useMemo(() => filterBooks(books, bookFilter), [books, bookFilter])
 
   // Um modo por vez: a pasta de docs abre no lugar do Library, como o Reader.
   const openDocsFolder = docsFolders.find((f) => f.id === openDocsId)
@@ -583,7 +561,7 @@ export function Library({
           </div>
         ) : (
           <>
-          {(books.length > BOOK_FILTER_MIN || bookFilter !== '') && (
+          {showBookFilter(books.length, bookFilter) && (
             <input
               type="search"
               className={styles.filterInput}

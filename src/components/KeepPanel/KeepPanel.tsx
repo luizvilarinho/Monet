@@ -11,12 +11,14 @@ import {
   formatCalendarTitle,
   getWeekdayName,
   parseCalendarTitle,
+  toDateKey,
 } from '../../lib/calendar'
 import { storage } from '../../storage'
 import type { AiResponse, Note, Notebook, NoteType } from '../../types'
 import { useTasks } from '../../hooks/useTasks'
 import { useToday } from '../../hooks/useToday'
 import { useTaskStatuses } from '../../hooks/useTaskStatuses'
+import { useTrackers } from '../../hooks/useTrackers'
 import { DEFAULT_TASKS_ENV, TasksEnvProvider } from '../TasksView/TasksEnv'
 import { buildBaseExtensions } from '../Editor/extensions'
 import { EditorResponsesProvider } from '../Editor/EditorResponsesContext'
@@ -25,10 +27,13 @@ import { TasksProvider } from '../Editor/TasksContext'
 import { taskStatusPluginKey, type TaskStatusStorage } from '../Editor/TaskStatus'
 import { TimePicker } from '../Editor/TimePicker'
 import { CalendarView } from '../CalendarView/CalendarView'
+import { TrackerChips } from '../Trackers/TrackerChips'
+import { TrackersModal } from '../Trackers/TrackersModal'
 import { attachNoteImageOpener, useImageViewer } from '../ImageViewer/ImageViewer'
 import { isTaskBodyNote, type TodosInfo } from '../../lib/tasks'
 import { copyBodyNoteForOccurrence } from '../../lib/taskBodyNote'
 import { isTodosNote } from '../../lib/noteTypes'
+import { loadWithRetry } from '../../lib/tasksEvents'
 import { collectEmbedIds } from '../../lib/noteFileText'
 import styles from './KeepPanel.module.css'
 
@@ -131,6 +136,10 @@ export function KeepPanel() {
     if (current) persistNote({ ...current, updatedAt: Date.now() })
   }
   const todayKey = useToday()
+  // Trackers de constância: marcas por dia (chips e faixa do calendário) e a
+  // gestão no modal "Trackers".
+  const trackers = useTrackers({ notes: allNotes, todayKey })
+  const [trackersOpen, setTrackersOpen] = useState(false)
   const { tasks, tasksById, updateTaskFresh, reload: reloadTasks } = useTasks({
     // Recorrente concluída aqui: a ocorrência nova leva a cópia da nota-corpo,
     // como na main (que relê as notas no aviso ao perder o foco).
@@ -178,14 +187,25 @@ export function KeepPanel() {
   }
   const loadNotebooksRef = useRef(loadNotebooks)
   loadNotebooksRef.current = loadNotebooks
-  // Tipos de nota para o ícone/nome do tipo nos cards do calendário.
+  // Tipos de nota para o ícone/nome do tipo nos cards do calendário e o vínculo
+  // dos trackers. Relidos no mount, no `keep-shown` (a main pode tê-los mudado
+  // com a janela oculta) e depois de "Create 'Practice' type" no modal. No mount e
+  // no `keep-shown` a leitura tenta de novo se falhar (cold start com o banco
+  // travado), senão o vínculo dos trackers apareceria como "None" até o próximo show.
   const [noteTypes, setNoteTypes] = useState<NoteType[]>([])
-  useEffect(() => {
+  const loadNoteTypes = (): Promise<boolean> =>
     storage
       .getNoteTypes()
-      .then(setNoteTypes)
-      .catch((err) => console.error('keep: failed to load note types', err))
-  }, [])
+      .then((list) => {
+        setNoteTypes(list)
+        return true
+      })
+      .catch((err) => {
+        console.error('keep: failed to load note types', err)
+        return false
+      })
+  const loadNoteTypesRef = useRef(loadNoteTypes)
+  loadNoteTypesRef.current = loadNoteTypes
 
   const editor = useEditor({
     immediatelyRender: false,
@@ -220,6 +240,10 @@ export function KeepPanel() {
       const current = noteRef.current
       if (!current) return
       const md = getMarkdown(editor)
+      // Nota que termina em bloco que não é parágrafo ganha um parágrafo vazio
+      // na 1ª transação (TrailingNode): o `update` dispara sem o markdown mudar,
+      // e gravar isso só mexeria na data de edição.
+      if (md === current.content) return
       const updated: Note = { ...current, content: md, updatedAt: Date.now() }
       noteRef.current = updated
       setNote(updated)
@@ -456,6 +480,7 @@ export function KeepPanel() {
 
     loadOrCreateDayNote(new Date())
     loadNotebooksRef.current()
+    let cancelNoteTypesLoad = loadWithRetry(() => loadNoteTypesRef.current())
 
     let unlisten: (() => void) | undefined
     void listen('keep-shown', () => {
@@ -463,6 +488,8 @@ export function KeepPanel() {
       setResponsesTick((t) => t + 1)
       loadOrCreateDayNote(new Date(), { focus: true })
       loadNotebooksRef.current()
+      cancelNoteTypesLoad()
+      cancelNoteTypesLoad = loadWithRetry(() => loadNoteTypesRef.current())
       void reloadTasksRef.current()
     }).then((fn) => {
       if (cancelled) fn()
@@ -507,6 +534,7 @@ export function KeepPanel() {
 
     return () => {
       cancelled = true
+      cancelNoteTypesLoad()
       unlisten?.()
       unlistenUpdated?.()
       unlistenFocus?.()
@@ -622,6 +650,12 @@ export function KeepPanel() {
   )
   const headerDate = note?.title ?? formatCalendarTitle(new Date())
   const headerWeekday = getWeekdayName(parseCalendarTitle(headerDate) ?? new Date())
+  // Dia da nota aberta, só pelo título: vale também para o rascunho ainda não
+  // gravado (os chips dos trackers dependem só da chave do dia).
+  const chipsDayKey = useMemo(() => {
+    const d = parseCalendarTitle(note?.title ?? '')
+    return d ? toDateKey(d.getFullYear(), d.getMonth(), d.getDate()) : null
+  }, [note?.title])
   const calendarNotes = useMemo(
     () => allNotes.filter((n) => n.notebookId === CALENDAR_NOTEBOOK_ID),
     [allNotes]
@@ -651,6 +685,13 @@ export function KeepPanel() {
       console.warn('keep: open in main failed', err)
       void invoke('open_main_window')
     }
+    void getCurrentWindow().hide()
+  }
+
+  // Clique no dia vindo de nota (faixa e chip): a main abre a nota e a keep se
+  // esconde, como em "onNoteClick" do calendário.
+  function openTrackerNote(noteId: string) {
+    void invoke('open_note_in_main', { noteId })
     void getCurrentWindow().hide()
   }
 
@@ -730,7 +771,38 @@ export function KeepPanel() {
           void invoke('open_task_in_main', { taskId })
           void getCurrentWindow().hide()
         }}
+        trackers={trackers.active}
+        trackerDays={trackers.days}
+        onToggleTrackerDay={(id, day, on) => void trackers.setMark(id, day, on)}
+        onOpenTrackerNote={openTrackerNote}
+        onManageTrackers={() => {
+          trackers.clearErrors()
+          setTrackersOpen(true)
+        }}
+        trackersLoadFailed={trackers.loadFailed}
+        trackersLoaded={trackers.loaded}
+        onRetryTrackers={trackers.reload}
+        trackerError={trackers.markError}
+        trackersCollapsedKey="monet:keep-trackers-collapsed"
+        trackersDefaultCollapsed
       />
+      <div className={styles.notePane}>
+      {/* Fora do .body: o onMouseDown dele faz preventDefault e foca o editor, o
+          que roubaria o clique dos chips. */}
+      {chipsDayKey && chipsDayKey <= todayKey && trackers.active.length > 0 && (
+        <div className={styles.chipsHost}>
+          <TrackerChips
+            trackers={trackers.active}
+            days={trackers.days}
+            dayKey={chipsDayKey}
+            todayKey={todayKey}
+            noteTypes={noteTypes}
+            onToggle={(id, day, on) => void trackers.setMark(id, day, on)}
+            onOpenNote={openTrackerNote}
+            error={trackers.markError}
+          />
+        </div>
+      )}
       <div
         className={styles.body}
         onMouseDown={(e) => {
@@ -761,11 +833,20 @@ export function KeepPanel() {
         </RemindersProvider>
       </div>
       </div>
+      </div>
       {timePickerPos && (
         <TimePicker
           position={timePickerPos}
           onConfirm={handleTimePickerConfirm}
           onCancel={handleTimePickerCancel}
+        />
+      )}
+      {trackersOpen && (
+        <TrackersModal
+          registry={trackers}
+          noteTypes={noteTypes}
+          onTypesChanged={() => loadNoteTypesRef.current()}
+          onClose={() => setTrackersOpen(false)}
         />
       )}
       {imageViewer.viewer}

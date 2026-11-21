@@ -357,6 +357,7 @@ export function planSaveChanges(types: NoteType[], defs: MetadataDef[]): PlanSav
     builtin: false,
     createdAt: now,
     board: null,
+    log: null,
   }
 
   const own = typeDefs(defs, type.id)

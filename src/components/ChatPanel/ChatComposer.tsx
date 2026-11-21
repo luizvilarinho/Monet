@@ -119,7 +119,10 @@ export function ChatComposer({
   const deepResearchOffByAgent = !agent.context.deepResearch
   const effectiveDeepResearch = tools.deepResearch && !deepResearchOffByAgent
   const effectiveWebSearch = tools.webSearch && agent.context.web
-  const needsTavily = effectiveDeepResearch || effectiveWebSearch
+  // Agente com pipeline de busca próprio (Radar): o app roda as buscas e exige a
+  // chave do Tavily, com o toggle de web search desligado ou não.
+  const pipelineTavily = !!agent.webPipeline?.needsTavily
+  const needsTavily = effectiveDeepResearch || effectiveWebSearch || pipelineTavily
 
   // Web search ou deep research sem a chave do Tavily: o envio fica parado (o
   // rascunho não se perde) e o aviso leva ao Settings. Checado ao ligar, na
@@ -127,6 +130,8 @@ export function ChatComposer({
   // e na volta à janela (chave salva na outra).
   const [tavilyMissing, setTavilyMissing] = useState(false)
   const tavilyCheckRef = useRef(0)
+  // A conferência da chave de um atalho de agente em curso (um 2º Enter não repete).
+  const shortcutKeyCheckRef = useRef(false)
   const checkTavily = () => {
     if (!needsTavily) {
       setTavilyMissing(false)
@@ -158,6 +163,8 @@ export function ChatComposer({
   const visionWarning = draftImages.length > 0 && !modelSupportsVision
   const hasDraft = draft.trim().length > 0 || draftImages.length > 0 || draftDocs.length > 0
   const tavilyBlocked = needsTavily && tavilyMissing
+  // Só o pipeline do agente pede a chave: não há toggle para desligar.
+  const tavilyBlockedByPipeline = tavilyBlocked && pipelineTavily && !effectiveDeepResearch && !effectiveWebSearch
 
   const canSend =
     !isStreaming &&
@@ -170,24 +177,46 @@ export function ChatComposer({
 
   const sendTitle = !selectedModel
     ? 'Select a model first'
-    : tavilyBlocked
-      ? 'Add a Tavily key in Settings, or turn off web search'
-      : undefined
+    : tavilyBlockedByPipeline
+      ? 'Add a Tavily key in Settings'
+      : tavilyBlocked
+        ? 'Add a Tavily key in Settings, or turn off web search'
+        : undefined
 
-  function handleSend() {
+  async function handleSend() {
     const parsed = agentsAvailable ? parseAgentShortcut(draft) : null
     const hasAttachments = draftImages.length > 0 || draftDocs.length > 0
     // Sem texto, o agente que não pede pergunta manda a mensagem padrão dele.
     const fallback = agentsAvailable
       ? (chatAgentComposerHint(parsed ? parsed.agent.id : agentId)?.defaultMessage ?? '')
       : ''
-    if (parsed && !parsed.rest && !hasAttachments && (!fallback || !canSend)) {
+    // Agente com pipeline de busca (Radar, Papers): o comando sozinho só o seleciona,
+    // porque a consulta custa buscas e consome a janela do escopo. O Enter com o
+    // rascunho vazio, com o agente já selecionado, envia a mensagem padrão.
+    if (parsed && !parsed.rest && !hasAttachments && (!fallback || !canSend || !!parsed.agent.webPipeline)) {
       // Só o comando: liga o seletor (vale também durante o streaming).
       onSelectAgent(parsed.agent.id)
       setDraft('')
       return
     }
     if (!canSend) return
+    // Atalho de um agente que pede a chave do Tavily (`/radar texto`) com outro
+    // agente selecionado: o aviso do composer só olha o agente selecionado. Confere
+    // a chave antes de limpar o rascunho; sem ela, só seleciona o agente (o aviso
+    // aparece e o texto fica, como no chat das Anotações).
+    if (parsed?.agent.webPipeline?.needsTavily && !needsTavily) {
+      if (shortcutKeyCheckRef.current) return
+      shortcutKeyCheckRef.current = true
+      const hasKey = await hasTavilyKey()
+        .catch(() => true)
+        .finally(() => {
+          shortcutKeyCheckRef.current = false
+        })
+      if (!hasKey) {
+        onSelectAgent(parsed.agent.id)
+        return
+      }
+    }
     const typed = parsed ? parsed.rest : draft
     const text = typed.trim() ? typed : fallback || typed
     const images = draftImages
@@ -377,7 +406,7 @@ export function ChatComposer({
         {webSearchActive && (
           <div className={styles.webSearchProgress} role="status" aria-live="polite">
             <span className={styles.webSearchDot} aria-hidden="true" />
-            Searching the web...
+            {agent.webPipeline?.status ?? 'Searching the web...'}
           </div>
         )}
         {ragSearching && <RagSearchStatus />}
@@ -398,8 +427,9 @@ export function ChatComposer({
         {tavilyBlocked && (
           <div className={styles.noticeWithActions} role="alert">
             <span>
-              {effectiveDeepResearch ? 'Deep Research' : 'Web Search'} needs a Tavily key. Add it in Settings, or turn
-              it off to send.
+              {tavilyBlockedByPipeline
+                ? `${agent.label} needs a Tavily key for web search. Add it in Settings.`
+                : `${effectiveDeepResearch ? 'Deep Research' : 'Web Search'} needs a Tavily key. Add it in Settings, or turn it off to send.`}
             </span>
             <div className={styles.noticeActions}>
               {onOpenSettings && (
@@ -408,13 +438,15 @@ export function ChatComposer({
                   Open Settings
                 </button>
               )}
-              <button
-                type="button"
-                className={styles.noticeBtn}
-                onClick={() => setTool(effectiveDeepResearch ? 'deepResearch' : 'webSearch', false)}
-              >
-                Turn off
-              </button>
+              {!tavilyBlockedByPipeline && (
+                <button
+                  type="button"
+                  className={styles.noticeBtn}
+                  onClick={() => setTool(effectiveDeepResearch ? 'deepResearch' : 'webSearch', false)}
+                >
+                  Turn off
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -453,7 +485,7 @@ export function ChatComposer({
             if (shortcut.onKeyDown(e)) return
             if (e.key === 'Enter' && !e.ctrlKey && !e.shiftKey) {
               e.preventDefault()
-              handleSend()
+              void handleSend()
             }
           }}
           onPaste={(e) => {
@@ -543,6 +575,7 @@ export function ChatComposer({
             folderWebResearch={activeFolder ? { enabled: activeFolder.webResearchEnabled } : null}
             onToggleFolderWebResearch={(v) => activeFolder && setFolderWebResearchEnabled(activeFolder.id, v)}
             tasksTool={{ supported: selectedModel?.supportsTools ?? false }}
+            trackersTool={{ supported: selectedModel?.supportsTools ?? false }}
             dailyNotesTool={{ supported: selectedModel?.supportsTools ?? false }}
             notesTool={{ supported: selectedModel?.supportsTools ?? false }}
             agent={agent}
@@ -560,7 +593,7 @@ export function ChatComposer({
             <button
               type="button"
               className={styles.sendBtn}
-              onClick={handleSend}
+              onClick={() => void handleSend()}
               disabled={!canSend}
               title={sendTitle}
             >

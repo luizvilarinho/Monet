@@ -428,9 +428,13 @@
 }
 
 .errorRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1h) var(--space-2);
   color: var(--accent-warn, #ef9f27);
   font-size: 12px;
-  padding: 0 12px 8px;
+  padding: 0 var(--space-3) var(--space-2);
   flex-shrink: 0;
 }
 
@@ -500,6 +504,8 @@
 .composer {
   /* Âncora da lista do atalho "/agente". */
   position: relative;
+  /* Container da largura do menu de agentes (AgentPicker): ele nunca passa do composer. */
+  container-type: inline-size;
   flex-shrink: 0;
   border-top: 1px solid var(--border, #333340);
   background: var(--bg-panel, #161625);

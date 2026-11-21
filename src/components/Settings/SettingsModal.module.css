@@ -118,6 +118,11 @@
   max-width: 420px;
 }
 
+/* Segundo bloco da mesma seção (OpenAlex depois do Tavily) */
+.formNext {
+  margin-top: var(--gap-section);
+}
+
 .formTitle {
   margin: 0;
   font-size: 14px;

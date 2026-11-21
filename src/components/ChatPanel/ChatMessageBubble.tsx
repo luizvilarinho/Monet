@@ -1,5 +1,7 @@
 import {
   ArrowClockwise,
+  BookmarkSimple,
+  Broadcast,
   CalendarPlus,
   Check,
   Copy,
@@ -7,18 +9,30 @@ import {
   GearSix,
   IdentificationCard,
   WarningCircle,
+  type Icon,
 } from '@phosphor-icons/react'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { ChatMessage } from '../../hooks/useChat'
-import { agentNoteDraft, type AgentNoteDraft } from '../../lib/agentNotes'
+import { expandItemMarkers, hasAgentPayload } from '../../lib/agentItems'
+import { AGENT_DRAFT_ACTION, agentNoteDraft, type AgentNoteDraft } from '../../lib/agentNotes'
 import { CHAT_AGENTS } from '../../lib/agents/chat'
 import { dateKeyFromMs } from '../../lib/calendar'
 import { renderMarkdown } from '../../lib/markdown'
 import { linkNoteMarks } from '../../lib/noteMarks'
 import { clickedImage, useImageViewer } from '../ImageViewer/ImageViewer'
 import { useMermaidDiagrams } from '../MermaidDiagram/useMermaidDiagrams'
+import { AgentItemsList, type AgentItemActions } from './AgentItemsList'
 import styles from './ChatMessageBubble.module.css'
+
+// Ícone do botão de cada rascunho de nota de agente (o rótulo vem de
+// AGENT_DRAFT_ACTION); também usado pelo balão do chat das Anotações.
+export const AGENT_DRAFT_ICON: Record<AgentNoteDraft['kind'], Icon> = {
+  plan: CalendarPlus,
+  profile: IdentificationCard,
+  radarProfile: Broadcast,
+  paper: BookmarkSimple,
+}
 
 // Respostas que levam o rótulo do agente: com agentId diferente do da resposta
 // anterior do assistant (General não grava agentId).
@@ -38,6 +52,10 @@ export function agentLabelIds(messages: ChatMessage[]): Set<string> {
 // meio), ela não chegou: "No response (interrupted)". Sem a marca, outra janela
 // ainda a escreve: sem Retry, que duplicaria o turno.
 const STALE_EMPTY_ANSWER_MS = 15 * 60_000
+
+// Resposta vazia parada pelo usuário (Stop com o Radar ou o Papers ainda montando o
+// contexto): o balão fica, com este texto no lugar de "No response".
+export const STOPPED_BEFORE_REPLY = 'Stopped before the response started'
 
 export function emptyAnswerState(message: ChatMessage, isStreaming: boolean): 'streaming' | 'elsewhere' | 'stopped' | null {
   if (message.role !== 'assistant' || message.content.length > 0) return null
@@ -82,6 +100,9 @@ interface ChatMessageBubbleProps {
   // Marca "Saved to <nota>": título atual da nota e como abri-la. Ausente com
   // a nota apagada.
   savedNote?: { title: string; onOpen: () => void }
+  // Ações dos itens do Radar embaixo da resposta (Open, Send to Mincer, Add to
+  // KB). Ausente = sem a lista.
+  itemActions?: AgentItemActions | null
   // Conteudo extra abaixo da resposta do assistant.
   footer?: ReactNode
 }
@@ -102,6 +123,7 @@ export function ChatMessageBubble({
   retryDisabledReason,
   onOpenSettings,
   savedNote,
+  itemActions,
   footer,
 }: ChatMessageBubbleProps) {
   const isUser = message.role === 'user'
@@ -126,26 +148,34 @@ export function ChatMessageBubble({
     () => (canSaveToNote && onSaveAgentNote ? agentNoteDraft(message, dateKeyFromMs(Date.now())) : null),
     [canSaveToNote, onSaveAgentNote, message]
   )
+  const DraftIcon = agentDraft ? AGENT_DRAFT_ICON[agentDraft.kind] : null
 
   const cacheKey = useMemo(
     () => (isUser ? null : `${message.id}:${message.content.length}`),
     [isUser, message.id, message.content]
   )
 
+  // Radar: os marcadores [W3] viram título, link e fonte a partir do payload do
+  // app (no fim do turno o content já vem expandido e a expansão não muda nada).
+  const displayContent = useMemo(
+    () => (message.agentItems ? expandItemMarkers(message.content, message.agentItems) : message.content),
+    [message.content, message.agentItems]
+  )
+
   useEffect(() => {
     if (isUser || isErrorMessage) return
-    if (!message.content) {
+    if (!displayContent) {
       setHtml('')
       return
     }
     let cancelled = false
-    renderMarkdown(message.content, { allowedImageUrls: message.allowedImageUrls }).then((out) => {
+    renderMarkdown(displayContent, { allowedImageUrls: message.allowedImageUrls }).then((out) => {
       if (!cancelled) setHtml(linkNoteMarks(out))
     })
     return () => {
       cancelled = true
     }
-  }, [isUser, isErrorMessage, message.content, cacheKey, message.allowedImageUrls?.join('\n')])
+  }, [isUser, isErrorMessage, displayContent, cacheKey, message.allowedImageUrls?.join('\n')])
 
   // Objeto estável: o React 19 reescreve o innerHTML quando a identidade do
   // { __html } muda, e isso desfaz a seleção do usuário na resposta.
@@ -221,7 +251,9 @@ export function ChatMessageBubble({
         </span>
       ) : isNoResponse ? (
         <>
-          <p className={styles.noResponse}>No response (interrupted)</p>
+          <p className={styles.noResponse}>
+            {message.interrupted === 'stopped' ? STOPPED_BEFORE_REPLY : 'No response (interrupted)'}
+          </p>
           {retryButton && <div className={styles.turnActions}>{retryButton}</div>}
         </>
       ) : emptyState === 'elsewhere' ? (
@@ -279,6 +311,15 @@ export function ChatMessageBubble({
               void openUrl(href)
             }}
           />
+          {itemActions && message.agentItems && hasAgentPayload(message) && (
+            <AgentItemsList
+              payload={message.agentItems}
+              actions={itemActions}
+              disabled={isStreaming}
+              messageId={message.id}
+              content={message.content}
+            />
+          )}
           {showMeta && (
             <div className={styles.msgMetaRow}>
               {interruptedLabel && (
@@ -314,16 +355,10 @@ export function ChatMessageBubble({
                 type="button"
                 className={styles.saveBtn}
                 onClick={() => onSaveAgentNote(agentDraft)}
-                aria-label={
-                  agentDraft.kind === 'profile' ? 'Save this study profile as a note' : 'Save this plan as a Plan note'
-                }
+                aria-label={AGENT_DRAFT_ACTION[agentDraft.kind].title}
               >
-                {agentDraft.kind === 'profile' ? (
-                  <IdentificationCard size={13} aria-hidden />
-                ) : (
-                  <CalendarPlus size={13} aria-hidden />
-                )}
-                {agentDraft.kind === 'profile' ? 'Save study profile' : 'Save as Plan note'}
+                {DraftIcon && <DraftIcon size={13} aria-hidden />}
+                {AGENT_DRAFT_ACTION[agentDraft.kind].label}
               </button>
             )}
             {canSaveToNote && onSaveToNote && (

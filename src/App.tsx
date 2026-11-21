@@ -43,10 +43,14 @@ import { TasksEnvProvider, type TasksEnv } from './components/TasksView/TasksEnv
 import { StatusManagerModal } from './components/TasksView/StatusManagerModal'
 import { MetadataManagerModal } from './components/TasksView/MetadataManagerModal'
 import { NoteTypesModal } from './components/NoteTypes/NoteTypesModal'
+import { TrackerChips } from './components/Trackers/TrackerChips'
+import { TrackersModal } from './components/Trackers/TrackersModal'
 import { NoteBoard } from './components/NoteBoard/NoteBoard'
 import { NoteBoardModalNav } from './components/NoteBoard/NoteBoardModalNav'
+import { NoteLog } from './components/NoteLog/NoteLog'
 import { NoteTypePicker } from './components/NoteTypes/NoteTypePicker'
 import { NotePropertiesBar } from './components/NoteTypes/NotePropertiesBar'
+import { PaperLibraryBar } from './components/NoteTypes/PaperLibraryBar'
 import { TodosPanel } from './components/NoteTypes/TodosPanel'
 import { TodosMigrationModal } from './components/NoteTypes/TodosMigrationModal'
 import { ProjectsBoard } from './components/TasksView/ProjectsBoard'
@@ -89,6 +93,7 @@ import { useTasks } from './hooks/useTasks'
 import { useTaskStatuses } from './hooks/useTaskStatuses'
 import { useMetadataDefs } from './hooks/useMetadataDefs'
 import { useNoteTypes } from './hooks/useNoteTypes'
+import { useTrackers } from './hooks/useTrackers'
 import { useConfirm } from './hooks/useConfirm'
 import {
   canHaveType,
@@ -100,6 +105,7 @@ import {
   typeDefs,
 } from './lib/noteTypes'
 import { boardNotes, resolveBoard, withPropertyValue } from './lib/noteBoard'
+import { logNewNoteNotebookId, logNotes, resolveLog } from './lib/noteLog'
 import {
   buildTodosContent,
   missingPillLines,
@@ -122,6 +128,8 @@ import {
 } from './lib/agents/define'
 import { docsSources, DOCS_NOT_FOUND, formatDocsContext } from './lib/agents/docs'
 import { EXPAND_NO_TAVILY, EXPAND_SEARCH_FAILED } from './lib/agents/expand'
+import { sinceSearch } from './lib/agents/radar'
+import { prepareSinceContext } from './lib/agents/since'
 import { RAG_REWRITE_MODEL_KEY, ragMessage, ragRetrieve, type RagCandidate } from './lib/rag'
 import {
   agendaContents,
@@ -136,8 +144,12 @@ import {
 import { onAssistantNoteRequest } from './lib/assistantNoteBridge'
 import type { AgentNoteRequest } from './lib/agentNotes'
 import { agendaPlanSummaries, isPlanType, planSaveChanges } from './lib/planNotes'
-import { loadReaderBooks } from './lib/agents/agentData'
+import { loadReaderBooks, loadTrackersWeekText } from './lib/agents/agentData'
 import { STUDY_PROFILE_TAG } from './lib/studyProfile'
+import { RADAR_PROFILE_TAG } from './lib/radarProfile'
+import { isPaperType, paperNoteAuthors, paperProperties } from './lib/papers'
+import { findReadingListNote, setUpPaperType } from './lib/paperSetup'
+import { requestOpenBook } from './lib/libraryOpen'
 import { emitTasksChanged } from './lib/tasksEvents'
 import {
   getUpdatePreference,
@@ -147,7 +159,7 @@ import {
   isMandatory,
   setSkippedVersion,
 } from './lib/updater'
-import { getAiBlockTitle, getToggleTitle, isPotentialCommandLine } from './components/Editor/commandParser'
+import { getAiBlockTitle, getToggleTitle, isPotentialCommandLine, responseCommandText } from './components/Editor/commandParser'
 import {
   cleanNoteContentForAi,
   collectEmbedIds,
@@ -270,13 +282,15 @@ const AI_BLOCK_MAX_CHARS = 1500
 const COLLAPSED_PANEL_WIDTH = 48
 
 // Área principal, uma por vez: notas (padrão), Tasks, a lista de marcas, a
-// lista de uma tag ou o board de um tipo de nota.
+// lista de uma tag, o board de um tipo de nota ou o Log de um tipo de nota
+// (coluna das notas, como a lista de uma tag).
 type MainArea =
   | { kind: 'notes' }
   | { kind: 'tasks' }
   | { kind: 'marks' }
   | { kind: 'tag'; tag: string }
   | { kind: 'noteBoard'; typeId: string }
+  | { kind: 'noteLog'; typeId: string }
 
 const NOTES_AREA: MainArea = { kind: 'notes' }
 
@@ -650,12 +664,15 @@ function App() {
   const [metadataManager, setMetadataManager] = useState<{ focusId: string | null } | null>(null)
   // "Note types" aberto (focusTypeId = tipo selecionado ao abrir; reorder =
   // aberto por "Reorder types…" da lista de notas; board = rolado até a seção
-  // Board, pelo "Board settings").
+  // Board, pelo "Board settings"; log = rolado até a seção Log, pelo "Settings" do Log).
   const [noteTypesOpen, setNoteTypesOpen] = useState<{
     focusTypeId: string | null
     reorder?: boolean
     board?: boolean
+    log?: boolean
   } | null>(null)
+  // "Trackers" aberto (gestão dos hábitos do Calendar).
+  const [trackersOpen, setTrackersOpen] = useState(false)
   const { confirm, choose, modal: confirmModal } = useConfirm()
   // Group by da lista de tasks.
   const [tasksGroupBy, setTasksGroupByState] = useState<TaskGroupBy>(() => {
@@ -734,8 +751,15 @@ function App() {
   // limpa as notas no banco; a memória relê (só com o modal aberto, sem
   // digitação em voo no editor).
   const noteTypes = useNoteTypes({
-    onRemoved: () => void refreshNotes().catch((err) => console.error('failed to reload notes', err)),
+    onRemoved: () => {
+      void refreshNotes().catch((err) => console.error('failed to reload notes', err))
+      // O banco limpou o vínculo dos trackers com o tipo apagado; sem reler, um
+      // tracker salvo depois nesta janela regravaria o vínculo antigo.
+      void trackers.reload()
+    },
   })
+  // Trackers de constância (hábitos com meta semanal) e as marcas por dia.
+  const trackers = useTrackers({ notes, todayKey: today })
   const {
     views: savedViews,
     create: createSavedView,
@@ -1174,6 +1198,18 @@ function App() {
   const noteBoardOpen = activeBoard !== null
   const fullAreaOpen = tasksBoardOpen || noteBoardOpen
 
+  // Logs de tipo de nota ("Show as log") e o aberto, na coluna das notas.
+  const logs = useMemo(
+    () =>
+      noteTypes.types.flatMap((type) => {
+        const log = resolveLog(type, noteTypes.defs)
+        return log ? [{ type, log, count: logNotes(notes, type.id).length }] : []
+      }),
+    [noteTypes.types, noteTypes.defs, notes]
+  )
+  const noteLogTypeId = mainArea.kind === 'noteLog' ? mainArea.typeId : null
+  const activeLog = logs.find((l) => l.type.id === noteLogTypeId) ?? null
+
   // Task aberta pelo Opened today ou pelo Related content: modal sobre a nota
   // atual; nas visões em quadro (o editor já está num modal), a área Tasks.
   const openTaskFromPanel = useCallback(
@@ -1182,11 +1218,13 @@ function App() {
   )
 
   // Tipo apagado, board desligado ou coluna apagada (inclusive por outra
-  // janela) com o board aberto: volta para as notas.
+  // janela) com o board aberto: volta para as notas. Igual para o Log (tipo
+  // apagado ou Log desligado).
   const noteBoardGone = mainArea.kind === 'noteBoard' && !boards.some((b) => b.type.id === mainArea.typeId)
+  const noteLogGone = mainArea.kind === 'noteLog' && !logs.some((l) => l.type.id === mainArea.typeId)
   useEffect(() => {
-    if (noteBoardGone) setMainArea(NOTES_AREA)
-  }, [noteBoardGone])
+    if (noteBoardGone || noteLogGone) setMainArea(NOTES_AREA)
+  }, [noteBoardGone, noteLogGone])
 
   // O board de notas na tela (fora do modo foco) recolhe o painel de IA (o
   // board precisa da largura) e, ao sair, reabre se estava aberto. Reabrir
@@ -1216,6 +1254,19 @@ function App() {
     setMainArea({ kind: 'noteBoard', typeId })
     setNoteBoardModalId(null)
   }, [])
+
+  const openNoteLog = useCallback((typeId: string) => setMainArea({ kind: 'noteLog', typeId }), [])
+
+  // "Open reading list" do "Add to reading list": o board do tipo Paper, o mesmo
+  // da coluna de cadernos. Sem board (o tipo ainda não tem), sem o botão.
+  const openReadingList = useMemo(() => {
+    const board = boards.find((b) => isPaperType(b.type))
+    if (!board) return undefined
+    return () => {
+      setActiveMode('notebook')
+      openNoteBoard(board.type.id)
+    }
+  }, [boards, openNoteBoard])
 
   const taskProgress = useMemo(() => taskProgressByNotebook(tasks, today), [tasks, today])
   // Progresso de cada nota TODOS (lista de notas e faixa da nota).
@@ -1407,8 +1458,7 @@ function App() {
     const set = new Set<string>()
     for (const r of responses) {
       if (r.status === 'error') continue
-      const text = r.query.trim() ? `${r.command} ${r.query.trim()}` : r.command
-      set.add(text)
+      set.add(responseCommandText(r))
     }
     return set
   }, [responses])
@@ -2227,6 +2277,16 @@ function App() {
   // "Settings" da janela assistant: o mesmo caminho do App (handleOpenSettings,
   // atribuído mais abaixo), que respeita o onboarding.
   const openSettingsRef = useRef<() => void>(() => {})
+  // "Open in Library" de um artigo: a Library remonta (key) e lê o livro pedido,
+  // mesmo quando o modo já é "library". Também vem da janela assistant.
+  const [libraryNonce, setLibraryNonce] = useState(0)
+  const openBookInLibrary = useCallback((bookId: string) => {
+    requestOpenBook(bookId)
+    setLibraryNonce((n) => n + 1)
+    setActiveMode('library')
+  }, [])
+  const openBookInLibraryRef = useRef(openBookInLibrary)
+  openBookInLibraryRef.current = openBookInLibrary
   useEffect(() => {
     let cancelled = false
     const unlisteners: Array<() => void> = []
@@ -2260,6 +2320,15 @@ function App() {
         const main = getCurrentWindow()
         void main.unminimize().then(() => main.show()).then(() => main.setFocus()).catch(() => {})
         openMarkRef.current(event.payload)
+      })
+    )
+    // Livro de um artigo aberto na janela assistant: a main aparece na Library.
+    track(
+      listen<string>('assistant-open-book', (event) => {
+        if (typeof event.payload !== 'string') return
+        const main = getCurrentWindow()
+        void main.unminimize().then(() => main.show()).then(() => main.setFocus()).catch(() => {})
+        openBookInLibraryRef.current(event.payload)
       })
     )
     // "Settings" da janela assistant: a main aparece com o Settings aberto.
@@ -2419,7 +2488,7 @@ function App() {
         )
         return true
       }
-      if (policy.web === 'required') {
+      if (policy.web === 'required' || policy.web === 'since') {
         if (!(await hasTavilyKey())) {
           addErrorCard(
             activeId,
@@ -2526,7 +2595,7 @@ function App() {
 
       // Nota quase vazia (só blocos de IA também conta): aviso sem chamar o modelo.
       if (policy.minUserTextChars && userText.trim().length < policy.minUserTextChars) {
-        addErrorCard(activeId, cmd, cardQuery, CRITIQUE_TOO_SHORT, commandId)
+        addErrorCard(activeId, cmd, cardQuery, policy.tooShortMessage ?? CRITIQUE_TOO_SHORT, commandId)
         return true
       }
 
@@ -2581,6 +2650,7 @@ function App() {
       }
 
       let searchContext: string | undefined
+      let startQuery = cardQuery
       if (policy.web === 'required' && query.trim()) {
         setPrepareStatus(commandId, 'Searching the web…')
         try {
@@ -2602,6 +2672,27 @@ function App() {
         } else {
           extraContext.push(EXPAND_NO_TAVILY)
         }
+      } else if (policy.web === 'since') {
+        const since = await prepareSinceContext(
+          {
+            instruction: query,
+            note: activeNote ?? { createdAt: Date.now() },
+            noteId: activeId,
+            calendarKey,
+            responses: [...embeds.values()],
+            userText,
+            todayKey,
+            onSearch: () => setPrepareStatus(commandId, 'Searching the web…'),
+          },
+          sinceSearch
+        )
+        if ('error' in since) {
+          addErrorCard(activeId, cmd, cardQuery, since.error, commandId)
+          return true
+        }
+        startQuery = since.titleQuery ?? cardQuery
+        extraContext.push(...since.extraContext)
+        searchContext = since.searchContext
       }
 
       const notebookId = activeNote?.notebookId ?? null
@@ -2715,9 +2806,14 @@ function App() {
               planDays: agendaPlanDays,
             })
           : null
+      // Trackers da semana da agenda (só /week-review); falha de leitura = sem o bloco.
+      const trackersWeek =
+        policy.trackers && agendaInput
+          ? await loadTrackersWeekText(agendaInput.from, todayKey, { notes, types: noteTypes.types }).catch(() => null)
+          : null
       const agendaContext =
         agenda && agendaInput && planSummaries
-          ? `${agendaHeader}\n\n${formatAgendaContext(agenda, agendaInput, toAiText, planSummaries)}\n\n---`
+          ? `${agendaHeader}\n\n${formatAgendaContext(agenda, agendaInput, toAiText, planSummaries)}${trackersWeek ? `\n\n${trackersWeek}` : ''}\n\n---`
           : undefined
 
       let datedNotesContext: string | undefined
@@ -2768,7 +2864,7 @@ function App() {
         noteId: activeId,
         model: modelId,
         command: cmd,
-        query: cardQuery,
+        query: startQuery,
         commandId,
         systemPrompt,
         userMessage,
@@ -3582,6 +3678,35 @@ function App() {
           tags: [STUDY_PROFILE_TAG],
         })
       }
+      if (req.kind === 'radarProfile') {
+        return handleCreateNoteFromChat(req.notebookId, req.title, req.content, undefined, null, {
+          tags: [RADAR_PROFILE_TAG],
+        })
+      }
+      if (req.kind === 'paper') {
+        // "Add to reading list": tipo Paper (só o que falta), nota e propriedades.
+        // A main é a única que grava: se o artigo entrou na fila desde que o modal
+        // abriu (o modal aberto na outra janela), devolve a nota que já existe. O
+        // "Try again" (nota já criada neste pedido) segue direto para as propriedades.
+        let note = requestId ? agentNoteByRequestRef.current.get(requestId) : undefined
+        if (!note) {
+          const existing = await findReadingListNote(req)
+          if (existing) return existing
+        }
+        const setup = await setUpPaperType()
+        for (const warning of setup.warnings) console.warn(warning)
+        await noteTypes.reload()
+        if (!note) {
+          note = await handleCreateNoteFromChat(req.notebookId, req.title, req.content, undefined, setup.typeId)
+          if (requestId) agentNoteByRequestRef.current.set(requestId, note)
+        }
+        const props = paperProperties(setup.ids, req)
+        if (Object.keys(props).length > 0 && !(await setNoteProperties(note.id, props))) {
+          throw new Error('Failed to save note properties.')
+        }
+        if (requestId) agentNoteByRequestRef.current.delete(requestId)
+        return note
+      }
       const [types, defs] = await Promise.all([storage.getNoteTypes(), storage.getMetadataDefs()])
       const p = planSaveChanges(types, defs.filter((d) => d.scope === 'note'))
       // Uma execução por linha, sem BEGIN/COMMIT (pool sqlx): falha parcial é
@@ -3827,6 +3952,20 @@ function App() {
     },
     [handleNavigateToNote, activeId, activeNotebookId]
   )
+
+  // "New session" do Log: nota do tipo (template e tipo aplicados) com a data de
+  // hoje, no caderno da nota mais recente do tipo (sem nenhuma, o caderno
+  // ativo; Calendar ou nenhum, o Quick Notes), aberta no editor com o Log ao lado.
+  async function handleCreateLogNote(typeId: string) {
+    const fromType = logNewNoteNotebookId(notes, typeId)
+    const notebookId =
+      fromType ?? (activeNotebookId && activeNotebookId !== calendarNotebookId ? activeNotebookId : await ensureInbox())
+    const note = await createTypedNote(notebookId, null, typeId)
+    const template = noteTypes.types.find((t) => t.id === typeId)?.template
+    const dated: Note = { ...note, content: template ?? note.content, date: today, updatedAt: Date.now() }
+    await saveNote(dated)
+    handleOpenTaggedNote(dated)
+  }
 
   // "List" do menu da marca e Ctrl+clique numa marca: a lista no rótulo dela,
   // com a marca destacada.
@@ -4296,13 +4435,25 @@ function App() {
           onManageMetadata={(focusId) => setMetadataManager({ focusId: focusId ?? null })}
         />
       ) : activeCalendarDay ? (
-        <DueTodayBlock
-          tasks={tasks}
-          dayKey={activeCalendarDay}
-          todayKey={today}
-          onOpenTask={openTask}
-          onToggleTask={handleToggleLinkedTask}
-        />
+        <>
+          <TrackerChips
+            trackers={trackers.active}
+            days={trackers.days}
+            dayKey={activeCalendarDay}
+            todayKey={today}
+            noteTypes={noteTypes.types}
+            onToggle={(id, day, on) => void trackers.setMark(id, day, on)}
+            onOpenNote={handleNoteLinkNavigation}
+            error={trackers.markError}
+          />
+          <DueTodayBlock
+            tasks={tasks}
+            dayKey={activeCalendarDay}
+            todayKey={today}
+            onOpenTask={openTask}
+            onToggleTask={handleToggleLinkedTask}
+          />
+        </>
       ) : activeNoteType ? (
         <>
           <NotePropertiesBar
@@ -4327,6 +4478,21 @@ function App() {
             onCreateOption={async (defId, name) => (await noteTypes.createOption(defId, name)).id}
             onInsertTemplate={handleInsertTemplate}
           />
+          {isPaperType(activeNoteType) && (
+            <PaperLibraryBar
+              key={activeNote.id}
+              noteId={activeNote.id}
+              notebookId={activeNote.notebookId}
+              title={activeNote.title}
+              content={activeNote.content}
+              authors={paperNoteAuthors(activeNote, typeDefs(noteTypes.defs, activeNoteType.id))}
+              // Este editor também é o do modal "Edit note" do board: ele fecha e dá lugar à Library.
+              onOpenBook={(bookId) => {
+                setNoteBoardModalId(null)
+                openBookInLibrary(bookId)
+              }}
+            />
+          )}
           {activeNoteType.id === TODOS_TYPE_ID && (
             <TodosPanel
               progress={todosProgress.get(activeNote.id)}
@@ -4503,6 +4669,7 @@ function App() {
       ) : activeMode === 'library' ? (
         <div className="workspace">
           <Library
+            key={libraryNonce}
             notebooks={orderedNotebooks}
             notes={notes}
             noteTypes={noteTypes.types}
@@ -4530,6 +4697,8 @@ function App() {
               if (!(await saveNote(note))) throw new Error('Failed to save note.')
             }}
             onNavigateToNote={handleNavigateToNote}
+            onOpenBook={openBookInLibrary}
+            onOpenReadingList={openReadingList}
             tasks={tasks}
             todayKey={today}
             taskChecklist={taskChecklist}
@@ -4584,6 +4753,10 @@ function App() {
           onOpenBoard={openNoteBoard}
           onCloseBoard={closeMainArea}
           onSetUpBoard={() => setNoteTypesOpen({ focusTypeId: null, board: true })}
+          logs={logs.map((l) => ({ type: l.type, count: l.count }))}
+          activeLogTypeId={noteLogTypeId}
+          onOpenLog={openNoteLog}
+          onCloseLog={closeMainArea}
           onOpenSettings={handleOpenSettings}
           calendarNotebookId={calendarNotebookId}
           tasksActive={tasksViewOpen}
@@ -4702,6 +4875,23 @@ function App() {
             onDeleteTasks={(ids) => void deleteProjectTasks(ids)}
             checklist={taskChecklist}
           />
+        ) : activeLog ? (
+          <NoteLog
+            type={activeLog.type}
+            resolved={activeLog.log}
+            typeDefs={typeDefs(noteTypes.defs, activeLog.type.id)}
+            notes={notes}
+            notebooks={orderedNotebooks}
+            todayKey={today}
+            activeNoteId={activeId}
+            onOpenNote={handleOpenTaggedNote}
+            onOpenSettings={() => setNoteTypesOpen({ focusTypeId: activeLog.type.id, log: true })}
+            onNewSession={() => void handleCreateLogNote(activeLog.type.id)}
+            onClose={closeMainArea}
+            width={effectiveSidebarWidth}
+            wide={notebookCollapsed}
+            onWidthChange={setColumnWidth}
+          />
         ) : marksViewOpen ? (
           <MarksView
             hits={allMarkHits}
@@ -4762,6 +4952,18 @@ function App() {
               })
             }
             onOpenTask={openTask}
+            trackers={trackers.active}
+            trackerDays={trackers.days}
+            onToggleTrackerDay={(id, day, on) => void trackers.setMark(id, day, on)}
+            onOpenTrackerNote={handleNoteLinkNavigation}
+            onManageTrackers={() => {
+              trackers.clearErrors()
+              setTrackersOpen(true)
+            }}
+            trackersLoadFailed={trackers.loadFailed}
+            trackersLoaded={trackers.loaded}
+            onRetryTrackers={trackers.reload}
+            trackerError={trackers.markError}
           />
         ) : (
           <Sidebar
@@ -4878,12 +5080,15 @@ function App() {
               pendingExchange={pendingChatExchange}
               onPendingExchangeConsumed={handleChatExchangeConsumed}
               onOpenSettings={handleOpenSettings}
+              onOpenSettingsSection={handleOpenMincerSettings}
               canInsert={canInsertIntoNote}
               onInsertIntoNote={handleInsertIntoNote}
               onOpenMark={handleOpenMark}
               notes={notes}
               onCreateAgentNote={handleCreateAgentNoteFromChat}
               onNavigateToNote={handleNavigateToNote}
+              onOpenBook={openBookInLibrary}
+              onOpenReadingList={openReadingList}
             />
           }
         />
@@ -5098,12 +5303,30 @@ function App() {
           focusTypeId={noteTypesOpen.focusTypeId}
           reorder={noteTypesOpen.reorder}
           focusBoard={noteTypesOpen.board}
+          focusLog={noteTypesOpen.log}
           registry={noteTypes}
           notes={notes}
+          trackers={trackers.trackers}
           onOpenBoard={(id) => {
             setNoteTypesOpen(null)
             openNoteBoard(id)
           }}
+          onOpenLog={(id) => {
+            setNoteTypesOpen(null)
+            openNoteLog(id)
+          }}
+        />
+      )}
+      {trackersOpen && (
+        <TrackersModal
+          registry={trackers}
+          noteTypes={noteTypes.types}
+          onTypesChanged={() => noteTypes.reload()}
+          onOpenLog={(id) => {
+            setTrackersOpen(false)
+            openNoteLog(id)
+          }}
+          onClose={() => setTrackersOpen(false)}
         />
       )}
       {todosMigration && (

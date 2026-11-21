@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Brain, CalendarBlank, FileText, Globe, ListChecks, ListMagnifyingGlass, Wrench } from '@phosphor-icons/react'
+import { Brain, CalendarBlank, FileText, Globe, ListChecks, ListMagnifyingGlass, Target, Wrench } from '@phosphor-icons/react'
 import type { ChatTools } from '../../hooks/useChat'
 import type { ChatAgentDef } from '../../lib/agents/chat'
 import { useRagDetailed } from '../../hooks/useRagDetailed'
@@ -31,6 +31,8 @@ export interface ChatToolsMenuProps {
   onToggleFolderWebResearch?: (value: boolean) => void
   // Tool "Tasks": chat principal e NotesChat; `supported` = o modelo aceita tools.
   tasksTool?: { supported: boolean } | null
+  // Tool "Trackers": chat principal, Assistant e NotesChat; fora do Reader.
+  trackersTool?: { supported: boolean } | null
   // Tool "Daily notes" (get_day, notes_by_date); `supported` = o modelo aceita tools.
   dailyNotesTool?: { supported: boolean } | null
   // Tool "Notes" (get_note e search_marks); `supported` = o modelo aceita tools.
@@ -49,6 +51,7 @@ export function ChatToolsMenu({
   folderWebResearch = null,
   onToggleFolderWebResearch = () => {},
   tasksTool = null,
+  trackersTool = null,
   dailyNotesTool = null,
   notesTool = null,
   agent = null,
@@ -77,14 +80,20 @@ export function ChatToolsMenu({
     }
   }, [open])
 
-  // Estado efetivo por agente (General não muda nada).
-  const webOffByAgent = !!agent && !agent.context.web
+  // Estado efetivo por agente (General não muda nada). Agente com pipeline de
+  // busca próprio (Radar): o app roda as buscas, então a web fica ligada e
+  // travada (sem mexer no toggle do usuário).
+  const webByPipeline = !!agent?.webPipeline?.needsTavily
+  const webOffByAgent = !!agent && !agent.context.web && !webByPipeline
   const tasksForced = !!agent?.forceTasksTool && !!tasksTool?.supported
+  const trackersForced = !!agent?.forceTrackersTool && !!trackersTool?.supported
   const notesForced = !!agent?.forceNotesTool && !!notesTool?.supported
   const effective = (key: keyof ChatTools): boolean => {
-    if (key === 'webSearch') return tools.webSearch && !webOffByAgent
+    if (key === 'webSearch') return webByPipeline || (tools.webSearch && !webOffByAgent)
     return tools[key]
   }
+  // Trackers fora da conta: a tool vem ligada por padrão, mas só vai ao turno com
+  // tracker ativo, e o menu não sabe se há (contá-la mostraria +1 a quem não tem).
   const activeCount =
     TOOLS.filter((t) => effective(t.key)).length +
     (folderMemory?.enabled ? 1 : 0) +
@@ -118,11 +127,18 @@ export function ChatToolsMenu({
             {TOOLS.map((t) => {
               const enabled = effective(t.key)
               const lockedBy = t.key === 'webSearch' && webOffByAgent ? agent : null
+              const pipelineBy = t.key === 'webSearch' && webByPipeline ? agent : null
               return (
                 <div
                   key={t.key}
                   className={styles.toolRow}
-                  title={lockedBy ? `${lockedBy.label} doesn't use web search` : undefined}
+                  title={
+                    lockedBy
+                      ? `${lockedBy.label} doesn't use web search`
+                      : pipelineBy
+                        ? `Always on for ${pipelineBy.label}: the app runs the searches`
+                        : undefined
+                  }
                 >
                   <span className={styles.toolIcon}>{t.icon}</span>
                   <div className={styles.toolText}>
@@ -131,13 +147,16 @@ export function ChatToolsMenu({
                       {t.description}
                     </span>
                     {lockedBy && <span className={styles.toolLocked}>Off for {lockedBy.label}</span>}
+                    {pipelineBy && (
+                      <span className={styles.toolLocked}>Always on for {pipelineBy.label}: the app runs the searches</span>
+                    )}
                   </div>
                   <button
                     type="button"
                     role="switch"
                     aria-checked={enabled}
                     aria-label={`toggle ${t.name.toLowerCase()}`}
-                    disabled={!!lockedBy}
+                    disabled={!!lockedBy || !!pipelineBy}
                     className={enabled ? styles.toggleOn : styles.toggleOff}
                     onClick={() => onToggle(t.key, !enabled)}
                   >
@@ -175,6 +194,40 @@ export function ChatToolsMenu({
                   disabled={!tasksTool.supported || tasksForced}
                   className={tools.tasks || tasksForced ? styles.toggleOn : styles.toggleOff}
                   onClick={() => onToggle('tasks', !tools.tasks)}
+                >
+                  <span className={styles.toggleKnob} aria-hidden="true" />
+                </button>
+              </div>
+            )}
+            {trackersTool && (
+              <div
+                className={styles.toolRow}
+                title={
+                  !trackersTool.supported
+                    ? 'This model does not support tools'
+                    : trackersForced && agent
+                      ? `${agent.label} always reads your trackers`
+                      : undefined
+                }
+              >
+                <span className={styles.toolIcon}>
+                  <Target size={16} />
+                </span>
+                <div className={styles.toolText}>
+                  <span className={styles.toolName}>Trackers</span>
+                  <span className={styles.toolDescription}>
+                    Lets the AI count your trackers (days done per week and per month) when you ask about them. Read-only.
+                  </span>
+                  {trackersForced && agent && <span className={styles.toolLocked}>On for {agent.label}</span>}
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={tools.trackers || trackersForced}
+                  aria-label="toggle trackers"
+                  disabled={!trackersTool.supported || trackersForced}
+                  className={tools.trackers || trackersForced ? styles.toggleOn : styles.toggleOff}
+                  onClick={() => onToggle('trackers', !tools.trackers)}
                 >
                   <span className={styles.toggleKnob} aria-hidden="true" />
                 </button>

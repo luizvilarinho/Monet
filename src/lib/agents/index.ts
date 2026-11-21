@@ -15,6 +15,7 @@ import {
   summarizeAgent,
   tableAgent,
 } from './legacy'
+import { sinceAgent } from './since'
 import { todayAgent } from './today'
 import { weekReviewAgent } from './weekReview'
 
@@ -28,6 +29,7 @@ export const AGENTS: AgentDef[] = [
   opinionAgent,
   tableAgent,
   expandAgent,
+  sinceAgent,
   explainAgent,
   guideAgent,
   mindmapAgent,

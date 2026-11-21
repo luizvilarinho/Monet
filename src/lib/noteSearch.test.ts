@@ -25,7 +25,7 @@ function notebook(id: string, name: string): Notebook {
 }
 
 function noteType(id: string, name: string): NoteType {
-  return { id, name, icon: null, color: null, template: null, sortOrder: 0, builtin: false, createdAt: 0, board: null }
+  return { id, name, icon: null, color: null, template: null, sortOrder: 0, builtin: false, createdAt: 0, board: null, log: null }
 }
 
 const notebooks = [

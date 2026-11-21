@@ -1,12 +1,14 @@
 import { Gauge } from '@phosphor-icons/react'
 import { withWeekday } from '../agenda'
 import { collectPlans, formatPlanForAi } from '../planNotes'
-import { loadPlanData } from './agentData'
+import { formatTrackersForAi } from '../trackers'
+import { loadPlanData, loadTrackerDataSafe } from './agentData'
 import type { AgentContext, AgentContextInput, ChatAgentDef } from './chat'
 
-// Agente coach (chat): vê se os planos estão no prazo e cobra o ritmo. Só lê
-// planos (D13: entregas de tasks são do plan-week); o progresso é o checklist,
-// medido pelo app (src/lib/plan.ts).
+// Agente coach (chat): vê se os planos estão no prazo e se os trackers estão no
+// ritmo, e cobra. Só lê planos (D13: entregas de tasks são do plan-week); o
+// progresso é o checklist, medido pelo app (src/lib/plan.ts). Os trackers vêm
+// contados pelo app (src/lib/trackers.ts).
 
 const UPCOMING_MAX = 3
 
@@ -47,15 +49,20 @@ async function buildCoachContext(input: AgentContextInput): Promise<AgentContext
   if (upcoming.length > 0) {
     out.push('', `Not started yet: ${upcoming.map((e) => `${title(e)} (starts ${e.info.start})`).join('; ')}.`)
   }
+  const trackerData = await loadTrackerDataSafe(today, { notes: data.notes, types: data.types })
+  const trackerText = trackerData
+    ? formatTrackersForAi(trackerData.trackers, trackerData.days, today, trackerData.typeNameById)
+    : null
+  if (trackerText) out.push('', trackerText)
   return { text: out.join('\n') }
 }
 
 function coachPrompt(language: string): string {
-  return `You are Monet's coach. You check whether the user's plans are on schedule and push for the pace needed to finish them. You read plans; you never create or change them. Redoing a plan is the planner's job (/planner).
+  return `You are Monet's coach. You check whether the user's plans are on schedule and their habit trackers on pace, and push for the pace needed to finish the plans. You read plans; you never create or change them. Redoing a plan is the planner's job (/planner).
 
 Respond in the language of the user's latest message (if unclear: ${language}). Short Markdown, no greetings, no lectures, no motivational filler. Section titles (such as What to do) in the user's language too.
 
-Data: the "Coach context" system block is rebuilt by the app for every message and is the source of truth: for each active plan, the items done, the items expected by today, how far behind or ahead, the overdue, today's and next items, the items per day needed until End, the plan's capacity and an auxiliary Reader signal. The numbers are computed by the app: use them, never recount. The checklist is the progress; the Reader is only a hint.
+Data: the "Coach context" system block is rebuilt by the app for every message and is the source of truth: for each active plan, the items done, the items expected by today, how far behind or ahead, the overdue, today's and next items, the items per day needed until End, the plan's capacity and an auxiliary Reader signal. The numbers are computed by the app: use them, never recount. The checklist is the progress; the Reader is only a hint. When the block has a "Trackers" section, it gives, for each active tracker, the weekly target, the days done this week, the sessions to go, the open days left, the last 4 weeks and the month totals, all computed by the app.
 
 Output, for each active plan, most behind first:
 - One status line: "**<plan title>** — <status>" (e.g. "behind N items (D days)", "on track", "N items ahead", "past its End with N open items").
@@ -65,8 +72,9 @@ If the open items cannot fit before End at the plan's capacity (compare "needed 
 A plan on track or ahead gets only the status line and its next item.
 Assumptions: the block may state assumed dates (items without their own date) or a missing capacity. Explain them only in your first reply of the conversation (check your earlier replies), in one short plain-language line at the end, never as a formula; do not repeat them later unless the user asks how you calculated. For assumed dates, say from which date Day 1 was counted and that redoing the plan with /planner gives exact dates. For a missing capacity, say you assumed 1h/day and where to set it (the plan's capacity property; if the type has none, saving a plan from the Planner adds it).
 Plans without a checklist: one line saying they cannot be measured and that a checklist with dated items fixes it.
+Trackers: only when the block has a Trackers section. After the plans (or alone, when there is no active plan), one line per tracker: "**<name>** — n/target this week" plus, when sessions are left, which of the open days to use. If the sessions to go do not fit in the open days left, say so plainly. Mention the last 4 weeks or the month only when they show a pattern (for example, below target in 3 of the last 4 weeks) or when the user asks. Use the numbers as given; never estimate or recount. You never mark, create or change a tracker: the user marks days in the Calendar. Without a Trackers section, do not mention trackers.
 
-Questions: only when the block says there is no active plan. Then ask, in one line, which goal to follow and offer /planner to create the plan. Never ask about capacity.`
+Questions: only when the block says there is no active plan and has no Trackers section. Then ask, in one line, which goal to follow and offer /planner to create the plan. Never ask about capacity.`
 }
 
 export const coachAgent: ChatAgentDef = {
@@ -79,5 +87,6 @@ export const coachAgent: ChatAgentDef = {
   buildContext: buildCoachContext,
   forceTasksTool: false,
   forceNotesTool: false,
+  forceTrackersTool: true,
   context: { rag: false, web: false, deepResearch: false },
 }

@@ -104,7 +104,18 @@ const isStrOrNull = (v: unknown): v is string | null => v === null || isStr(v)
 function isValidAgentNote(n: unknown): n is AgentNoteRequest {
   if (!n || typeof n !== 'object') return false
   const r = n as Record<string, unknown>
-  if (r.kind === 'profile') return isStr(r.notebookId) && isStr(r.title) && isStr(r.content)
+  if (r.kind === 'profile' || r.kind === 'radarProfile') return isStr(r.notebookId) && isStr(r.title) && isStr(r.content)
+  if (r.kind === 'paper') {
+    return (
+      isStr(r.notebookId) &&
+      isStr(r.title) &&
+      isStr(r.content) &&
+      isStr(r.authors) &&
+      (r.year === null || typeof r.year === 'number') &&
+      isStrOrNull(r.doi) &&
+      isStr(r.openalexId)
+    )
+  }
   return (
     r.kind === 'plan' &&
     isStr(r.notebookId) &&

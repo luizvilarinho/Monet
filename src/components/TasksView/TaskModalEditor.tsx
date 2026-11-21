@@ -17,6 +17,7 @@ import type {
   TaskStatusDef,
 } from '../../types'
 import { Editor } from '../Editor/Editor'
+import { responseCommandText } from '../Editor/commandParser'
 import { TasksProvider, type TasksContextValue } from '../Editor/TasksContext'
 import { TaskPropertiesBar } from './TaskPropertiesBar'
 import styles from './TaskModalEditor.module.css'
@@ -96,8 +97,7 @@ export function TaskModalEditor({
     const set = new Set<string>()
     for (const r of responses) {
       if (r.status === 'error') continue
-      const text = r.query.trim() ? `${r.command} ${r.query.trim()}` : r.command
-      set.add(text)
+      set.add(responseCommandText(r))
     }
     return set
   }, [responses])

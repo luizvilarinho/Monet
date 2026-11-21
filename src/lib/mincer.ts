@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { emit, listen, type UnlistenFn } from '@tauri-apps/api/event'
 
 export type MincerKind = 'file' | 'paste' | 'record' | 'youtube' | 'web_summary' | 'web_capture'
 export type MincerStatus = 'queued' | 'running' | 'done' | 'error' | 'cancelled' | 'interrupted'
@@ -138,6 +138,7 @@ export const STAGE_LABELS: Record<string, string> = {
   splitting: 'Splitting audio',
   transcribing: 'Transcribing',
   fetching: 'Reading page',
+  fetching_tavily: 'The site blocked direct access — reading the page through Tavily',
   reading_pdf: 'Reading PDF',
   summarizing: 'Summarizing',
 }
@@ -322,6 +323,12 @@ export function onMincerLevel(handler: (p: MincerLevel) => void): Promise<Unlist
 // A lista mudou fora de um job (itens interrompidos e recuperados no boot).
 export function onMincerChanged(handler: () => void): Promise<UnlistenFn> {
   return listen('mincer://changed', () => handler())
+}
+
+// O `mincer_start` não emite o evento: quem enfileira de fora do Mincer (o "Send
+// to Mincer" do Radar) avisa a lista e a Toolbar.
+export function emitMincerChanged(): Promise<void> {
+  return emit('mincer://changed')
 }
 
 // Interrompido (crash) ou recuperado (gravação órfã): pede um Resume.

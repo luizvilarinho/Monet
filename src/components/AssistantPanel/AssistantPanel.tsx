@@ -28,6 +28,7 @@ import {
 import { storage } from '../../storage'
 import type { AiModel, Note, Notebook } from '../../types'
 import { ModelSelector } from '../AiPanel/ModelSelector'
+import type { AgentItemActions } from '../ChatPanel/AgentItemsList'
 import { ChatComposer } from '../ChatPanel/ChatComposer'
 import { agentLabelIds, ChatMessageBubble } from '../ChatPanel/ChatMessageBubble'
 import { FolderSystemPromptModal } from '../ChatPanel/FolderSystemPromptModal'
@@ -149,6 +150,7 @@ export function AssistantPanel() {
     setFolderMemory,
     setFolderMemoryEnabled,
     setFolderWebResearchEnabled,
+    registerAiSourcesFolder,
     folderMemoryUpdatedAt,
     webSourcesSaved,
   } = useChat(models, { mode: 'assistant', getTasksSnapshot: loadTasksSnapshot })
@@ -190,6 +192,53 @@ export function AssistantPanel() {
   // rascunho (o send() resolve tudo pelo folderId da conversa).
   const effectiveFolder = chosenFolder ?? assistantFolder
   const folderNotebookId = effectiveFolder ? getFolderNotebookId(effectiveFolder.id) : null
+  // Caderno do escopo de um artigo ("Add to reading list"); null = o da pasta.
+  const [agentNoteDefaultNotebookId, setAgentNoteDefaultNotebookId] = useState<string | null>(null)
+
+  // Estável: o balão memoiza o rascunho (plano ou perfil) por esta prop.
+  const openSaveAgentNote = useCallback(async (draft: AgentNoteDraft) => {
+    try {
+      const { notebooks, notes } = await loadSaveTargets()
+      setAgentNoteTarget({ draft, notebooks, notes })
+    } catch (err) {
+      console.error('failed to load notebooks for save agent note', err)
+    }
+  }, [])
+
+  // Ações dos itens do Radar. O "Add to KB" grava na pasta da conversa aberta
+  // (uma conversa retomada pode ser de outra pasta que a escolhida no seletor);
+  // o rascunho ainda sem pasta própria usa a pasta efetiva.
+  const itemFolder = useMemo(
+    () => (activeId ? folders.find((f) => f.conversationIds.includes(activeId)) : undefined) ?? effectiveFolder,
+    [folders, activeId, effectiveFolder]
+  )
+  const itemActions = useMemo<AgentItemActions>(
+    () => ({
+      kb: itemFolder
+        ? {
+            chatFolderId: itemFolder.id,
+            folderName: itemFolder.name,
+            webResearchEnabled: itemFolder.webResearchEnabled,
+            setWebResearchEnabled: (enabled) => setFolderWebResearchEnabled(itemFolder.id, enabled),
+            registerAiSourcesFolder,
+          }
+        : null,
+      // A nota abre na janela principal.
+      onOpenNote: (_notebookId, noteId) => {
+        void invoke('open_note_in_main', { noteId }).catch((err) => console.warn('open note in main failed', err))
+      },
+      // O modal do Paper abre aqui; a main grava a nota (ponte do "Save to note").
+      onAddPaper: (draft, defaultNotebookId) => {
+        setAgentNoteDefaultNotebookId(defaultNotebookId)
+        void openSaveAgentNote(draft)
+      },
+      // O livro abre na Library da janela principal.
+      onOpenBook: (bookId) => {
+        void emitTo('main', 'assistant-open-book', bookId).catch((err) => console.warn('open book in main failed', err))
+      },
+    }),
+    [itemFolder, setFolderWebResearchEnabled, registerAiSourcesFolder, openSaveAgentNote]
+  )
   const folderDocCount = effectiveFolder ? getFolderVisibleDocumentIds(effectiveFolder.id).length : 0
   const folderIdRef = useRef<string | undefined>(effectiveFolder?.id)
   folderIdRef.current = effectiveFolder?.id
@@ -339,16 +388,6 @@ export function AssistantPanel() {
       console.error('failed to load notebooks for save to note', err)
     }
   }
-
-  // Estável: o balão memoiza o rascunho (plano ou perfil) por esta prop.
-  const openSaveAgentNote = useCallback(async (draft: AgentNoteDraft) => {
-    try {
-      const { notebooks, notes } = await loadSaveTargets()
-      setAgentNoteTarget({ draft, notebooks, notes })
-    } catch (err) {
-      console.error('failed to load notebooks for save agent note', err)
-    }
-  }, [])
 
   return (
     <div className={styles.window}>
@@ -528,6 +567,7 @@ export function AssistantPanel() {
                 onSaveAgentNote={openSaveAgentNote}
                 // Marca citada: a main aparece e abre a nota nela.
                 onOpenMark={(text) => void emitTo('main', 'assistant-open-mark', text)}
+                itemActions={itemActions}
                 footer={<MessageSources message={m} trace={ragTraces[m.id]} timings={chatTimings[m.id]} />}
               />
             ))
@@ -597,14 +637,17 @@ export function AssistantPanel() {
         draft={agentNoteTarget?.draft ?? null}
         notebooks={agentNoteTarget?.notebooks ?? []}
         notes={agentNoteTarget?.notes ?? []}
-        defaultNotebookId={folderNotebookId}
+        defaultNotebookId={agentNoteDefaultNotebookId ?? folderNotebookId}
         onCreate={createAgentNoteViaMain}
         onNavigateToNote={(_notebookId, noteId) => {
           void invoke('open_note_in_main', { noteId }).catch((err) =>
             console.warn('open note in main failed', err)
           )
         }}
-        onClose={() => setAgentNoteTarget(null)}
+        onClose={() => {
+          setAgentNoteTarget(null)
+          setAgentNoteDefaultNotebookId(null)
+        }}
       />
       <FolderSystemPromptModal
         open={promptOpen}

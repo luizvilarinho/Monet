@@ -203,6 +203,20 @@ fn transcription_model(item: &MincerItem) -> Result<String, JobError> {
         .ok_or_else(|| JobError::Failed("Choose a transcription model in Settings.".into()))
 }
 
+// O site barrou o acesso direto: com chave do Tavily, ele lê a página (só a URL
+// vai a ele); sem a chave, ou se ele falhar, o erro explica o bloqueio.
+async fn read_blocked_page(ctx: &JobCtx, url: &str) -> Result<String, JobError> {
+    let Some(key) = crate::read_key(&ctx.app, "tavily_key") else {
+        return Err(JobError::Failed(webpage::blocked_message()));
+    };
+    ctx.progress("fetching_tavily", 0, 0);
+    let result = tokio::select! {
+        r = webpage::extract_with_tavily(url, &key) => r,
+        _ = ctx.cancelled() => return Err(JobError::Cancelled),
+    };
+    result.map_err(|e| JobError::Failed(webpage::tavily_failure_message(&e)))
+}
+
 async fn extract_text(ctx: &JobCtx, item: &MincerItem) -> Result<String, JobError> {
     let app = &ctx.app;
     let source = item.source.as_deref().unwrap_or_default();
@@ -223,9 +237,14 @@ async fn extract_text(ctx: &JobCtx, item: &MincerItem) -> Result<String, JobErro
         }
         "web_summary" | "web_capture" => {
             ctx.progress("fetching", 0, 0);
-            let (title, text) = tokio::select! {
-                r = webpage::fetch_article(source) => r?,
+            let fetched = tokio::select! {
+                r = webpage::fetch_article(source) => r,
                 _ = ctx.cancelled() => return Err(JobError::Cancelled),
+            };
+            let (title, text) = match fetched {
+                Ok(article) => article,
+                Err(webpage::FetchError::Failed(message)) => return Err(JobError::Failed(message)),
+                Err(webpage::FetchError::Blocked) => (None, read_blocked_page(ctx, source).await?),
             };
             if let Some(title) = title {
                 db::set_title(app, &ctx.item_id, &title)?;

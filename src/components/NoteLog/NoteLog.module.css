@@ -1,0 +1,324 @@
+/* Coluna das notas (mesma moldura da Sidebar, da lista de marcas e da de tag). */
+.view {
+  flex-shrink: 0;
+  background: var(--bg-app, #0e0e10);
+  border-right: 1px solid var(--border, #333340);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
+  padding: var(--pad-panel);
+  gap: var(--space-2);
+}
+
+.resizeHandle {
+  position: absolute;
+  right: -3px;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 10;
+}
+
+.resizeHandle:hover {
+  background: var(--accent, #7c6af5);
+  opacity: 0.4;
+}
+
+.header {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted, #606070);
+  padding: 0 var(--space-1);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+/* "[ícone] Practice · Log": o nome corta, o sufixo fica. */
+.headerTitle {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  white-space: nowrap;
+  gap: var(--space-1h);
+}
+
+.headerIcon {
+  flex-shrink: 0;
+  display: inline-flex;
+}
+
+.headerName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary, #a0a0b8);
+}
+
+.headerSuffix {
+  flex-shrink: 0;
+}
+
+.headerText,
+.headerBtn {
+  background: transparent;
+  border: none;
+  font-family: inherit;
+  color: var(--text-muted, #606070);
+  cursor: pointer;
+}
+
+.headerText {
+  flex-shrink: 0;
+  padding: 0 var(--space-0);
+  font-size: 12px;
+}
+
+.headerText:hover {
+  color: var(--text-primary, #e8e8f0);
+  text-decoration: underline;
+}
+
+.headerBtn {
+  flex-shrink: 0;
+  padding: var(--space-1);
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.headerBtn:hover {
+  color: var(--text-primary, #e8e8f0);
+  background: var(--surface-1, #1e1e22);
+}
+
+/* "New session" (nota do tipo com a data de hoje): linha logo abaixo do título. */
+.newSession {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  min-height: var(--control-md);
+  padding: var(--space-1) var(--space-2);
+  background: transparent;
+  border: 1px solid var(--border, #333340);
+  border-radius: var(--radius-md);
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-secondary, #a0a0b8);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.newSession:hover {
+  color: var(--text-primary, #e8e8f0);
+  border-color: var(--accent, #7c6af5);
+}
+
+/* Seletor de período: quatro botões segmentados. Quebram em duas linhas na
+   coluna estreita (cada linha enche a largura); o fio de 1px entre os botões é
+   o fundo do contêiner aparecendo pelo gap. */
+.periods {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px;
+  background: var(--border, #333340);
+  border: 1px solid var(--border, #333340);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.period {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: var(--control-sm);
+  padding: 0 var(--space-2);
+  background: var(--bg-app, #0e0e10);
+  border: none;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-muted, #606070);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.period:hover {
+  color: var(--text-primary, #e8e8f0);
+}
+
+.periodActive,
+.periodActive:hover {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-app, #0e0e10));
+}
+
+.scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0);
+}
+
+.scroll > * {
+  flex-shrink: 0;
+}
+
+.totals {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2) var(--space-2);
+  font-size: 12px;
+  color: var(--text-secondary, #a0a0b8);
+  font-variant-numeric: tabular-nums;
+}
+
+.totalsMain {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary, #e8e8f0);
+}
+
+.trendLine {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* Rótulo de bloco ("By Piece", "Notes"), como o nome do caderno na lista de tag. */
+.sectionLabel {
+  padding: var(--space-3) var(--space-2) var(--space-1);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted, #606070);
+}
+
+.groupRow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0);
+  padding: var(--space-1h) var(--space-2) var(--space-1h) var(--space-3);
+  border-radius: var(--radius-md);
+}
+
+.groupTop {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.groupLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  line-height: var(--lh-row);
+  color: var(--text-primary, #e8e8f0);
+}
+
+.groupMeta {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted, #606070);
+  font-variant-numeric: tabular-nums;
+}
+
+.groupDetail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-0) var(--space-3);
+  font-size: 12px;
+  color: var(--text-muted, #606070);
+  font-variant-numeric: tabular-nums;
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0);
+  padding: var(--space-1h) var(--space-2) var(--space-1h) var(--space-3);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  outline: none;
+}
+
+.row:hover,
+.row:focus-visible {
+  background: var(--surface-1, #1e1e22);
+}
+
+.rowActive,
+.rowActive:hover {
+  background: var(--surface-2, #26262c);
+}
+
+.rowTop {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.day {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted, #606070);
+  font-variant-numeric: tabular-nums;
+}
+
+.title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  line-height: var(--lh-row);
+  color: var(--text-primary, #e8e8f0);
+}
+
+.rowMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-0) var(--space-2);
+  font-size: 12px;
+  line-height: var(--lh-ui);
+  color: var(--text-muted, #606070);
+  font-variant-numeric: tabular-nums;
+}
+
+.notebook,
+.prop {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.propName {
+  color: var(--text-secondary, #a0a0b8);
+}
+
+.empty {
+  padding: var(--space-3) var(--space-2);
+  color: var(--text-muted, #606070);
+  font-size: 12px;
+  line-height: var(--lh-ui);
+}

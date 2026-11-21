@@ -15,6 +15,7 @@ import {
   taskBucket,
   uncheckChecklist,
   undoPatch,
+  uniqueName,
 } from './tasks'
 
 // Regras da Fatia 4 (Tasks): Overdue × Slipped (U1/U7), My Day no Today (U4),
@@ -266,5 +267,35 @@ describe('cópia do corpo da recorrente', () => {
     expect(uncheckChecklist(md)).toBe(
       ['- [ ] one', '  - [ ] nested', '- [ ] two', '- [x] <task-ref id="a">linked</task-ref>', 'text [x]'].join('\n')
     )
+  })
+})
+
+describe('uniqueName', () => {
+  const others = [
+    { id: 'a', name: 'Guitarra' },
+    { id: 'b', name: 'Corrida' },
+  ]
+
+  it('apara, corta no máximo e devolve o nome', () => {
+    expect(uniqueName('  Piano  ', 32, others, null)).toEqual({ name: 'Piano', clash: null })
+    expect(uniqueName('abcdefgh', 5, others, null).name).toBe('abcde')
+  })
+
+  it('nome vazio ou só espaços: name vazio, sem colisão', () => {
+    expect(uniqueName('   ', 32, others, null)).toEqual({ name: '', clash: null })
+  })
+
+  it('a colisão ignora caixa e acento e devolve o item que já usa o nome', () => {
+    expect(uniqueName('GUITARRA', 32, others, null).clash).toBe(others[0])
+    expect(uniqueName('córrida', 32, others, null).clash).toBe(others[1])
+  })
+
+  it('o item excluído (edição do próprio nome) não colide consigo mesmo', () => {
+    expect(uniqueName('guitarra', 32, others, 'a').clash).toBeNull()
+    expect(uniqueName('guitarra', 32, others, 'b').clash).toBe(others[0])
+  })
+
+  it('a colisão vale para o nome já cortado', () => {
+    expect(uniqueName('Guitarra extra', 8, others, null).clash).toBe(others[0])
   })
 })

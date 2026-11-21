@@ -56,9 +56,11 @@
 }
 
 /* Nota diária do Calendar: título tem largura fixa (DD/MM/YYYY) para o dia
-   da semana ficar logo ao lado do texto. */
+   da semana ficar logo ao lado do texto. content-box: os 12ch são só do texto;
+   o padding esquerdo (--pad-note-x, que cresce com o editor) fica por fora. */
 .titleCompact {
   flex: 0 0 auto;
+  box-sizing: content-box;
   width: 12ch;
   padding-right: 0;
 }

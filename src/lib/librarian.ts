@@ -1,4 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
+import type { Document } from '../types'
+import { dateKeyFromMs } from './calendar'
 import { tavilyExtract, hashUrlToFilename, type SearchResult } from './search'
 
 // Teto do conteúdo salvo de uma página web. Igual ao MAX_WEB_SOURCE_CHARS de
@@ -177,22 +179,97 @@ export function enqueueLibrarian(input: LibrarianInput): void {
   })
 }
 
-async function runPipeline(input: LibrarianInput): Promise<void> {
-  // a. Localizar a AI folder existente (sem criar) para dedupe em disco. A busca
-  // é pelo caminho determinístico (…/web-research/<chatFolderId>, origin='ai'),
-  // espelhando documents_ensure_ai_folder — NÃO pelo snapshot de
-  // visibleDocumentIds do turno, que fica defasado nos turnos iniciais (antes de
-  // onFolderRegistered propagar o id ao estado React) e causaria re-extract caro
-  // + toast inflado ao não achar a pasta que já existe em disco.
-  const { documentsListGlobal } = await import('./documents')
-  const allDocs = await documentsListGlobal()
-  const aiFolderSuffix = `web-research/${input.chatFolderId}`
-  const existingAiFolder = allDocs.find(
+// Localiza a AI folder existente da pasta de chat (sem criar) para dedupe em
+// disco. A busca é pelo caminho determinístico (…/web-research/<chatFolderId>,
+// origin='ai'), espelhando documents_ensure_ai_folder — NÃO pelo snapshot de
+// visibleDocumentIds do turno, que fica defasado nos turnos iniciais (antes de
+// onFolderRegistered propagar o id ao estado React) e causaria re-extract caro
+// + toast inflado ao não achar a pasta que já existe em disco.
+export function findAiFolder(allDocs: Document[], chatFolderId: string): Document | undefined {
+  const aiFolderSuffix = `web-research/${chatFolderId}`
+  return allDocs.find(
     (d) =>
       d.docType === 'folder' &&
       d.origin === 'ai' &&
       (d.originalPath ?? '').replace(/\\/g, '/').endsWith(aiFolderSuffix),
   )
+}
+
+// Nomes de arquivo (hash da URL) já salvos em QUALQUER pasta de fontes da IA: o
+// Radar tira dos candidatos o que já está na KB. Falha = conjunto vazio.
+export async function loadKbSourceFilenames(): Promise<Set<string>> {
+  try {
+    const { documentsListGlobal } = await import('./documents')
+    const allDocs = await documentsListGlobal()
+    const aiFolderIds = new Set(
+      allDocs.filter((d) => d.docType === 'folder' && d.origin === 'ai').map((d) => d.id),
+    )
+    return new Set(
+      allDocs.filter((d) => d.parentFolderId && aiFolderIds.has(d.parentFolderId)).map((d) => d.name),
+    )
+  } catch (e) {
+    console.warn('librarian: could not list the saved web sources', e)
+    return new Set()
+  }
+}
+
+// "Add to KB" de um item do Radar: grava a página (Tavily extract, conteúdo
+// verbatim com o cabeçalho de proveniência) na pasta de fontes da IA da pasta de
+// chat. Sem triagem nem julgamento: o clique do usuário é a curadoria. Roda na
+// cadeia da pasta e devolve o resultado (erro lança). Na cadeia, nenhum pipeline
+// do bibliotecário roda junto (as chaves in-flight dele já foram liberadas), então
+// só o disco decide se a página já está lá.
+export function addUrlToKb(o: {
+  chatFolderId: string
+  folderName: string
+  url: string
+  title: string
+}): Promise<{ status: 'added' | 'already'; aiFolderId: string | null }> {
+  const prev = folderChains.get(o.chatFolderId) ?? Promise.resolve()
+  const result = prev.then(() => saveUrlToKb(o))
+  const next = result.then(
+    () => {},
+    () => {},
+  )
+  folderChains.set(o.chatFolderId, next)
+  void next.finally(() => {
+    if (folderChains.get(o.chatFolderId) === next) {
+      folderChains.delete(o.chatFolderId)
+    }
+  })
+  return result
+}
+
+async function saveUrlToKb(o: {
+  chatFolderId: string
+  folderName: string
+  url: string
+  title: string
+}): Promise<{ status: 'added' | 'already'; aiFolderId: string | null }> {
+  const { documentsListGlobal, documentsEnsureAiFolder, documentsWriteAiSourceFile, documentsScanWatchedFolder } =
+    await import('./documents')
+  const allDocs = await documentsListGlobal()
+  const existing = findAiFolder(allDocs, o.chatFolderId)
+  const filename = await hashUrlToFilename(o.url)
+  if (existing && allDocs.some((d) => d.parentFolderId === existing.id && d.name === filename)) {
+    return { status: 'already', aiFolderId: existing.id }
+  }
+
+  const extracted = await tavilyExtract(o.url)
+  if (!extracted) throw new Error('Could not read this page (Tavily returned no content).')
+
+  const folderId = await documentsEnsureAiFolder(o.chatFolderId, o.folderName)
+  const header = `# ${o.title}\n\nSource: ${o.url}\nRetrieved: ${dateKeyFromMs(Date.now())}\n\n`
+  await documentsWriteAiSourceFile(folderId, filename, header + extracted.rawContent.slice(0, MAX_WEB_SOURCE_CHARS))
+  void documentsScanWatchedFolder(folderId).catch(() => {})
+  return { status: 'added', aiFolderId: folderId }
+}
+
+async function runPipeline(input: LibrarianInput): Promise<void> {
+  // a. Localizar a AI folder existente (sem criar) para dedupe em disco.
+  const { documentsListGlobal } = await import('./documents')
+  const allDocs = await documentsListGlobal()
+  const existingAiFolder = findAiFolder(allDocs, input.chatFolderId)
   const existingFilenames = new Set<string>()
   if (existingAiFolder) {
     for (const d of allDocs) {

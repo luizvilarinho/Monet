@@ -114,6 +114,24 @@
   display: flex;
 }
 
+/* Lado direito: chips dos trackers acima do corpo da nota. Os chips ficam fora
+   do .body porque o onMouseDown dele foca o editor. */
+.notePane {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Os chips seguem o padding horizontal do .body (eixo lateral do TrackerChips). */
+.chipsHost {
+  --pad-note-x: var(--space-6);
+  --pad-note-x-end: var(--space-6);
+  flex-shrink: 0;
+  padding-top: var(--space-3);
+}
+
 /* Corpo da nota: ocupa todo o lado direito, sem card. */
 .body {
   flex: 1;

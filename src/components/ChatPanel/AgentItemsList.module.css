@@ -1,0 +1,157 @@
+/* Linha montada pelo app acima da lista (escopo, janela e consultas). Quebra em
+   qualquer ponto, para uma consulta longa não alargar a coluna de 220 a 300 px. */
+.searchLine {
+  margin: var(--space-3) 0 0;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border, #333340);
+  min-width: 0;
+  font-size: 11px;
+  line-height: var(--lh-ui);
+  color: var(--text-muted, #606070);
+  overflow-wrap: anywhere;
+}
+
+/* Itens do Radar embaixo da resposta: título e fonte à esquerda, ações à direita
+   (quebram para baixo quando a coluna é estreita). A lista é o container da
+   regra de coluna estreita no fim do arquivo. */
+.list {
+  container-type: inline-size;
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: var(--space-2) 0 0;
+  border-top: 1px solid var(--border, #333340);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* Depois da linha do app, é ela quem leva a borda de cima. */
+.searchLine + .list {
+  margin-top: 0;
+  border-top: none;
+}
+
+.item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1h) var(--space-3);
+}
+
+.info {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+.title,
+.meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: var(--lh-ui);
+}
+
+.title {
+  font-size: 12px;
+  color: var(--text-primary, #e8e8f0);
+}
+
+.meta {
+  font-size: 11px;
+  color: var(--text-muted, #606070);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1h);
+}
+
+.btn,
+.btnDone {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1h);
+  background: transparent;
+  border: 1px solid var(--border, #333340);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary, #a0a0b8);
+  cursor: pointer;
+  padding: var(--space-1) var(--space-2);
+  font-size: 12px;
+  font-family: inherit;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.btn:hover:not(:disabled) {
+  color: var(--accent-ai, #5dcaa5);
+  border-color: var(--accent-ai, #5dcaa5);
+  background: rgba(93, 202, 165, 0.08);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* "Queued in Mincer" e "In KB": feito, sem ação */
+.btnDone {
+  color: var(--accent-ai, #5dcaa5);
+  cursor: default;
+}
+
+/* "In reading list": a nota do artigo, com a cor de "feito" mas clicável. A nota
+   arquivada ("Archived") fica no botão neutro. */
+.btnOn {
+  color: var(--accent-ai, #5dcaa5);
+}
+
+/* Estado do PDF ("Open-access PDF", "No open-access PDF"): texto, sem ação. A
+   forma curta ("PDF available", "No PDF") só aparece em coluna estreita. */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-1) var(--space-0);
+  font-size: 11px;
+  line-height: var(--lh-ui);
+  color: var(--text-muted, #606070);
+  white-space: nowrap;
+}
+
+.badgeShort {
+  display: none;
+}
+
+/* Coluna com menos de 320 px: a linha de meta some (o prefixo da resposta já traz
+   fonte e data) e o selo do PDF encurta. */
+@container (width < 320px) {
+  .meta {
+    display: none;
+  }
+
+  .badgeFull {
+    display: none;
+  }
+
+  .badgeShort {
+    display: inline;
+  }
+}
+
+.error {
+  margin: 0;
+  font-size: 11px;
+  line-height: var(--lh-ui);
+  color: var(--accent-danger, #e05555);
+}

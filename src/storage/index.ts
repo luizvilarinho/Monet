@@ -14,6 +14,8 @@ import type {
   Task,
   TaskStatusDef,
   TaskView,
+  Tracker,
+  TrackerMark,
 } from '../types'
 import { TauriStorage } from './tauri'
 import { BrowserStorage } from './browser'
@@ -97,6 +99,25 @@ export interface StorageAdapter {
   setNoteType(noteId: string, typeId: string | null): Promise<void>
   setNoteProperties(noteId: string, properties: Record<string, MetadataValue>): Promise<void>
   setNoteArchived(noteId: string, archivedAt: number | null): Promise<void>
+
+  // Trackers de constância (não são tasks). Todos, inclusive os arquivados, por
+  // sort_order e depois created_at.
+  getTrackers(): Promise<Tracker[]>
+  // Upsert por id.
+  saveTracker(tracker: Tracker): Promise<void>
+  // Marcas e depois o tracker (duas execuções, sem BEGIN/COMMIT).
+  deleteTracker(id: string): Promise<void>
+  countTrackerMarks(trackerId: string): Promise<number>
+  // Todas as marcas (volume pequeno: uma por tracker por dia), por day.
+  getTrackerMarks(): Promise<TrackerMark[]>
+  // on = INSERT OR IGNORE; off = DELETE. Idempotente.
+  setTrackerMark(trackerId: string, day: string, on: boolean): Promise<void>
+
+  // Radar
+  // Dia (YYYY-MM-DD local) da última consulta concluída do escopo; null = nunca.
+  getRadarLastRun(scopeKey: string): Promise<string | null>
+  // Upsert por escopo ('notebook:<id>' | 'tag:<tagKey>' | 'board:<typeId>' | 'all').
+  setRadarLastRun(scopeKey: string, dayKey: string): Promise<void>
 
   getResponses(noteId: string): Promise<AiResponse[]>
   getResponsesByIds(ids: string[]): Promise<AiResponse[]>

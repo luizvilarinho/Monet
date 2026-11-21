@@ -1,6 +1,13 @@
-import type { MetadataDef, Note, Notebook, NoteType } from '../../types'
+import type { MetadataDef, Note, Notebook, NoteType, Tracker } from '../../types'
 import { notesIndexGetDisabledNotebooks } from '../documents'
 import type { ReaderBookInfo } from '../planNotes'
+import {
+  buildTrackerDays,
+  formatTrackersWeekForAi,
+  queryTrackersText,
+  type TrackerDays,
+  type TrackerQuery,
+} from '../trackers'
 import { storage } from '../../storage'
 
 // Dados comuns aos agentes de plano (planner, coach; o tutor reusa): notas,
@@ -64,4 +71,63 @@ export function bookLine({ book, maxHighlightPage }: ReaderBookInfo): string {
     maxHighlightPage !== null ? `furthest highlight ${unit} ${maxHighlightPage}` : 'no highlights',
     `last opened ${unit} ${book.lastPage}`,
   ].join(' · ')
+}
+
+// Trackers ativos, os dias feitos de cada um (marcas e notas do tipo vinculado) e
+// o nome dos tipos, para o resumo dos agentes e a tool query_trackers.
+export interface TrackerData {
+  trackers: Tracker[]
+  days: Map<string, TrackerDays>
+  typeNameById: Map<string, string>
+}
+
+// Lido do storage na chamada. `base` evita reler as notas e os tipos que quem
+// chama já tem. Cadernos com a IA desligada contam: só a contagem vai ao agente.
+export async function loadTrackerData(
+  todayKey: string,
+  base?: { notes: Note[]; types: NoteType[] }
+): Promise<TrackerData> {
+  const [all, marks, notes, types] = await Promise.all([
+    storage.getTrackers(),
+    storage.getTrackerMarks(),
+    base ? base.notes : storage.getNotes(),
+    base ? base.types : storage.getNoteTypes(),
+  ])
+  const trackers = all.filter((t) => t.archivedAt === null)
+  return {
+    trackers,
+    days: buildTrackerDays(trackers, marks, notes, todayKey),
+    typeNameById: new Map(types.map((t) => [t.id, t.name])),
+  }
+}
+
+// Para os agentes que juntam os trackers a um contexto que não depende deles
+// (Coach e Plan week): falha de leitura = null, e o agente segue sem o bloco de
+// trackers (como o /week-review), com os planos e as tasks intactos.
+export async function loadTrackerDataSafe(
+  todayKey: string,
+  base: { notes: Note[]; types: NoteType[] }
+): Promise<TrackerData | null> {
+  try {
+    return await loadTrackerData(todayKey, base)
+  } catch (err) {
+    console.warn('trackers failed:', err)
+    return null
+  }
+}
+
+// Tool query_trackers.
+export async function queryTrackersTool(query: TrackerQuery, todayKey: string): Promise<string> {
+  const data = await loadTrackerData(todayKey)
+  return queryTrackersText(data.trackers, data.days, query, todayKey, data.typeNameById)
+}
+
+// Bloco dos trackers da semana (/week-review); null sem tracker na semana.
+export async function loadTrackersWeekText(
+  weekStart: string,
+  todayKey: string,
+  base: { notes: Note[]; types: NoteType[] }
+): Promise<string | null> {
+  const data = await loadTrackerData(todayKey, base)
+  return formatTrackersWeekForAi(data.trackers, data.days, weekStart, todayKey)
 }

@@ -1,7 +1,11 @@
 import { ChatCircle, type Icon } from '@phosphor-icons/react'
+import type { AgentItemsPayload, AgentRun } from '../agentItems'
+import { PAPERS_DEFAULT_MESSAGE, RADAR_DEFAULT_MESSAGE } from '../radar'
 import { coachAgent } from './coach'
+import { papersAgent } from './papers'
 import { planWeekAgent } from './planWeek'
 import { plannerAgent } from './planner'
+import { radarAgent } from './radar'
 import { tutorAgent } from './tutor'
 
 // Agente de chat: um papel por conversa (D9). O prompt substitui o
@@ -17,9 +21,15 @@ export interface ChatAgentDef {
   buildContext: ((input: AgentContextInput) => Promise<AgentContext>) | null
   forceTasksTool: boolean // liga query_tasks no turno sem mudar o toggle
   forceNotesTool: boolean // liga get_note/search_marks no turno sem mudar o toggle
+  forceTrackersTool: boolean // liga query_trackers no turno sem mudar o toggle
   // Política de contexto: true = segue o toggle/pasta do usuário; false =
   // desligado no turno (o toggle não muda). A nota aberta das Anotações vai sempre.
   context: { rag: boolean; web: boolean; deepResearch: boolean }
+  // Presente = o app roda as buscas dentro do buildContext (o modelo não recebe
+  // a tool web_search; `context.web` fica false). needsTavily: o composer e o
+  // send() exigem a chave do Tavily. status: o texto que o composer mostra
+  // enquanto o app monta o contexto.
+  webPipeline?: { needsTavily: boolean; status: string }
 }
 
 // Entrada do montador de contexto do agente (remontado a cada mensagem).
@@ -31,6 +41,18 @@ export interface AgentContextInput {
   folderName: string | null
   // Mensagens do usuário na conversa, da mais nova (a deste turno) para a mais antiga.
   userMessages: string[]
+  signal: AbortSignal // o Stop cancela as buscas do pipeline
+  // A última consulta concluída deste agente na conversa (Radar e Papers), se a
+  // última resposta com consulta for dele: a base do seguimento sem nova busca.
+  // Ausente ou null = a primeira consulta, ou a anterior falhou ou foi parada.
+  previousRun?: AgentRun | null
+  // Todas as consultas concluídas deste agente na conversa, da mais recente à mais
+  // antiga: a janela do Radar que não encolhe procura entre elas a do escopo e do dia.
+  previousRuns?: AgentRun[]
+  // Agente com pipeline de busca: chamado logo antes da 1ª chamada que busca (o
+  // planejador de consultas), para o composer mostrar o status só quando o app vai
+  // mesmo buscar (não no seguimento, no caderno sem IA nem no escopo vazio).
+  onSearchStart?: () => void
 }
 
 // Saída do montador de contexto.
@@ -40,6 +62,11 @@ export interface AgentContext {
   // search_knowledge_base buscam nesse caderno; null = sem RAG; ausente = o da
   // pasta da conversa, como no General.
   ragNotebookId?: string | null
+  // Itens que o app montou (Radar/Papers); gravados na mensagem do assistant.
+  items?: AgentItemsPayload
+  // Gancho de fim de turno: só roda quando a resposta termina com texto
+  // (nunca em erro, Stop ou resposta vazia).
+  onDone?: () => Promise<void>
 }
 
 export const GENERAL_AGENT_ID = 'general'
@@ -54,11 +81,12 @@ const generalAgent: ChatAgentDef = {
   buildContext: null,
   forceTasksTool: false,
   forceNotesTool: false,
+  forceTrackersTool: false,
   context: { rag: true, web: true, deepResearch: true },
 }
 
 // Ordem do seletor e do autocomplete.
-export const CHAT_AGENTS: ChatAgentDef[] = [generalAgent, planWeekAgent, plannerAgent, coachAgent, tutorAgent]
+export const CHAT_AGENTS: ChatAgentDef[] = [generalAgent, planWeekAgent, plannerAgent, coachAgent, tutorAgent, radarAgent, papersAgent]
 
 // Id ausente, desconhecido ou de agente removido = General.
 export function findChatAgent(id: string | null | undefined): ChatAgentDef {
@@ -112,6 +140,18 @@ const COMPOSER_HINTS: Record<string, ChatAgentComposerHint> = {
   tutor: {
     placeholder: 'Tutor: which topic should we review?',
     empty: 'Tutor reviews your study of a topic and suggests next steps. Say which topic.',
+  },
+  radar: {
+    placeholder: "Radar: press Enter to see what's new, or name a notebook, tag or board",
+    empty:
+      "Radar searches the news, releases and papers about what you study and shows only what is new since your last check. To look further back, say 'since 01/11'. Press Enter to start, or name a notebook, a #tag, a board or everything.",
+    defaultMessage: RADAR_DEFAULT_MESSAGE,
+  },
+  papers: {
+    placeholder: 'Papers: press Enter for essential papers, or name a topic, notebook or tag',
+    empty:
+      'Papers finds the foundational and recent papers on what you study and adds the ones you choose to your reading list. It searches OpenAlex, where conference papers may be missing. Press Enter to start, or name a notebook, a #tag or everything.',
+    defaultMessage: PAPERS_DEFAULT_MESSAGE,
   },
 }
 

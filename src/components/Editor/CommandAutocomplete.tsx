@@ -54,8 +54,8 @@ export function CommandAutocomplete({ state, onSelect, onHover }: Props) {
           const group = commandGroup(name)
           const header = group !== lastGroup ? group : null
           lastGroup = group
-          // `required` não roda sem a chave do Tavily; `withQuery` usa a web
-          // quando há query e chave.
+          // `required` e `since` não rodam sem a chave do Tavily; `withQuery` usa
+          // a web quando há query e chave.
           const webPolicy = findAgent(name)?.context.web ?? 'none'
           const web = webPolicy !== 'none'
           return (
@@ -80,7 +80,9 @@ export function CommandAutocomplete({ state, onSelect, onHover }: Props) {
                       title={
                         webPolicy === 'required'
                           ? 'Searches the web (needs a Tavily key)'
-                          : 'Uses the web when you add a query and have a Tavily key'
+                          : webPolicy === 'since'
+                            ? "Searches the web from the note's date (needs a Tavily key)"
+                            : 'Uses the web when you add a query and have a Tavily key'
                       }
                     >
                       web

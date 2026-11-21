@@ -262,6 +262,11 @@ export function Editor({
 
   const onChangeRef = useRef(onChange)
   onChangeRef.current = onChange
+  // Último markdown que o pai conhece (o da nota ao montar, o emitido e o que
+  // veio de fora). Nota que termina em bloco que não é parágrafo ganha um
+  // parágrafo vazio na 1ª transação (TrailingNode): o `update` dispara sem o
+  // markdown mudar, e gravar isso só mexeria na data de edição.
+  const lastMdRef = useRef(value)
   const onCommandRef = useRef(onCommand)
   onCommandRef.current = onCommand
   const autocompleteRef = useRef(autocomplete)
@@ -545,6 +550,8 @@ export function Editor({
     },
     onUpdate: ({ editor }) => {
       const md = getMarkdown(editor)
+      if (md === lastMdRef.current) return
+      lastMdRef.current = md
       onChangeRef.current(md)
     },
   })
@@ -583,6 +590,14 @@ export function Editor({
   const updateAutocomplete = useCallback(() => {
     if (!editor) return
     if (disableSlashCommands || previewMode) return
+    // Sem foco no editor (montagem, cursor restaurado, texto vindo de fora)
+    // não há o que sugerir; sem isto o popover abria sozinho por cima dos
+    // modais e só o blur o fechava. O clique na linha roda isto de novo (a
+    // transação de foco já vem com `isFocused`).
+    if (!editor.isFocused) {
+      if (autocompleteRef.current.visible) setAutocomplete(HIDDEN_AUTOCOMPLETE)
+      return
+    }
     const info = getCurrentCommandLine(editor.state, isCalendarNoteRef.current)
     if (!info) {
       dismissedFingerprintRef.current = null
@@ -690,6 +705,7 @@ export function Editor({
   // o editor em uso, o cursor fica onde estava em vez de pular para o fim.
   useEffect(() => {
     if (!editor) return
+    lastMdRef.current = value
     const current = getMarkdown(editor)
     if (current === value) return
     const head = editor.isFocused ? editor.state.selection.head : null

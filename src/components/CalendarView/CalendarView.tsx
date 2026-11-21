@@ -1,6 +1,6 @@
 import { CaretLeft, CaretRight, Plus, SidebarSimple, Target } from '@phosphor-icons/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Note, Notebook, NoteType, Task } from '../../types'
+import type { Note, Notebook, NoteType, Task, Tracker } from '../../types'
 import { CALENDAR_NOTEBOOK_ID, dateKeyFromMs, toDateKey } from '../../lib/calendar'
 import {
   formatDueShort,
@@ -12,7 +12,9 @@ import {
   taskSpan,
   type ProjectChoice,
 } from '../../lib/tasks'
+import { focusWeekStart, MAX_CELL_DOTS, type TrackerDays } from '../../lib/trackers'
 import { ProjectPicker } from '../TasksView/ProjectPicker'
+import { TrackersStrip } from '../Trackers/TrackersStrip'
 import { TypeIcon } from '../NoteTypes/TypeIcon'
 import { useSidebarResize } from '../../hooks/useSidebarResize'
 import styles from './CalendarView.module.css'
@@ -55,6 +57,8 @@ const EDITED_LIMIT = 5
 
 type NoteCard = { note: Note; dated: boolean }
 
+const NO_TRACKER_DAYS = new Map<string, TrackerDays>()
+
 interface CalendarViewProps {
   notes: Note[]
   datedNotes: Note[]
@@ -81,6 +85,28 @@ interface CalendarViewProps {
   /** Ausente (janela keep): esconde o "+ task". */
   onCreateTask?: (scheduledDate: string, title: string, project: ProjectChoice) => void
   onOpenTask: (id: string) => void
+  /** Trackers ativos e os dias feitos de cada um (faixa "Trackers" e pontos da
+   *  grade). Sem `trackers` ou sem `onToggleTrackerDay`: nada de trackers. */
+  trackers?: Tracker[]
+  trackerDays?: Map<string, TrackerDays>
+  onToggleTrackerDay?: (trackerId: string, day: string, on: boolean) => void
+  /** Clique no dia vindo de nota do tipo vinculado: abre a nota do dia. */
+  onOpenTrackerNote?: (noteId: string) => void
+  /** Ausente: a faixa não mostra "Manage" nem "New tracker". */
+  onManageTrackers?: () => void
+  /** A leitura dos trackers falhou: a faixa mostra "couldn't load" (e "Retry", com
+   *  `onRetryTrackers`) no lugar do estado vazio. */
+  trackersLoadFailed?: boolean
+  onRetryTrackers?: () => Promise<unknown>
+  /** A 1ª leitura dos trackers terminou; antes dela a faixa mostra só o título, sem
+   *  o "New tracker". Ausente: vale como lida. */
+  trackersLoaded?: boolean
+  /** Falha ao gravar a marca de um dia (linha curta no cabeçalho da faixa). */
+  trackerError?: string | null
+  /** Chave do localStorage da faixa recolhida: uma por janela (a keep passa a sua). */
+  trackersCollapsedKey?: string
+  /** A faixa começa recolhida enquanto o usuário não escolheu (a keep passa `true`). */
+  trackersDefaultCollapsed?: boolean
 }
 
 export function CalendarView({
@@ -102,6 +128,17 @@ export function CalendarView({
   onToggleTaskDone,
   onCreateTask,
   onOpenTask,
+  trackers,
+  trackerDays = NO_TRACKER_DAYS,
+  onToggleTrackerDay,
+  onOpenTrackerNote,
+  onManageTrackers,
+  trackersLoadFailed,
+  onRetryTrackers,
+  trackersLoaded,
+  trackerError,
+  trackersCollapsedKey,
+  trackersDefaultCollapsed,
 }: CalendarViewProps) {
   const [year, setYear] = useState(() => parseDateKey(todayKey).y)
   const [month, setMonth] = useState(() => parseDateKey(todayKey).m)
@@ -229,6 +266,26 @@ export function CalendarView({
     return map
   }, [tasks, todayKey, year, month])
 
+  // Trackers feitos por dia do mês visível (na ordem dos trackers), para os
+  // pontos da célula. Itera só os dias do mês visível.
+  const trackerDotMap = useMemo(() => {
+    const map = new Map<string, Tracker[]>()
+    if (!trackers || trackers.length === 0) return map
+    const daysInMonth = new Date(year, month + 1, 0).getDate()
+    for (let d = 1; d <= daysInMonth; d++) {
+      const key = toDateKey(year, month, d)
+      const done = trackers.filter((t) => trackerDays.get(t.id)?.has(key))
+      if (done.length > 0) map.set(key, done)
+    }
+    return map
+  }, [trackers, trackerDays, year, month])
+
+  // Semana em foco da faixa "Trackers": derivada do dia selecionado e do mês.
+  const trackerWeekStart = useMemo(
+    () => focusWeekStart(selectedDay, year, month, todayKey),
+    [selectedDay, year, month, todayKey]
+  )
+
   // A do My Day de hoje fica nas tasks de hoje, mesmo atrasada (como na List,
   // no Week e no "Due today").
   const overdueTasks = useMemo(
@@ -336,7 +393,8 @@ export function CalendarView({
     today: boolean,
     dotType: 'todo' | 'content' | null,
     activity: boolean,
-    taskMark: 'active' | 'due' | undefined
+    taskMark: 'active' | 'due' | undefined,
+    trackerNames: string[]
   ) {
     const weekday = WEEKDAY_SHORT[new Date(year, month, day).getDay()]
     const parts = [`${weekday} ${day} ${MONTH_NAMES[month].slice(0, 3)}`]
@@ -346,6 +404,7 @@ export function CalendarView({
     if (activity) parts.push('notes edited')
     if (taskMark === 'due') parts.push('task deadline')
     else if (taskMark === 'active') parts.push('tasks')
+    for (const name of trackerNames) parts.push(`${name} done`)
     return parts.join(' · ')
   }
 
@@ -504,10 +563,18 @@ export function CalendarView({
                 const dateKey = cell.current ? toDateKey(year, month, cell.day) : ''
                 const dotType = cell.current ? (dayDotMap.get(title) ?? dayDotMap.get(dateKey) ?? null) : null
                 const taskMark = cell.current ? taskDayMap.get(dateKey) : undefined
+                const doneTrackers = cell.current ? trackerDotMap.get(dateKey) : undefined
                 const today_ = isToday(cell.day, cell.current)
                 const isSelected = cell.current && selectedDay === dateKey
                 const label = cell.current
-                  ? cellLabel(cell.day, today_, dotType, today_ && hasActivityToday, taskMark)
+                  ? cellLabel(
+                      cell.day,
+                      today_,
+                      dotType,
+                      today_ && hasActivityToday,
+                      taskMark,
+                      doneTrackers?.map((t) => t.name) ?? []
+                    )
                   : undefined
                 return (
                   <div
@@ -546,6 +613,14 @@ export function CalendarView({
                         aria-hidden
                       />
                     )}
+                    {doneTrackers && (
+                      <span className={styles.trackerDots} aria-hidden>
+                        {doneTrackers.slice(0, MAX_CELL_DOTS).map((t) => (
+                          <span key={t.id} className={styles.trackerDot} style={{ background: t.color }} />
+                        ))}
+                        {doneTrackers.length > MAX_CELL_DOTS && <Plus size={5} weight="bold" />}
+                      </span>
+                    )}
                   </div>
                 )
               })}
@@ -560,9 +635,33 @@ export function CalendarView({
                 <li><span className={`${styles.dot} ${styles.dotActivity}`} aria-hidden /> Edited today</li>
                 <li><span className={styles.taskBar} aria-hidden /> Tasks</li>
                 <li><span className={`${styles.taskBar} ${styles.taskBarDue}`} aria-hidden /> Deadline</li>
+                {trackers && trackers.length > 0 && (
+                  <li><span className={`${styles.trackerDot} ${styles.trackerDotLegend}`} aria-hidden /> Tracker done</li>
+                )}
               </ul>
             </details>
           </div>
+
+          {trackers && onToggleTrackerDay && (
+            <TrackersStrip
+              trackers={trackers}
+              days={trackerDays}
+              weekStart={trackerWeekStart}
+              year={year}
+              month0={month}
+              todayKey={todayKey}
+              noteTypes={noteTypes}
+              onToggle={onToggleTrackerDay}
+              onOpenNote={onOpenTrackerNote}
+              onManage={onManageTrackers}
+              loadFailed={trackersLoadFailed}
+              loaded={trackersLoaded}
+              onRetry={onRetryTrackers}
+              error={trackerError}
+              collapsedKey={trackersCollapsedKey}
+              defaultCollapsed={trackersDefaultCollapsed}
+            />
+          )}
 
           {selectedDay && (
             <div className={styles.cards}>

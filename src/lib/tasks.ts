@@ -936,6 +936,22 @@ export function normalizeName(s: string): string {
   return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
 }
 
+// Nome aparado e cortado em `max`, e o item de `others` (fora o de `exceptId`) que
+// já tem esse nome, sem caixa nem acento (`clash`, ou null). Nome vazio devolve
+// `name: ''` sem colisão: quem chama diz que o nome é obrigatório e monta a
+// própria mensagem de colisão.
+export function uniqueName<T extends { id: string; name: string }>(
+  name: string,
+  max: number,
+  others: T[],
+  exceptId: string | null
+): { name: string; clash: T | null } {
+  const trimmed = name.trim().slice(0, max)
+  if (!trimmed) return { name: '', clash: null }
+  const wanted = normalizeName(trimmed)
+  return { name: trimmed, clash: others.find((o) => o.id !== exceptId && normalizeName(o.name) === wanted) ?? null }
+}
+
 // Caderno cujo nome, sem espaços/acentos, casa com `name` (sem o `#`).
 // O Calendar nunca é projeto.
 export function findProjectByTag(notebooks: Notebook[], name: string): Notebook | undefined {

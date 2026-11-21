@@ -13,6 +13,10 @@ Bugs e ideias registrados pelo Coordenador ou deixados para trás nas entregas, 
 - **Cerca de código colada no fim de uma linha com texto (2026-11-18):** colar uma cerca ` ```mermaid ` ou ` ```js ` inteira no fim de uma linha que já tem texto vira texto do parágrafo, não um bloco. Numa linha vazia vira bloco. Vem da colagem do tiptap-markdown. Achado na passada final da task do Mermaid (`DOCS/reports/17-11-2026/executionreport_20261117155733.md`).
 - **Preview de nota linkada descarta HTML bruto (2026-11-17):** o `renderNoteContent` (`src/lib/markdown.ts`) descarta o HTML bruto da nota, então toggles e tabelas gravadas em HTML (mescladas, sem cabeçalho, em toggle) somem do preview. Achado no explorer report da tabela (`DOCS/reports/17-11-2026/explorerreport_20261117161124.md`).
 - **Alinhamento de coluna de tabela se perde (2026-11-17):** o alinhamento vindo da IA (`:---`, `---:`) se perde ao gravar a nota. Achado no explorer report da tabela.
+- **Download do bibliotecário lê o corpo inteiro antes do teto (2026-11-20):** o `librarian_fetch_and_save_pdf` lê a resposta inteira na memória antes de conferir o tamanho. Uma resposta sem `Content-Length` ou um arquivo gigante ocupa memória até o tempo limite. O `books_download_pdf` (Papers) foi corrigido para ler em pedaços; falta aplicar o mesmo aqui. Apontado no review (`DOCS/reports/20-11-2026/reviewreport_20261120163843_papers-ui.md`).
+- **Enter repetido no Chat e na Assistant com agente de mensagem padrão (2026-11-20):** com o Radar, o Papers, o Coach ou o Plan week selecionado e o rascunho vazio, dois Enter muito próximos podem enviar a mensagem padrão duas vezes, porque o `useChat.send` só marca o turno em andamento depois de alguns `await`. No Radar e no Papers isso roda duas buscas. O chat das Anotações já tem uma trava própria. Caminho: uma trava no início do `send` do `useChat`. Apontado na passada final (`DOCS/reports/20-11-2026/executionreport_20261120115512.md`).
+- **Pontas do "Open in Library" na nota Paper (2026-11-20):** trocar da nota A para a B e voltar à A durante o download permite um segundo download em paralelo; com o livro ligado apagado, o botão diz "Opening…" durante o download; e quando a main devolve uma nota Paper que já existia, o modal mostra "Paper added". Apontado na passada final (mesmo arquivo).
+- **Marca de tracker em gravação pode sumir da tela (2026-11-20):** uma recarga vinda da outra janela (evento `trackers-changed`) pode tirar da tela, por alguns milissegundos, uma marca que ainda está gravando. A marca fica no banco e reaparece na recarga seguinte. A correção pede um mapa de marcas pendentes mesclado no `reload` do `useTrackers`, que hoje não tem teste. Apontado no review (`DOCS/reports/20-11-2026/reviewreport_20261120151608_trackers-log.md`).
 
 ---
 
@@ -37,6 +41,22 @@ Bugs e ideias registrados pelo Coordenador ou deixados para trás nas entregas, 
 
   Caminho: no `behavior` de `src/lib/agents/critique.ts`, só marcar "Inaccurate" quando os excertos ou um fato consolidado contradizem a nota de forma explícita. Não encontrar algo nos excertos não é erro, e o modelo não deve supor edição nem data da fonte. Quando faltar base, a crítica deve dizer "não encontrei nos trechos" em vez de corrigir. Incluir o caso no harness de prompts.
 
+- **Papers e Radar não seguem a nota aberta no chat das Anotações (2026-11-20):** no teste do Coordenador, "Find essential papers" numa nota "Dom Quixote" do caderno "Livros" trouxe artigos de arquitetura de software. Causas conferidas no código: o escopo é o caderno da pasta e nunca a nota anexada (`buildPapersContext`, `src/lib/agents/papers.ts`); o mapa de foco inclui os livros em andamento da Library sem filtrar pelo escopo (`src/lib/focusMap.ts`, "Books in progress"); e sem assunto na mensagem o planejador escolhe o tema dominante do mapa. Nomear o assunto na mensagem ("artigos sobre Dom Quixote") resolveu no teste. O Coordenador pediu para não mudar ainda. Caminho, se ele decidir: com nota anexada e mensagem padrão, a nota vira o assunto (título e conteúdo lidos só para achar os termos, como no `/since`); livros em andamento só no escopo "tudo" ou os ligados a notas do escopo; e o assunto nomeado na mensagem valendo também na etapa de escolha, que hoje só o considera quando o caderno está vazio. **Evidência do reteste (2026-11-21):** numa consulta do Radar num caderno de RAG, uma das 6 buscas foi "Dante Divine Comedy analysis", vinda dos livros em andamento (`DOCS/reports/20-11-2026/testresults_20261121004220_reteste.md`, R1). O vazamento do "Follow" do perfil para o escopo estreito, que era o mesmo tipo de problema, já foi corrigido.
+
+- **Número com separador de milhar no card e na lista (2026-11-21):** o card do board e a linha da lista de notas mostram a propriedade numérica com separador ("Year 2,025", "2,006"); o editor de propriedades mostra "2025". É a formatação antiga das propriedades numéricas, que o tipo Paper deixou à mostra. Decidir: sem separador sempre, ou só para inteiros de até 4 dígitos.
+
+- **Cabeçalho do chat das Anotações no mínimo de 300 px (2026-11-21):** o seletor de modelo cobre o botão de tools e o contador. Visto no teste (`DOCS/reports/20-11-2026/testresults_20261120235817_radar-papers.md`).
+
+- **Nota diária vazia não se apaga pela interface (2026-11-21):** abrir um dia no Calendar cria a nota diária, e uma nota diária vazia não aparece em nenhuma lista para ser apagada. O teste deixou uma em 22/11/2026; já havia outras (18/11, 19/11, 21/11, 23/11).
+
+- **Fila de leitura entre janelas (2026-11-20):** quando a nota Paper é criada pela janela assistant, a main não relê a fila, e o botão do artigo continua "Add to reading list" num balão já aberto na main até a próxima leitura. Além disso, cada balão com artigos relê todas as notas a cada nota Paper criada. Caminho: um evento entre janelas para a fila e uma leitura única compartilhada pelos balões. Suspeitas S4 e S5 do review (`DOCS/reports/20-11-2026/reviewreport_20261120163843_papers-ui.md`).
+
+- **`validName` em `useMetadataDefs` (2026-11-20):** o `useTrackers` e o `useNoteTypes` passaram a usar o `uniqueName` de `src/lib/tasks.ts`. O `useMetadataDefs.ts` ainda tem a cópia antiga da mesma lógica.
+
+- **CSS repetido do `TrackersModal` (2026-11-20):** cerca de 80 linhas do `TrackersModal.module.css` repetem regras de layout do `NoteTypesModal`. Mover para um módulo comum pede conferir os dois modais na tela.
+
+- **Testes de hook e de componente (2026-11-20):** o projeto só tem teste de lógica pura. Ficaram sem teste automático o `useTrackers` (gravação otimista e desfazer), a fiação de fim de turno do `useChat` (done, Stop, erro, corte), o `handleCommand` do `/since`, a `AgentItemsList`, o `PaperLibraryBar` e o `SaveAgentNoteModal`. Os `codeAgent` usaram testes de fumaça temporários com happy-dom, apagados depois. Decidir se vale adotar `@testing-library`.
+
 ---
 
 ## Ideias
@@ -55,7 +75,10 @@ Bugs e ideias registrados pelo Coordenador ou deixados para trás nas entregas, 
 - **Notas de contexto para a IA (2026-11-05):** o Coordenador gostou do padrão "nota que o agente lê", como o "Perfil de estudo" que o tutor exige. O padrão já existe de três formas:
   - o perfil de estudo (tag `study profile` ou título, `src/lib/studyProfile.ts`), lido só pelo tutor;
   - as notas de plano (Plan/Capacidade/Livro), lidas pelo planner e pelo coach;
-  - notas como "Dados do livro", que só chegam pelo RAG.
+  - notas como "Dados do livro", que só chegam pelo RAG;
+  - o perfil do Radar (tag `radar profile`, 2026-11-20), lido pelo Radar e, só na linha Ignore, pelo Papers.
+
+  **2026-11-20:** depois de usar o perfil do Radar no teste, o Coordenador disse que gostou de ter notas que servem de configuração e que a ideia pode ser mais útil no futuro. Continua sem decisão sobre a convenção única.
 
   A ideia é uma convenção única de contexto por caderno, lida por todos os agentes. Os dados pessoais ficam em notas e os prompts continuam genéricos.
 
@@ -74,3 +97,20 @@ Bugs e ideias registrados pelo Coordenador ou deixados para trás nas entregas, 
 - **Rescan all — arquivos da pasta no banner (2026-11-16):** o progresso do Rescan all é por pasta. Numa pasta com centenas de arquivos novos (`git checkout`, cópia de pasta), o banner fica parado nela até a fila acabar e parece travado. Ideia: mandar no evento `documents://rescan-progress` a contagem de arquivos da pasta atual e mostrar "Livros · 37/300 files". Sugestão S7 do uxAgent (`DOCS/reports/16-11-2026/uxreport_20261116133039.md`).
 - **KB — "Recent changes" (2026-11-16):** seção recolhível (ou filtro "Changed today") na Knowledge Base com os arquivos das pastas monitoradas reindexados nas últimas 24 h, com a hora. Mostra o que o rescan automático pegou e responde "por que a IA citou isto?". Sai do `updated_at` das linhas que já existem, sem schema novo. Sugestão S15 do uxAgent (`DOCS/reports/16-11-2026/uxreport_20261116133039.md`).
 - **Opened today na nota do dia (2026-11-16):** botão "Add today's trail to the daily note" no Opened today, que grava na nota do dia a lista de notas e tasks abertas, com links. Por clique explícito, o rastro do dia (hoje no localStorage, zerado à meia-noite) vira registro perene e alimenta `/today` e `/week-review`. Sugestão S16 do uxAgent (`DOCS/reports/16-11-2026/uxreport_20261116133039.md`).
+- **Trackers e Log — depois do uso real (2026-11-20):** itens adiados na triagem de UX (`DOCS/reports/20-11-2026/uxtriage_20261120133108.md`, fatia 1):
+  - ícone do tipo no trilho recolhido, para distinguir dois ou mais Logs;
+  - filtrar a lista do Log ao clicar num grupo, e "Show all N" nos grupos;
+  - comando no Ctrl+P para marcar um tracker hoje;
+  - tool do Chat com as somas do Log ("quantos minutos pratiquei em outubro?").
+- **Radar e Papers — depois do uso real (2026-11-20):** itens adiados na triagem de UX (mesmo arquivo, fatia 2) e limites conhecidos (`DOCS/specs/radar.md`):
+  - separar "ler as páginas salvas" de "salvar automaticamente" no toggle "Save web sources";
+  - lista de itens recolhível nas colunas estreitas;
+  - "Queued in Mincer" clicável, abrindo o Mincer no item;
+  - caderno com nome de 2 caracteres como escopo (a regra é compartilhada com o Tutor);
+  - "Add to note" por item, anexando a novidade à nota que ela toca;
+  - títulos de nota citados na resposta virando link;
+  - o Radar não repetir URLs já mostradas no mesmo escopo;
+  - "Show the rest", com os candidatos que o modelo não escolheu;
+  - trocar o "Reading" do Tutor, que vem da memória do modelo, pela busca real do Papers;
+  - cobertura de artigos de conferência, que é baixa no OpenAlex: avaliar uma segunda fonte se o `/papers` sair fraco em computação;
+  - cancelar de verdade a chamada do planejador de consultas no Stop (hoje o resultado é descartado).

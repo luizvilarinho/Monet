@@ -1,5 +1,5 @@
 import { GraduationCap } from '@phosphor-icons/react'
-import type { Note, Notebook } from '../../types'
+import type { Note } from '../../types'
 import { storage } from '../../storage'
 import { withWeekday } from '../agenda'
 import { CALENDAR_NOTEBOOK_ID, dateKeyFromMs } from '../calendar'
@@ -7,12 +7,13 @@ import { cleanNoteContentForAi } from '../noteFileText'
 import { extractNoteMarks } from '../noteMarks'
 import { propertiesForAi, typeDefs } from '../noteTypes'
 import { nameKey } from '../plan'
-import { bookKey, collectPlans, matchBook, type PlanEntry, type ReaderBookInfo } from '../planNotes'
+import { collectPlans, matchBook, type PlanEntry, type ReaderBookInfo } from '../planNotes'
 import { findStudyProfile } from '../studyProfile'
 import { isTaskBodyNote } from '../tasks'
 import { bookLine, loadPlanData } from './agentData'
 import type { AgentContext, AgentContextInput, ChatAgentDef } from './chat'
 import { DEFINE_COMMANDS } from './define'
+import { namedIn, resolveNotebookScope, SCOPE_SOURCE_TEXT } from './scope'
 
 // Agente tutor (chat): julga o estudo de um tema (o caderno em escopo), aponta
 // lacunas, indica leituras e propõe uma atividade. O contexto é um índice
@@ -33,85 +34,6 @@ const GLOSSARY_CHARS = 3000
 const GLOSSARY_LINE_MAX = 120
 const OTHER_NOTES_MAX = 120
 const OTHER_NOTES_CHARS = 6000
-
-type ScopeSource = 'folder' | 'folderName' | 'message'
-
-const SOURCE_TEXT: Record<ScopeSource, string> = {
-  folder: 'from the chat folder',
-  folderName: 'from the folder name',
-  message: 'from your message',
-}
-
-const FOLDER_NAME_RE = /^Notebook - (.+)$/
-
-// Item cujo nome aparece no texto como palavras inteiras (chave com 3+
-// caracteres); com vários, o nome mais longo ganha.
-function namedIn<T>(text: string, items: T[], name: (item: T) => string): T | null {
-  const haystack = ` ${bookKey(text)} `
-  let best: { item: T; key: string } | null = null
-  for (const item of items) {
-    const key = bookKey(name(item))
-    if (key.length < 3 || !haystack.includes(` ${key} `)) continue
-    if (!best || key.length > best.key.length) best = { item, key }
-  }
-  return best?.item ?? null
-}
-
-// Texto entre aspas (retas, curvas ou angulares).
-const QUOTED_RE = /["“”'‘’«»]([^"“”'‘’«»\n]{3,90})["“”'‘’«»]/g
-// Palavras que, antes do nome, marcam o caderno ("caderno de X", "notebook X").
-const NOTEBOOK_WORDS = ['caderno', 'caderno de', 'caderno do', 'caderno da', 'notebook']
-
-// Caderno citado de forma explícita: o nome entre aspas ou junto de
-// "caderno"/"notebook". Com vários, o nome mais longo ganha.
-function explicitNotebookIn(text: string, notebooks: Notebook[]): Notebook | null {
-  const quoted = new Set([...text.matchAll(QUOTED_RE)].map((m) => bookKey(m[1])))
-  const haystack = ` ${bookKey(text)} `
-  let best: { notebook: Notebook; key: string } | null = null
-  for (const notebook of notebooks) {
-    const key = bookKey(notebook.name)
-    if (key.length < 3) continue
-    const near =
-      NOTEBOOK_WORDS.some((w) => haystack.includes(` ${w} ${key} `)) || haystack.includes(` ${key} notebook `)
-    if (!quoted.has(key) && !near) continue
-    if (!best || key.length > best.key.length) best = { notebook, key }
-  }
-  return best?.notebook ?? null
-}
-
-// Caderno em escopo, recalculado a cada mensagem. A mensagem deste turno que
-// cita outro caderno de forma explícita (entre aspas ou junto de
-// "caderno"/"notebook") vence a pasta (a pergunta mudou de tema); senão,
-// vínculo da pasta, depois o nome "Notebook - X", depois o caderno citado nas
-// mensagens (da mais nova para a mais antiga). O Calendar fica fora.
-function resolveTutorNotebook(
-  input: AgentContextInput,
-  notebooks: Notebook[]
-): { notebook: Notebook; source: ScopeSource } | null {
-  const candidates = notebooks.filter((nb) => nb.id !== CALENDAR_NOTEBOOK_ID)
-  const latest = input.userMessages[0] ? explicitNotebookIn(input.userMessages[0], candidates) : null
-
-  let fromFolder: { notebook: Notebook; source: ScopeSource } | null = null
-  const linked = input.notebookId ? candidates.find((nb) => nb.id === input.notebookId) : undefined
-  if (linked) {
-    fromFolder = { notebook: linked, source: 'folder' }
-  } else {
-    const folder = input.folderName?.match(FOLDER_NAME_RE)
-    if (folder) {
-      const key = nameKey(folder[1])
-      const named = candidates.find((nb) => nameKey(nb.name.trim().slice(0, 90)) === key)
-      if (named) fromFolder = { notebook: named, source: 'folderName' }
-    }
-  }
-  if (latest && latest.id !== fromFolder?.notebook.id) return { notebook: latest, source: 'message' }
-  if (fromFolder) return fromFolder
-
-  for (const message of input.userMessages) {
-    const named = namedIn(message, candidates, (nb) => nb.name)
-    if (named) return { notebook: named, source: 'message' }
-  }
-  return null
-}
 
 // Livro do Reader citado na conversa (a mensagem mais nova primeiro).
 function bookInQuestion(input: AgentContextInput, books: ReaderBookInfo[]): ReaderBookInfo | null {
@@ -168,7 +90,7 @@ function firstSentence(text: string): string {
 async function buildTutorContext(input: AgentContextInput): Promise<AgentContext> {
   const data = await loadPlanData()
   const header = 'Tutor context (rebuilt by the app for this message; it replaces any earlier one).'
-  const scope = resolveTutorNotebook(input, data.notebooks)
+  const scope = resolveNotebookScope(input, data.notebooks)
 
   if (!scope) {
     const names = data.notebooks
@@ -190,7 +112,7 @@ async function buildTutorContext(input: AgentContextInput): Promise<AgentContext
   // o caderno é dito na 1ª resposta e quando o escopo muda.
   const previous =
     input.userMessages.length > 1
-      ? resolveTutorNotebook({ ...input, userMessages: input.userMessages.slice(1) }, data.notebooks)
+      ? resolveNotebookScope({ ...input, userMessages: input.userMessages.slice(1) }, data.notebooks)
       : null
   const scopeChanged = input.userMessages.length > 1 && previous?.notebook.id !== notebook.id
   if (disabled) {
@@ -227,7 +149,7 @@ async function buildTutorContext(input: AgentContextInput): Promise<AgentContext
   const book = bookInQuestion(input, data.books)
   const out = [
     header,
-    `Today: ${withWeekday(input.todayKey)} · Notebook in scope: "${notebook.name}" (${SOURCE_TEXT[source]}). ` +
+    `Today: ${withWeekday(input.todayKey)} · Notebook in scope: "${notebook.name}" (${SCOPE_SOURCE_TEXT[source]}). ` +
       (scopeChanged
         ? `The scope changed${previous ? ` (it was "${previous.notebook.name}")` : ''}: say in your first line which notebook you are using now.`
         : 'Say which notebook you are using in one short first line only in your first reply of the conversation (check your earlier replies); do not repeat it later.'),
@@ -401,5 +323,6 @@ export const tutorAgent: ChatAgentDef = {
   buildContext: buildTutorContext,
   forceTasksTool: false,
   forceNotesTool: true,
+  forceTrackersTool: false,
   context: { rag: true, web: true, deepResearch: false },
 }

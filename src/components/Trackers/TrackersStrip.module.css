@@ -1,0 +1,233 @@
+/* Faixa "Trackers" do Calendar. Cabe na largura mínima de 220px (janela keep):
+   16px de borda de cada lado deixam 188px para os 7 dias. */
+.strip {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+/* Linha 1: o botão que recolhe a faixa e "Manage". Linha 2: a semana ("This week ·
+   16–22 Nov" não cabe ao lado deles em 188px). */
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-2);
+  min-width: 0;
+  padding: 0 var(--space-0);
+}
+
+.toggle,
+.manage,
+.linkBtn {
+  background: transparent;
+  border: none;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+/* Caret + "Trackers" e, recolhida, o n/meta de cada tracker na semana em foco. */
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 0;
+  color: var(--text-muted, #606070);
+}
+
+.toggle:hover {
+  color: var(--text-primary, #e8e8f0);
+}
+
+.toggle:focus-visible,
+.manage:focus-visible,
+.linkBtn:focus-visible {
+  outline: 1px solid var(--accent, #7c6af5);
+  outline-offset: 1px;
+}
+
+.title {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.range {
+  flex: 1 0 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: var(--lh-ui);
+  color: var(--text-muted, #606070);
+}
+
+.manage {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 0 var(--space-0);
+  font-size: 12px;
+  color: var(--text-muted, #606070);
+}
+
+.manage:hover {
+  color: var(--text-primary, #e8e8f0);
+  text-decoration: underline;
+}
+
+/* Falha ao gravar uma marca: uma linha curta sob o cabeçalho. */
+.error {
+  margin: 0;
+  padding: 0 var(--space-0);
+  font-size: 11px;
+  line-height: var(--lh-ui);
+  color: var(--accent-danger);
+}
+
+/* Sem tracker ("Trackers · New tracker") ou sem leitura ("Trackers couldn't load."
+   e "Retry"): uma linha só. */
+.empty {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1h) var(--space-2);
+  padding: 0 var(--space-0);
+  font-size: 12px;
+  color: var(--text-muted, #606070);
+}
+
+.linkBtn {
+  padding: 0;
+  font-size: 12px;
+  color: var(--accent, #7c6af5);
+}
+
+.linkBtn:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.linkBtn:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1h);
+  min-width: 0;
+}
+
+.rowHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+  min-width: 0;
+  padding: 0 var(--space-0);
+}
+
+.icon {
+  flex-shrink: 0;
+  display: inline-flex;
+}
+
+.name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-secondary, #a0a0b8);
+}
+
+.count {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted, #606070);
+}
+
+/* Os 7 dias: botões redondos de 22px, espaçados na largura da coluna. */
+.week {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-0);
+}
+
+.day {
+  flex: 0 0 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--hair, #34344f);
+  border-radius: 50%;
+  background: transparent;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-muted, #606070);
+  cursor: pointer;
+}
+
+.day:not(.dayDone):hover:not(:disabled) {
+  border-color: var(--text-secondary, #a0a0b8);
+  color: var(--text-primary, #e8e8f0);
+}
+
+.day:focus-visible {
+  outline: 1px solid var(--accent, #7c6af5);
+  outline-offset: 1px;
+}
+
+/* Feito (marca ou nota): fundo na cor do tracker (inline), letra escura. */
+.dayDone {
+  border-color: transparent;
+  color: var(--bg-panel, #161625);
+  font-weight: 600;
+}
+
+/* Feito vindo de nota: anel interno. O clique abre a nota (não desmarca). */
+.dayNote {
+  box-shadow: inset 0 0 0 2px var(--bg-panel, #161625);
+}
+
+/* Hoje: anel de destaque, como a célula de hoje da grade. */
+.dayToday {
+  border-color: var(--accent, #7c6af5);
+}
+
+/* Futuro: sem ação. */
+.day:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.month {
+  margin: 0;
+  padding: 0 var(--space-0);
+  font-size: 11px;
+  line-height: var(--lh-ui);
+  color: var(--text-muted, #606070);
+}

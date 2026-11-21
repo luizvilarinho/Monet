@@ -19,6 +19,7 @@ import {
   Books,
   CalendarBlank,
   CaretRight,
+  ChartLineUp,
   DotsSixVertical,
   FileText,
   FolderSimple,
@@ -439,6 +440,12 @@ export interface NotebookListProps {
   onOpenBoard: (typeId: string) => void
   onCloseBoard: () => void
   onSetUpBoard: () => void
+  // Logs logo abaixo dos boards: um por tipo de nota com "Show as log" (e a
+  // contagem de notas). Clicar no ativo fecha. Sem logs, nada aparece.
+  logs: Array<{ type: NoteType; count: number }>
+  activeLogTypeId: string | null
+  onOpenLog: (typeId: string) => void
+  onCloseLog: () => void
   onOpenSettings: () => void
   calendarNotebookId?: string | null
   // Entrada virtual "Tasks" (não é linha em `notebooks`). Enquanto ativa,
@@ -492,6 +499,10 @@ export function NotebookList({
   onOpenBoard,
   onCloseBoard,
   onSetUpBoard,
+  logs,
+  activeLogTypeId,
+  onOpenLog,
+  onCloseLog,
   onOpenSettings,
   calendarNotebookId,
   tasksActive,
@@ -531,8 +542,9 @@ export function NotebookList({
   const inputRef = useRef<HTMLInputElement>(null)
   const subjectInputRef = useRef<HTMLInputElement>(null)
   const { confirm, modal } = useConfirm()
-  // Tasks, Marks, uma tag ou um board aberto: nenhum caderno aparece ativo.
-  const viewActive = tasksActive || marksActive || activeTag !== null || activeBoardTypeId !== null
+  // Tasks, Marks, uma tag, um board ou um log aberto: nenhum caderno aparece ativo.
+  const viewActive =
+    tasksActive || marksActive || activeTag !== null || activeBoardTypeId !== null || activeLogTypeId !== null
   const activeTagKey = activeTag === null ? null : tagKey(activeTag)
   const allMarksActive = marksActive && marksFilter === null
   const dragging = useRef(false)
@@ -855,6 +867,23 @@ export function NotebookList({
             )
           })
         )}
+        {logs.map((l) => {
+          const active = l.type.id === activeLogTypeId
+          return (
+            <button
+              key={l.type.id}
+              className={`${styles.railButton} ${active ? styles.railActive : ''}`}
+              onClick={() => (active ? onCloseLog() : onOpenLog(l.type.id))}
+              aria-label={`${l.type.name} log`}
+              title={`${l.type.name} · Log`}
+              type="button"
+            >
+              <span className={styles.boardIcon} style={{ color: l.type.color ?? undefined }}>
+                <ChartLineUp size={16} aria-hidden />
+              </span>
+            </button>
+          )
+        })}
         <span className={styles.railSeparator} aria-hidden />
         <button
           ref={notebookMenuButtonRef}
@@ -1139,6 +1168,28 @@ export function NotebookList({
                   )
                 })
               )}
+
+              {logs.map((l) => {
+                const active = l.type.id === activeLogTypeId
+                return (
+                  <li
+                    key={l.type.id}
+                    className={`${styles.row} ${active ? styles.active : ''}`}
+                    title={`${l.type.name} notes as a log`}
+                    onClick={() => (active ? onCloseLog() : onOpenLog(l.type.id))}
+                    onKeyDown={activateOnKey(() => (active ? onCloseLog() : onOpenLog(l.type.id)))}
+                    tabIndex={0}
+                  >
+                    <span className={styles.boardIcon} style={{ color: l.type.color ?? undefined }}>
+                      <ChartLineUp size={16} aria-hidden />
+                    </span>
+                    <span className={styles.rowLabel}>
+                      {l.type.name} <span className={styles.boardProp}>· Log</span>
+                    </span>
+                    <span className={styles.sectionCount}>{l.count}</span>
+                  </li>
+                )
+              })}
             </ul>
           </section>
 

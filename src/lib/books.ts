@@ -28,6 +28,12 @@ export async function booksDeleteFile(path: string): Promise<void> {
   await invoke('books_delete_file', { path })
 }
 
+// Baixa um PDF de acesso aberto para a pasta de livros (Rust); o registro no
+// banco é do `registerBookFile`.
+export async function booksDownloadPdf(url: string): Promise<BookImportResult> {
+  return invoke<BookImportResult>('books_download_pdf', { url })
+}
+
 // Fluxo completo de import: dialog + cópia (Rust) → validação/metadados via
 // pdfjs ou epubjs, conforme a extensão → registro no banco. A validação
 // acontece ANTES do insert: se o arquivo for inválido/protegido, a cópia é
@@ -35,7 +41,16 @@ export async function booksDeleteFile(path: string): Promise<void> {
 export async function importBook(): Promise<Book | null> {
   const picked = await booksImportFile()
   if (!picked) return null
+  return registerBookFile(picked)
+}
 
+// Registra um arquivo que o Rust já gravou em books/ (o import da Library e o
+// download do "Open in Library"): a validação e o registro descritos acima.
+// `meta` (título e autor não vazios) substitui os do metadado do arquivo.
+export async function registerBookFile(
+  picked: BookImportResult,
+  meta?: { title?: string; author?: string | null },
+): Promise<Book> {
   // O Rust grava o destino com a extensão original em minúsculas, então
   // basta olhar o sufixo para saber por qual caminho validar.
   const isEpub = picked.destPath.toLowerCase().endsWith('.epub')
@@ -102,6 +117,11 @@ export async function importBook(): Promise<Book | null> {
     }
     throw new Error('This file is corrupted or is not a valid PDF.')
   }
+
+  const title = meta?.title?.trim()
+  const author = meta?.author?.trim()
+  if (title) book.title = title
+  if (author) book.author = author
 
   await storage.saveBook(book)
   return book

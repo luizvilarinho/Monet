@@ -16,7 +16,9 @@ export type RagPolicy = { pipeline: 'vector'; topK: number } | { pipeline: 'hybr
 // withQuery = busca se houver query e chave; sem chave, segue e avisa numa linha
 //             (/expand, /ask, /explain, /guide). O selo "web" do autocomplete
 //             vale para required e withQuery.
-export type WebPolicy = 'none' | 'required' | 'withQuery'
+// since     = busca pelos termos da nota, com corte de data (/since); sem chave
+//             Tavily é card de erro
+export type WebPolicy = 'none' | 'required' | 'withQuery' | 'since'
 
 export interface AgendaWindow {
   from: string
@@ -38,6 +40,8 @@ export interface ContextPolicy {
   datedNotes: boolean          // bloco "Notes dated on this day" numa nota do Calendar
   previousDefinition: boolean  // glossário (/define)
   minUserTextChars?: number    // abaixo disso, aviso sem chamar o modelo (/critique)
+  tooShortMessage?: string     // texto do aviso de minUserTextChars (padrão: o do /critique)
+  trackers?: boolean           // resumo dos trackers na semana da agenda (só /week-review)
 }
 
 export interface AgentDef {

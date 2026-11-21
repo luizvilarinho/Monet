@@ -1,5 +1,6 @@
 import { COMMANDS, findCommand } from '../../lib/commands'
 import { agentLabel } from '../../lib/agents'
+import { isSinceTitleQuery } from '../../lib/radar'
 
 export type CommandLineStatus =
   | 'idle'
@@ -29,6 +30,14 @@ export function getToggleTitle(command: string, query?: string): string {
   const q = query?.replace(/\s+/g, ' ').trim() ?? ''
   if (!q) return label
   return `${label} · ${q.length > TITLE_QUERY_MAX ? `${q.slice(0, TITLE_QUERY_MAX - 1).trimEnd()}…` : q}`
+}
+
+// O texto da linha de comando que uma resposta executou ("/cmd query"), para
+// marcar a linha da nota como executada. O /since sem instrução grava a data de
+// corte e a origem como query (o título do bloco); a linha na nota continua "/since".
+export function responseCommandText(r: { command: string; query: string }): string {
+  const query = r.command === '/since' && isSinceTitleQuery(r.query) ? '' : r.query.trim()
+  return query ? `${r.command} ${query}` : r.command
 }
 
 // Título do bloco no texto que vai para a IA (e no export): sempre diz que foi
@@ -87,7 +96,7 @@ export function getCommandLineStatus(line: string, isCalendarNote = false): Comm
 // Grupos do autocomplete, nesta ordem. Comando fora deles cai em "More".
 const COMMAND_GROUPS: Array<{ label: string; names: string[] }> = [
   { label: 'Understand', names: ['/define', '/explain', '/docs', '/ask', '/guide'] },
-  { label: 'Review', names: ['/critique', '/expand', '/opinion'] },
+  { label: 'Review', names: ['/critique', '/expand', '/since', '/opinion'] },
   { label: 'Transform', names: ['/summarize', '/table', '/mindmap', '/action'] },
   { label: 'Web', names: ['/search', '/profile'] },
   { label: 'Calendar', names: ['/today', '/week-review'] },

@@ -27,10 +27,13 @@ import {
 } from '../../hooks/useNoteTypes'
 import { hasMetadataValue, METADATA_TYPE_LABEL, NOTE_PROPERTY_TYPES } from '../../lib/metadata'
 import { MAX_LIST_PROPERTIES, typeDefs } from '../../lib/noteTypes'
-import type { MetadataDef, MetadataType, Note, NoteType, SelectOption } from '../../types'
+import { deleteTypeTrackersNote } from '../../lib/trackers'
+import type { MetadataDef, MetadataType, Note, NoteType, SelectOption, Tracker } from '../../types'
 import { ColorDots } from '../TasksView/ColorDots'
+import { IconPicker } from './IconPicker'
 import { NoteTypeBoardSection } from './NoteTypeBoardSection'
-import { TYPE_ICON_GROUPS, TypeIcon } from './TypeIcon'
+import { NoteTypeLogSection } from './NoteTypeLogSection'
+import { TypeIcon } from './TypeIcon'
 import styles from '../TasksView/StatusManagerModal.module.css'
 import own from './NoteTypesModal.module.css'
 
@@ -127,10 +130,16 @@ interface NoteTypesModalProps {
   registry: NoteTypesRegistry
   // Contagens das confirmações de exclusão.
   notes: Note[]
+  // Trackers (arquivados incluídos): a exclusão de um tipo cita os vinculados a ele.
+  trackers?: Tracker[]
   // "Open board" da seção Board (só com o board ligado).
   onOpenBoard?: (typeId: string) => void
   // Aberto por "Board settings": rola o detalhe até a seção Board.
   focusBoard?: boolean
+  // "Open log" da seção Log (só com o Log ligado).
+  onOpenLog?: (typeId: string) => void
+  // Aberto pelo "Settings" do Log: rola o detalhe até a seção Log.
+  focusLog?: boolean
 }
 
 function errorText(err: unknown): string {
@@ -154,8 +163,11 @@ export function NoteTypesModal({
   reorder = false,
   registry,
   notes,
+  trackers = [],
   onOpenBoard,
   focusBoard = false,
+  onOpenLog,
+  focusLog = false,
 }: NoteTypesModalProps) {
   const { types, defs } = registry
   const { confirm, modal } = useConfirm()
@@ -164,17 +176,19 @@ export function NoteTypesModal({
   const [newTypeName, setNewTypeName] = useState('')
   const [newPropName, setNewPropName] = useState('')
   const [newPropType, setNewPropType] = useState<MetadataType>('text')
-  const [iconQuery, setIconQuery] = useState('')
   // Contagens recalculadas no momento do confirm (não as do render).
   const notesRef = useRef(notes)
   notesRef.current = notes
+  const trackersRef = useRef(trackers)
+  trackersRef.current = trackers
   const cancelRef = useRef(false)
   const onDraftKeys = draftKeys(cancelRef)
   const detailRef = useRef<HTMLDivElement>(null)
 
   // Só na abertura: o usuário rola livremente depois.
   useEffect(() => {
-    if (focusBoard) detailRef.current?.querySelector('[data-board-section]')?.scrollIntoView({ block: 'start' })
+    const section = focusBoard ? 'board' : focusLog ? 'log' : null
+    if (section) detailRef.current?.querySelector(`[data-${section}-section]`)?.scrollIntoView({ block: 'start' })
   }, [])
   // O teclado assume o arrasto (KeyboardSensor do dnd-kit); o ponteiro precisa
   // de 5px de deslocamento para não competir com o clique no input.
@@ -185,15 +199,6 @@ export function NoteTypesModal({
 
   const selected = types.find((t) => t.id === selectedId) ?? types[0] ?? null
   const selectedDefs = selected ? typeDefs(defs, selected.id) : []
-
-  // Busca de ícone: pelo nome (espaço vale como "-") ou pelo nome do grupo.
-  const query = iconQuery.trim().toLowerCase()
-  const iconGroups = TYPE_ICON_GROUPS.map((g) => ({
-    label: g.label,
-    names: Object.keys(g.icons).filter(
-      (name) => !query || g.label.toLowerCase().includes(query) || name.includes(query.replace(/\s+/g, '-'))
-    ),
-  })).filter((g) => g.names.length > 0)
 
   async function run(op: () => Promise<unknown>): Promise<boolean> {
     try {
@@ -236,10 +241,13 @@ export function NoteTypesModal({
 
   async function handleRemoveType(t: NoteType) {
     const count = notesRef.current.filter((n) => n.typeId === t.id).length
-    const message =
+    const base =
       count > 0
         ? `Delete type "${t.name}"? ${count} note${count === 1 ? '' : 's'} lose the type and its property values.`
         : `Delete type "${t.name}"?`
+    const linkedNames = trackersRef.current.filter((tr) => tr.linkedTypeId === t.id).map((tr) => tr.name)
+    const linked = deleteTypeTrackersNote(linkedNames)
+    const message = linked ? `${base} ${linked}` : base
     const ok = await confirm(message, { title: 'Delete type', confirmLabel: 'Delete', destructive: true })
     if (ok) void run(() => registry.removeType(t.id))
   }
@@ -406,40 +414,11 @@ export function NoteTypesModal({
         </div>
         <div className={`${own.field} ${own.iconField}`}>
           <span className={own.label}>Icon</span>
-          <div className={own.iconPicker}>
-            <input
-              className={styles.nameInput}
-              value={iconQuery}
-              onChange={(e) => setIconQuery(e.target.value)}
-              placeholder="Search icons"
-              aria-label="search icons"
-            />
-            <div className={own.icons} role="radiogroup" aria-label="type icon">
-              {iconGroups.map((g) => (
-                <div key={g.label} className={own.iconGroup}>
-                  <span className={own.iconGroupLabel}>{g.label}</span>
-                  {g.names.map((name) => {
-                    const active = (t.icon ?? 'note') === name
-                    return (
-                      <button
-                        key={name}
-                        type="button"
-                        role="radio"
-                        aria-checked={active}
-                        aria-label={name}
-                        title={name}
-                        className={`${own.iconButton} ${active ? own.iconActive : ''}`}
-                        onClick={() => void run(() => registry.updateType(t.id, { icon: name }))}
-                      >
-                        <TypeIcon name={name} size={14} />
-                      </button>
-                    )
-                  })}
-                </div>
-              ))}
-              {iconGroups.length === 0 && <p className={own.empty}>No icons match.</p>}
-            </div>
-          </div>
+          <IconPicker
+            value={t.icon ?? 'note'}
+            onChange={(name) => void run(() => registry.updateType(t.id, { icon: name }))}
+            label="type icon"
+          />
         </div>
         <div className={own.field}>
           <span className={own.label}>Color</span>
@@ -542,6 +521,13 @@ export function NoteTypesModal({
           defs={selectedDefs}
           onChange={(board) => void run(() => registry.updateType(t.id, { board }))}
           onOpenBoard={onOpenBoard ? () => onOpenBoard(t.id) : undefined}
+        />
+
+        <NoteTypeLogSection
+          type={t}
+          defs={selectedDefs}
+          onChange={(log) => void run(() => registry.updateType(t.id, { log }))}
+          onOpenLog={onOpenLog ? () => onOpenLog(t.id) : undefined}
         />
 
         <p className={own.section}>Template</p>

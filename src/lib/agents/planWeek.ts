@@ -21,9 +21,10 @@ import {
   WEEKDAY_SHORT,
   type ChecklistProgress,
 } from '../tasks'
+import { formatTrackersForPlanWeek } from '../trackers'
 import { DEFAULT_WORK_HOURS_PER_DAY, loadWorkCapacity } from '../workCapacity'
 import { storage } from '../../storage'
-import { loadReaderBooks } from './agentData'
+import { loadReaderBooks, loadTrackerDataSafe } from './agentData'
 import type { ChatAgentDef } from './chat'
 
 // Agente plan-week (chat): plano da semana de trabalho a partir das tasks,
@@ -154,7 +155,15 @@ export async function buildPlanWeekContext(todayKey: string): Promise<string> {
     disabledNotebookIds,
     planDays: { from: win.planDays[0], to: win.planDays[win.planDays.length - 1] },
   })
-  return `${header}\n\n${formatAgendaContext(sel, input, toAiText, planSummaries)}`
+  const trackerData = await loadTrackerDataSafe(todayKey, { notes, types })
+  const trackerText = trackerData
+    ? formatTrackersForPlanWeek(trackerData.trackers, trackerData.days, todayKey, {
+        thisWeek: win.coverage !== 'nextWeek',
+        nextWeek: win.coverage !== 'thisWeek',
+      })
+    : null
+  const agenda = `${header}\n\n${formatAgendaContext(sel, input, toAiText, planSummaries)}`
+  return trackerText ? `${agenda}\n\n${trackerText}` : agenda
 }
 
 function planWeekPrompt(language: string): string {
@@ -165,6 +174,7 @@ Respond in the language of the user's latest message (if unclear: ${language}). 
 Data:
 - The "Plan week context" system block is rebuilt by the app for every message and is the source of truth: today, work days, capacity, the days to plan and the agenda (open and overdue tasks, TODOS deliverables, dated notes, and Calendar daily notes). Ignore older versions of it in the conversation.
 - Plan notes come among the dated notes as a "[Plan …]" summary computed by the app: state, items done and expected, overdue, Today and Next items, the plan's items on the days to plan ("Items dated …", done or open) and the plan's Capacity (hours per day). Use these numbers as given; never count days or items yourself.
+- The block may end with a "Trackers" section (habits with a weekly target): the sessions to go in each covered week and the candidate days, computed by the app.
 - The query_tasks tool, when available, is only for a specific lookup the block does not answer. Do not wait for a tool to build the plan.
 
 How to plan:
@@ -177,13 +187,14 @@ How to plan:
 
 Output — exactly this, with titles in the user's language:
 - One line per day to plan: "**<Wkd dd/mm> · ~Nh**" (short weekday, dd/mm, the day's total hours). Under it at most 4 bullets, each only the task or deliverable title, or a short step when you split one. No hours, source, notebook or "AI estimate" on the items. A day with nothing: "**<Wkd dd/mm> · free**".
+- **Trackers**: only when the block has a Trackers section with sessions to go. One line per tracker and week: "<name>: N sessions — <Wkd dd/mm>, <Wkd dd/mm>", choosing days only from that line's candidate days (weekends included) and spreading them out. Sessions have no hours, do not use the capacity and do not count toward the 4 items per day. A tracker whose target is reached gets no line. You only suggest: the user marks days in the Calendar.
 - **Upcoming**: only when there are task deadlines or TODOS delivery dates after the planned days. One line per item, nearest first: "dd/mm · title". No hours and no split into days.
 - **Parked**: at most 2 lines, only when there are parked tasks, grouped by status name.
 - **Risks**: at most 2 lines, only when what is due does not fit in the capacity before its deadline. Name the deliverable and what would have to change (postpone, cut scope, renegotiate). Overdue items that do not fit go here.
 - Last line, in italics: hours are AI estimates. When the capacity source is the default, add in the same line: "default ${DEFAULT_WORK_HOURS_PER_DAY}h/day, set yours in Settings › Agenda".
 Nothing else: no reasoning, no explanation of the capacity, no summary.
 
-Questions: never ask about capacity or work days; the block has them. Ask only when something missing blocks the plan: one focused question with a suggested answer. If there are no open tasks and no deadlines, say so in one line and do not make up a plan.
+Questions: never ask about capacity or work days; the block has them. Ask only when something missing blocks the plan: one focused question with a suggested answer. If there are no open tasks and no deadlines, say so in one line and do not make up a plan (still give the Trackers section when it has sessions to go).
 
 Follow-ups: when the user asks for a change ("drop <weekday>", "focus on <task>", "only <N>h on <weekday>"), redo the whole plan in the same format with the change applied.`
 }
@@ -198,5 +209,6 @@ export const planWeekAgent: ChatAgentDef = {
   buildContext: async (input) => ({ text: await buildPlanWeekContext(input.todayKey) }),
   forceTasksTool: true,
   forceNotesTool: false,
+  forceTrackersTool: true,
   context: { rag: false, web: false, deepResearch: false },
 }

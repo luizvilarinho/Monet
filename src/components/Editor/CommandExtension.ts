@@ -5,7 +5,7 @@ import type { EditorState, Transaction } from '@tiptap/pm/state'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { EditorView } from '@tiptap/pm/view'
 import { ArrowLineDown, ArrowLineUp, Trash } from '@phosphor-icons/react'
-import { commandLineHint, getCommandLineStatus, isPotentialCommandLine, parseCommandLine } from './commandParser'
+import { commandLineHint, getCommandLineStatus, isPotentialCommandLine, parseCommandLine, responseCommandText } from './commandParser'
 import { iconMarkup } from './iconMarkup'
 import { CHAT_AGENTS, GENERAL_AGENT_ID } from '../../lib/agents/chat'
 import type { AiResponse } from '../../types'
@@ -78,10 +78,6 @@ function isParagraph(node: PMNode): boolean {
 
 function paragraphText(node: PMNode): string {
   return node.textContent
-}
-
-function commandTextFromResponse(r: AiResponse): string {
-  return r.query.trim() ? `${r.command} ${r.query.trim()}` : r.command
 }
 
 // For !takesQuery commands, the stored query is always '' so the executed key is
@@ -200,7 +196,7 @@ function buildCommandIndex(
     byId.set(r.id, r)
     if (r.status === 'error') continue
     const map = r.status === 'completed' ? byText : otherByText
-    const text = commandTextFromResponse(r)
+    const text = responseCommandText(r)
     const arr = map.get(text) ?? []
     arr.push(r)
     map.set(text, arr)

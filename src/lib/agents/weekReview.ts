@@ -37,11 +37,12 @@ export const weekReviewAgent: AgentDef = {
   complementRules: false,
   behavior: `Role: record the user's calendar week in the daily note. It is a review, not a plan.
 Use only the "Agenda" block (tasks, TODOS deliverables, dated notes, ongoing plans and Calendar daily notes). Plan notes come as a "[Plan …]" summary computed by the app (progress, behind or ahead, overdue items): use its numbers as given; never count days or items yourself.
-Three short sections, titled in the user's language:
+Up to four short sections, titled in the user's language:
 - **Done**: what was completed or happened in the "Done" period (completed tasks, TODOS progress, activities in notes and daily notes).
 - **Pending**: what was due in the week and was not done, plus anything overdue, ordered by deadline, with overdue items marked.
 - **Slipped**: postponed tasks ("postponed Nx") and plans whose summary says they are behind or past their End, with the summary's numbers.
-Start Done and Pending with their period as a short date range. One line per item. No hour estimates and no distribution across days. If a section has nothing, say so in one line. If a Parameter is given, focus on it. Never invent tasks, dates or deliverables.`,
+- **Trackers**: only when the Agenda has a "Trackers in this week" block. One line per tracker: "<name>: n/target" and its status from the block (on target, below target, in progress with days left). Use the block's numbers; never estimate.
+Start Done and Pending with their period as a short date range. One line per item. No hour estimates and no distribution across days. If Done, Pending or Slipped has nothing, say so in one line. Without a "Trackers in this week" block in the Agenda, leave out the Trackers section: do not write it, not even to say there is nothing. If a Parameter is given, focus on it. Never invent tasks, dates or deliverables.`,
   context: {
     note: 'none',
     noteMeta: false,
@@ -50,5 +51,6 @@ Start Done and Pending with their period as a short date range. One line per ite
     agenda: weekReviewAgenda,
     datedNotes: false,
     previousDefinition: false,
+    trackers: true,
   },
 }

@@ -2,15 +2,16 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { nanoid } from 'nanoid'
 import type { MetadataDef, MetadataType, NoteType, SelectOption } from '../types'
 import { storage } from '../storage'
-import { normalizeName } from '../lib/tasks'
+import { normalizeName, uniqueName } from '../lib/tasks'
 import { MAX_LIST_PROPERTIES } from '../lib/noteTypes'
 import { stripDefFromBoard } from '../lib/noteBoard'
-import { emitTasksChanged, loadAndSyncWithRetry } from '../lib/tasksEvents'
+import { stripDefFromLog } from '../lib/noteLog'
+import { emitTasksChanged, emitTrackersChanged, loadAndSyncWithRetry } from '../lib/tasksEvents'
 
 export const MAX_TYPE_NAME = 24
 export const MAX_PROPERTY_NAME = 24
 
-export type NoteTypePatch = Partial<Pick<NoteType, 'name' | 'icon' | 'color' | 'template' | 'board'>>
+export type NoteTypePatch = Partial<Pick<NoteType, 'name' | 'icon' | 'color' | 'template' | 'board' | 'log'>>
 export type NoteDefPatch = Partial<Pick<MetadataDef, 'name' | 'showInList' | 'options'>>
 
 function maxOrder(list: Array<{ sortOrder: number }>): number {
@@ -26,10 +27,9 @@ function validName(
   exceptId: string | null,
   clash: string
 ): string {
-  const trimmed = name.trim().slice(0, max)
+  const { name: trimmed, clash: other } = uniqueName(name, max, others, exceptId)
   if (!trimmed) throw new Error('Name is required.')
-  const wanted = normalizeName(trimmed)
-  if (others.some((o) => o.id !== exceptId && normalizeName(o.name) === wanted)) throw new Error(clash)
+  if (other) throw new Error(clash)
   return trimmed
 }
 
@@ -95,6 +95,7 @@ export function useNoteTypes(opts?: { onRemoved?: () => void }) {
         builtin: false,
         createdAt: Date.now(),
         board: null,
+        log: null,
       }
       setTypes((list) => [...list, type])
       await persist(() => storage.saveNoteType(type), 'create note type')
@@ -121,12 +122,14 @@ export function useNoteTypes(opts?: { onRemoved?: () => void }) {
   )
 
   // As notas perdem o tipo e os valores das propriedades dele (banco:
-  // deleteNoteType; memória: `onRemoved`).
+  // deleteNoteType; memória: `onRemoved`). O banco também limpa o vínculo dos
+  // trackers com o tipo: as outras janelas relêem os trackers (`trackers-changed`).
   const removeType = useCallback(
     async (id: string) => {
       const current = typesRef.current.find((t) => t.id === id)
       if (!current || current.builtin) return
       if (!(await persist(() => storage.deleteNoteType(id), 'delete note type'))) return
+      emitTrackersChanged()
       setTypes((list) => list.filter((t) => t.id !== id))
       setDefs((list) => list.filter((d) => d.noteTypeId !== id))
       onRemovedRef.current?.()
@@ -204,7 +207,8 @@ export function useNoteTypes(opts?: { onRemoved?: () => void }) {
   )
 
   // Os valores somem das notas (banco: deleteMetadataDef; memória: `onRemoved`).
-  // O board do tipo dono perde a referência (sendo a coluna, o board some).
+  // O board e o Log do tipo dono perdem a referência (sendo a coluna, o board
+  // some); o tipo é gravado uma vez só.
   const removeDef = useCallback(
     async (id: string) => {
       const ownerId = defsRef.current.find((d) => d.id === id)?.noteTypeId
@@ -212,10 +216,11 @@ export function useNoteTypes(opts?: { onRemoved?: () => void }) {
       setDefs((list) => list.filter((d) => d.id !== id))
       onRemovedRef.current?.()
       const owner = typesRef.current.find((t) => t.id === ownerId)
-      if (!owner?.board) return
-      const board = stripDefFromBoard(owner.board, id)
-      if (board === owner.board) return
-      const next = { ...owner, board }
+      if (!owner) return
+      const board = owner.board ? stripDefFromBoard(owner.board, id) : null
+      const log = owner.log ? stripDefFromLog(owner.log, id) : null
+      if (board === owner.board && log === owner.log) return
+      const next = { ...owner, board, log }
       setTypes((list) => list.map((t) => (t.id === next.id ? next : t)))
       await persist(() => storage.saveNoteType(next), 'save note type')
     },

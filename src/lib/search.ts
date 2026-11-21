@@ -6,6 +6,9 @@ export interface SearchResult {
   content: string
   rawContent?: string
   imageUrl?: string
+  // `published_date` do Tavily, como veio (só com `include_published_date`);
+  // pode ser a data de atualização da página.
+  publishedDate?: string
 }
 
 export async function getTavilyKey(): Promise<string | null> {
@@ -49,12 +52,15 @@ function isSearchResult(value: unknown): value is SearchResult {
 }
 
 // `signal` deixa o Stop do chat cancelar a busca em andamento (o fetch rejeita
-// com AbortError).
+// com AbortError). `opts` (Radar e /since): `topic`; `startDate` (YYYY-MM-DD) e
+// `filterByDate` (tira o que está fora da janela e o que não tem data); com
+// `opts`, a resposta traz `published_date`. Sem `opts`, o body não muda.
 export async function webSearch(
   query: string,
   maxResults = 5,
   includeRawContent = false,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  opts?: { topic?: 'general' | 'news'; startDate?: string; filterByDate?: boolean }
 ): Promise<SearchResult[]> {
   const key = await getTavilyKey()
   if (!key) throw new Error('Tavily key not configured')
@@ -71,6 +77,12 @@ export async function webSearch(
       query,
       max_results: maxResults,
       include_raw_content: includeRawContent,
+      ...(opts && {
+        ...(opts.topic && { topic: opts.topic }),
+        ...(opts.startDate && { start_date: opts.startDate }),
+        ...(opts.filterByDate && { filter_by_published_date: true }),
+        include_published_date: true,
+      }),
     }),
   })
 
@@ -97,6 +109,7 @@ export async function webSearch(
       content: typeof r.content === 'string' ? r.content : '',
       rawContent: typeof r.raw_content === 'string' && r.raw_content ? r.raw_content : undefined,
       imageUrl: typeof r.image === 'string' && r.image ? r.image : undefined,
+      publishedDate: typeof r.published_date === 'string' && r.published_date ? r.published_date : undefined,
     }
     return isSearchResult(normalized) ? [normalized] : []
   })

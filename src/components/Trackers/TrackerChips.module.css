@@ -1,0 +1,70 @@
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1h);
+  /* Mesmo eixo lateral do editor (título, tags e corpo); a janela keep define
+     --pad-note-x e --pad-note-x-end no contêiner. */
+  margin: 0 var(--pad-note-x-end, var(--pad-content-x)) var(--space-2) var(--pad-note-x, var(--pad-editor-body));
+}
+
+/* Falha ao gravar uma marca: uma linha curta acima dos chips. */
+.error {
+  flex: 1 0 100%;
+  margin: 0;
+  font-size: 12px;
+  color: var(--accent-danger);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1h);
+  min-width: 0;
+  max-width: 100%;
+  height: var(--control-sm);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--hair);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.chip:hover {
+  border-color: var(--tracker-color);
+  color: var(--text-primary);
+}
+
+.chip:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Feito (marca ou nota): fundo em tom da cor do tracker. */
+.chipDone {
+  border-color: color-mix(in srgb, var(--tracker-color) 55%, transparent);
+  background: color-mix(in srgb, var(--tracker-color) 20%, transparent);
+  color: var(--text-primary);
+}
+
+.icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  color: var(--tracker-color);
+}
+
+.name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Feito vindo de nota: "· note" depois do nome; o clique abre a nota. */
+.suffix {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}

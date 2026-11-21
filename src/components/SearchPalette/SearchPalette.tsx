@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
-import { Plus, Tag, X } from '@phosphor-icons/react'
+import { MagnifyingGlass, Plus, Tag, X } from '@phosphor-icons/react'
 import { CALENDAR_NOTEBOOK_ID } from '../../lib/calendar'
 import { notesFolderDocId } from '../../lib/documents'
 import { clipContextStart, type NoteMarkEntry } from '../../lib/noteMarks'
@@ -507,34 +507,43 @@ export function SearchPalette({
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => completeFilter(s)}
       >
-        {s.kind === 'tag' && <Tag size={11} aria-hidden />}
-        {s.type && <TypeIcon name={s.type.icon} size={11} />}
+        {s.kind === 'tag' && <Tag size={13} aria-hidden />}
+        {s.type && <TypeIcon name={s.type.icon} size={13} />}
         <span>{s.kind === 'notebook' ? `#${s.label}` : s.label}</span>
       </button>
     )
   }
 
   return (
-    <div className={styles.overlay} onMouseDown={onClose}>
-      <div className={styles.panel} role="dialog" aria-modal="true" aria-label="Search" onMouseDown={(e) => e.stopPropagation()}>
-        <input
-          ref={inputRef}
-          className={styles.input}
-          type="text"
-          placeholder="Search… (#notebook, tag:, type:, is:archived, has:mark)"
-          value={query}
-          onChange={(e) => {
-            setQuery(e.target.value)
-            setCaret(e.target.selectionStart ?? e.target.value.length)
-          }}
-          onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
-          role="combobox"
-          aria-label="Search notes"
-          aria-autocomplete="list"
-          aria-expanded={items.length > 0}
-          aria-controls={listId}
-          aria-activedescendant={items[selectedIndex] ? optionId(selectedIndex) : undefined}
-        />
+    <div className={`${styles.overlay} ${styles.paletteOverlay}`} onMouseDown={onClose}>
+      <div
+        className={`${styles.panel} ${styles.palettePanel}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Search"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className={styles.searchRow}>
+          <MagnifyingGlass size={22} className={styles.searchIcon} aria-hidden />
+          <input
+            ref={inputRef}
+            className={styles.input}
+            type="text"
+            placeholder="Search… (#notebook, tag:, type:, is:archived, has:mark)"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value)
+              setCaret(e.target.selectionStart ?? e.target.value.length)
+            }}
+            onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
+            role="combobox"
+            aria-label="Search notes"
+            aria-autocomplete="list"
+            aria-expanded={items.length > 0}
+            aria-controls={listId}
+            aria-activedescendant={items[selectedIndex] ? optionId(selectedIndex) : undefined}
+          />
+        </div>
         {suggestions && (
           <div className={styles.suggestions} role="group" aria-label="Filter suggestions">
             {suggestions.items.length === 0 ? (
@@ -563,7 +572,7 @@ export function SearchPalette({
                 onClick={() => removeChip(notebookChip.raw)}
               >
                 <span>#{notebookChip.label}</span>
-                <X size={10} aria-hidden />
+                <X size={12} aria-hidden />
               </button>
             )}
             {archivedChip && (
@@ -575,7 +584,7 @@ export function SearchPalette({
                 onClick={() => removeChip(archivedChip.raw)}
               >
                 <span>is:archived</span>
-                <X size={10} aria-hidden />
+                <X size={12} aria-hidden />
               </button>
             )}
             {tagChip && (
@@ -586,9 +595,9 @@ export function SearchPalette({
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => removeChip(tagChip.raw)}
               >
-                <Tag size={11} aria-hidden />
+                <Tag size={13} aria-hidden />
                 <span>{tagChip.label}</span>
-                <X size={10} aria-hidden />
+                <X size={12} aria-hidden />
               </button>
             )}
             {/* Atalho do filtro de marcas: botão sempre visível, alterna
@@ -601,7 +610,7 @@ export function SearchPalette({
               onClick={toggleMarks}
             >
               <span>Marks</span>
-              {liveParsed.marked && <X size={10} aria-hidden />}
+              {liveParsed.marked && <X size={12} aria-hidden />}
             </button>
             {labelChips.map((label) => {
               const active = liveParsed.markLabel === label
@@ -615,7 +624,7 @@ export function SearchPalette({
                   onClick={() => toggleMarkLabel(label)}
                 >
                   <span>{label}</span>
-                  {active && <X size={10} aria-hidden />}
+                  {active && <X size={12} aria-hidden />}
                 </button>
               )
             })}
@@ -633,9 +642,9 @@ export function SearchPalette({
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => toggleType(t)}
                 >
-                  <TypeIcon name={t.icon} size={11} />
+                  <TypeIcon name={t.icon} size={13} />
                   <span>{t.name}</span>
-                  {active && <X size={10} aria-hidden />}
+                  {active && <X size={12} aria-hidden />}
                 </button>
               )
             })}
@@ -710,13 +719,13 @@ export function SearchPalette({
                     <span className={styles.itemNotebook}>{createNotebookName}</span>
                     {parsed.tag && (
                       <span className={styles.itemTag}>
-                        <Tag size={10} aria-hidden />
+                        <Tag size={12} aria-hidden />
                         {parsed.tag}
                       </span>
                     )}
                   </div>
                   <div className={styles.itemTitleRow}>
-                    <Plus size={13} className={styles.createIcon} aria-hidden />
+                    <Plus size={16} className={styles.createIcon} aria-hidden />
                     <div className={styles.itemTitle}>Create note “{text}”</div>
                   </div>
                 </div>
@@ -774,7 +783,7 @@ export function SearchPalette({
                     <div className={styles.itemTitle}>{note.title || 'Untitled'}</div>
                     {result.kind === 'note' && result.tag && (
                       <span className={styles.itemTag}>
-                        <Tag size={10} aria-hidden />
+                        <Tag size={12} aria-hidden />
                         {result.tag}
                       </span>
                     )}

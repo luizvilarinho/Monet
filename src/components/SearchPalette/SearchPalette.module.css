@@ -1,3 +1,7 @@
+/* Base compartilhada com o MarkNotePicker (seletor compacto de 520 px, tamanho
+   de popover). A janela do Ctrl+P parte desta base e ganha a escala própria da
+   seção "Janela do Ctrl+P", no fim do arquivo; o que for só dela (`.input`,
+   `.chip`, `.footer`...) já está na escala dela. */
 .overlay {
   position: fixed;
   inset: 0;
@@ -12,7 +16,6 @@
 .panel {
   background: var(--surface-1);
   border: 1px solid var(--border);
-  /* Paleta é popover, não modal: raio de menu */
   border-radius: var(--radius-lg);
   width: 520px;
   max-width: 90vw;
@@ -20,16 +23,43 @@
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
 }
 
+/* Campo de busca: o centro da janela. O campo ocupa a faixa inteira (clicar
+   em qualquer ponto dela foca o campo, como antes); a lupa fica por cima, no
+   padding da esquerda, sem pegar o clique. */
+.searchRow {
+  position: relative;
+  border-bottom: 1px solid var(--border);
+}
+
+.searchIcon {
+  position: absolute;
+  left: var(--pal-gutter);
+  top: 50%;
+  width: var(--pal-icon-size);
+  height: var(--pal-icon-size);
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  pointer-events: none;
+  transition: color 0.12s;
+}
+
+.searchRow:focus-within .searchIcon {
+  color: var(--accent);
+}
+
 .input {
+  display: block;
   width: 100%;
-  padding: var(--space-3) var(--space-4);
-  font-size: 15px;
+  padding: var(--pal-input-pad) var(--pal-gutter) var(--pal-input-pad)
+    calc(var(--pal-gutter) + var(--pal-icon-size) + var(--space-3));
+  font-family: inherit;
+  font-size: var(--pal-input-size);
+  line-height: var(--lh-tight);
   background: transparent;
   border: none;
-  border-bottom: 1px solid var(--border);
   color: var(--text-primary);
+  caret-color: var(--accent);
   outline: none;
-  box-sizing: border-box;
 }
 
 .input::placeholder {
@@ -42,8 +72,8 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-1);
-  padding: var(--space-2) var(--space-4);
+  gap: var(--space-2);
+  padding: var(--space-3) var(--pal-gutter);
   border-bottom: 1px solid var(--border);
 }
 
@@ -65,7 +95,7 @@
 .suggestHint kbd {
   font-family: inherit;
   font-size: 10px;
-  padding: 0 var(--space-1);
+  padding: 0 var(--space-1h);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
@@ -83,15 +113,15 @@
 .chip {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-1);
-  padding: 0 var(--space-2);
-  min-height: var(--control-sm);
+  gap: var(--space-1h);
+  padding: 0 var(--space-3);
+  min-height: var(--pal-chip-h);
   border-radius: 999px;
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text-muted);
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--pal-chip-size);
   cursor: pointer;
 }
 
@@ -150,9 +180,10 @@
 .itemMeta {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-3);
   min-width: 0;
   margin-bottom: var(--space-0);
+  line-height: var(--lh-tight);
 }
 
 .itemMeta .itemNotebook {
@@ -186,8 +217,8 @@
 
 .statusDot {
   flex-shrink: 0;
-  width: var(--space-2);
-  height: var(--space-2);
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
 }
 
@@ -279,7 +310,7 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-0);
-  font-size: 11px;
+  font-size: var(--pal-meta-size);
   color: var(--text-secondary);
   overflow: hidden;
   white-space: nowrap;
@@ -290,7 +321,7 @@
   flex-shrink: 1;
   min-width: 0;
   max-width: 40%;
-  font-size: 11px;
+  font-size: var(--pal-meta-size);
   color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -304,17 +335,18 @@
 }
 
 .sectionHeader {
-  padding: var(--space-2) var(--space-4) var(--space-1);
+  padding: var(--space-3) var(--pal-gutter) var(--space-1);
   font-size: 11px;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
 }
 
 .itemPreview {
-  font-size: 12px;
+  font-size: var(--pal-preview-size);
   color: var(--text-muted);
-  margin-top: var(--space-0);
+  margin-top: var(--space-1);
+  line-height: 1.35;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -343,9 +375,10 @@
 /* Rodapé com os atalhos de abertura (só quando a nota lateral está disponível). */
 .footer {
   display: flex;
-  gap: var(--space-4);
-  padding: var(--space-2) var(--space-4);
+  gap: var(--space-6);
+  padding: var(--space-3) var(--pal-gutter);
   border-top: 1px solid var(--border);
+  background: var(--bg-panel);
   color: var(--text-muted);
   font-size: 11px;
 }
@@ -353,8 +386,137 @@
 .footer kbd {
   font-family: inherit;
   font-size: 10px;
-  padding: 0 var(--space-1);
+  padding: 0 var(--space-1h);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
+}
+
+/* ===== Janela do Ctrl+P =====
+   O atalho mais usado do app: ocupa o espaço que a importância pede (840 px,
+   até 720 px de altura, sempre dentro da janela) e usa a mesma sobreposição
+   dos modais grandes. A presença vem do tamanho e do respiro, não da letra: as
+   fontes ficam na escala do resto do app (só o campo é um degrau maior) e a
+   margem lateral é a do editor (40 px). Os tamanhos vêm de variáveis locais
+   (`--pal-*`) para a escala caber numa janela baixa ou estreita sem repetir
+   regra. Vale só para quem tem `.paletteOverlay`/`.palettePanel`; o
+   MarkNotePicker segue na base compacta acima. */
+.paletteOverlay {
+  /* Distância do topo; o painel nunca passa da base da janela. */
+  --pal-top: clamp(var(--space-6), 8vh, 96px);
+  padding: var(--pal-top) var(--space-8) 0;
+  background: rgba(10, 10, 14, 0.7);
+  backdrop-filter: blur(2px);
+}
+
+.palettePanel {
+  --pal-gutter: var(--space-10);
+  --pal-input-pad: var(--space-4);
+  --pal-input-size: 16px;
+  --pal-icon-size: 18px;
+  --pal-chip-h: var(--control-sm);
+  --pal-chip-size: 12px;
+  --pal-row-pad: var(--space-3);
+  --pal-title-size: 14px;
+  --pal-meta-size: 11px;
+  --pal-preview-size: 12px;
+
+  display: flex;
+  flex-direction: column;
+  width: min(840px, 100%);
+  max-width: none;
+  max-height: min(720px, calc(100vh - var(--pal-top) - var(--space-8)));
+  border-color: var(--hair);
+  /* Palette é janela de trabalho, não popover: raio e sombra dos modais. */
+  border-radius: var(--radius-xl);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.03);
+}
+
+/* Cabeçalho e rodapé têm a altura deles; só a lista cede e rola. O mínimo
+   evita a janela virar uma fresta quando casa pouca coisa. */
+.palettePanel .searchRow,
+.palettePanel .suggestions,
+.palettePanel .chips,
+.palettePanel .footer {
+  flex-shrink: 0;
+}
+
+.palettePanel .chips {
+  gap: var(--space-2);
+  padding: var(--space-3) var(--pal-gutter);
+}
+
+.palettePanel .list {
+  flex: 1 1 auto;
+  min-height: min(320px, 40vh);
+  max-height: none;
+}
+
+.palettePanel .item {
+  padding: var(--pal-row-pad) var(--pal-gutter);
+}
+
+/* A linha selecionada ganha a barra de destaque, além do fundo. */
+.palettePanel .itemActive {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.palettePanel .itemTitleRow {
+  gap: var(--space-3);
+}
+
+.palettePanel .itemNotebook {
+  font-size: var(--pal-meta-size);
+}
+
+.palettePanel .itemTitle {
+  font-size: var(--pal-title-size);
+  line-height: var(--lh-tight);
+}
+
+.palettePanel .itemLabel,
+.palettePanel .itemAside,
+.palettePanel .markLabel {
+  font-size: var(--pal-meta-size);
+}
+
+.palettePanel .markPreview {
+  font-size: var(--pal-preview-size);
+}
+
+.palettePanel .empty {
+  padding: var(--space-8) var(--pal-gutter);
+  font-size: 13px;
+}
+
+/* Janela baixa (o app tem mínimo de 600 px): densidade antes de escala. O
+   campo encolhe um degrau, as linhas apertam e a lista segue com a altura de
+   antes. */
+@media (max-height: 700px) {
+  .palettePanel {
+    --pal-input-pad: var(--space-3);
+    --pal-input-size: 15px;
+    --pal-icon-size: 16px;
+    --pal-row-pad: var(--space-2);
+  }
+
+  .palettePanel .chips {
+    gap: var(--space-1h);
+    padding-block: var(--space-2);
+  }
+
+  .palettePanel .footer {
+    padding-block: var(--space-2);
+  }
+}
+
+/* Janela estreita: o respiro lateral cai para o do app. */
+@media (max-width: 720px) {
+  .paletteOverlay {
+    padding-inline: var(--space-4);
+  }
+
+  .palettePanel {
+    --pal-gutter: var(--space-4);
+  }
 }

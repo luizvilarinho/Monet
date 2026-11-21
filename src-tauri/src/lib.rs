@@ -252,6 +252,28 @@ fn get_tavily_key(app: AppHandle) -> Result<Option<String>, String> {
     Ok(read_key(&app, "tavily_key"))
 }
 
+// Chave opcional do OpenAlex (Radar e Papers): sem ela as consultas saem sem o
+// parâmetro `api_key`, com o orçamento diário gratuito.
+#[tauri::command]
+fn save_openalex_key(app: AppHandle, key: String) -> Result<(), String> {
+    save_key(&app, "openalex_key", key)
+}
+
+#[tauri::command]
+fn has_openalex_key(app: AppHandle) -> Result<bool, String> {
+    Ok(read_key(&app, "openalex_key").is_some())
+}
+
+#[tauri::command]
+fn clear_openalex_key(app: AppHandle) -> Result<(), String> {
+    clear_key(&app, "openalex_key")
+}
+
+#[tauri::command]
+fn get_openalex_key(app: AppHandle) -> Result<Option<String>, String> {
+    Ok(read_key(&app, "openalex_key"))
+}
+
 // Verificação da chave salva (Settings). A chave não volta ao frontend: só os
 // 4 últimos caracteres.
 #[derive(Serialize)]
@@ -778,6 +800,99 @@ async fn librarian_academic_relevance(
         "Current date: {current_date}\n\nYou are a conservative curator selecting scholarly papers to save permanently to a personal knowledge base. For each candidate you are given its DOI, Title, Year, and Abstract (Abstract may be '(none)').\n\nUser question: {question}\n\nCandidates:\n{candidates_block}\n\nRules:\n1. Approve a paper ONLY if it addresses the SPECIFIC focus of the question — the particular author, concept, relation, or claim being asked about — not merely the broad subject area. A paper that shares only the general topic, or that matches just because a keyword happens to appear, does NOT qualify.\n2. If the question relates two or more entities, the paper must actually engage with that relation or with all of them together; treating only one of them is not enough.\n3. If a candidate has NO abstract and the title matches only the broad subject, or the match is ambiguous, reject it. With no abstract, approve only when the title unequivocally addresses the specific focus of the question.\n4. Set the bar HIGH and approve at most 3. When in doubt, reject. It is fine to approve nothing.\n\nReturn a JSON object of the form {{\"dois\": [\"<doi>\", ...]}} listing only the approved DOIs (verbatim from the list), nothing else. If none qualify, return {{\"dois\": []}}."
     );
     librarian_decide(&app, prompt, "dois").await
+}
+
+// Prompt de geração de consultas do Radar ("radar"), do Papers ("papers") e do
+// /since ("since"). `focus` é o mapa de foco (ou, no /since, o texto da nota, só
+// para o modelo identificar o assunto); o app ainda limpa cada consulta antes de
+// buscar. `kind` desconhecido = None.
+fn radar_queries_prompt(
+    kind: &str,
+    focus: &str,
+    instruction: &str,
+    since: &str,
+    current_date: &str,
+) -> Option<String> {
+    let prompt = match kind {
+        "radar" => format!(
+            r#"Current date: {current_date}
+
+You plan web and scholarly searches for a personal "what is new" radar. The focus map below lists what the user studies and works on: notebooks, recent note titles, tags, plans, books in progress, board cards and an optional radar profile (subjects to follow, preferred sources, what to ignore). Only news published since {since} matter.
+
+User request (may be empty): {instruction}
+
+Focus map:
+{focus}
+
+Rules:
+1. Pick the 3 to 6 subjects most worth following now. The first line of the focus map names the scope:
+   - all notebooks: first the subjects the radar profile says to follow, then the most active notebooks, plans and books;
+   - a notebook, a tag or a board: search only for the subjects of that scope (its notes, plans, books, cards and tags). Use the profile's Follow list only for the subjects that match the scope, and never add a Follow subject the scope does not touch;
+   - in every scope the profile's Sources and Ignore lines apply: prefer those sources and never search for what the profile says to ignore.
+   If the user request names a subject, focus on it.
+2. Each query is 2 to 8 key terms: names of technologies, fields, methods, authors, standards, products or organizations. NO personal details, NO note text, NO sentences, NO question phrasing, NO dates.
+3. Prefix each query with its kind: "news: " (events, announcements, articles), "release: " (new versions, changelogs, tool or product releases) or "paper: " (scholarly research, in English terminology). At most 3 queries of each kind.
+4. If the focus map gives nothing to search for and the user request names no subject, return an empty list.
+
+Return a JSON object of the form {{"queries": ["news: ...", "release: ...", "paper: ..."]}}, nothing else."#
+        ),
+        "papers" => format!(
+            r#"Current date: {current_date}
+
+You plan searches in the OpenAlex scholarly database to find the essential papers on what the user studies. The focus map below lists the notebook or scope in question: note titles, tags, plans, books and profiles.
+
+User request (may be empty): {instruction}
+
+Focus map:
+{focus}
+
+Rules:
+1. Choose the 1 or 2 central research topics of the focus map (or the topic the user request names). A line starting with "Radar profile (ignore only)" lists what the user wants left out: never search for it.
+2. Each query is 2 to 6 key terms, as they would appear in paper titles and abstracts, in English canonical terminology. NO personal details, NO note text, NO question phrasing, NO years.
+3. Prefix each query with "paper: ". At most 2 queries.
+4. If the focus map has no research topic and the user request names none, return an empty list.
+
+Return a JSON object of the form {{"queries": ["paper: ...", "paper: ..."]}}, nothing else."#
+        ),
+        "since" => format!(
+            r#"Current date: {current_date}
+
+You plan web searches to find what changed, since {since}, about the subject of a note the user wrote. Use the note only to identify its subject; never copy its sentences.
+
+User instruction (may be empty): {instruction}
+
+Note:
+{focus}
+
+Rules:
+1. Identify the 1 to 3 specific subjects of the note (technologies, laws, standards, products, people, organizations, methods). If the instruction names a focus, follow it.
+2. Each query is 2 to 8 key terms. NO personal details, NO sentences from the note, NO question phrasing, NO dates.
+3. Prefix each query with "web: ". At most 3 queries.
+4. If the note has no searchable subject, return an empty list.
+
+Return a JSON object of the form {{"queries": ["web: ...", "web: ..."]}}, nothing else."#
+        ),
+        _ => return None,
+    };
+    Some(prompt)
+}
+
+// Consultas de busca do Radar, do Papers e do /since: o modelo do bibliotecário
+// lê o mapa de foco (ou a nota) e devolve linhas "<tipo>: <termos>". Falha de
+// rede, de chave ou de parse = lista vazia; o TS limpa e limita cada consulta.
+#[tauri::command]
+async fn radar_plan_queries(
+    app: AppHandle,
+    kind: String,
+    focus: String,
+    instruction: String,
+    since: String,
+    current_date: String,
+) -> Result<Vec<String>, String> {
+    match radar_queries_prompt(&kind, &focus, &instruction, &since, &current_date) {
+        Some(prompt) => librarian_decide(&app, prompt, "queries").await,
+        None => Ok(vec![]),
+    }
 }
 
 #[tauri::command]
@@ -1915,6 +2030,10 @@ pub fn run() {
             has_tavily_key,
             clear_tavily_key,
             get_tavily_key,
+            save_openalex_key,
+            has_openalex_key,
+            clear_openalex_key,
+            get_openalex_key,
             openrouter_list_models,
             openrouter_stream_chat,
             openrouter_stream_messages,
@@ -1924,6 +2043,7 @@ pub fn run() {
             librarian_judge,
             librarian_academic_query,
             librarian_academic_relevance,
+            radar_plan_queries,
             deep_research_rerank,
             web_search_route,
             extract_pdf_text,
@@ -1979,6 +2099,7 @@ pub fn run() {
             books::books_import_file,
             books::books_read_file,
             books::books_delete_file,
+            books::books_download_pdf,
             docs_folder::docs_tree,
             docs_folder::docs_read_file,
             docs_folder::docs_watch_start,

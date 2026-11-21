@@ -23,10 +23,13 @@ import type {
   TaskStatusDef,
   TaskView,
   TaskViewConfig,
+  Tracker,
+  TrackerMark,
 } from '../types'
 import { BUILTIN_STATUS_DEFS, TASK_COLOR_PALETTE } from '../lib/tasks'
 import { TODOS_DEFAULT_TEMPLATE, TODOS_TYPE_ID } from '../lib/noteTypes'
 import { parseBoardConfig } from '../lib/noteBoard'
+import { parseLogConfig } from '../lib/noteLog'
 import { CALENDAR_NOTEBOOK_ID, parseCalendarTitle } from '../lib/calendar'
 import type { DailyCleanupResult, StorageAdapter } from './index'
 
@@ -67,6 +70,26 @@ interface NoteTypeRow {
   builtin: number
   created_at: number
   board?: string | null
+  log?: string | null
+}
+
+interface TrackerRow {
+  id: string
+  name: string
+  weekly_target: number
+  color: string
+  icon: string
+  sort_order: number
+  linked_type_id: string | null
+  archived_at: number | null
+  created_at: number
+  updated_at: number
+}
+
+interface TrackerMarkRow {
+  tracker_id: string
+  day: string
+  created_at: number
 }
 
 interface SubjectRow {
@@ -203,7 +226,27 @@ function rowToNoteType(r: NoteTypeRow): NoteType {
     builtin: r.builtin === 1,
     createdAt: r.created_at,
     board: parseBoardConfig(r.board ?? null),
+    log: parseLogConfig(r.log ?? null),
   }
+}
+
+function rowToTracker(r: TrackerRow): Tracker {
+  return {
+    id: r.id,
+    name: r.name,
+    weeklyTarget: r.weekly_target,
+    color: r.color,
+    icon: r.icon,
+    sortOrder: r.sort_order,
+    linkedTypeId: r.linked_type_id ?? null,
+    archivedAt: r.archived_at ?? null,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  }
+}
+
+function rowToTrackerMark(r: TrackerMarkRow): TrackerMark {
+  return { trackerId: r.tracker_id, day: r.day, createdAt: r.created_at }
 }
 
 // Limites de zoom espelhados do Reader (src/components/Reader/Reader.tsx).
@@ -573,8 +616,12 @@ const NOTES_EXTRA_COLUMNS = [
 ]
 
 // Colunas de note_types posteriores à criação da tabela. `board` = config do
-// board do tipo (JSON); NULL = sem board.
-const NOTE_TYPES_EXTRA_COLUMNS = [{ name: 'board', ddl: 'board TEXT' }]
+// board do tipo (JSON); NULL = sem board. `log` = config do Log do tipo (JSON);
+// NULL = sem Log.
+const NOTE_TYPES_EXTRA_COLUMNS = [
+  { name: 'board', ddl: 'board TEXT' },
+  { name: 'log', ddl: 'log TEXT' },
+]
 
 // Listas explícitas das leituras (iguais às interfaces *Row), não `*`: ver o
 // comentário do getNoteTypes. Incluem as colunas dos *_EXTRA_COLUMNS, então o
@@ -585,6 +632,9 @@ const NOTEBOOK_COLUMNS = 'id, name, created_at, updated_at, color'
 const TASK_COLUMNS =
   'id, title, status, notebook_id, note_id, due_date, scheduled_date, parent_note_id, important, recurrence, recurrence_next_id, created_at, updated_at, completed_at, source_note_id, reschedule_count, sort_order, doing_since, planned_day, metadata'
 const METADATA_DEF_COLUMNS = 'id, name, type, sort_order, created_at, scope, note_type_id, options, show_in_list'
+const TRACKER_COLUMNS =
+  'id, name, weekly_target, color, icon, sort_order, linked_type_id, archived_at, created_at, updated_at'
+const TRACKER_MARK_COLUMNS = 'tracker_id, day, created_at'
 
 // Adiciona as colunas que faltam (PRAGMA table_info). Outra janela (main/keep)
 // pode ter adicionado a coluna entre o PRAGMA e o ALTER: "duplicate column
@@ -671,6 +721,8 @@ export class TauriStorage implements StorageAdapter {
   private notebookColorReady: Promise<void> | null = null
   private notesColumnsReady: Promise<void> | null = null
   private noteTypesTableReady: Promise<void> | null = null
+  private trackersTablesReady: Promise<void> | null = null
+  private radarStateReady: Promise<void> | null = null
   // Fila das DDLs idempotentes (ensure*): uma por vez nesta janela, para não
   // disputarem entre si o lock de escrita do monet.db no cold start (que já
   // é disputado com as outras janelas e com o scan do Rust).
@@ -1214,6 +1266,66 @@ export class TauriStorage implements StorageAdapter {
     return this.noteTypesTableReady
   }
 
+  // Trackers de constância: tabelas só do frontend, criadas aqui (sem
+  // migration), no padrão do ensureNoteTypesTable. Memoizado; se falhar, zera
+  // para tentar de novo na próxima chamada.
+  private ensureTrackersTables(db: Database): Promise<void> {
+    if (!this.trackersTablesReady) {
+      const p = this.serialDdl(async () => {
+        await db.execute(
+          `CREATE TABLE IF NOT EXISTS trackers (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            weekly_target INTEGER NOT NULL,
+            color TEXT NOT NULL,
+            icon TEXT NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            linked_type_id TEXT,
+            archived_at INTEGER,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+          )`
+        )
+        await db.execute(
+          `CREATE TABLE IF NOT EXISTS tracker_marks (
+            tracker_id TEXT NOT NULL,
+            day TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            PRIMARY KEY (tracker_id, day)
+          )`
+        )
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_tracker_marks_day ON tracker_marks(day)')
+      })
+      this.trackersTablesReady = p
+      p.catch(() => {
+        if (this.trackersTablesReady === p) this.trackersTablesReady = null
+      })
+    }
+    return this.trackersTablesReady
+  }
+
+  // Última consulta do Radar por escopo: tabela só do frontend, criada aqui
+  // (sem migration), no padrão do ensureTrackersTables. Memoizado; se falhar,
+  // zera para tentar de novo na próxima chamada.
+  private ensureRadarStateTable(db: Database): Promise<void> {
+    if (!this.radarStateReady) {
+      const p = this.serialDdl(async () => {
+        await db.execute(
+          `CREATE TABLE IF NOT EXISTS radar_scope_state (
+            scope_key TEXT PRIMARY KEY,
+            last_run_date TEXT NOT NULL,
+            updated_at INTEGER NOT NULL
+          )`
+        )
+      })
+      this.radarStateReady = p
+      p.catch(() => {
+        if (this.radarStateReady === p) this.radarStateReady = null
+      })
+    }
+    return this.radarStateReady
+  }
+
   async getTasks(): Promise<Task[]> {
     const db = await this.db()
     await this.ensureTasksTables(db)
@@ -1431,11 +1543,11 @@ export class TauriStorage implements StorageAdapter {
   async getNoteTypes(): Promise<NoteType[]> {
     const db = await this.db()
     await this.ensureNoteTypesTable(db)
-    // Colunas explícitas, não `*`: na abertura que adiciona `board`, uma conexão
-    // do pool com o schema antigo em cache preparava o `*` com 8 colunas e o
-    // sqlx entrava em pânico ao ler a 9ª (index out of bounds).
+    // Colunas explícitas, não `*`: na abertura que adiciona `board` (ou `log`),
+    // uma conexão do pool com o schema antigo em cache preparava o `*` com 8
+    // colunas e o sqlx entrava em pânico ao ler a 9ª (index out of bounds).
     const rows = await db.select<NoteTypeRow[]>(
-      `SELECT id, name, icon, color, template, sort_order, builtin, created_at, board
+      `SELECT id, name, icon, color, template, sort_order, builtin, created_at, board, log
        FROM note_types ORDER BY sort_order ASC, id ASC`
     )
     return rows.map(rowToNoteType)
@@ -1446,15 +1558,16 @@ export class TauriStorage implements StorageAdapter {
     await this.ensureNoteTypesTable(db)
     // `builtin` só no INSERT: um tipo não vira (nem deixa de ser) embutido.
     await db.execute(
-      `INSERT INTO note_types (id, name, icon, color, template, sort_order, builtin, created_at, board)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `INSERT INTO note_types (id, name, icon, color, template, sort_order, builtin, created_at, board, log)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        ON CONFLICT(id) DO UPDATE SET
          name = excluded.name,
          icon = excluded.icon,
          color = excluded.color,
          template = excluded.template,
          sort_order = excluded.sort_order,
-         board = excluded.board`,
+         board = excluded.board,
+         log = excluded.log`,
       [
         t.id,
         t.name,
@@ -1465,19 +1578,22 @@ export class TauriStorage implements StorageAdapter {
         t.builtin ? 1 : 0,
         t.createdAt,
         t.board ? JSON.stringify(t.board) : null,
+        t.log ? JSON.stringify(t.log) : null,
       ]
     )
     this.scheduleCheckpoint()
   }
 
   // Passos idempotentes nesta ordem (sem BEGIN/COMMIT: pool sqlx): valores das
-  // propriedades do tipo, defs do tipo, tipo das notas e, por fim, o tipo.
-  // Falha no meio é segura e reexecutar termina o serviço. Built-in não sai.
+  // propriedades do tipo, defs do tipo, tipo das notas, vínculo dos trackers e,
+  // por fim, o tipo. Falha no meio é segura e reexecutar termina o serviço.
+  // Built-in não sai.
   async deleteNoteType(id: string): Promise<void> {
     const db = await this.db()
     await this.ensureTasksTables(db)
     await this.ensureNotesColumns(db)
     await this.ensureNoteTypesTable(db)
+    await this.ensureTrackersTables(db)
     const type = await db.select<Array<{ builtin: number }>>(
       'SELECT builtin FROM note_types WHERE id = $1',
       [id]
@@ -1490,6 +1606,7 @@ export class TauriStorage implements StorageAdapter {
     for (const def of defs) await this.removeNotePropertyKey(db, def.id)
     await db.execute("DELETE FROM metadata_defs WHERE scope = 'note' AND note_type_id = $1", [id])
     await db.execute('UPDATE notes SET type_id = NULL WHERE type_id = $1', [id])
+    await db.execute('UPDATE trackers SET linked_type_id = NULL WHERE linked_type_id = $1', [id])
     await db.execute('DELETE FROM note_types WHERE id = $1 AND builtin = 0', [id])
     this.scheduleCheckpoint()
   }
@@ -1518,6 +1635,115 @@ export class TauriStorage implements StorageAdapter {
     const db = await this.db()
     await this.ensureNotesColumns(db)
     await db.execute('UPDATE notes SET archived_at = $1 WHERE id = $2', [archivedAt, noteId])
+    this.scheduleCheckpoint()
+  }
+
+  async getTrackers(): Promise<Tracker[]> {
+    const db = await this.db()
+    await this.ensureTrackersTables(db)
+    const rows = await db.select<TrackerRow[]>(
+      `SELECT ${TRACKER_COLUMNS} FROM trackers ORDER BY sort_order ASC, created_at ASC`
+    )
+    return rows.map(rowToTracker)
+  }
+
+  async saveTracker(t: Tracker): Promise<void> {
+    const db = await this.db()
+    await this.ensureTrackersTables(db)
+    await db.execute(
+      `INSERT INTO trackers (id, name, weekly_target, color, icon, sort_order, linked_type_id, archived_at, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       ON CONFLICT(id) DO UPDATE SET
+         name = excluded.name,
+         weekly_target = excluded.weekly_target,
+         color = excluded.color,
+         icon = excluded.icon,
+         sort_order = excluded.sort_order,
+         linked_type_id = excluded.linked_type_id,
+         archived_at = excluded.archived_at,
+         updated_at = excluded.updated_at`,
+      [
+        t.id,
+        t.name,
+        t.weeklyTarget,
+        t.color,
+        t.icon,
+        t.sortOrder,
+        t.linkedTypeId,
+        t.archivedAt,
+        t.createdAt,
+        t.updatedAt,
+      ]
+    )
+    this.scheduleCheckpoint()
+  }
+
+  // Duas execuções separadas, nesta ordem (sem BEGIN/COMMIT: pool sqlx): as
+  // marcas e depois o tracker; falha entre elas é segura, reexecutar é
+  // idempotente.
+  async deleteTracker(id: string): Promise<void> {
+    const db = await this.db()
+    await this.ensureTrackersTables(db)
+    await db.execute('DELETE FROM tracker_marks WHERE tracker_id = $1', [id])
+    await db.execute('DELETE FROM trackers WHERE id = $1', [id])
+    this.scheduleCheckpoint()
+  }
+
+  async countTrackerMarks(trackerId: string): Promise<number> {
+    const db = await this.db()
+    await this.ensureTrackersTables(db)
+    const rows = await db.select<Array<{ n: number }>>(
+      'SELECT COUNT(*) AS n FROM tracker_marks WHERE tracker_id = $1',
+      [trackerId]
+    )
+    return Number(rows[0]?.n ?? 0)
+  }
+
+  async getTrackerMarks(): Promise<TrackerMark[]> {
+    const db = await this.db()
+    await this.ensureTrackersTables(db)
+    const rows = await db.select<TrackerMarkRow[]>(
+      `SELECT ${TRACKER_MARK_COLUMNS} FROM tracker_marks ORDER BY day ASC`
+    )
+    return rows.map(rowToTrackerMark)
+  }
+
+  // on = INSERT OR IGNORE; off = DELETE. As duas são idempotentes.
+  async setTrackerMark(trackerId: string, day: string, on: boolean): Promise<void> {
+    const db = await this.db()
+    await this.ensureTrackersTables(db)
+    if (on) {
+      await db.execute(
+        'INSERT OR IGNORE INTO tracker_marks (tracker_id, day, created_at) VALUES ($1, $2, $3)',
+        [trackerId, day, Date.now()]
+      )
+    } else {
+      await db.execute('DELETE FROM tracker_marks WHERE tracker_id = $1 AND day = $2', [trackerId, day])
+    }
+    this.scheduleCheckpoint()
+  }
+
+  async getRadarLastRun(scopeKey: string): Promise<string | null> {
+    const db = await this.db()
+    await this.ensureRadarStateTable(db)
+    const rows = await db.select<Array<{ last_run_date: string }>>(
+      'SELECT last_run_date FROM radar_scope_state WHERE scope_key = $1',
+      [scopeKey]
+    )
+    return rows[0]?.last_run_date ?? null
+  }
+
+  async setRadarLastRun(scopeKey: string, dayKey: string): Promise<void> {
+    const db = await this.db()
+    await this.ensureRadarStateTable(db)
+    await db.execute(
+      `INSERT INTO radar_scope_state (scope_key, last_run_date, updated_at)
+       VALUES ($1, $2, $3)
+       ON CONFLICT(scope_key) DO UPDATE SET
+         last_run_date = excluded.last_run_date,
+         updated_at = excluded.updated_at`,
+      [scopeKey, dayKey, Date.now()]
+    )
     this.scheduleCheckpoint()
   }
 

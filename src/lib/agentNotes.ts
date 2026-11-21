@@ -1,15 +1,17 @@
 import type { ChatMessage } from '../hooks/useChat'
 import type { Note } from '../types'
 import { storage } from '../storage'
+import { radarProfileDraftAllowed, type PaperItem } from './agentItems'
 import { notesIndexGetDisabledNotebooks } from './documents'
 import { extractPlanDraft, nameKey, type PlanDraft } from './plan'
 import { bookKey, collectPlans, matchBook, type PlanEntry } from './planNotes'
+import { extractRadarProfileDraft, type RadarProfileDraft } from './radarProfile'
 import { extractProfileDraft, type ProfileDraft } from './studyProfile'
 
 // Notas criadas a partir de respostas de agente ("Save as Plan note" do
-// planner, "Save study profile" do tutor): o
-// pedido gravado pela main, o rascunho detectado na resposta e o vínculo
-// resposta → nota, que evita duplicar.
+// planner, "Save study profile" do tutor, "Save radar profile" do Radar, "Add to
+// reading list" dos artigos): o pedido gravado pela main, o rascunho detectado
+// na resposta e o vínculo resposta → nota, que evita duplicar.
 
 // Pedido de nota criada a partir de uma resposta de agente (gravado pela main).
 export type AgentNoteRequest =
@@ -26,17 +28,45 @@ export type AgentNoteRequest =
       archiveNoteId: string | null
     }
   | { kind: 'profile'; notebookId: string; title: string; content: string }
+  | { kind: 'radarProfile'; notebookId: string; title: string; content: string }
+  | {
+      kind: 'paper'
+      notebookId: string
+      title: string
+      content: string
+      year: number | null
+      authors: string
+      doi: string | null
+      // Com o `doi`, a chave de dedupe: a main confere a fila antes de criar a nota.
+      openalexId: string
+    }
 
-// Rascunho detectado numa resposta do assistant.
+// Rascunho detectado numa resposta do assistant. O `paper` não sai do
+// `agentNoteDraft`: a lista de itens o monta no clique de "Add to reading list".
 export type AgentNoteDraft =
   | { kind: 'plan'; messageId: string; plan: PlanDraft }
   | { kind: 'profile'; messageId: string; profile: ProfileDraft }
+  | { kind: 'radarProfile'; messageId: string; profile: RadarProfileDraft }
+  | { kind: 'paper'; messageId: string; paper: PaperItem; reason: string; agentLabel: 'Papers' | 'Radar' }
+
+// Rótulo e dica do botão de cada rascunho, nas três superfícies do chat.
+export const AGENT_DRAFT_ACTION: Record<AgentNoteDraft['kind'], { label: string; title: string }> = {
+  plan: { label: 'Save as Plan note', title: 'Save this plan as a Plan note' },
+  profile: { label: 'Save study profile', title: 'Save this study profile as a note' },
+  radarProfile: { label: 'Save radar profile', title: 'Save this radar profile as a note' },
+  paper: { label: 'Add to reading list', title: 'Add this paper to your reading list' },
+}
 
 export function agentNoteDraft(message: ChatMessage, todayKey: string): AgentNoteDraft | null {
   if (message.role !== 'assistant') return null
   if (message.agentId === 'tutor') {
     const profile = extractProfileDraft(message.content)
     return profile ? { kind: 'profile', messageId: message.id, profile } : null
+  }
+  if (message.agentId === 'radar') {
+    if (!radarProfileDraftAllowed(message)) return null
+    const profile = extractRadarProfileDraft(message.content)
+    return profile ? { kind: 'radarProfile', messageId: message.id, profile } : null
   }
   if (message.agentId !== 'planner') return null
   // Com `issue`, o botão aparece e o modal explica por que não dá para salvar.

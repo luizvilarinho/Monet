@@ -15,6 +15,7 @@ import {
   hasTavilyKey,
   saveTavilyKey,
 } from '../../lib/search'
+import { clearOpenAlexKey, hasOpenAlexKey, saveOpenAlexKey } from '../../lib/openalex'
 import {
   getUpdatePreference,
   setUpdatePreference,
@@ -113,7 +114,7 @@ export function SettingsModal({
   // Muda a cada save: confere a chave nova mesmo com outra já salva.
   const [keyCheckNonce, setKeyCheckNonce] = useState(0)
   // Remover uma chave pede confirmação em linha.
-  const [confirmingRemove, setConfirmingRemove] = useState<'openrouter' | 'tavily' | null>(null)
+  const [confirmingRemove, setConfirmingRemove] = useState<'openrouter' | 'tavily' | 'openalex' | null>(null)
   // "Saved" ao lado do campo gravado sozinho (some depois de 2 s).
   const [savedField, setSavedField] = useState<string | null>(null)
   const savedTimerRef = useRef<number | null>(null)
@@ -141,6 +142,15 @@ export function SettingsModal({
   const [hasTavily, setHasTavily] = useState(false)
   const [tavSaving, setTavSaving] = useState(false)
   const [tavStatus, setTavStatus] = useState<{
+    kind: 'idle' | 'success' | 'error'
+    message: string
+  }>({ kind: 'idle', message: '' })
+
+  // OpenAlex state (chave opcional: sem ela a busca usa o orçamento gratuito)
+  const [openalexValue, setOpenalexValue] = useState('')
+  const [hasOpenAlex, setHasOpenAlex] = useState(false)
+  const [oaSaving, setOaSaving] = useState(false)
+  const [oaStatus, setOaStatus] = useState<{
     kind: 'idle' | 'success' | 'error'
     message: string
   }>({ kind: 'idle', message: '' })
@@ -181,6 +191,11 @@ export function SettingsModal({
     hasTavilyKey()
       .then(setHasTavily)
       .catch(() => setHasTavily(false))
+    setOpenalexValue('')
+    setOaStatus({ kind: 'idle', message: '' })
+    hasOpenAlexKey()
+      .then(setHasOpenAlex)
+      .catch(() => setHasOpenAlex(false))
     setCheckStatus({ kind: 'idle', message: '' })
     setConfirmingRemove(null)
     setSavedField(null)
@@ -404,6 +419,42 @@ export function SettingsModal({
     }
   }
 
+  async function handleOpenAlexSave() {
+    const trimmed = openalexValue.trim()
+    if (!trimmed) {
+      setOaStatus({ kind: 'error', message: 'Please enter a valid key.' })
+      return
+    }
+    setOaSaving(true)
+    try {
+      await saveOpenAlexKey(trimmed)
+      setHasOpenAlex(true)
+      setOpenalexValue('')
+      setOaStatus({ kind: 'success', message: 'Key saved.' })
+    } catch (err) {
+      setOaStatus({
+        kind: 'error',
+        message: err instanceof Error ? err.message : 'Failed to save key.',
+      })
+    } finally {
+      setOaSaving(false)
+    }
+  }
+
+  async function handleOpenAlexClear() {
+    setConfirmingRemove(null)
+    try {
+      await clearOpenAlexKey()
+      setHasOpenAlex(false)
+      setOaStatus({ kind: 'success', message: 'Key removed.' })
+    } catch (err) {
+      setOaStatus({
+        kind: 'error',
+        message: err instanceof Error ? err.message : 'Failed to remove key.',
+      })
+    }
+  }
+
   function handlePrefChange(pref: UpdatePreference) {
     setUpdatePref(pref)
     setUpdatePreference(pref)
@@ -564,8 +615,9 @@ export function SettingsModal({
               <div className={styles.form}>
                 <h3 className={styles.formTitle}>Web Search (Tavily)</h3>
                 <p className={styles.formHelp}>
-                  Used by Web search, Deep research, <code>/search</code>, <code>/profile</code> and{' '}
-                  <code>/expand</code> to query the internet before responding. Create a free account at{' '}
+                  Used by Web search, Deep research, <code>/search</code>, <code>/profile</code>,{' '}
+                  <code>/expand</code>, <code>/since</code>, the Radar and Add to KB to query the internet before responding.
+                  Create a free account at{' '}
                   <button type="button" className={styles.linkBtn} onClick={() => void openUrl('https://tavily.com')}>
                     tavily.com
                   </button>{' '}
@@ -611,7 +663,7 @@ export function SettingsModal({
                 </div>
                 {confirmingRemove === 'tavily' && (
                   <div className={styles.confirmRow} role="alert">
-                    <span>Remove the key? Web search and Deep research stop until you add one again.</span>
+                    <span>Remove the key? Web search, Deep research, /since, the Radar and Add to KB stop until you add one again.</span>
                     <button className={styles.danger} type="button" onClick={() => void handleTavilyClear()}>
                       Remove key
                     </button>
@@ -627,8 +679,77 @@ export function SettingsModal({
                 )}
                 <p className={styles.footNote}>
                   {hasTavily
-                    ? 'Web search is on: Web search, Deep research, /search, /profile and /expand query the internet.'
-                    : 'Without the key, Web search and Deep research are off, and /search, /profile and /expand use only the model\'s knowledge.'}
+                    ? 'Web search is on: Web search, Deep research, /search, /profile, /expand, /since, the Radar and Add to KB query the internet.'
+                    : 'Without the key, Web search, Deep research, /since, the Radar and Add to KB do not work, and /search, /profile and /expand use only the model\'s knowledge.'}
+                </p>
+              </div>
+            )}
+
+            {section === 'search' && (
+              <div className={`${styles.form} ${styles.formNext}`}>
+                <h3 className={styles.formTitle}>OpenAlex (optional)</h3>
+                <p className={styles.formHelp}>
+                  Papers and the Radar search OpenAlex without a key, within a small free daily budget shared by your
+                  network. A free key raises it. Get one at{' '}
+                  <button type="button" className={styles.linkBtn} onClick={() => void openUrl('https://openalex.org')}>
+                    openalex.org
+                  </button>
+                  .
+                </p>
+                <label className={styles.label} htmlFor="oa-key">
+                  API Key
+                </label>
+                <input
+                  id="oa-key"
+                  className={styles.input}
+                  type="password"
+                  value={openalexValue}
+                  placeholder={hasOpenAlex ? 'key configured — type to replace' : 'OpenAlex API key'}
+                  onChange={(e) => setOpenalexValue(e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleOpenAlexSave() }}
+                />
+                <div className={styles.actions}>
+                  <button
+                    className={styles.primary}
+                    type="button"
+                    onClick={handleOpenAlexSave}
+                    disabled={oaSaving}
+                  >
+                    {oaSaving ? 'Saving…' : 'Save key'}
+                  </button>
+                  {hasOpenAlex && confirmingRemove !== 'openalex' && (
+                    <button
+                      className={styles.secondary}
+                      type="button"
+                      onClick={() => setConfirmingRemove('openalex')}
+                      disabled={oaSaving}
+                    >
+                      Remove key
+                    </button>
+                  )}
+                </div>
+                {confirmingRemove === 'openalex' && (
+                  <div className={styles.confirmRow} role="alert">
+                    <span>Remove the key? OpenAlex searches go back to the shared free budget.</span>
+                    <button className={styles.danger} type="button" onClick={() => void handleOpenAlexClear()}>
+                      Remove key
+                    </button>
+                    <button className={styles.secondary} type="button" onClick={() => setConfirmingRemove(null)}>
+                      Cancel
+                    </button>
+                  </div>
+                )}
+                {oaStatus.kind !== 'idle' && (
+                  <p className={oaStatus.kind === 'error' ? styles.statusError : styles.statusOk}>
+                    {oaStatus.message}
+                  </p>
+                )}
+                <p className={styles.footNote}>
+                  {hasOpenAlex
+                    ? 'Key configured: OpenAlex searches use your own budget.'
+                    : 'No key: OpenAlex searches use the shared free budget.'}
                 </p>
               </div>
             )}

@@ -49,7 +49,13 @@
   bottom: calc(100% + 6px);
   left: 0;
   z-index: 1100;
-  width: 320px;
+  /* 320px, mas nunca mais larga que o composer (o container: `.composer` do chat
+     e do Assistant, e `.composer` das Anotações): na coluna de 300px das Anotações
+     o menu ancorado à esquerda do botão saía da janela pela direita. */
+  width: min(320px, 100cqw);
+  /* Sete agentes passam da altura útil em janela baixa: o menu rola. */
+  max-height: min(60vh, 440px);
+  overflow-y: auto;
   padding: var(--space-1);
   background: var(--bg-panel, #161618);
   border: 1px solid var(--border, #333340);

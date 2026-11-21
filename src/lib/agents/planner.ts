@@ -108,5 +108,6 @@ export const plannerAgent: ChatAgentDef = {
   buildContext: buildPlannerContext,
   forceTasksTool: false,
   forceNotesTool: false,
+  forceTrackersTool: false,
   context: { rag: false, web: false, deepResearch: false },
 }

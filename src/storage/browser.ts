@@ -14,6 +14,8 @@ import type {
   Task,
   TaskStatusDef,
   TaskView,
+  Tracker,
+  TrackerMark,
 } from '../types'
 import type { DailyCleanupResult, StorageAdapter } from './index'
 
@@ -187,6 +189,28 @@ export class BrowserStorage implements StorageAdapter {
   async setNoteArchived(_noteId: string, _archivedAt: number | null): Promise<void> {
     throw new Error('BrowserStorage.setNoteArchived not implemented')
   }
+  async getTrackers(): Promise<Tracker[]> {
+    throw new Error('BrowserStorage.getTrackers not implemented')
+  }
+  async saveTracker(_tracker: Tracker): Promise<void> {
+    throw new Error('BrowserStorage.saveTracker not implemented')
+  }
+  async deleteTracker(_id: string): Promise<void> {
+    throw new Error('BrowserStorage.deleteTracker not implemented')
+  }
+  async countTrackerMarks(_trackerId: string): Promise<number> {
+    throw new Error('BrowserStorage.countTrackerMarks not implemented')
+  }
+  async getTrackerMarks(): Promise<TrackerMark[]> {
+    throw new Error('BrowserStorage.getTrackerMarks not implemented')
+  }
+  async setTrackerMark(_trackerId: string, _day: string, _on: boolean): Promise<void> {
+    throw new Error('BrowserStorage.setTrackerMark not implemented')
+  }
+  async getRadarLastRun(_scopeKey: string): Promise<string | null> {
+    return null
+  }
+  async setRadarLastRun(_scopeKey: string, _dayKey: string): Promise<void> {}
 
   async getResponses(_noteId: string): Promise<AiResponse[]> {
     throw new Error('BrowserStorage.getResponses not implemented')

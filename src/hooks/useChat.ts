@@ -66,7 +66,17 @@ import { cleanNoteContentForAi, loadEmbedResponses, noteDate } from '../lib/note
 import { formatNoteDateMatch, matchNoteDates, type NoteDateMatch } from '../lib/agenda'
 import { extractNoteMarks, markLabelKey, summarizeMarks, type NoteMarkEntry } from '../lib/noteMarks'
 import { isTodosNote, propertiesForAi } from '../lib/noteTypes'
-import { findChatAgent, GENERAL_AGENT_ID, type AgentContextInput } from '../lib/agents/chat'
+import { findChatAgent, GENERAL_AGENT_ID, type AgentContext, type AgentContextInput } from '../lib/agents/chat'
+import {
+  agentRuns,
+  finalizeAgentItems,
+  finalizeMessageItems,
+  markStoppedBeforeReply,
+  previousAgentRun,
+  settleMessageItems,
+  type AgentItemsPayload,
+} from '../lib/agentItems'
+import { queryTrackersTool } from '../lib/agents/agentData'
 import { ocrTextsForContent } from '../lib/imageOcr'
 import { storage } from '../storage'
 
@@ -283,6 +293,7 @@ export interface ChatMessage {
   noteTitle?: string
   // Agente (não General) que gerou esta resposta do assistant.
   agentId?: string
+  agentItems?: AgentItemsPayload // itens do Radar/Papers montados pelo app (podados no fim do turno)
   // URLs (fontes e imagens) da busca deste turno: as únicas imagens remotas
   // que carregam sem clique.
   allowedImageUrls?: string[]
@@ -372,6 +383,9 @@ export interface ChatTools {
   deepResearch: boolean
   // Tool "Tasks" (consulta à tabela de tasks); nos chats que fornecem o snapshot.
   tasks: boolean
+  // Tool "Trackers" (query_trackers): só leitura; fora do Reader. Ligada por
+  // padrão, mas só vai ao turno com ao menos um tracker ativo.
+  trackers: boolean
   // Tools "Daily notes" (get_day, notes_by_date): leem notas datadas de
   // qualquer caderno, fora do escopo da pasta. Ligadas por padrão (cadernos
   // com a IA desligada ficam de fora).
@@ -405,6 +419,7 @@ const DEFAULT_TOOLS: ChatTools = {
   webSearch: false,
   deepResearch: false,
   tasks: false,
+  trackers: true,
   dailyNotes: true,
   notes: true,
 }
@@ -425,6 +440,7 @@ function loadTools(): ChatTools {
           deepResearch: !!p.deepResearch,
           tasks: !!p.tasks,
           // Ligadas por padrão: só desligam com escolha explícita.
+          trackers: p.trackers !== false,
           dailyNotes: p.dailyNotes !== false,
           notes: p.notes !== false,
         }
@@ -1076,7 +1092,10 @@ function withCutMarks(list: ChatConversation[]): ChatConversation[] {
   const next = list.map((c) => {
     if (!c.messages.some(isCut)) return c
     changed = true
-    return { ...c, messages: c.messages.map((m) => (isCut(m) ? { ...m, interrupted: 'cut' as const } : m)) }
+    return {
+      ...c,
+      messages: c.messages.map((m) => (isCut(m) ? { ...settleMessageItems(m), interrupted: 'cut' as const } : m)),
+    }
   })
   return changed ? next : list
 }
@@ -1642,6 +1661,9 @@ export interface UseChatResult {
   setFolderMemory: (folderId: string, text: string) => void
   setFolderMemoryEnabled: (folderId: string, enabled: boolean) => void
   setFolderWebResearchEnabled: (folderId: string, enabled: boolean) => void
+  // Pasta de fontes da IA (web-research) criada fora do bibliotecário (Add to KB):
+  // entra na seleção do caderno ou da pasta de chat.
+  registerAiSourcesFolder: (chatFolderId: string, aiFolderId: string) => void
   folderMemoryUpdatedAt: number | null
   webSourcesSaved: { count: number; at: number } | null
   moveConversation: (
@@ -2149,6 +2171,11 @@ export function useChat(
     question: string
     searchResults: SearchResult[]
   } | null>(null)
+  // Gancho de fim de turno do agente (AgentContext.onDone, ex.: a data da última
+  // consulta do Radar). Só roda no done final da resposta do próprio turno com
+  // texto; erro, Stop e resposta vazia o descartam (zerado onde o
+  // librarianContextRef é).
+  const agentDoneRef = useRef<{ assistantId: string; run: () => Promise<void> } | null>(null)
   const [thinkingEnabled, setThinkingEnabled] = useState<boolean>(() => {
     try {
       return localStorage.getItem(THINKING_KEY) === '1'
@@ -2177,7 +2204,15 @@ export function useChat(
   }, [])
   // Turno em andamento antes e durante o stream: o Stop aborta a busca na web
   // e o deep research do pré-turno, e o resto do send() para no próximo passo.
-  const turnAbortRef = useRef<{ convId: string; assistantId: string; controller: AbortController } | null>(null)
+  const turnAbortRef = useRef<{
+    convId: string
+    assistantId: string
+    controller: AbortController
+    // Só enquanto um agente com pipeline de busca (Radar, Papers) monta o contexto: o
+    // modelo do turno. Um Stop nessa fase deixa o balão parado (como no streaming), e
+    // não o tira.
+    pipelineModel?: string
+  } | null>(null)
   const activeStreamRef = useRef<{
     requestId: string
     convId: string
@@ -3102,14 +3137,70 @@ export function useChat(
         msgs.map((m) => {
           if (m.id !== assistantId || m.failed) return m
           if (m.content === '') {
-            return { ...m, content: `Error: ${readable.message}`, failed: readable.settings ? 'settings' : 'retry' }
+            return {
+              ...m,
+              content: `Error: ${readable.message}`,
+              failed: readable.settings ? 'settings' : 'retry',
+              agentItems: undefined,
+            }
           }
-          return { ...m, interrupted: 'cut', model: m.model ?? turnModel }
+          // O texto parcial fica com os marcadores já expandidos e só os itens citados
+          // (uma 2ª chamada, depois do Stop ou de outro erro, não poda de novo).
+          return { ...(m.interrupted ? m : settleMessageItems(m)), interrupted: 'cut', model: m.model ?? turnModel }
         })
       )
       if (hasText) setError(readable.message, readable.settings ? 'openrouter' : null)
     },
     [updateMessages, setError]
+  )
+
+  // Fim real do turno de um agente com itens (Radar/Papers): o done e o turno que
+  // termina só com a tool da memória (o Rust não emite done depois de um tool call).
+  // Os marcadores viram título, link e fonte (só os citados), o payload fica só com
+  // os citados e o gancho do agente (a data da última consulta do Radar) roda quando
+  // a resposta tem texto. `roundText` é o texto da rodada que acabou, sem esperar o
+  // render. Erro, Stop e corte não passam por aqui: a data não avança.
+  const finishAgentTurn = useCallback(
+    (convId: string, assistantId: string, roundText: string) => {
+      const agentDone = agentDoneRef.current
+      agentDoneRef.current = null
+      // Lido antes da poda: o ref ainda tem o payload com todos os candidatos.
+      const msg = conversationsRef.current.find((c) => c.id === convId)?.messages.find((m) => m.id === assistantId)
+      if (!msg?.agentItems && !agentDone) return // turno de um agente sem itens (o General)
+      const finalText = msg?.agentItems ? finalizeAgentItems(roundText, msg.agentItems).content : roundText
+      updateMessages(convId, (msgs) =>
+        msgs.map((m) => (m.id === assistantId ? finalizeMessageItems(m, NO_RESPONSE_MESSAGE) : m))
+      )
+      if (agentDone?.assistantId === assistantId && finalText.trim()) void agentDone.run()
+    },
+    [updateMessages]
+  )
+
+  // A pasta de fontes da IA da pasta de chat entra na seleção de documentos:
+  // pasta vinculada a caderno, na tabela do caderno; senão, no visibleDocumentIds
+  // da pasta. Usada pelo bibliotecário e pelo "Add to KB".
+  const registerAiSourcesFolder = useCallback(
+    (chatFolderId: string, aiFolderId: string) => {
+      const linkedNotebookId = getNotebookIdForChatFolder(chatFolderId)
+      if (linkedNotebookId) {
+        setNotebookDocumentVisibility(linkedNotebookId, aiFolderId, true).catch((err) =>
+          console.error('failed to add AI sources folder to notebook visibility', err)
+        )
+        return
+      }
+      setFolders((prev) =>
+        prev.map((f) =>
+          f.id === chatFolderId && !f.visibleDocumentIds.includes(aiFolderId)
+            ? {
+                ...f,
+                visibleDocumentIds: [...f.visibleDocumentIds, aiFolderId],
+                updatedAt: new Date().toISOString(),
+              }
+            : f
+        )
+      )
+    },
+    [setFolders]
   )
 
   useEffect(() => {
@@ -3181,6 +3272,10 @@ export function useChat(
               : m
           )
         )
+        // Itens do Radar/Papers e gancho do agente (data da última consulta): só no
+        // done final. A rodada de tools que antecede a resposta não emite done; este
+        // é o mesmo ponto em que o bibliotecário roda.
+        finishAgentTurn(stream.convId, stream.assistantId, stream.roundText)
         // Total do turno: o done da 2ª rodada sobrescreve o da 1ª.
         const started = turnStartedAtRef.current.get(stream.assistantId)
         if (started !== undefined) patchTimings(stream.assistantId, { totalMs: Date.now() - started })
@@ -3218,27 +3313,7 @@ export function useChat(
             searchResults: ctx.searchResults,
             citedUrls,
             onSaved: (count) => setWebSourcesSaved({ count, at: Date.now() }),
-            onFolderRegistered: (aiFolderId) => {
-              // Pasta vinculada a caderno: a seleção mora na tabela do caderno.
-              const linkedNotebookId = getNotebookIdForChatFolder(ctx.chatFolderId)
-              if (linkedNotebookId) {
-                setNotebookDocumentVisibility(linkedNotebookId, aiFolderId, true).catch((err) =>
-                  console.error('failed to add AI sources folder to notebook visibility', err)
-                )
-                return
-              }
-              setFolders((prev) =>
-                prev.map((f) =>
-                  f.id === ctx.chatFolderId && !f.visibleDocumentIds.includes(aiFolderId)
-                    ? {
-                        ...f,
-                        visibleDocumentIds: [...f.visibleDocumentIds, aiFolderId],
-                        updatedAt: new Date().toISOString(),
-                      }
-                    : f
-                )
-              )
-            },
+            onFolderRegistered: (aiFolderId) => registerAiSourcesFolder(ctx.chatFolderId, aiFolderId),
           })
         }
       })
@@ -3257,6 +3332,7 @@ export function useChat(
         setDeepResearchPhase(null)
         setWebSearchActive(false)
         librarianContextRef.current = null
+        agentDoneRef.current = null
       })
       const toolCall = await onOpenRouterToolCall((p) => {
         const handler = toolCallHandlerRef.current
@@ -3266,15 +3342,16 @@ export function useChat(
         }
         // Tool call sem handler (ex.: a 2ª rodada, enviada sem tools, em que o
         // modelo ainda tenta chamar uma tool): o backend não emite done nem
-        // error, então o turno é encerrado aqui — senão fica vazio para sempre.
+        // error, então o turno é encerrado aqui — senão fica vazio para sempre. Fim
+        // anormal: os itens do Radar/Papers são podados, mas a data não avança.
         const stream = activeStreamRef.current
         if (!stream || stream.requestId !== p.requestId) return
         updateMessages(stream.convId, (msgs) =>
-          msgs.map((m) =>
-            m.id === stream.assistantId && m.content === ''
-              ? { ...m, model: stream.model, content: NO_RESPONSE_MESSAGE }
-              : m
-          )
+          msgs.map((m) => {
+            if (m.id !== stream.assistantId) return m
+            const settled = settleMessageItems(m)
+            return m.content === '' ? { ...settled, model: stream.model, content: NO_RESPONSE_MESSAGE } : settled
+          })
         )
         activeStreamRef.current = null
         if (turnAbortRef.current?.assistantId === stream.assistantId) turnAbortRef.current = null
@@ -3282,6 +3359,7 @@ export function useChat(
         setDeepResearchPhase(null)
         setWebSearchActive(false)
         librarianContextRef.current = null
+        agentDoneRef.current = null
       })
       if (cancelled) {
         chunk()
@@ -3298,7 +3376,7 @@ export function useChat(
       cancelled = true
       unlisteners.forEach((u) => u())
     }
-  }, [updateMessages, patchTimings, markTurnFailed])
+  }, [updateMessages, patchTimings, markTurnFailed, finishAgentTurn, registerAiSourcesFolder])
 
   const send = useCallback(
     async (
@@ -3334,6 +3412,7 @@ export function useChat(
       }
       setError(null)
       librarianContextRef.current = null
+      agentDoneRef.current = null
 
       // Garante uma conversa ativa
       let convId = activeId
@@ -3514,10 +3593,14 @@ export function useChat(
       // começa (a mensagem não vira um balão de erro) e a faixa leva ao
       // Settings. O composer já segura o envio; isto cobre a chave apagada
       // depois da checagem dele.
-      if ((useDeepResearch || useWebSearch) && !(await hasTavilyKey())) {
+      // O agente com pipeline de busca próprio (Radar) exige a chave sempre.
+      const pipelineNeedsTavily = !!turnAgent.webPipeline?.needsTavily
+      if ((useDeepResearch || useWebSearch || pipelineNeedsTavily) && !(await hasTavilyKey())) {
         endTurnAbort()
         setError(
-          `${useDeepResearch ? 'Deep Research' : 'Web Search'} needs a Tavily key. Add it in Settings > Web Search, or turn it off.`,
+          useDeepResearch || useWebSearch
+            ? `${useDeepResearch ? 'Deep Research' : 'Web Search'} needs a Tavily key. Add it in Settings > Web Search, or turn it off.`
+            : `${turnAgent.label} needs a Tavily key for web search. Add it in Settings > Web Search.`,
           'search'
         )
         return
@@ -3623,6 +3706,7 @@ export function useChat(
           interrupted: true,
         })
         librarianContextRef.current = null
+        agentDoneRef.current = null
         activeStreamRef.current = null
         setIsStreaming(false)
         setDeepResearchPhase(null)
@@ -3802,6 +3886,12 @@ export function useChat(
       // Caderno do RAG resolvido pelo agente (AgentContext.ragNotebookId).
       let agentRagNotebookId: string | null | undefined
       if (turnAgent.buildContext) {
+        let builtContext: AgentContext | null = null
+        // Agente com pipeline de busca próprio: o indicador de busca na web acende
+        // quando o agente avisa (`onSearchStart`, antes de planejar as consultas), e
+        // não no seguimento, no caderno sem IA nem no escopo vazio, que não buscam.
+        const pipeline = !!turnAgent.webPipeline
+        if (pipeline && turnAbortRef.current?.controller === controller) turnAbortRef.current.pipelineModel = model
         try {
           const contextInput: AgentContextInput = {
             todayKey: currentDate,
@@ -3814,14 +3904,42 @@ export function useChat(
                 .map((m) => m.content)
                 .reverse(),
             ],
+            signal,
+            // As consultas do agente com pipeline nesta conversa: a última dá o
+            // seguimento sem nova busca, e todas dão a janela do Radar que não encolhe.
+            previousRun: pipeline ? previousAgentRun(priorMessages, turnAgent.id) : null,
+            previousRuns: pipeline ? agentRuns(priorMessages, turnAgent.id) : [],
+            onSearchStart: () => {
+              if (pipeline && !signal.aborted) setWebSearchActive(true)
+            },
           }
           const built = await turnAgent.buildContext(contextInput)
+          builtContext = built
           agentContext = built.text
           agentRagNotebookId = built.ragNotebookId
         } catch (err) {
-          console.warn('agent context failed:', err)
-          agentContext = `${turnAgent.label} context could not be loaded for this message. Say so in one line and answer from the conversation.`
+          // Stop durante a montagem (o signal aborta as buscas): o turno acabou.
+          if (!signal.aborted) {
+            console.warn('agent context failed:', err)
+            agentContext = `${turnAgent.label} context could not be loaded for this message. Say so in one line and answer from the conversation.`
+          }
+        } finally {
+          // Depois do Stop o cancel() já apagou o indicador, e um turno novo pode ter
+          // acendido o dele.
+          if (pipeline && !signal.aborted) setWebSearchActive(false)
+          // O contexto acabou: o Stop daqui em diante é o de antes do stream.
+          if (turnAbortRef.current?.controller === controller) turnAbortRef.current.pipelineModel = undefined
         }
+        // Stop (ou desmontagem) durante o contexto: o cancel() já tirou o balão vazio.
+        if (signal.aborted) return
+        // Itens montados pelo app (Radar) e o gancho de fim de turno.
+        const items = builtContext?.items
+        if (items) {
+          updateMessages(targetId, (msgs) =>
+            msgs.map((m) => (m.id === assistantId ? { ...m, agentItems: items } : m))
+          )
+        }
+        if (builtContext?.onDone) agentDoneRef.current = { assistantId, run: builtContext.onDone }
       }
 
       // RAG context for folder documents. A selecao (ids de arquivo e de pasta)
@@ -4182,6 +4300,44 @@ export function useChat(
           },
         })
       }
+      // query_trackers: só leitura; com a tool "Trackers" ligada (padrão) ou
+      // forçada pelo agente da conversa, nunca no Reader e só com ao menos um
+      // tracker ativo (uma leitura do storage no envio; se falhar, a tool não
+      // vai). Lê o storage de novo na chamada.
+      let hasActiveTrackers = false
+      if (
+        supportsTools &&
+        mode !== 'reader' &&
+        (toolsRef.current.trackers || turnAgent.forceTrackersTool)
+      ) {
+        try {
+          hasActiveTrackers = (await storage.getTrackers()).some((t) => t.archivedAt === null)
+        } catch (err) {
+          console.warn('getTrackers failed:', err)
+        }
+      }
+      if (hasActiveTrackers) {
+        toolDefs.push({
+          type: 'function',
+          function: {
+            name: 'query_trackers',
+            description:
+              'Count the user\'s habit trackers in Monet (for example, guitar 3 times a week): the days done per tracker, per week (Monday to Sunday, with the weekly target) and the list of days, for a period. The numbers are computed by the app: report them as given, never estimate. Read-only: the user marks the days in the Calendar; you cannot mark, create or change trackers. Use it for questions such as "how many times did I go in October?" or "did I hit my target last week?". Resolve relative dates from the current date in the system prompt (the user\'s local date); weeks start on Monday.',
+            parameters: {
+              type: 'object',
+              properties: {
+                tracker: {
+                  type: 'string',
+                  description: 'Tracker name (or part of it). Omit for all active trackers.',
+                },
+                from: { type: 'string', description: 'First day, as YYYY-MM-DD.' },
+                to: { type: 'string', description: 'Last day, as YYYY-MM-DD.' },
+              },
+              required: ['from', 'to'],
+            },
+          },
+        })
+      }
       // get_day / notes_by_date: só com a tool "Daily notes" ligada (leem notas
       // de qualquer caderno, fora do escopo da pasta).
       if (supportsTools && toolsRef.current.dailyNotes) {
@@ -4359,6 +4515,8 @@ export function useChat(
             let toolSearchMessage: ChatMessageInput | null = null
             // Resultados de query_tasks (uma entrada por chamada).
             const taskResults: string[] = []
+            // Resultados de query_trackers (uma entrada por chamada).
+            const trackerResults: string[] = []
             // Resultados de search_knowledge_base e das tools de notas, com as
             // fontes da resposta (cópia): a numeração [n] continua a do RAG.
             const kbResults: string[] = []
@@ -4490,6 +4648,20 @@ export function useChat(
                     `query_tasks ${JSON.stringify(query)} (today is ${snapshot.todayKey}):\n${result}`
                   )
                 }
+              } else if (tc.toolName === 'query_trackers') {
+                const args = parsedArgs as Record<string, unknown>
+                const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
+                let result: string
+                try {
+                  result = await queryTrackersTool(
+                    { tracker: str(args.tracker) || undefined, from: str(args.from), to: str(args.to) },
+                    currentDate
+                  )
+                } catch (err) {
+                  console.warn('query_trackers failed:', err)
+                  result = 'Trackers are unavailable right now.'
+                }
+                trackerResults.push(`query_trackers ${tc.argumentsJson} (today is ${currentDate}):\n${result}`)
               } else if (tc.toolName === 'search_knowledge_base' && ragScope) {
                 const args = parsedArgs as Record<string, unknown>
                 const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined)
@@ -4581,6 +4753,8 @@ export function useChat(
               updateMessages(targetId, (msgs) =>
                 msgs.map((m) => (m.id === assistantId ? { ...m, model } : m))
               )
+              // Sem done aqui: este é o fim do turno do Radar/Papers (itens e data).
+              finishAgentTurn(targetId, assistantId, keptText)
               toolCallHandlerRef.current = null
               activeStreamRef.current = null
               endTurnAbort()
@@ -4594,6 +4768,13 @@ export function useChat(
                     // Sem isto o modelo chamava a lista de "tarefas do Jira": as
                     // notas citam o Jira do trabalho e os status lembram os dele.
                     content: `You looked up the user's tasks. These are the tasks the user keeps in Monet (this app), not tasks from Jira or any other external tracker — call them "your tasks in Monet". Answer from these results only; do not invent tasks.\n\n${taskResults.join('\n\n')}`,
+                  }
+                : null
+            const toolTrackersMessage: ChatMessageInput | null =
+              trackerResults.length > 0
+                ? {
+                    role: 'system',
+                    content: `You looked up the user's trackers in Monet. These counts come from the app: report them exactly; never estimate, round or recount. You cannot mark, create or change trackers; the user marks days in the Calendar.\n\n${trackerResults.join('\n\n')}`,
                   }
                 : null
             const toolKbMessage: ChatMessageInput | null =
@@ -4642,6 +4823,7 @@ export function useChat(
               ...(ragSystemMessage && !(toolFound && ragOnlyNothingFound) ? [ragSystemMessage] : []),
               ...(toolSearchMessage ? [toolSearchMessage] : []),
               ...(toolTasksMessage ? [toolTasksMessage] : []),
+              ...(toolTrackersMessage ? [toolTrackersMessage] : []),
               ...(toolKbMessage ? [toolKbMessage] : []),
               ...(toolNotesMessage ? [toolNotesMessage] : []),
               ...(toolGetNoteMessage ? [toolGetNoteMessage] : []),
@@ -4700,7 +4882,7 @@ export function useChat(
         failOnAssistant(message)
       }
     },
-    [activeId, dedicatedFolderName, isDetached, mode, isStreaming, model, models, setFolders, setLooseOrder, updateMessages, thinkingEnabled, markTurnFailed, setError]
+    [activeId, dedicatedFolderName, isDetached, mode, isStreaming, model, models, setFolders, setLooseOrder, updateMessages, thinkingEnabled, markTurnFailed, finishAgentTurn, setError]
   )
 
   // Apagar com Undo (chat principal): a conversa sai da lista na hora; os
@@ -4765,20 +4947,32 @@ export function useChat(
     setWebSearchActive(false)
     setRagSearching(false)
     librarianContextRef.current = null
+    agentDoneRef.current = null
 
     const stream = activeStreamRef.current
     if (!stream) {
       // Stop antes do stream: o turno termina aqui, sem esperar a busca.
       if (!turn || !isStreamingRef.current) return
-      setChatTimings((prev) => {
-        if (!(turn.assistantId in prev)) return prev
-        const next = { ...prev }
-        delete next[turn.assistantId]
-        return next
-      })
-      updateMessages(turn.convId, (msgs) =>
-        msgs.filter((m) => !(m.id === turn.assistantId && m.content === ''))
-      )
+      if (turn.pipelineModel) {
+        // O agente (Radar, Papers) ainda montava o contexto: o balão fica parado, como
+        // no Stop do streaming ("Stopped" e Retry), e a data da consulta não avança
+        // (o gancho acima já foi descartado).
+        patchTimings(turn.assistantId, {
+          totalMs: Date.now() - (turnStartedAtRef.current.get(turn.assistantId) ?? Date.now()),
+          interrupted: true,
+        })
+        updateMessages(turn.convId, (msgs) => markStoppedBeforeReply(msgs, turn.assistantId, turn.pipelineModel))
+      } else {
+        setChatTimings((prev) => {
+          if (!(turn.assistantId in prev)) return prev
+          const next = { ...prev }
+          delete next[turn.assistantId]
+          return next
+        })
+        updateMessages(turn.convId, (msgs) =>
+          msgs.filter((m) => !(m.id === turn.assistantId && m.content === ''))
+        )
+      }
       isStreamingRef.current = false
       setIsStreaming(false)
       return
@@ -4807,10 +5001,11 @@ export function useChat(
       if (last && last.id === stream.assistantId && last.content === '') {
         return msgs.slice(0, -1)
       }
-      // Marca "Stopped" (e o modelo, para a linha de metadados aparecer).
+      // Marca "Stopped" (e o modelo, para a linha de metadados aparecer). Os itens
+      // do Radar/Papers são podados aos citados, e a data do escopo não avança.
       return msgs.map((m) =>
         m.id === stream.assistantId && m.content.length > 0
-          ? { ...m, interrupted: 'stopped' as const, model: m.model ?? stream.model }
+          ? settleMessageItems({ ...m, interrupted: 'stopped' as const, model: m.model ?? stream.model })
           : m
       )
     })
@@ -5116,6 +5311,7 @@ export function useChat(
     setFolderMemory,
     setFolderMemoryEnabled,
     setFolderWebResearchEnabled,
+    registerAiSourcesFolder,
     folderMemoryUpdatedAt,
     webSourcesSaved,
     moveConversation,

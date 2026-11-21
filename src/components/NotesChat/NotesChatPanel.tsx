@@ -1,5 +1,5 @@
 import { openUrl } from '@tauri-apps/plugin-opener'
-import { Stop, FileText, Brain, CalendarPlus, IdentificationCard, GearSix, Plus, X } from '@phosphor-icons/react'
+import { Stop, FileText, Brain, GearSix, Plus, X } from '@phosphor-icons/react'
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import {
   useChat,
@@ -9,18 +9,21 @@ import {
   type ChatMessage,
   type ChatConversation,
   type ChatTimings,
+  type ChatTools,
   type TasksSnapshot,
   NO_RESPONSE_MESSAGE,
 } from '../../hooks/useChat'
 import { useStickToBottom } from '../../hooks/useStickToBottom'
 import { renderMarkdown } from '../../lib/markdown'
-import { agentNoteDraft, type AgentNoteDraft, type AgentNoteRequest } from '../../lib/agentNotes'
+import { expandItemMarkers, hasAgentPayload } from '../../lib/agentItems'
+import { AGENT_DRAFT_ACTION, agentNoteDraft, type AgentNoteDraft, type AgentNoteRequest } from '../../lib/agentNotes'
 import { dateKeyFromMs } from '../../lib/calendar'
 import { linkNoteMarks } from '../../lib/noteMarks'
 import { notesFolderDocId } from '../../lib/documents'
 import { loadEmbedResponses } from '../../lib/noteFileText'
 import { ocrTextsForContent } from '../../lib/imageOcr'
 import { storage } from '../../storage'
+import { hasTavilyKey, TAVILY_KEY_CHANGED_EVENT } from '../../lib/search'
 import type { ChecklistProgress } from '../../lib/tasks'
 import {
   listOpenRouterModels,
@@ -31,7 +34,7 @@ import { ModelSelector } from '../AiPanel/ModelSelector'
 import { useTasksEnv } from '../TasksView/TasksEnv'
 import { SystemPromptIcon } from '../ChatPanel/SystemPromptIcon'
 import { AgentPicker, AgentSuggestions, useAgentShortcut } from '../ChatPanel/AgentPicker'
-import { chatAgentComposerHint, parseAgentShortcut } from '../../lib/agents/chat'
+import { chatAgentComposerHint, findChatAgent, parseAgentShortcut, type ChatAgentDef } from '../../lib/agents/chat'
 import { ChatToolsMenu } from '../ChatPanel/ChatToolsMenu'
 import { ClearAllChatsButton, ClearChatButton } from '../ChatPanel/ChatClearActions'
 import { clickedImage, useImageViewer } from '../ImageViewer/ImageViewer'
@@ -41,7 +44,8 @@ import { FolderDocumentSelectorModal } from '../ChatPanel/FolderDocumentSelector
 import { FolderMemoryModal } from '../ChatPanel/FolderMemoryModal'
 import { RagSearchStatus } from '../ChatPanel/RagSearchStatus'
 import { MessageSources } from '../ChatPanel/MessageSources'
-import { AgentReplyLabel, agentLabelIds } from '../ChatPanel/ChatMessageBubble'
+import { AGENT_DRAFT_ICON, AgentReplyLabel, agentLabelIds, STOPPED_BEFORE_REPLY } from '../ChatPanel/ChatMessageBubble'
+import { AgentItemsList, type AgentItemActions } from '../ChatPanel/AgentItemsList'
 import { ScrollToBottomButton } from '../ChatPanel/ScrollToBottomButton'
 import { SaveAgentNoteModal } from '../ChatPanel/SaveAgentNoteModal'
 import type { RagResponse } from '../../lib/rag'
@@ -59,6 +63,19 @@ import styles from './NotesChatPanel.module.css'
 // EFÊMERO (nunca persistido), e a nota atual é excluída do RAG.
 
 const ASK_AI_QUOTE_BUDGET = 600
+
+// O aviso de um turno que precisa da chave do Tavily (deep research, web search
+// ou o pipeline do agente, como no `send()` do useChat); null = o turno não a
+// pede. O envio confere a chave antes de limpar o rascunho.
+function tavilyNeedMessage(agent: ChatAgentDef, tools: ChatTools): string | null {
+  if (tools.deepResearch && agent.context.deepResearch) {
+    return 'Deep Research needs a Tavily key. Add it in Settings > Web Search, or turn it off.'
+  }
+  if (tools.webSearch && agent.context.web) {
+    return 'Web Search needs a Tavily key. Add it in Settings > Web Search, or turn it off.'
+  }
+  return agent.webPipeline?.needsTavily ? `${agent.label} needs a Tavily key for web search. Add it in Settings > Web Search.` : null
+}
 
 // "Chat" de um card da aba AI: a pergunta e a resposta abrem numa conversa
 // da pasta do caderno (IA-03).
@@ -95,6 +112,9 @@ interface NotesChatPanelProps {
   onPendingExchangeConsumed?: () => void
   // Botão "Settings" do seletor de modelo e da faixa sem chave.
   onOpenSettings: () => void
+  // "Open Settings" do aviso da chave do Tavily: abre o Settings na seção da busca.
+  // Ausente: abre o Settings na seção de abertura.
+  onOpenSettingsSection?: (section: 'search') => void
   canInsert: boolean
   onInsertIntoNote: (content: NoteInsert, where: 'cursor' | 'end') => void
   // Clique numa NoteMark (`==texto==`) citada na resposta: abre a nota no
@@ -104,6 +124,11 @@ interface NotesChatPanelProps {
   notes: Note[]
   onCreateAgentNote: (req: AgentNoteRequest, requestId: string) => Promise<Note>
   onNavigateToNote: (notebookId: string, noteId: string) => void
+  // "Open in Library" de um artigo: o App abre o livro na Library.
+  onOpenBook: (bookId: string) => void
+  // "Open reading list" do "Add to reading list": abre o board do tipo Paper.
+  // Ausente (ainda não há o board) = sem o botão.
+  onOpenReadingList?: () => void
   // Subject, tipo, propriedades e tags da nota aberta, para o contexto da IA.
   describeNote: (note: Note) => NoteMetaForAi
 }
@@ -127,12 +152,15 @@ export function NotesChatPanel({
   pendingExchange = null,
   onPendingExchangeConsumed,
   onOpenSettings,
+  onOpenSettingsSection,
   canInsert,
   onInsertIntoNote,
   onOpenMark,
   notes,
   onCreateAgentNote,
   onNavigateToNote,
+  onOpenBook,
+  onOpenReadingList,
 }: NotesChatPanelProps) {
   const [models, setModels] = useState<AiModel[]>([])
   const [modelsLoading, setModelsLoading] = useState(false)
@@ -171,9 +199,11 @@ export function NotesChatPanel({
     setTool,
     isStreaming,
     ragSearching,
+    webSearchActive,
     ragTraces,
     chatTimings,
     error,
+    errorSettings,
     send,
     activeAgentId,
     agentsAvailable,
@@ -191,15 +221,24 @@ export function NotesChatPanel({
     setFolderMemory,
     setFolderMemoryEnabled,
     setFolderWebResearchEnabled,
+    registerAiSourcesFolder,
   } = useChat(models, { mode: 'notes', getTasksSnapshot: () => tasksSnapshotRef.current })
 
   const [draft, setDraft] = useState('')
   const shortcut = useAgentShortcut(draft, setDraft, agentsAvailable)
+  // Aviso da chave do Tavily ausente, achado ao enviar (o rascunho fica). Some ao
+  // salvar a chave, ao trocar de conversa ou de agente e no próximo envio.
+  const [tavilyBlock, setTavilyBlock] = useState<string | null>(null)
+  // Envio em curso (da conferência da chave até o `send()` voltar): um 2º Enter não
+  // dispara outro turno.
+  const sendingRef = useRef(false)
   const [notebookFolderId, setNotebookFolderId] = useState<string | null>(null)
   const [promptOpen, setPromptOpen] = useState(false)
   const [docsOpen, setDocsOpen] = useState(false)
   const [memoryOpen, setMemoryOpen] = useState(false)
   const [agentDraft, setAgentDraft] = useState<AgentNoteDraft | null>(null)
+  // Caderno do escopo de um artigo ("Add to reading list"); null = o do chat.
+  const [agentDefaultNotebookId, setAgentDefaultNotebookId] = useState<string | null>(null)
   // Chip do contexto: nota aberta e/ou seleção fora do envio (R8).
   const [excludedNoteId, setExcludedNoteId] = useState<string | null>(null)
   const [removedSelection, setRemovedSelection] = useState<string | null>(null)
@@ -234,6 +273,28 @@ export function NotesChatPanel({
   const notebookFolder = useMemo(
     () => folders.find((f) => f.id === notebookFolderId) ?? null,
     [folders, notebookFolderId]
+  )
+
+  // Ações dos itens do Radar: "Add to KB" grava na pasta do caderno.
+  const itemActions = useMemo<AgentItemActions>(
+    () => ({
+      kb: notebookFolder
+        ? {
+            chatFolderId: notebookFolder.id,
+            folderName: notebookFolder.name,
+            webResearchEnabled: notebookFolder.webResearchEnabled,
+            setWebResearchEnabled: (enabled) => setFolderWebResearchEnabled(notebookFolder.id, enabled),
+            registerAiSourcesFolder,
+          }
+        : null,
+      onOpenNote: onNavigateToNote,
+      onAddPaper: (draft, defaultNotebookId) => {
+        setAgentDefaultNotebookId(defaultNotebookId)
+        setAgentDraft(draft)
+      },
+      onOpenBook,
+    }),
+    [notebookFolder, setFolderWebResearchEnabled, registerAiSourcesFolder, onNavigateToNote, onOpenBook]
   )
 
   const visibleDocCount = notebookFolder
@@ -482,6 +543,23 @@ export function NotesChatPanel({
 
   // Placeholder, estado vazio e mensagem padrão do agente ativo (IA-19).
   const agentHint = chatAgentComposerHint(activeAgentId)
+  const activeAgent = findChatAgent(agentsAvailable ? activeAgentId : undefined)
+
+  useEffect(() => {
+    setTavilyBlock(null)
+  }, [activeId, activeAgentId])
+  useEffect(() => {
+    const clear = () => setTavilyBlock(null)
+    window.addEventListener(TAVILY_KEY_CHANGED_EVENT, clear)
+    return () => window.removeEventListener(TAVILY_KEY_CHANGED_EVENT, clear)
+  }, [])
+
+  // Faixa de erro: o erro do turno que não vira balão e o aviso da chave do
+  // Tavily achado no envio. Sem mensagem na conversa, só o da chave aparece (com
+  // "Open Settings"): o erro do envio sem balão ainda não tem onde aparecer.
+  const searchKeyIssue = tavilyBlock !== null || errorSettings === 'search'
+  const errorText = tavilyBlock ?? error
+  const showErrorRow = !!errorText && (messages.length > 0 || searchKeyIssue)
 
   const ready =
     !!notebook &&
@@ -516,9 +594,11 @@ export function NotesChatPanel({
     const parsed = agentsAvailable ? parseAgentShortcut(draft) : null
     // Agente que não pede pergunta: sem texto, vai a mensagem padrão dele.
     const fallback = chatAgentComposerHint(parsed ? parsed.agent.id : activeAgentId)?.defaultMessage ?? ''
-    // Atalho "/agente" sem texto e sem mensagem padrão: só liga o seletor
-    // (também durante o streaming).
-    if (parsed && !parsed.rest && (!fallback || !ready)) {
+    // Atalho "/agente" sem texto, sem mensagem padrão ou de agente com pipeline de
+    // busca (Radar, Papers): só liga o seletor (também durante o streaming). A
+    // consulta custa buscas e consome a janela do escopo; o Enter com o rascunho
+    // vazio, com o agente já selecionado, envia a mensagem padrão.
+    if (parsed && !parsed.rest && (!fallback || !ready || !!parsed.agent.webPipeline)) {
       setConversationAgent(parsed.agent.id)
       setDraft('')
       return
@@ -526,50 +606,72 @@ export function NotesChatPanel({
     const typed = parsed ? parsed.rest : draft
     const text = typed.trim() ? typed : fallback
     if (!ready || !text || !notebook) return
-    // Idempotente; recria a pasta (e refresca o ref usado pelo fallback do
-    // send) caso ela tenha sido apagada em outra janela durante a sessão.
-    ensureScopedFolder({ kind: 'notebook', id: notebook.id, title: notebook.name })
-    setDraft('')
-    // Contexto montado NO MOMENTO do envio: trocar de nota depois não afeta
-    // a resposta em streaming.
-    const note = activeNote
-    // A nota pode ter sido apagada com o painel aberto (R11d): cai fora do
-    // contexto e o chip mostra que ela não vai.
-    const exists = note ? !!(await storage.getNote(note.id)) : false
-    if (note && !exists) setExcludedNoteId(note.id)
-    const attachedNote = note && exists && noteIncluded ? note : null
-    const selectionText = attachedNote && selectionIncluded ? getSelectionText() : ''
-    const embeds = await loadEmbedResponses(
-      attachedNote ? [attachedNote.content] : [],
-      resolveNoteContent
-    )
-    const imageTexts = await ocrTextsForContent(attachedNote?.content ?? '')
-    const ephemeralContext = buildNotesContext({
-      notebookName: notebook.name,
-      note: attachedNote,
-      noteMeta: attachedNote ? describeNote(attachedNote) : null,
-      selectionText,
-      resolveNoteTitle,
-      isNoteArchived,
-      resolveLinkedNoteContent: resolveNoteContent,
-      resolveEmbed: (id) => embeds.get(id),
-      resolveImageText: (dataUrl) => imageTexts.get(dataUrl),
-      projectTasks,
-      todayKey,
-      checklist: taskChecklist,
-      statuses,
-    })
-    void send(text, undefined, undefined, {
-      ephemeralContext,
-      excludeNoteId: note?.id ?? null,
-      agentId: parsed?.agent.id,
-      noteContext: attachedNote
-        ? {
-            noteId: attachedNote.id,
-            noteTitle: attachedNote.title,
-          }
-        : undefined,
-    })
+    // Um 2º Enter durante os `await` abaixo (e até o `send()` voltar, já com o turno
+    // em andamento) veria o rascunho vazio, cairia na mensagem padrão do agente e
+    // dispararia outro turno: o `isStreaming` do `useChat` só vale no render
+    // seguinte. A trava vai da entrada até o `send()` retornar.
+    if (sendingRef.current) return
+    sendingRef.current = true
+    try {
+      // Turno que pede a chave do Tavily: confere antes de limpar o rascunho, e sem
+      // a chave o aviso fica no painel e o texto digitado não se perde.
+      const turnAgent = findChatAgent(agentsAvailable ? (parsed ? parsed.agent.id : activeAgentId) : undefined)
+      const tavilyMessage = tavilyNeedMessage(turnAgent, tools)
+      if (tavilyMessage) {
+        const hasKey = await hasTavilyKey().catch(() => true)
+        if (!hasKey) {
+          setTavilyBlock(tavilyMessage)
+          return
+        }
+      }
+      setTavilyBlock(null)
+      // Idempotente; recria a pasta (e refresca o ref usado pelo fallback do
+      // send) caso ela tenha sido apagada em outra janela durante a sessão.
+      ensureScopedFolder({ kind: 'notebook', id: notebook.id, title: notebook.name })
+      setDraft('')
+      // Contexto montado NO MOMENTO do envio: trocar de nota depois não afeta
+      // a resposta em streaming.
+      const note = activeNote
+      // A nota pode ter sido apagada com o painel aberto (R11d): cai fora do
+      // contexto e o chip mostra que ela não vai.
+      const exists = note ? !!(await storage.getNote(note.id)) : false
+      if (note && !exists) setExcludedNoteId(note.id)
+      const attachedNote = note && exists && noteIncluded ? note : null
+      const selectionText = attachedNote && selectionIncluded ? getSelectionText() : ''
+      const embeds = await loadEmbedResponses(
+        attachedNote ? [attachedNote.content] : [],
+        resolveNoteContent
+      )
+      const imageTexts = await ocrTextsForContent(attachedNote?.content ?? '')
+      const ephemeralContext = buildNotesContext({
+        notebookName: notebook.name,
+        note: attachedNote,
+        noteMeta: attachedNote ? describeNote(attachedNote) : null,
+        selectionText,
+        resolveNoteTitle,
+        isNoteArchived,
+        resolveLinkedNoteContent: resolveNoteContent,
+        resolveEmbed: (id) => embeds.get(id),
+        resolveImageText: (dataUrl) => imageTexts.get(dataUrl),
+        projectTasks,
+        todayKey,
+        checklist: taskChecklist,
+        statuses,
+      })
+      await send(text, undefined, undefined, {
+        ephemeralContext,
+        excludeNoteId: note?.id ?? null,
+        agentId: parsed?.agent.id,
+        noteContext: attachedNote
+          ? {
+              noteId: attachedNote.id,
+              noteTitle: attachedNote.title,
+            }
+          : undefined,
+      })
+    } finally {
+      sendingRef.current = false
+    }
   }
 
   return (
@@ -649,8 +751,10 @@ export function NotesChatPanel({
                     notebookFolder && setFolderWebResearchEnabled(notebookFolder.id, v)
                   }
                   tasksTool={{ supported: selectedModel?.supportsTools ?? false }}
+                  trackersTool={{ supported: selectedModel?.supportsTools ?? false }}
                   dailyNotesTool={{ supported: selectedModel?.supportsTools ?? false }}
                   notesTool={{ supported: selectedModel?.supportsTools ?? false }}
+                  agent={activeAgent}
                 />
               </div>
               <ModelSelector
@@ -740,6 +844,7 @@ export function NotesChatPanel({
                     onInsert={onInsertIntoNote}
                     onOpenMark={onOpenMark}
                     onSaveAgentNote={setAgentDraft}
+                    itemActions={itemActions}
                     trace={ragTraces[m.id]}
                     timings={chatTimings[m.id]}
                   />
@@ -776,13 +881,24 @@ export function NotesChatPanel({
             {!atBottom && <ScrollToBottomButton className={styles.scrollBtn} onClick={scrollToBottom} />}
           </div>
 
-          {error && messages.length > 0 && (
+          {showErrorRow && (
             <div className={styles.errorRow} role="alert">
-              {error}
+              <span>{errorText}</span>
+              {searchKeyIssue && (
+                <button
+                  type="button"
+                  className={styles.keyBannerBtn}
+                  onClick={() => (onOpenSettingsSection ? onOpenSettingsSection('search') : onOpenSettings())}
+                >
+                  <GearSix size={12} aria-hidden />
+                  Open Settings
+                </button>
+              )}
             </div>
           )}
 
           <div className={styles.composer}>
+            {webSearchActive && activeAgent.webPipeline && <RagSearchStatus label={activeAgent.webPipeline.status} />}
             {ragSearching && <RagSearchStatus />}
             {activeNote && (
               <div className={styles.contextChips}>
@@ -923,10 +1039,14 @@ export function NotesChatPanel({
         draft={agentDraft}
         notebooks={notebooks}
         notes={notes}
-        defaultNotebookId={notebook?.id ?? null}
+        defaultNotebookId={agentDefaultNotebookId ?? notebook?.id ?? null}
         onCreate={onCreateAgentNote}
         onNavigateToNote={onNavigateToNote}
-        onClose={() => setAgentDraft(null)}
+        onOpenReadingList={onOpenReadingList}
+        onClose={() => {
+          setAgentDraft(null)
+          setAgentDefaultNotebookId(null)
+        }}
       />
     </section>
   )
@@ -940,6 +1060,7 @@ interface NotesChatBubbleProps {
   onInsert: (content: NoteInsert, where: 'cursor' | 'end') => void
   onOpenMark?: (text: string) => void
   onSaveAgentNote: (draft: AgentNoteDraft) => void
+  itemActions: AgentItemActions
   trace?: RagResponse
   timings?: ChatTimings
 }
@@ -952,14 +1073,21 @@ function NotesChatBubble({
   onInsert,
   onOpenMark,
   onSaveAgentNote,
+  itemActions,
   trace,
   timings,
 }: NotesChatBubbleProps) {
   const isUser = message.role === 'user'
   const isEmpty = !isUser && message.content.length === 0
+  // Radar: os marcadores [W3] viram título, link e fonte a partir do payload do
+  // app (no fim do turno o content já vem expandido e a expansão não muda nada).
+  const displayContent = useMemo(
+    () => (message.agentItems ? expandItemMarkers(message.content, message.agentItems) : message.content),
+    [message.content, message.agentItems]
+  )
   const segments = useMemo(
-    () => (isUser ? [] : splitMessageBlocks(message.content)),
-    [isUser, message.content]
+    () => (isUser ? [] : splitMessageBlocks(displayContent)),
+    [isUser, displayContent]
   )
   // Resposta do planner com plano datado ou do tutor com bloco de perfil
   // (só depois do streaming).
@@ -967,6 +1095,7 @@ function NotesChatBubble({
     () => (isUser || isStreaming ? null : agentNoteDraft(message, dateKeyFromMs(Date.now()))),
     [isUser, isStreaming, message]
   )
+  const DraftIcon = agentDraft ? AGENT_DRAFT_ICON[agentDraft.kind] : null
   const imageViewer = useImageViewer()
 
   if (isUser) {
@@ -991,7 +1120,9 @@ function NotesChatBubble({
         <span />
       </span>
     ) : (
-      <div className={styles.bubbleAssistant}>{NO_RESPONSE_MESSAGE}</div>
+      <div className={styles.bubbleAssistant}>
+        {message.interrupted === 'stopped' ? STOPPED_BEFORE_REPLY : NO_RESPONSE_MESSAGE}
+      </div>
     )
   }
 
@@ -1059,6 +1190,15 @@ function NotesChatBubble({
           )
         })}
       </div>
+      {message.agentItems && hasAgentPayload(message) && (
+        <AgentItemsList
+          payload={message.agentItems}
+          actions={itemActions}
+          disabled={isStreaming}
+          messageId={message.id}
+          content={message.content}
+        />
+      )}
       <div className={styles.messageActions}>
         {agentDraft && (
           <button
@@ -1066,16 +1206,10 @@ function NotesChatBubble({
             className={styles.messageActionBtn}
             disabled={isStreaming}
             onClick={() => onSaveAgentNote(agentDraft)}
-            aria-label={
-              agentDraft.kind === 'profile' ? 'Save this study profile as a note' : 'Save this plan as a Plan note'
-            }
+            aria-label={AGENT_DRAFT_ACTION[agentDraft.kind].title}
           >
-            {agentDraft.kind === 'profile' ? (
-              <IdentificationCard size={13} className={styles.messageActionIcon} aria-hidden />
-            ) : (
-              <CalendarPlus size={13} className={styles.messageActionIcon} aria-hidden />
-            )}
-            {agentDraft.kind === 'profile' ? 'Save study profile' : 'Save as Plan note'}
+            {DraftIcon && <DraftIcon size={13} className={styles.messageActionIcon} aria-hidden />}
+            {AGENT_DRAFT_ACTION[agentDraft.kind].label}
           </button>
         )}
         <button

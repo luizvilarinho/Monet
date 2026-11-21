@@ -21,6 +21,7 @@ import { ModelSelector } from '../AiPanel/ModelSelector'
 import { buildMincerContext, mincerTruncationNotice } from '../Mincer/mincerContext'
 import { useTasksEnv } from '../TasksView/TasksEnv'
 import styles from './ChatPanel.module.css'
+import type { AgentItemActions } from './AgentItemsList'
 import { ChatComposer } from './ChatComposer'
 import { agentLabelIds, ChatMessageBubble } from './ChatMessageBubble'
 import { MessageSources } from './MessageSources'
@@ -52,6 +53,11 @@ export interface ChatPanelProps {
   onCreateAgentNote: (req: AgentNoteRequest, requestId: string) => Promise<Note>
   onSaveNote: (note: Note) => Promise<void>
   onNavigateToNote: (notebookId: string, noteId: string) => void
+  // "Open in Library" de um artigo: o App abre o livro na Library.
+  onOpenBook: (bookId: string) => void
+  // "Open reading list" do "Add to reading list": abre o board do tipo Paper.
+  // Ausente (ainda não há o board) = sem o botão.
+  onOpenReadingList?: () => void
   // Tool "Tasks" (opt-in no menu de ferramentas).
   tasks: Task[]
   todayKey: string
@@ -76,6 +82,8 @@ export function ChatPanel({
   onCreateAgentNote,
   onSaveNote,
   onNavigateToNote,
+  onOpenBook,
+  onOpenReadingList,
   tasks,
   todayKey,
   taskChecklist,
@@ -158,6 +166,7 @@ export function ChatPanel({
     setFolderMemory,
     setFolderMemoryEnabled,
     setFolderWebResearchEnabled,
+    registerAiSourcesFolder,
     folderMemoryUpdatedAt,
     webSourcesSaved,
     moveConversation,
@@ -169,6 +178,8 @@ export function ChatPanel({
 
   const [saveTarget, setSaveTarget] = useState<{ messageId: string; content: string } | null>(null)
   const [agentNoteDraft, setAgentNoteDraft] = useState<AgentNoteDraft | null>(null)
+  // Caderno do escopo de um artigo ("Add to reading list"); null = o da pasta.
+  const [agentNoteDefaultNotebookId, setAgentNoteDefaultNotebookId] = useState<string | null>(null)
   const [systemPromptFolderId, setSystemPromptFolderId] = useState<string | null>(
     null,
   )
@@ -222,6 +233,28 @@ export function ChatPanel({
   }, [folders, activeId])
 
   const activeFolderId = activeFolder?.id ?? null
+
+  // Ações dos itens do Radar: "Add to KB" só em chat com pasta.
+  const itemActions = useMemo<AgentItemActions>(
+    () => ({
+      kb: activeFolder
+        ? {
+            chatFolderId: activeFolder.id,
+            folderName: activeFolder.name,
+            webResearchEnabled: activeFolder.webResearchEnabled,
+            setWebResearchEnabled: (enabled) => setFolderWebResearchEnabled(activeFolder.id, enabled),
+            registerAiSourcesFolder,
+          }
+        : null,
+      onOpenNote: onNavigateToNote,
+      onAddPaper: (draft, defaultNotebookId) => {
+        setAgentNoteDefaultNotebookId(defaultNotebookId)
+        setAgentNoteDraft(draft)
+      },
+      onOpenBook,
+    }),
+    [activeFolder, setFolderWebResearchEnabled, registerAiSourcesFolder, onNavigateToNote, onOpenBook]
+  )
 
   // Contexto da conversa (cabeçalho e estado vazio): pasta e documentos que a
   // resposta usa. As notas do caderno vinculado entram sempre (doc implícito).
@@ -496,6 +529,7 @@ export function ChatPanel({
                     onRetry={m.id === retryableId ? () => void handleRetry(m.id) : undefined}
                     retryDisabledReason={m.id === retryableId ? retryDisabledReason : undefined}
                     onOpenSettings={() => onOpenSettings('openrouter')}
+                    itemActions={itemActions}
                     savedNote={
                       savedNoteRow
                         ? {
@@ -595,10 +629,16 @@ export function ChatPanel({
         draft={agentNoteDraft}
         notebooks={notebooks}
         notes={notes}
-        defaultNotebookId={activeFolder ? getFolderNotebookId(activeFolder.id) : null}
+        defaultNotebookId={
+          agentNoteDefaultNotebookId ?? (activeFolder ? getFolderNotebookId(activeFolder.id) : null)
+        }
         onCreate={onCreateAgentNote}
         onNavigateToNote={onNavigateToNote}
-        onClose={() => setAgentNoteDraft(null)}
+        onOpenReadingList={onOpenReadingList}
+        onClose={() => {
+          setAgentNoteDraft(null)
+          setAgentNoteDefaultNotebookId(null)
+        }}
       />
 
       <FolderSystemPromptModal
