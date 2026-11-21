@@ -2,13 +2,23 @@ import { describe, expect, it } from 'vitest'
 import type { Task } from '../types'
 import { selectAgenda } from './agenda'
 import {
+  applyTaskPatch,
   BUILTIN_STATUS_DEFS,
+  byBoardOrder,
   computeTaskSummary,
+  deadlineAlongPatch,
+  deadlineBand,
+  deadlineDropDate,
+  deadlineMarkOn,
   filterTasksForBlock,
+  fitDayRows,
+  formatDeadlineDay,
   formatRelativeDay,
   groupTasksBy,
   isInProgress,
   isOverdue,
+  openDeadlinesByDay,
+  planCellOf,
   reschedulePatch,
   splitDoneWindow,
   summaryMatches,
@@ -16,6 +26,7 @@ import {
   uncheckChecklist,
   undoPatch,
   uniqueName,
+  weekWindow,
 } from './tasks'
 
 // Regras da Fatia 4 (Tasks): Overdue × Slipped (U1/U7), My Day no Today (U4),
@@ -297,5 +308,295 @@ describe('uniqueName', () => {
 
   it('a colisão vale para o nome já cortado', () => {
     expect(uniqueName('Guitarra extra', 8, others, null).clash).toBe(others[0])
+  })
+})
+
+// Regra do chip "Postponed" (F1.3): só conta deadline adiado ou do date adiado.
+describe('Postponed (F1.3)', () => {
+  it('adiar o deadline existente soma 1', () => {
+    const t = task({ dueDate: '2026-11-23', rescheduleCount: 1 })
+    expect(applyTaskPatch(t, { dueDate: '2026-11-25' }, 1).rescheduleCount).toBe(2)
+  })
+
+  it('antecipar o deadline (ou repetir a data) não soma', () => {
+    const t = task({ dueDate: '2026-11-23', rescheduleCount: 1 })
+    expect(applyTaskPatch(t, { dueDate: '2026-11-20' }, 1).rescheduleCount).toBe(1)
+    expect(applyTaskPatch(t, { dueDate: '2026-11-23' }, 1).rescheduleCount).toBe(1)
+  })
+
+  it('limpar o deadline zera', () => {
+    const t = task({ dueDate: '2026-11-23', rescheduleCount: 3 })
+    expect(applyTaskPatch(t, { dueDate: null }, 1).rescheduleCount).toBe(0)
+  })
+
+  it('definir o primeiro deadline não soma', () => {
+    const t = task({ dueDate: null, rescheduleCount: 0 })
+    expect(applyTaskPatch(t, { dueDate: '2026-11-25' }, 1).rescheduleCount).toBe(0)
+  })
+
+  it('adiar o do date existente soma 1', () => {
+    const t = task({ scheduledDate: '2026-11-20' })
+    expect(applyTaskPatch(t, { scheduledDate: '2026-11-24' }, 1).rescheduleCount).toBe(1)
+  })
+
+  it('antecipar o do date, definir o primeiro ou limpar não soma', () => {
+    const t = task({ scheduledDate: '2026-11-24' })
+    expect(applyTaskPatch(t, { scheduledDate: '2026-11-20' }, 1).rescheduleCount).toBe(0)
+    expect(applyTaskPatch(t, { scheduledDate: null }, 1).rescheduleCount).toBe(0)
+    expect(applyTaskPatch(task({}), { scheduledDate: '2026-11-20' }, 1).rescheduleCount).toBe(0)
+  })
+
+  it('antecipar o deadline e adiar o do date no mesmo patch soma 1', () => {
+    const t = task({ dueDate: '2026-11-23', scheduledDate: '2026-11-20' })
+    const patch = { dueDate: '2026-11-21', scheduledDate: '2026-11-22' }
+    expect(applyTaskPatch(t, patch, 1).rescheduleCount).toBe(1)
+  })
+
+  it('o rescheduleCount explícito no patch (Undo) prevalece', () => {
+    const t = task({ dueDate: '2026-11-23', rescheduleCount: 2 })
+    expect(applyTaskPatch(t, { dueDate: '2026-11-25', rescheduleCount: 0 }, 1).rescheduleCount).toBe(0)
+  })
+
+  it('desfazer uma antecipação do deadline não soma adiamento', () => {
+    const before = task({ dueDate: '2026-11-27', rescheduleCount: 1 })
+    const after = applyTaskPatch(before, { dueDate: '2026-11-24' }, 1)
+    expect(after.rescheduleCount).toBe(1)
+    const undo = undoPatch(before, after)
+    expect(undo).toEqual({ dueDate: '2026-11-27', rescheduleCount: 1 })
+    expect(applyTaskPatch(after, undo!, 2)).toMatchObject({ dueDate: '2026-11-27', rescheduleCount: 1 })
+  })
+
+  it('desfazer uma antecipação do do date não soma adiamento', () => {
+    const before = task({ scheduledDate: '2026-11-24', rescheduleCount: 1 })
+    const after = applyTaskPatch(before, { scheduledDate: '2026-11-20' }, 1)
+    expect(after.rescheduleCount).toBe(1)
+    const undo = undoPatch(before, after)
+    expect(undo).toEqual({ scheduledDate: '2026-11-24', rescheduleCount: 1 })
+    expect(applyTaskPatch(after, undo!, 2)).toMatchObject({ scheduledDate: '2026-11-24', rescheduleCount: 1 })
+  })
+})
+
+describe('célula do plano e ordem', () => {
+  it('My Day de hoje fica em hoje, mesmo com o do date em outro dia', () => {
+    expect(planCellOf(task({ plannedDay: TODAY, scheduledDate: '2026-11-25' }), TODAY)).toBe(TODAY)
+  })
+
+  it('deadline estourado sem plano novo vai para overdue', () => {
+    expect(planCellOf(task({ dueDate: '2026-11-17' }), TODAY)).toBe('overdue')
+  })
+
+  it('deadline estourado com do date de hoje em diante vai para o dia do plano', () => {
+    expect(planCellOf(task({ dueDate: '2026-11-17', scheduledDate: '2026-11-20' }), TODAY)).toBe('2026-11-20')
+  })
+
+  it('só deadline futuro: o dia do deadline; sem data: nodate', () => {
+    expect(planCellOf(task({ dueDate: '2026-11-27' }), TODAY)).toBe('2026-11-27')
+    expect(planCellOf(task({}), TODAY)).toBe('nodate')
+  })
+
+  it('byBoardOrder: important, depois doing, depois a ordem manual', () => {
+    const manual = task({ sortOrder: 1 })
+    const later = task({ sortOrder: 2 })
+    const doing = task({ sortOrder: 3, status: 'doing' })
+    const important = task({ sortOrder: 4, important: true })
+    expect([later, important, doing, manual].sort(byBoardOrder)).toEqual([important, doing, manual, later])
+  })
+
+  it('openDeadlinesByDay ignora concluída e descartada e agrupa pelo deadline', () => {
+    const a = task({ dueDate: '2026-11-27' })
+    const b = task({ dueDate: '2026-11-27' })
+    const c = task({ dueDate: '2026-11-30' })
+    const done = task({ dueDate: '2026-11-27', status: 'done' })
+    const dropped = task({ dueDate: '2026-11-27', status: 'dropped' })
+    const none = task({})
+    const map = openDeadlinesByDay([a, b, c, done, dropped, none])
+    expect(map.get('2026-11-27')).toEqual([a, b])
+    expect(map.get('2026-11-30')).toEqual([c])
+    expect(map.size).toBe(2)
+  })
+})
+
+describe('janela de semanas', () => {
+  it('5 semanas de 7 dias a partir da segunda da semana', () => {
+    const weeks = weekWindow(TODAY, 5)
+    expect(weeks).toHaveLength(5)
+    expect(weeks.every((w) => w.length === 7)).toBe(true)
+    expect(weeks[0][0]).toBe('2026-11-16')
+    expect(weeks[4][6]).toBe('2026-12-20')
+  })
+
+  it('começar num domingo ainda começa na segunda da semana', () => {
+    expect(weekWindow('2026-11-22', 5)[0][0]).toBe('2026-11-16')
+  })
+})
+
+describe('faixa do deadline', () => {
+  it('sem deadline: none', () => {
+    expect(deadlineBand(task({}), TODAY)).toBe('none')
+  })
+
+  it('antes de hoje: missed, mesmo com do date novo', () => {
+    expect(deadlineBand(task({ dueDate: '2026-11-17' }), TODAY)).toBe('missed')
+    expect(deadlineBand(task({ dueDate: '2026-11-17', scheduledDate: '2026-11-20' }), TODAY)).toBe('missed')
+  })
+
+  it('dentro da janela: a segunda da semana do deadline', () => {
+    expect(deadlineBand(task({ dueDate: TODAY }), TODAY)).toBe('2026-11-16')
+    expect(deadlineBand(task({ dueDate: '2026-12-20' }), TODAY)).toBe('2026-12-14')
+  })
+
+  it('depois da 5ª semana: later', () => {
+    expect(deadlineBand(task({ dueDate: '2026-12-21' }), TODAY)).toBe('later')
+  })
+
+  it('o horizonte vem do parâmetro de semanas', () => {
+    // 1 semana: vai até dom 22; 2 semanas: até dom 29.
+    expect(deadlineBand(task({ dueDate: '2026-11-22' }), TODAY, 1)).toBe('2026-11-16')
+    expect(deadlineBand(task({ dueDate: '2026-11-23' }), TODAY, 1)).toBe('later')
+    expect(deadlineBand(task({ dueDate: '2026-11-29' }), TODAY, 2)).toBe('2026-11-23')
+    expect(deadlineBand(task({ dueDate: '2026-11-30' }), TODAY, 2)).toBe('later')
+  })
+})
+
+describe('data ao soltar numa semana (F3.6)', () => {
+  const WORK = [1, 2, 3, 4, 5]
+
+  it('mantém o dia da semana do deadline atual', () => {
+    expect(deadlineDropDate(task({ dueDate: '2026-11-27' }), '2026-12-07', TODAY, WORK)).toBe('2026-12-11')
+    expect(deadlineDropDate(task({ dueDate: '2026-11-25' }), '2026-12-07', TODAY, WORK)).toBe('2026-12-09')
+  })
+
+  it('sem deadline: o último dia de trabalho da semana', () => {
+    expect(deadlineDropDate(task({}), '2026-12-07', TODAY, WORK)).toBe('2026-12-11')
+    expect(deadlineDropDate(task({}), '2026-12-07', TODAY, [1, 2, 3, 4, 5, 6])).toBe('2026-12-12')
+  })
+
+  it('dia da semana que já passou em This week: o último dia de trabalho', () => {
+    expect(deadlineDropDate(task({ dueDate: '2026-11-16' }), '2026-11-16', TODAY, WORK)).toBe('2026-11-20')
+  })
+
+  it('se o último dia de trabalho também passou: hoje', () => {
+    expect(deadlineDropDate(task({ dueDate: '2026-11-17' }), '2026-11-16', '2026-11-21', WORK)).toBe('2026-11-21')
+  })
+
+  it('sem dias de trabalho configurados: o último dia útil é a sexta', () => {
+    expect(deadlineDropDate(task({}), '2026-12-07', TODAY, [])).toBe('2026-12-11')
+    expect(deadlineDropDate(task({ dueDate: '2026-11-17' }), '2026-12-07', TODAY, [])).toBe('2026-12-08')
+    expect(deadlineDropDate(task({ dueDate: '2026-11-16' }), '2026-11-16', TODAY, [])).toBe('2026-11-20')
+  })
+
+  it('nunca devolve data antes de hoje', () => {
+    for (const today of [TODAY, '2026-11-21', '2026-11-22']) {
+      for (const due of [null, '2026-11-16', '2026-11-18', '2026-11-22']) {
+        for (const days of [WORK, [1, 2, 3, 4, 5, 6], [0], []]) {
+          const date = deadlineDropDate(task({ dueDate: due }), '2026-11-16', today, days)
+          expect(date >= today).toBe(true)
+        }
+      }
+    }
+  })
+})
+
+describe('datas do Deadlines', () => {
+  it('dentro da janela de 5 semanas: dia da semana e número', () => {
+    expect(formatDeadlineDay('2026-11-27', TODAY)).toBe('Fri 27')
+    expect(formatDeadlineDay('2026-11-17', TODAY)).toBe('Tue 17')
+  })
+
+  it('fora da janela: mês e dia', () => {
+    expect(formatDeadlineDay('2026-11-10', TODAY)).toBe('Nov 10')
+    expect(formatDeadlineDay('2027-04-30', TODAY)).toBe('Apr 30')
+  })
+
+  it('as bordas da janela: a segunda da 1ª semana e o domingo da 5ª entram', () => {
+    expect(formatDeadlineDay('2026-11-15', TODAY)).toBe('Nov 15')
+    expect(formatDeadlineDay('2026-11-16', TODAY)).toBe('Mon 16')
+    expect(formatDeadlineDay('2026-12-20', TODAY)).toBe('Sun 20')
+    expect(formatDeadlineDay('2026-12-21', TODAY)).toBe('Dec 21')
+  })
+
+  it('a janela vem do parâmetro de semanas', () => {
+    expect(formatDeadlineDay('2026-11-22', TODAY, 1)).toBe('Sun 22')
+    expect(formatDeadlineDay('2026-11-23', TODAY, 1)).toBe('Nov 23')
+  })
+})
+
+describe('deadline na linha do Month', () => {
+  it('no dia do deadline: due', () => {
+    expect(deadlineMarkOn(task({ dueDate: '2026-11-27' }), '2026-11-27', TODAY)).toEqual({ kind: 'due' })
+  })
+
+  it('dias depois do deadline: after com a distância', () => {
+    expect(deadlineMarkOn(task({ dueDate: '2026-11-27' }), '2026-11-30', TODAY)).toEqual({
+      kind: 'after',
+      days: 3,
+    })
+  })
+
+  it('deadline estourado: missed', () => {
+    expect(deadlineMarkOn(task({ dueDate: '2026-11-17' }), '2026-11-20', TODAY)).toEqual({ kind: 'missed' })
+  })
+
+  it('dia antes do deadline ou sem deadline: nada', () => {
+    expect(deadlineMarkOn(task({ dueDate: '2026-11-27' }), '2026-11-25', TODAY)).toBeNull()
+    expect(deadlineMarkOn(task({}), '2026-11-25', TODAY)).toBeNull()
+  })
+})
+
+describe('linhas por célula', () => {
+  it('cabe tudo: títulos longos ganham a 2ª linha de cima para baixo', () => {
+    expect(fitDayRows(3, [false, true])).toEqual({ shown: 2, more: 0, wrap: [false, true] })
+    expect(fitDayRows(4, [true, true])).toEqual({ shown: 2, more: 0, wrap: [true, true] })
+    expect(fitDayRows(3, [true, true])).toEqual({ shown: 2, more: 0, wrap: [true, false] })
+  })
+
+  it('sem sobra, ninguém ganha a 2ª linha', () => {
+    expect(fitDayRows(3, [true, true, true])).toEqual({ shown: 3, more: 0, wrap: [false, false, false] })
+  })
+
+  it('não cabe: o último lugar vira "+N more"', () => {
+    expect(fitDayRows(2, [false, false, false])).toEqual({ shown: 1, more: 2, wrap: [false, false, false] })
+    expect(fitDayRows(1, [false, false])).toEqual({ shown: 0, more: 2, wrap: [false, false] })
+  })
+
+  it('capacidade 0 conta como 1 linha', () => {
+    expect(fitDayRows(0, [false, false])).toEqual({ shown: 0, more: 2, wrap: [false, false] })
+    expect(fitDayRows(0, [true])).toEqual({ shown: 1, more: 0, wrap: [false] })
+    expect(fitDayRows(0, [])).toEqual({ shown: 0, more: 0, wrap: [] })
+  })
+})
+
+describe('Move deadline too na barra de Undo', () => {
+  it('o patch leva o deadline e fica com um adiamento só', () => {
+    const t = task({ scheduledDate: '2026-11-20', dueDate: '2026-11-23' })
+    expect(deadlineAlongPatch(t, '2026-11-25', TODAY)).toEqual({ dueDate: '2026-11-25', rescheduleCount: 1 })
+  })
+
+  it('arrasto + Move deadline too termina com rescheduleCount 1 (e não 2)', () => {
+    const t = task({ scheduledDate: '2026-11-20', dueDate: '2026-11-23' })
+    const dragged = applyTaskPatch(t, reschedulePatch(t, '2026-11-25', TODAY)!, 1)
+    expect(dragged.rescheduleCount).toBe(1)
+    const moved = applyTaskPatch(dragged, deadlineAlongPatch(t, '2026-11-25', TODAY), 2)
+    expect(moved.dueDate).toBe('2026-11-25')
+    expect(moved.rescheduleCount).toBe(1)
+  })
+
+  it('task só com deadline: +1 só pelo deadline adiado', () => {
+    const t = task({ dueDate: '2026-11-27' })
+    expect(deadlineAlongPatch(t, '2026-11-30', TODAY)).toEqual({ dueDate: '2026-11-30', rescheduleCount: 1 })
+  })
+
+  it('Undo depois do arrasto e do Move deadline too restaura do date, deadline e adiamentos', () => {
+    const before = task({ scheduledDate: '2026-11-20', dueDate: '2026-11-23', rescheduleCount: 2 })
+    const dragged = applyTaskPatch(before, reschedulePatch(before, '2026-11-25', TODAY)!, 1)
+    const moved = applyTaskPatch(dragged, deadlineAlongPatch(before, '2026-11-25', TODAY), 2)
+    expect(moved).toMatchObject({ scheduledDate: '2026-11-25', dueDate: '2026-11-25', rescheduleCount: 3 })
+    const undo = undoPatch(before, moved)
+    expect(undo).toEqual({ scheduledDate: '2026-11-20', dueDate: '2026-11-23', rescheduleCount: 2 })
+    expect(applyTaskPatch(moved, undo!, 3)).toMatchObject({
+      scheduledDate: '2026-11-20',
+      dueDate: '2026-11-23',
+      rescheduleCount: 2,
+    })
   })
 })

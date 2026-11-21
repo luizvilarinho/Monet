@@ -1,0 +1,36 @@
+/* Acima do fantasma do useCardDrag (z-index 1000); não captura o mouse, então
+   o elementFromPoint do arrasto e a roda continuam passando por baixo. */
+.label {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 1001;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-0);
+  padding: var(--space-0) var(--space-1h);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.late {
+  color: var(--accent-late);
+  font-weight: 600;
+}
+
+.danger {
+  color: var(--accent-danger);
+  font-weight: 600;
+}
+
+.accent {
+  color: var(--accent-task);
+  font-weight: 600;
+}

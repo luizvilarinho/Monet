@@ -1,23 +1,24 @@
 import { CaretLeft, CaretRight, Eye, EyeSlash, Target } from '@phosphor-icons/react'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { dateKeyFromMs } from '../../lib/calendar'
 import {
   addDaysKey,
+  byBoardOrder,
   computeTaskSummary,
   filterTasksForView,
   formatDueShort,
   isDone,
-  isInProgress,
   isOpen,
-  isOverdue,
-  planDate,
+  openDeadlinesByDay,
+  planCellOf,
+  PLAN_NODATE,
+  PLAN_OVERDUE,
   startOfWeekKey,
   summaryMatches,
   weekDayKeys,
   type ChecklistProgress,
   type TaskSummaryKey,
 } from '../../lib/tasks'
-import { isWeekendOff, loadWorkCapacity } from '../../lib/workCapacity'
 import type { Notebook, Task } from '../../types'
 import { TasksHeader, type NewTaskDraft } from './TasksHeader'
 import { useTasksEnv } from './TasksEnv'
@@ -26,6 +27,7 @@ import { TaskCard } from './TaskCard'
 import { TaskBatchBar } from './TaskBatchBar'
 import { useCardDrag } from './useCardDrag'
 import { useTaskKeyboard, type TaskChanges } from './useTaskKeyboard'
+import { useWeekendPeek, useWeekendToggle, WEEKEND_RAIL_KEY } from './useWeekendToggle'
 import styles from './WeekBoard.module.css'
 
 // Visão Week na área principal: Overdue | 7 dias da semana | No date.
@@ -53,9 +55,6 @@ interface WeekBoardProps {
   checklist: Map<string, ChecklistProgress>
 }
 
-const NO_DATE = 'nodate'
-const WEEKEND = 'weekend'
-const HIDE_WEEKEND_KEY = 'monet:tasks-week-hide-weekend'
 const DAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
 interface Column {
@@ -69,35 +68,6 @@ interface Column {
   tone?: 'today' | 'overdue'
   // Trilho do fim de semana oculto (contagem em `open.length`).
   kind?: 'weekend'
-}
-
-// Important primeiro, depois `doing`, depois a ordem manual.
-function byBoardOrder(a: Task, b: Task): number {
-  if (a.important !== b.important) return a.important ? -1 : 1
-  const ai = isInProgress(a)
-  const bi = isInProgress(b)
-  if (ai !== bi) return ai ? -1 : 1
-  return a.sortOrder - b.sortOrder
-}
-
-// Coluna de uma task aberta: My Day de hoje → hoje; atrasada sem plano
-// novo → Overdue; senão o dia do plano (ou No date).
-function columnOf(t: Task, todayKey: string): string {
-  if (t.plannedDay === todayKey) return todayKey
-  if (isOverdue(t, todayKey)) return 'overdue'
-  return planDate(t) ?? NO_DATE
-}
-
-// Fim de semana oculto: a escolha do usuário; sem escolha, os dias de
-// trabalho do Settings › Agenda (sábado e domingo fora = oculto).
-function initialHideWeekend(): boolean {
-  try {
-    const stored = localStorage.getItem(HIDE_WEEKEND_KEY)
-    if (stored === '1' || stored === '0') return stored === '1'
-  } catch {
-    /* cai nos dias de trabalho */
-  }
-  return isWeekendOff(loadWorkCapacity().workDays)
 }
 
 export function WeekBoard({
@@ -120,26 +90,13 @@ export function WeekBoard({
 }: WeekBoardProps) {
   const [weekStart, setWeekStartState] = useState(() => startOfWeekKey(todayKey))
   const currentWeek = startOfWeekKey(todayKey)
-  const [hideWeekend, setHideWeekendState] = useState(initialHideWeekend)
-  // Fim de semana exibido temporariamente (drag segurado sobre o trilho).
-  const [peek, setPeek] = useState(false)
+  const { hideWeekend, setHideWeekend, weekendHidden, setPeek } = useWeekendToggle()
   // A semana começa na segunda: days[0] = segunda, days[5] = sábado, days[6] = domingo.
   const days = useMemo(() => weekDayKeys(weekStart), [weekStart])
-  const weekendHidden = hideWeekend && !peek
 
   function setWeekStart(update: (w: string) => string) {
     setWeekStartState(update)
     setPeek(false)
-  }
-
-  function setHideWeekend(hide: boolean) {
-    setHideWeekendState(hide)
-    setPeek(false)
-    try {
-      localStorage.setItem(HIDE_WEEKEND_KEY, hide ? '1' : '0')
-    } catch {
-      /* ignorar */
-    }
   }
 
   const notebookNameById = useMemo(
@@ -162,14 +119,7 @@ export function WeekBoard({
   )
 
   // Deadlines abertos de cada dia (marcador no cabeçalho da coluna).
-  const dueByDay = useMemo(() => {
-    const map = new Map<string, Task[]>()
-    for (const t of shownTasks) {
-      if (!isOpen(t) || t.dueDate === null) continue
-      map.set(t.dueDate, [...(map.get(t.dueDate) ?? []), t])
-    }
-    return map
-  }, [shownTasks])
+  const dueByDay = useMemo(() => openDeadlinesByDay(shownTasks), [shownTasks])
 
   const columns = useMemo((): Column[] => {
     const byDay = new Map(days.map((d) => [d, { open: [] as Task[], done: [] as Task[] }]))
@@ -177,9 +127,9 @@ export function WeekBoard({
     const noDate: Task[] = []
     for (const t of shownTasks) {
       if (isOpen(t)) {
-        const key = columnOf(t, todayKey)
-        if (key === 'overdue') overdue.push(t)
-        else if (key === NO_DATE) noDate.push(t)
+        const key = planCellOf(t, todayKey)
+        if (key === PLAN_OVERDUE) overdue.push(t)
+        else if (key === PLAN_NODATE) noDate.push(t)
         else byDay.get(key)?.open.push(t)
       } else if (isDone(t) && t.completedAt !== null) {
         byDay.get(dateKeyFromMs(t.completedAt))?.done.push(t)
@@ -189,7 +139,7 @@ export function WeekBoard({
     const weekendRail: Column[] = weekendHidden
       ? [
           {
-            key: WEEKEND,
+            key: WEEKEND_RAIL_KEY,
             label: 'Sat–Sun hidden',
             open: [...byDay.get(days[5])!.open, ...byDay.get(days[6])!.open],
             done: [],
@@ -203,7 +153,7 @@ export function WeekBoard({
       : []
     return [
       {
-        key: 'overdue',
+        key: PLAN_OVERDUE,
         label: 'Overdue',
         open: overdue.sort(byBoardOrder),
         done: [],
@@ -226,7 +176,7 @@ export function WeekBoard({
       }),
       ...weekendRail,
       {
-        key: NO_DATE,
+        key: PLAN_NODATE,
         label: 'No date',
         open: noDate.sort(byBoardOrder),
         done: [],
@@ -257,21 +207,10 @@ export function WeekBoard({
   const { draggingId, overKey, onCardMouseDown } = useCardDrag((id, dropKey) => {
     const task = tasksById.get(id)
     // Soltar na própria coluna não muda nada.
-    if (!task || dropKey === WEEKEND || columnOf(task, todayKey) === dropKey) return
-    void kb.actions.reschedule([{ id, date: dropKey === NO_DATE ? null : dropKey }], 'moved')
+    if (!task || dropKey === WEEKEND_RAIL_KEY || planCellOf(task, todayKey) === dropKey) return
+    void kb.actions.reschedule([{ id, date: dropKey === PLAN_NODATE ? null : dropKey }], 'moved')
   })
-
-  // Segurar um card ~400ms sobre o trilho expande o fim de semana.
-  useEffect(() => {
-    if (!draggingId || overKey !== WEEKEND) return
-    const timer = setTimeout(() => setPeek(true), 400)
-    return () => clearTimeout(timer)
-  }, [draggingId, overKey])
-
-  // Ao soltar o card, o fim de semana volta ao estado do toggle.
-  useEffect(() => {
-    if (!draggingId) setPeek(false)
-  }, [draggingId])
+  useWeekendPeek(draggingId, overKey, setPeek)
 
   const todayOnHiddenWeekend = columns.some((c) => c.kind === 'weekend' && c.tone === 'today')
 
@@ -386,9 +325,9 @@ export function WeekBoard({
               <button
                 key={c.key}
                 type="button"
-                data-drop-key={WEEKEND}
+                data-drop-key={WEEKEND_RAIL_KEY}
                 className={`${styles.weekendRail} ${hasToday ? styles.weekendRailToday : ''} ${
-                  draggingId && overKey === WEEKEND ? styles.columnOver : ''
+                  draggingId && overKey === WEEKEND_RAIL_KEY ? styles.columnOver : ''
                 }`}
                 onClick={() => setHideWeekend(false)}
                 title={`${hasToday ? 'Today is hidden here. ' : ''}${n} task${n === 1 ? '' : 's'} on Sat – Sun. Click to show weekends`}

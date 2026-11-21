@@ -1,0 +1,148 @@
+/* Linha compacta do Month: 22px (20px de linha + bordas de 1px). O filete do
+   projeto é a borda esquerda; o quadrado é o status (cantos quadrados). */
+.row {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1h);
+  min-height: 22px;
+  flex-shrink: 0;
+  padding: 0 var(--space-1);
+  background: var(--bg-app);
+  border: 1px solid var(--hair);
+  border-left: 3px solid var(--pc);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  cursor: grab;
+  outline: none;
+}
+
+.row:hover {
+  background: color-mix(in srgb, var(--surface-2) 40%, var(--bg-app));
+}
+
+/* Projeto sem cor: contorno de 3px no lugar do filete (como o quadrado
+   vazio do TaskCard). */
+.noColor::before {
+  content: '';
+  position: absolute;
+  left: -3px;
+  top: -1px;
+  bottom: -1px;
+  width: 3px;
+  box-sizing: border-box;
+  border: 1px solid var(--text-muted);
+}
+
+.sq {
+  width: 7px;
+  height: 7px;
+  margin-top: var(--space-1h);
+  flex-shrink: 0;
+  background: var(--st);
+  border-radius: 0;
+}
+
+.body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.title {
+  display: block;
+  font-size: 13px;
+  line-height: var(--lh-row);
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wrap .title {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
+}
+
+/* Bandeja Overdue: a data que estourou, sob o título. */
+.meta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding-bottom: var(--space-0);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.metaLate {
+  color: var(--accent-danger);
+  font-weight: 600;
+}
+
+.metaSlip {
+  color: var(--accent-late);
+}
+
+.icons {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--lh-row);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.accent {
+  display: inline-flex;
+  color: var(--accent-task);
+}
+
+.dl {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-0);
+}
+
+.dlAfter {
+  color: var(--accent-late);
+}
+
+.dlMissed {
+  color: var(--accent-danger);
+  font-weight: 600;
+}
+
+/* Mesmos estados do TaskCard: anel do cursor por dentro (a célula corta o que
+   passa da borda) e laranja a 14% na seleção. */
+.cursor {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-task) 55%, transparent);
+}
+
+.inSelection,
+.inSelection:hover {
+  background: color-mix(in srgb, var(--accent-task) 14%, var(--bg-app));
+}
+
+.dragging {
+  opacity: 0.35;
+}
+
+/* Hover no "N due" do dia do deadline: a borda acende, o filete fica. */
+.highlighted {
+  border-color: var(--text-secondary);
+  border-left-color: var(--pc);
+}
+
+.done {
+  opacity: 0.8;
+  cursor: default;
+}
+
+.done .title {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}

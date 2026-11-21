@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tasks: duas visões novas</title>
+<style>
+/* ===== Tokens copiados de src/App.css (o app só tem tema escuro) ===== */
+:root {
+  --bg-app: #1f1f2f;
+  --bg-panel: #161625;
+  --surface-1: #1d1d34;
+  --surface-2: #292959;
+  --surface-3: #2e2e36;
+  --text-primary: #ddddf1;
+  --text-secondary: #a2a2ae;
+  --text-muted: #9494ad;
+  --accent: #7b6ed4;
+  --accent-ai: #5dcaa5;
+  --accent-warn: #ef9f27;
+  --accent-task: #ef9f27;
+  --accent-danger: #e05555;
+  --accent-late: #e6c449;
+  --status-done: #5cc185;
+  --border: #2e2f2cb3;
+  --hair: #34344f;
+  --space-0: 2px; --space-1: 4px; --space-1h: 6px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+  --radius-sm: 4px; --radius-md: 6px; --radius-lg: 8px; --radius-xl: 10px;
+  --control-sm: 24px; --control-md: 28px; --control-lg: 32px;
+  --lh-row: 20px;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: #121220;
+  color: var(--text-primary);
+  /* Fonte de produção do app no Windows: Segoe UI (sem recurso externo). */
+  font: 14px/1.45 'Segoe UI', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+button, input, select { font-family: inherit; }
+a { color: var(--accent); }
+.i { fill: currentColor; flex-shrink: 0; display: block; }
+
+/* ===== Barra do estudo (fora do mockup) ===== */
+.study-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; padding: 8px 16px; font-size: 12px; color: var(--text-secondary); border-bottom: 1px solid var(--hair); }
+.study-bar strong { color: var(--text-primary); font-weight: 600; }
+.study-bar nav { display: flex; gap: 10px; }
+.study-bar nav a.on { color: var(--text-primary); text-decoration: none; font-weight: 600; }
+.study-bar .lbl { color: var(--text-muted); margin-right: -8px; }
+.seg { display: inline-flex; border: 1px solid var(--hair); border-radius: var(--radius-sm); overflow: hidden; }
+.seg button { background: transparent; border: none; border-right: 1px solid var(--hair); color: var(--text-secondary); font-size: 12px; padding: 2px 8px; cursor: pointer; }
+.seg button:last-child { border-right: none; }
+.seg button:hover { color: var(--text-primary); }
+.seg button.on { background: var(--surface-2); color: var(--text-primary); }
+.study-bar .tonotes { margin-left: auto; }
+.stage { padding: 12px 0; overflow-x: auto; }
+
+/* ===== Janela do app. "Ajustar": nunca menor que a janela padrão (1280×800)
+   e cresce com o navegador. Os outros modos fixam o tamanho. ===== */
+.window {
+  width: max(1280px, calc(100% - 32px));
+  height: max(800px, calc(100vh - 66px));
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-app);
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px var(--hair);
+  overflow: hidden;
+  position: relative;
+}
+body[data-size='1280'] .window { width: 1280px; height: 800px; }
+body[data-size='1920'] .window { width: 1920px; height: 1080px; }
+body[data-size='full'] .study-bar { display: none; }
+body[data-size='full'] .stage { padding: 0; overflow: visible; }
+body[data-size='full'] .window { width: 100%; height: 100vh; border-radius: 0; box-shadow: none; }
+
+/* Toolbar (44px) */
+.tb { height: 44px; flex-shrink: 0; display: flex; align-items: center; gap: 16px; padding: 8px 16px; background: var(--bg-panel); border-bottom: 1px solid var(--border); }
+.tb .brand { font-size: 15px; font-weight: 600; letter-spacing: .04em; color: var(--text-primary); }
+.tb .modes { margin-left: auto; display: flex; gap: 4px; }
+.tb .modes span { padding: 4px 12px; font-size: 13px; line-height: 1.4; color: var(--text-secondary); border-bottom: 2px solid transparent; }
+.tb .modes span.on { color: var(--accent); border-bottom-color: var(--accent); }
+
+.appbody { flex: 1; min-height: 0; display: flex; }
+
+/* Coluna de cadernos (180px) */
+.nb { width: 180px; flex-shrink: 0; background: var(--bg-panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
+.nb-scroll { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4) var(--space-2); }
+.nb-h { font-size: 12px; font-weight: 500; color: var(--text-muted); padding: 0 var(--space-1); min-height: 24px; display: flex; align-items: center; }
+.nb ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.nb-row { display: flex; align-items: center; gap: var(--space-1h); padding: 7px var(--space-2); border-radius: var(--radius-md); color: var(--text-secondary); font-size: 13px; line-height: var(--lh-row); white-space: nowrap; }
+.nb-row.active { background: var(--surface-2); color: var(--text-primary); }
+.nb-row .lab { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.nb-row .lab.w5 { font-weight: 500; }
+.nb-row .cnt { font-size: 11px; color: var(--text-muted); }
+.nb-row .ico { display: inline-flex; color: var(--text-muted); }
+.nb-row .ico.cal { color: var(--accent); }
+.nb-row .ico.quick { color: var(--accent-late); }
+.nb-row .ico.task { color: var(--accent-task); }
+.nb hr { border: none; border-top: 1px solid var(--border); margin: 0; }
+.nb-foot { border-top: 1px solid var(--border); padding: var(--space-2) var(--space-3); display: flex; justify-content: flex-end; gap: 4px; color: var(--text-muted); }
+.nb-foot span { padding: 6px; display: inline-flex; }
+
+/* Board (espelha WeekBoard.module.css) */
+.board { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-4); background: var(--bg-app); position: relative; }
+.view { flex: 1; min-height: 0; min-width: 0; position: relative; }
+
+/* TasksHeader (espelha TasksHeader.module.css) */
+.th { display: flex; flex-direction: column; gap: var(--space-3); }
+.th-title { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+.th-heading { font-size: 12px; font-weight: 500; color: var(--text-muted); }
+.vwrap { position: relative; }
+.vtrigger { display: inline-flex; align-items: center; gap: var(--space-1h); max-width: 140px; background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--space-0) var(--space-2); font-size: 12px; color: var(--text-primary); cursor: pointer; white-space: nowrap; }
+.vtrigger:hover, .vtrigger[aria-expanded='true'] { border-color: var(--accent-task); }
+.vmenu { position: absolute; left: 0; top: calc(100% + 4px); z-index: 30; min-width: 180px; padding: 4px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-2); box-shadow: 0 6px 18px rgba(0, 0, 0, .35); display: none; }
+.vmenu.open { display: block; }
+.vmenu a, .vmenu span.it { display: flex; align-items: center; gap: 6px; border-radius: var(--radius-sm); padding: var(--space-1h) var(--space-2); font-size: 12px; color: var(--text-primary); text-decoration: none; cursor: pointer; }
+.vmenu a:hover, .vmenu span.it:hover { background: var(--surface-3); }
+.vmenu .on { color: var(--accent-task); }
+.vmenu .new { font-size: 10px; padding: 0 5px; border-radius: 4px; background: rgba(123, 110, 212, .25); color: #b9b0f5; }
+.vmenu .div { height: 1px; margin: 4px 0; background: var(--border); }
+.iconbtn { display: inline-flex; align-items: center; justify-content: center; min-width: 24px; min-height: 24px; background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm); padding: 0; color: var(--text-muted); cursor: pointer; }
+.iconbtn:hover { color: var(--text-primary); border-color: var(--border); }
+.th-select, .th-new input { background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 13px; min-height: var(--control-md); padding: var(--space-1) var(--space-2); outline: none; }
+.th-select:focus, .th-new input:focus { border-color: var(--accent-task); }
+/* Proposta: slot à direita da 1ª linha, para os controles próprios da visão. */
+.th-slot { margin-left: auto; display: flex; align-items: center; gap: var(--space-1); }
+.navbtn, .pillbtn { display: inline-flex; align-items: center; gap: var(--space-1h); background: transparent; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--space-1) var(--space-1h); font-size: 12px; line-height: 1.45; color: var(--text-secondary); cursor: pointer; }
+.navbtn:hover, .pillbtn:hover { color: var(--text-primary); }
+.pillbtn.on { border-color: var(--accent-task); }
+.th-slot .range { margin: 0 var(--space-1h); font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.th-summary { display: flex; flex-direction: column; gap: 6px; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip { display: inline-flex; align-items: center; gap: 4px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: var(--space-0) var(--space-2); font-size: 11px; line-height: 1.45; color: var(--text-secondary); }
+.chip b { font-weight: 600; }
+.chip.empty { opacity: .5; }
+.chip.danger { color: var(--accent-danger); }
+.chip.late { color: var(--accent-late); }
+.weekbar { display: flex; align-items: center; gap: 8px; }
+.weektrack { flex: 1; height: 4px; border-radius: 2px; background: var(--surface-2); overflow: hidden; }
+.weekfill { height: 100%; background: var(--status-done); }
+.weeklabel { flex-shrink: 0; font-size: 11px; color: var(--text-muted); }
+.th-search { display: flex; align-items: center; gap: var(--space-1h); background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0 var(--space-2); color: var(--text-muted); }
+.th-search:focus-within { border-color: var(--accent-task); }
+.th-search input { flex: 1; min-width: 0; background: transparent; border: none; padding: 4px 0; font-size: 12px; color: var(--text-primary); outline: none; }
+.th-new { display: flex; flex-direction: column; gap: 4px; }
+.th-new .line { display: flex; gap: var(--space-1); }
+.th-new input { flex: 1; min-width: 0; }
+.addbtn { display: inline-flex; align-items: center; gap: var(--space-1); min-height: var(--control-md); background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0 var(--space-2); font-size: 12px; color: var(--text-primary); opacity: .5; }
+.pp { align-self: flex-start; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 12px; padding: var(--space-1) var(--space-1h); outline: none; }
+
+/* Barra de Undo (espelha TaskBatchBar.module.css) */
+.undobar { position: absolute; left: 16px; right: 16px; bottom: 16px; z-index: 40; display: none; flex-wrap: wrap; align-items: center; gap: var(--space-1); padding: var(--space-1h) var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-2); font-size: 12px; box-shadow: 0 6px 18px rgba(0, 0, 0, .35); }
+.undobar.show { display: flex; }
+.undobar .msg { color: var(--text-primary); margin-right: var(--space-1); }
+.undobar button { display: inline-flex; align-items: center; gap: var(--space-1); background: transparent; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--space-0) var(--space-2); font-size: 12px; line-height: 1.45; color: var(--text-secondary); cursor: pointer; }
+.undobar button:hover { color: var(--text-primary); border-color: var(--accent-task); }
+.undobar .dismiss { margin-left: auto; border: none; width: 24px; height: 24px; justify-content: center; padding: 0; color: var(--text-muted); }
+
+/* Diálogo de escolha (espelha ConfirmModal.module.css) */
+.backdrop { position: absolute; inset: 0; z-index: 100; background: rgba(0, 0, 0, .55); display: none; align-items: center; justify-content: center; }
+.backdrop.show { display: flex; }
+.dialog { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-xl); padding: 24px; min-width: 320px; max-width: 440px; display: flex; flex-direction: column; gap: 20px; box-shadow: 0 8px 32px rgba(0, 0, 0, .4); }
+.dialog h4 { margin: 0; font-size: 15px; font-weight: 600; }
+.dialog p { margin: 0; font-size: 13px; line-height: 1.5; color: var(--text-secondary); }
+.dialog .acts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
+.dialog button { height: var(--control-lg); padding: 0 16px; border-radius: var(--radius-md); font-size: 13px; cursor: pointer; background: transparent; border: 1px solid var(--border); color: var(--text-secondary); }
+.dialog button:hover { color: var(--text-primary); border-color: var(--text-muted); }
+.dialog button.primary { background: var(--accent); border-color: transparent; color: #fff; font-weight: 500; }
+
+/* Fantasma do arrasto (useCardDrag: clone com opacidade .9 e sombra) */
+.ghost { position: fixed !important; z-index: 1000; pointer-events: none; opacity: .92; box-shadow: 0 6px 18px rgba(0, 0, 0, .35); }
+body.dragging, body.dragging * { cursor: grabbing !important; user-select: none; }
+
+/* ===== Notas do estudo, abaixo do mockup ===== */
+.page { max-width: 1180px; margin: 0 auto; padding: 8px 16px 64px; }
+.page h1 { font-size: 20px; margin: 24px 0 6px; }
+.page h2 { font-size: 15px; margin: 28px 0 8px; }
+.page p, .page li { color: var(--text-secondary); max-width: 86ch; }
+.page code { font-size: 12px; color: var(--text-primary); background: #1b1b30; padding: 0 4px; border-radius: 3px; }
+.notes-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 900px) { .notes-grid { grid-template-columns: 1fr; } }
+.notes-box { background: #18182a; border: 1px solid var(--hair); border-radius: 8px; padding: 12px 16px; margin-top: 12px; }
+.notes-box h3 { font-size: 13px; margin: 0 0 6px; color: var(--text-primary); }
+.notes-box ul { margin: 0; padding-left: 18px; }
+.notes-box li { font-size: 13px; margin: 3px 0; }
+.notes-box table { border-collapse: collapse; width: 100%; font-size: 12px; margin-top: 4px; }
+.notes-box th, .notes-box td { border: 1px solid var(--hair); padding: 5px 8px; text-align: left; vertical-align: top; color: var(--text-secondary); }
+.notes-box th { color: var(--text-primary); font-weight: 500; }
+.legend { display: inline-flex; align-items: center; gap: 4px; vertical-align: -2px; color: var(--text-primary); }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; margin-top: 16px; }
+.card { display: block; text-decoration: none; background: #18182a; border: 1px solid var(--hair); border-radius: 8px; padding: 14px 16px; color: var(--text-secondary); }
+.card:hover { border-color: var(--accent-task); }
+.card h3 { margin: 0 0 6px; font-size: 15px; color: var(--text-primary); }
+.card p { margin: 0 0 8px; font-size: 13px; }
+.card .axis { font-size: 12px; color: var(--text-muted); }
+.sketch { display: grid; gap: 2px; margin: 10px 0 12px; }
+.sketch i { display: block; height: 14px; border-radius: 2px; background: #26263f; }
+.sketch i.on { background: color-mix(in srgb, var(--accent-task) 55%, #26263f); }
+.sketch i.a { background: #5b9cf0; opacity: .75; }
+.sketch i.b { background: #5dcaa5; opacity: .75; }
+.sketch i.c { background: #7b6ed4; opacity: .75; }
+.sketch i.g { background: transparent; }
+table.cmp { border-collapse: collapse; width: 100%; font-size: 13px; margin-top: 8px; }
+table.cmp th, table.cmp td { border: 1px solid var(--hair); padding: 6px 10px; text-align: left; vertical-align: top; color: var(--text-secondary); }
+table.cmp th { color: var(--text-primary); font-weight: 500; background: #18182a; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>Tasks: duas visões novas (estudo)</h1>
+  <p>Mockups em HTML puro das duas propostas do estudo de 21/11/2026, uma por visão. O visual copia o tema escuro do app (tokens de <code>src/App.css</code>, medidas do <code>WeekBoard</code>, do <code>TaskCard</code> e da <code>TasksHeader</code>) e os ícones são Phosphor embutidos. Cada página abre sozinha no navegador, sem rede, e desenha a janela do app em tamanho real: 1280×800 é a janela padrão. Os dados são fictícios.</p>
+
+  <div class="cards">
+    <a class="card" href="month.html">
+      <h3>Month</h3>
+      <div class="sketch" style="grid-template-columns: 26px repeat(5, 1fr) 6px">
+        <i style="grid-column: 1; grid-row: 1 / span 5; height: auto"></i><i></i><i></i><i class="on"></i><i></i><i></i><i style="grid-column: 7; grid-row: 1 / span 5; height: auto"></i>
+        <i></i><i></i><i></i><i></i><i></i>
+        <i></i><i></i><i></i><i></i><i></i>
+        <i></i><i></i><i></i><i></i><i></i>
+        <i></i><i></i><i></i><i></i><i></i>
+      </div>
+      <p>Cinco semanas a partir da semana atual, uma semana por linha, com uma bandeja de Overdue e No date à esquerda. Arrastar para um dia muda o <b>do date</b>.</p>
+      <p class="axis">Colunas: dias · Linhas: semanas · Dentro da célula: linhas compactas de 22px</p>
+    </a>
+    <a class="card" href="deadlines.html">
+      <h3>Deadlines</h3>
+      <div class="sketch" style="grid-template-columns: 22px repeat(3, 1fr)">
+        <i class="g"></i><i class="a"></i><i class="b"></i><i class="c"></i>
+        <i class="on"></i><i></i><i></i><i></i>
+        <i></i><i></i><i></i><i></i>
+        <i></i><i></i><i></i><i></i>
+        <i></i><i></i><i></i><i></i>
+      </div>
+      <p>Projetos em colunas e semanas de entrega em faixas alinhadas (Missed, This week, Next week…, Later, No deadline). Arrastar para outra faixa da mesma coluna muda o <b>deadline</b>.</p>
+      <p class="axis">Colunas: projetos · Linhas: semanas do deadline · Dentro da célula: linhas de task em duas faixas</p>
+    </a>
+  </div>
+
+  <h2>Lado a lado</h2>
+  <table class="cmp">
+    <tr><th></th><th>Month</th><th>Deadlines</th></tr>
+    <tr><th>Pergunta que responde</th><td>Em que dia vou fazer cada coisa nas próximas semanas?</td><td>O que cada projeto precisa entregar em cada semana?</td></tr>
+    <tr><th>Data que organiza</th><td>Do date (<code>scheduledDate</code>); sem ele, o deadline</td><td>Deadline (<code>dueDate</code>)</td></tr>
+    <tr><th>Uma linha é</th><td>Uma semana (seg–dom)</td><td>Uma semana (seg–dom)</td></tr>
+    <tr><th>Uma coluna é</th><td>Um dia</td><td>Um projeto (ou uma TODOS, com o filtro de um projeto)</td></tr>
+    <tr><th>O arrasto muda</th><td>O do date; o deadline só por escolha</td><td>O deadline; o do date e o projeto não mudam</td></tr>
+    <tr><th>Não recebe drop</th><td>Dias passados e Overdue</td><td>Outras colunas, Missed e Later</td></tr>
+    <tr><th>Sem data</th><td>Bandeja "No date"</td><td>Faixa "No deadline"</td></tr>
+    <tr><th>A 1280×800</th><td>Dia com 164px e 3 linhas de task</td><td>Coluna com 321px e título de ~39 caracteres por linha</td></tr>
+  </table>
+
+  <h2>Comum às duas</h2>
+  <ul>
+    <li>São visões novas no menu de visões de Tasks, sem substituir nenhuma. No mockup, Month entra depois de Week e Deadlines depois de Projects.</li>
+    <li>O cabeçalho de Tasks é o mesmo das outras visões. A única mudança é um slot à direita da primeira linha, onde o Month põe a navegação; assim a grade não perde altura.</li>
+    <li>Horizonte de 5 semanas a partir da semana atual nas duas. O que fica depois aparece como "N later" no Month e como a faixa Later no Deadlines.</li>
+    <li>Arrasto manual por mouse, com Undo, como nas visões atuais. A tela precisa ficar boa quase vazia, que é o uso real: use "Retrato real · 8" na barra do estudo.</li>
+    <li>Na barra do estudo de cada página dá para trocar o tamanho da janela (ajustar ao navegador, 1280×800, 1920×1080, tela cheia) e a densidade dos dados. As regras de cada visão estão abaixo do mockup.</li>
+  </ul>
+</div>
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <symbol id="i-target" viewBox="0 0 256 256"><path d="M221.87,83.16A104.1,104.1,0,1,1,195.67,49l22.67-22.68a8,8,0,0,1,11.32,11.32l-96,96a8,8,0,0,1-11.32-11.32l27.72-27.72a40,40,0,1,0,17.87,31.09,8,8,0,1,1,16-.9,56,56,0,1,1-22.38-41.65L184.3,60.39a87.88,87.88,0,1,0,23.13,29.67,8,8,0,0,1,14.44-6.9Z"/></symbol>
+  <symbol id="i-calendar" viewBox="0 0 256 256"><path d="M208,32H184V24a8,8,0,0,0-16,0v8H88V24a8,8,0,0,0-16,0v8H48A16,16,0,0,0,32,48V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V48A16,16,0,0,0,208,32ZM72,48v8a8,8,0,0,0,16,0V48h80v8a8,8,0,0,0,16,0V48h24V80H48V48ZM208,208H48V96H208V208Z"/></symbol>
+  <symbol id="i-checks" viewBox="0 0 256 256"><path d="M149.61,85.71l-89.6,88a8,8,0,0,1-11.22,0L10.39,136a8,8,0,1,1,11.22-11.41L54.4,156.79l84-82.5a8,8,0,1,1,11.22,11.42Zm96.1-11.32a8,8,0,0,0-11.32-.1l-84,82.5-18.83-18.5a8,8,0,0,0-11.21,11.42l24.43,24a8,8,0,0,0,11.22,0l89.6-88A8,8,0,0,0,245.71,74.39Z"/></symbol>
+  <symbol id="i-sun-fill" viewBox="0 0 256 256"><path d="M120,40V16a8,8,0,0,1,16,0V40a8,8,0,0,1-16,0Zm8,24a64,64,0,1,0,64,64A64.07,64.07,0,0,0,128,64ZM58.34,69.66A8,8,0,0,0,69.66,58.34l-16-16A8,8,0,0,0,42.34,53.66Zm0,116.68-16,16a8,8,0,0,0,11.32,11.32l16-16a8,8,0,0,0-11.32-11.32ZM192,72a8,8,0,0,0,5.66-2.34l16-16a8,8,0,0,0-11.32-11.32l-16,16A8,8,0,0,0,192,72Zm5.66,114.34a8,8,0,0,0-11.32,11.32l16,16a8,8,0,0,0,11.32-11.32ZM48,128a8,8,0,0,0-8-8H16a8,8,0,0,0,0,16H40A8,8,0,0,0,48,128Zm80,80a8,8,0,0,0-8,8v24a8,8,0,0,0,16,0V216A8,8,0,0,0,128,208Zm112-88H216a8,8,0,0,0,0,16h24a8,8,0,0,0,0-16Z"/></symbol>
+  <symbol id="i-check" viewBox="0 0 256 256"><path d="M232.49,80.49l-128,128a12,12,0,0,1-17,0l-56-56a12,12,0,1,1,17-17L96,183,215.51,63.51a12,12,0,0,1,17,17Z"/></symbol>
+  <symbol id="i-flag" viewBox="0 0 256 256"><path d="M232,56V176a8,8,0,0,1-2.76,6c-15.28,13.23-29.89,18-43.82,18-18.91,0-36.57-8.74-53-16.85C105.87,170,82.79,158.61,56,179.77V224a8,8,0,0,1-16,0V56a8,8,0,0,1,2.77-6h0c36-31.18,68.31-15.21,96.79-1.12C167,62.46,190.79,74.2,218.76,50A8,8,0,0,1,232,56Z"/></symbol>
+</svg>
+</body>
+</html>

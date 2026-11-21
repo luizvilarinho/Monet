@@ -62,6 +62,8 @@ import {
   type TasksMainView,
 } from './components/TasksView/views'
 import { WeekBoard } from './components/TasksView/WeekBoard'
+import { MonthBoard } from './components/TasksView/MonthBoard'
+import { DeadlinesBoard } from './components/TasksView/DeadlinesBoard'
 import { KanbanBoard } from './components/TasksView/KanbanBoard'
 import { DueTodayBlock } from './components/TasksView/DueTodayBlock'
 import { WeeklyReview } from './components/TasksView/WeeklyReview'
@@ -1226,21 +1228,23 @@ function App() {
     if (noteBoardGone || noteLogGone) setMainArea(NOTES_AREA)
   }, [noteBoardGone, noteLogGone])
 
-  // O board de notas na tela (fora do modo foco) recolhe o painel de IA (o
-  // board precisa da largura) e, ao sair, reabre se estava aberto. Reabrir
-  // com o board aberto é permitido.
+  // O board de notas e o Month de Tasks na tela (fora do modo foco) recolhem o
+  // painel de IA (precisam da largura) e, ao sair, reabrem se estava aberto.
+  // Reabrir com a visão aberta é permitido.
+  const monthOpen = tasksBoardOpen && tasksMainView === 'month'
+  const wideAreaOpen = noteBoardOpen || monthOpen
   const aiOpenRef = useRef(aiOpen)
   aiOpenRef.current = aiOpen
   const aiOpenBeforeBoardRef = useRef(false)
   useEffect(() => {
-    if (noteBoardOpen) {
+    if (wideAreaOpen) {
       aiOpenBeforeBoardRef.current = aiOpenRef.current
       setAiOpen(false)
     } else if (aiOpenBeforeBoardRef.current) {
       aiOpenBeforeBoardRef.current = false
       setAiOpen(true)
     }
-  }, [noteBoardOpen])
+  }, [wideAreaOpen])
 
   // Nota de um card aberta num modal sobre o board (o editor da nota ativa) e
   // a ordem dos cards quando ela abriu (Previous/Next do modal).
@@ -4827,6 +4831,10 @@ function App() {
           <TodosBoard {...boardProps} />
         ) : tasksBoardOpen && tasksMainView === 'plan' ? (
           <TodayBoard {...boardProps} />
+        ) : tasksBoardOpen && tasksMainView === 'month' ? (
+          <MonthBoard {...boardProps} />
+        ) : tasksBoardOpen && tasksMainView === 'deadlines' ? (
+          <DeadlinesBoard {...boardProps} />
         ) : tasksBoardOpen ? (
           <WeekBoard
             tasks={tasks}

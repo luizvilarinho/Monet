@@ -30,6 +30,13 @@
   border-radius: 0;
 }
 
+/* Deadlines: a linha de lista numa célula de fundo --surface-1; o hover
+   padrão seria o próprio fundo da célula, então tem tom próprio. Vem antes de
+   .inSelection para a seleção prevalecer. */
+.cellRow:hover {
+  background: color-mix(in srgb, var(--surface-3) 50%, var(--surface-1));
+}
+
 /* O laranja de seleção nunca é preenchimento sólido (só o status é). */
 .selected {
   border-color: var(--accent-task);
@@ -189,6 +196,24 @@
 .titleClosed {
   color: var(--text-muted);
   text-decoration: line-through;
+}
+
+/* Deadlines: o dia do deadline em 11px (fora do .top, que é quem dá o tamanho
+   nos outros usos) e a linha de contexto quebrando em coluna estreita, em vez
+   de vazar. */
+.cellRow .due {
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.cellRow .ctx {
+  flex-wrap: wrap;
+  gap: var(--space-0) var(--space-2);
+}
+
+.noDoDate {
+  color: var(--text-muted);
+  opacity: 0.8;
 }
 
 .ctx {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ArrowSquareOut, DotsThree, Flag, GearSix, MagnifyingGlass, Plus, X } from '@phosphor-icons/react'
 import { useConfirm } from '../../hooks/useConfirm'
 import {
@@ -63,6 +63,8 @@ interface TasksHeaderProps {
   onGroupByChange?: (mode: TaskGroupBy) => void
   // Converte "TODOS | título" das tasks dadas (após confirmação).
   onConvertPipeTitles: (tasks: Task[]) => void
+  // Controles da visão (Month): à direita da 1ª linha; quebram para baixo em janela estreita.
+  controls?: ReactNode
 }
 
 export const SUMMARY_LABEL: Record<TaskSummaryKey, string> = {
@@ -99,6 +101,7 @@ export function TasksHeader({
   groupBy,
   onGroupByChange,
   onConvertPipeTitles,
+  controls,
 }: TasksHeaderProps) {
   const { statuses, onManageStatuses, search, onSearchChange, todosById, viewsError } = useTasksEnv()
   const todosList = useMemo(() => [...todosById.values()], [todosById])
@@ -222,7 +225,7 @@ export function TasksHeader({
 
   return (
     <div className={styles.header}>
-      <div className={styles.titleRow}>
+      <div className={controls ? `${styles.titleRow} ${styles.titleRowWrap}` : styles.titleRow}>
         <span className={styles.heading}>Tasks</span>
         <ViewMenu mainView={mainView} onMainViewChange={onMainViewChange} />
         <button
@@ -247,6 +250,7 @@ export function TasksHeader({
             </option>
           ))}
         </select>
+        {controls && <div className={styles.viewControls}>{controls}</div>}
       </div>
       <div className={styles.summary}>
         <div className={styles.chips}>

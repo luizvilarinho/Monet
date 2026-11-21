@@ -1,0 +1,244 @@
+/* Deadlines: projetos (ou TODOS) em colunas × faixas pela semana do deadline.
+   Um grid só, rolável: cada faixa tem a altura da célula mais alta, e o
+   cabeçalho e a calha ficam fixos. Complementa o WeekBoard.module.css
+   (.board, .top). */
+.grid {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  grid-auto-rows: min-content;
+  align-content: start;
+  background: var(--bg-app);
+  border: 1px solid var(--hair);
+  border-radius: var(--radius-md);
+  /* O cursor do teclado rola a linha para a vista sem deixá-la sob o cabeçalho
+     nem sob a calha (fixos). */
+  scroll-padding: 36px 0 0 104px;
+}
+
+.grid > * {
+  min-width: 0;
+  border-right: 1px solid var(--hair);
+  border-bottom: 1px solid var(--hair);
+}
+
+.grid > .lastCol {
+  border-right: none;
+}
+
+/* ── Cabeçalho da coluna (fixo no topo) e canto ── */
+.corner,
+.head {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-1);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.corner {
+  left: 0;
+  z-index: 4;
+  padding-left: var(--space-2);
+  background: var(--bg-panel);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.dot {
+  flex-shrink: 0;
+  box-sizing: border-box;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.dotNone {
+  border: 1px solid var(--text-muted);
+}
+
+.todosIcon {
+  display: inline-flex;
+  color: var(--accent);
+}
+
+.name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.count {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.prog {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--surface-2);
+}
+
+.bar i {
+  display: block;
+  height: 100%;
+  background: var(--status-done);
+}
+
+/* Com a task no ar, as outras colunas esmaecem só o conteúdo (o fundo fixo
+   continua opaco, senão a grade apareceria por trás). */
+.headBlocked > * {
+  opacity: 0.4;
+}
+
+/* ── Calha das faixas (fixa à esquerda) ── */
+.gut {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-2);
+  background: var(--bg-panel);
+  font-size: 12px;
+}
+
+.gl {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1h);
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.gc {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.gs {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.gutMissed .gl {
+  color: var(--accent-danger);
+}
+
+.gutThis .gl {
+  color: var(--accent-task);
+}
+
+/* Faixa sem nada: fina, mas continua recebendo drop. */
+.thin {
+  min-height: 28px;
+  justify-content: center;
+  padding-top: var(--space-1);
+  padding-bottom: var(--space-1);
+}
+
+.gut.thin .gl {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.gutThis.thin .gl {
+  color: var(--accent-task);
+}
+
+/* A faixa sob o cursor acende na calha. */
+.gutOver {
+  background: var(--surface-2);
+}
+
+.gutOver .gl,
+.gutOver.thin .gl {
+  color: var(--accent-task);
+}
+
+/* ── Célula: as tasks do projeto com deadline naquela faixa ── */
+.cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-1);
+}
+
+.cellMissed {
+  background: color-mix(in srgb, var(--accent-danger) 5%, var(--surface-1));
+}
+
+.item {
+  cursor: grab;
+}
+
+.itemDragging {
+  opacity: 0.35;
+}
+
+/* O fio de baixo da última linha é o da própria célula. */
+.cell > .item:last-of-type > * {
+  border-bottom-color: transparent;
+}
+
+.doneCount {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-0);
+  padding: var(--space-1) var(--space-3) var(--space-1h);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* ── Estados do arrasto ── */
+.dim {
+  opacity: 0.4;
+}
+
+.cellTarget {
+  box-shadow: inset 0 0 0 1px var(--hair);
+}
+
+.cellOver {
+  background: var(--surface-2);
+  outline: 1px dashed var(--accent-task);
+  outline-offset: -2px;
+}
+
+/* O fantasma do useCardDrag é um clone do .item no body: a linha de lista é
+   transparente, então ele ganha fundo e borda (e a largura da célula é
+   limitada). */
+body > .item {
+  max-width: 320px;
+  background: var(--surface-2);
+  border: 1px solid var(--hair);
+  border-radius: var(--radius-sm);
+}
+
+body > .item > * {
+  border-bottom-color: transparent;
+}

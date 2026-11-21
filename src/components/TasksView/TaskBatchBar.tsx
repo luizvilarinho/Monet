@@ -83,6 +83,11 @@ export function TaskUndoBar({ actions }: { actions: TaskActions }) {
   return (
     <div className={styles.bar} role="status">
       <span className={styles.message}>{actions.undoMessage}</span>
+      {actions.undoExtraLabel && (
+        <button type="button" className={styles.action} onClick={actions.runUndoExtra}>
+          {actions.undoExtraLabel}
+        </button>
+      )}
       <button type="button" className={styles.action} onClick={actions.runUndo}>
         <ArrowCounterClockwise size={12} aria-hidden />
         Undo

@@ -1,0 +1,437 @@
+/* Month: bandeja + grade de 5 semanas. Complementa o WeekBoard.module.css
+   (.board, .top, .navBtn, .thisWeek, .range, .weekendToggle, .weekendCount). */
+.monthBoard {
+  position: relative;
+}
+
+/* Barra de Undo e de lote sobrepostas à grade: no fluxo, a barra encolheria a
+   grade por 6s e as células refariam as linhas. */
+.barSlot {
+  position: absolute;
+  left: var(--space-4);
+  right: var(--space-4);
+  bottom: var(--space-4);
+  z-index: 5;
+}
+
+/* Arrasto em curso: a barra não pode esconder a célula de baixo do elementFromPoint. */
+.barSlotPass {
+  pointer-events: none;
+}
+
+.month {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  gap: var(--space-3);
+}
+
+.later {
+  gap: var(--space-0);
+}
+
+/* ── Bandeja: Overdue e No date, de onde se arrasta para os dias ── */
+.tray {
+  width: 200px;
+  flex-shrink: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: var(--surface-1);
+  border-radius: var(--radius-md);
+  overflow-y: auto;
+}
+
+.traySection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1h);
+  border-radius: var(--radius-sm);
+}
+
+.noDate {
+  flex: 1;
+  min-height: 60px;
+}
+
+.trayHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+  padding: 0 var(--space-1);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.overdue .trayLabel {
+  color: var(--accent-danger);
+}
+
+.trayCount {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.collapse {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  min-height: 20px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.collapse:hover {
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+
+.hint {
+  padding: var(--space-2);
+  border: 1px dashed var(--hair);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.trayOver {
+  background: var(--surface-2);
+  outline: 1px dashed var(--accent-task);
+  outline-offset: var(--space-1);
+}
+
+/* Bandeja recolhida: trilho de 36px (padrão das colunas vazias do Week). */
+.trail {
+  width: 36px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) 0;
+  background: var(--surface-1);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  font-family: inherit;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.trail:hover {
+  color: var(--text-primary);
+  border-color: var(--hair);
+}
+
+.trailOver {
+  background: var(--surface-2);
+  border-color: var(--accent-task);
+  border-style: dashed;
+}
+
+.trailLabel {
+  writing-mode: vertical-rl;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.trailLabelDanger {
+  color: var(--accent-danger);
+}
+
+.trailCount {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.trailCountHas {
+  padding: var(--space-0) var(--space-1h);
+  background: var(--accent-task);
+  color: var(--bg-panel);
+  font-weight: 600;
+}
+
+.trailCountDanger {
+  background: var(--accent-danger);
+}
+
+.trailGap {
+  width: 16px;
+  margin: var(--space-1) 0;
+  border-top: 1px solid var(--hair);
+}
+
+/* ── Grade: cada linha é uma semana (seg–dom); fio de 1px entre as células
+   (o fundo da grade aparece pelo gap) ── */
+.grid {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: repeat(5, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--hair);
+  border: 1px solid var(--hair);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.day {
+  container-type: inline-size;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0);
+  padding: var(--space-1);
+  background-color: var(--surface-1);
+  overflow: hidden;
+}
+
+.weekend {
+  background-color: var(--bg-app);
+}
+
+.past {
+  background-color: var(--bg-panel);
+}
+
+.today {
+  box-shadow: inset 0 0 0 1px var(--accent-task);
+}
+
+.dayHead {
+  height: 18px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.past .dayLabel {
+  color: var(--text-muted);
+}
+
+.today .dayLabel {
+  color: var(--accent-task);
+}
+
+.monthStart {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.marks {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+/* "N open": só quando o dia não cabe na célula ou está carregado. */
+.openCount {
+  color: var(--text-secondary);
+}
+
+.heavy {
+  color: var(--accent-task);
+  font-weight: 600;
+}
+
+.doneCount,
+.dueCount,
+.deadlineFlag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-0);
+}
+
+.doneCount {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.doneCount:hover {
+  color: var(--text-primary);
+}
+
+.dueLate {
+  color: var(--accent-danger);
+}
+
+.dueHover {
+  color: var(--accent-late);
+  font-weight: 600;
+}
+
+.deadlineFlag {
+  color: var(--accent-late);
+  font-weight: 600;
+}
+
+/* As palavras dos marcadores somem numa célula estreita. */
+@container (max-width: 132px) {
+  .word {
+    display: none;
+  }
+}
+
+.dayBody {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0);
+  overflow: hidden;
+}
+
+.more {
+  flex-shrink: 0;
+  height: var(--lh-row);
+  align-self: flex-start;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-1);
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.more:hover {
+  color: var(--text-primary);
+  background: var(--surface-2);
+}
+
+/* ── Estados do arrasto ── */
+.blocked {
+  opacity: 0.45;
+}
+
+.over {
+  background-color: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--accent-task);
+  outline: 1px dashed var(--accent-task);
+  outline-offset: -2px;
+}
+
+/* Depois do deadline da task no ar: hachura amarela ("pode, com ressalva"). */
+.afterDeadline {
+  background-image: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--accent-late) 9%, transparent) 0 5px,
+    transparent 5px 11px
+  );
+}
+
+/* Dia do deadline (da task no ar ou sob o mouse): barra no topo. */
+.deadlineBar::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: var(--accent-late);
+}
+
+/* ── Fim de semana oculto: trilho de 36px por semana, com a contagem ── */
+.weekRail {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1h) 0;
+  background-color: var(--bg-app);
+  border: none;
+  font-family: inherit;
+  color: var(--text-muted);
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.weekRail:hover {
+  color: var(--text-primary);
+  background-color: var(--surface-1);
+}
+
+.weekRailToday {
+  box-shadow: inset 0 0 0 1px var(--accent-task);
+  color: var(--accent-task);
+}
+
+.weekRailOver {
+  background-color: var(--surface-2);
+}
+
+.weekRailLabel {
+  writing-mode: vertical-rl;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+/* ── Popover do dia ("+N more" e concluídas): acima dos modais (1000) ── */
+.popover {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 1010;
+  width: 300px;
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0);
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+.popoverHead {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: 0 var(--space-1) var(--space-1);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.popoverHead span {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.popoverSub {
+  padding: var(--space-1) var(--space-1) 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}

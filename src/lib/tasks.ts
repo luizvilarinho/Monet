@@ -144,9 +144,10 @@ export type TaskPatch = Partial<
 >
 
 // Regras de negócio de uma edição de task:
-// - reschedule_count conta quando havia deadline e ele muda para outro
-//   deadline, ou quando havia do date e ele é adiado (rollover); definir o
-//   primeiro valor, antecipar o do date ou limpar não contam;
+// - reschedule_count conta quando o deadline vai para depois de um deadline
+//   existente, ou quando o do date existente é adiado (rollover); definir o
+//   primeiro valor, antecipar o deadline ou o do date e limpar o do date não
+//   contam (no máximo +1 por edição);
 // - limpar o deadline zera o reschedule_count (recomeço, ex.: data errada);
 // - completed_at é gravado ao entrar em `done` e limpo ao sair dele;
 // - doing_since é gravado ao entrar em `doing` e limpo ao sair dele.
@@ -154,20 +155,17 @@ export type TaskPatch = Partial<
 // prevalecem sobre essas regras: restauram o estado anterior.
 export function applyTaskPatch(prev: Task, patch: TaskPatch, now: number): Task {
   const next: Task = { ...prev, ...patch, updatedAt: now }
-  if (
-    patch.dueDate !== undefined &&
-    prev.dueDate !== null &&
-    patch.dueDate !== null &&
-    patch.dueDate !== prev.dueDate
-  ) {
-    next.rescheduleCount = prev.rescheduleCount + 1
-  } else if (patch.dueDate === null && prev.dueDate !== null) {
+  if (patch.dueDate === null && prev.dueDate !== null) {
     next.rescheduleCount = 0
   } else if (
-    patch.scheduledDate !== undefined &&
-    prev.scheduledDate !== null &&
-    patch.scheduledDate !== null &&
-    patch.scheduledDate > prev.scheduledDate
+    (patch.dueDate !== undefined &&
+      patch.dueDate !== null &&
+      prev.dueDate !== null &&
+      patch.dueDate > prev.dueDate) ||
+    (patch.scheduledDate !== undefined &&
+      patch.scheduledDate !== null &&
+      prev.scheduledDate !== null &&
+      patch.scheduledDate > prev.scheduledDate)
   ) {
     next.rescheduleCount = prev.rescheduleCount + 1
   }
@@ -203,6 +201,11 @@ export function undoPatch(before: Task, current: Task): TaskPatch | null {
   const patch: TaskPatch = {}
   for (const key of UNDO_FIELDS) {
     if (before[key] !== current[key]) (patch as Record<string, unknown>)[key] = before[key]
+  }
+  // Data restaurada leva o total de adiamentos junto: sem isso, desfazer uma
+  // antecipação (que não contou) pareceria um adiamento e somaria 1.
+  if ((patch.dueDate !== undefined || patch.scheduledDate !== undefined) && patch.rescheduleCount === undefined) {
+    patch.rescheduleCount = before.rescheduleCount
   }
   return Object.keys(patch).length > 0 ? patch : null
 }
@@ -372,6 +375,132 @@ export function weekDayKeys(startKey: string): string[] {
 // Domingo da semana corrente.
 export function endOfWeekKey(todayKey: string): string {
   return addDaysKey(startOfWeekKey(todayKey), 6)
+}
+
+// ─── Visões em grade (Week, Month, Deadlines) ───────────────────────────────
+
+// Horizonte comum do Month e do Deadlines: semanas a partir da atual.
+export const TASK_WINDOW_WEEKS = 5
+
+// Chaves de célula/drop que não são dia (as mesmas do Week).
+export const PLAN_OVERDUE = 'overdue'
+export const PLAN_NODATE = 'nodate'
+
+// Célula do plano de uma task aberta: My Day de hoje → hoje; atrasada sem
+// plano novo → overdue; senão o dia do plano (do date, senão deadline) ou nodate.
+export function planCellOf(t: Task, todayKey: string): string {
+  if (t.plannedDay === todayKey) return todayKey
+  if (isOverdue(t, todayKey)) return PLAN_OVERDUE
+  return planDate(t) ?? PLAN_NODATE
+}
+
+// Ordem dentro da célula: important primeiro, depois `doing`, depois a ordem manual.
+export function byBoardOrder(a: Task, b: Task): number {
+  if (a.important !== b.important) return a.important ? -1 : 1
+  const ai = isInProgress(a)
+  const bi = isInProgress(b)
+  if (ai !== bi) return ai ? -1 : 1
+  return a.sortOrder - b.sortOrder
+}
+
+// Deadlines das tasks abertas por dia (marcador "N due" do dia).
+export function openDeadlinesByDay(tasks: Task[]): Map<string, Task[]> {
+  const map = new Map<string, Task[]>()
+  for (const t of tasks) {
+    if (!isOpen(t) || t.dueDate === null) continue
+    map.set(t.dueDate, [...(map.get(t.dueDate) ?? []), t])
+  }
+  return map
+}
+
+// `weeks` semanas seguidas (seg–dom) a partir da semana de `startKey`.
+export function weekWindow(startKey: string, weeks: number): string[][] {
+  const first = startOfWeekKey(startKey)
+  return Array.from({ length: weeks }, (_, i) => weekDayKeys(addDaysKey(first, i * 7)))
+}
+
+// Faixas do Deadlines que não são uma semana (a semana é a chave da segunda).
+export const BAND_MISSED = 'missed'
+export const BAND_LATER = 'later'
+export const BAND_NONE = 'none'
+
+// Faixa do deadline de uma task: sem deadline → none; antes de hoje → missed
+// (mesmo com do date novo, por isso não usa isOverdue); depois da janela →
+// later; senão a segunda da semana do deadline.
+export function deadlineBand(t: Task, todayKey: string, weeks = TASK_WINDOW_WEEKS): string {
+  if (t.dueDate === null) return BAND_NONE
+  if (t.dueDate < todayKey) return BAND_MISSED
+  if (t.dueDate > addDaysKey(startOfWeekKey(todayKey), weeks * 7 - 1)) return BAND_LATER
+  return startOfWeekKey(t.dueDate)
+}
+
+// Novo deadline ao soltar a task numa semana: o mesmo dia da semana do deadline
+// atual (sem deadline, o último dia de trabalho); nunca antes de hoje (se o dia
+// já passou, o último dia de trabalho da semana; se esse também, hoje).
+// `workDays` como no Settings (Date.getDay(), 0 = domingo).
+export function deadlineDropDate(t: Task, weekStart: string, todayKey: string, workDays: number[]): string {
+  const lastWorkOffset = workDays.length > 0 ? Math.max(...workDays.map((d) => (d + 6) % 7)) : 4
+  const lastWorkDay = addDaysKey(weekStart, lastWorkOffset)
+  let date =
+    t.dueDate !== null ? addDaysKey(weekStart, (parseKey(t.dueDate).getDay() + 6) % 7) : lastWorkDay
+  if (date < todayKey) date = lastWorkDay
+  if (date < todayKey) date = todayKey
+  return date
+}
+
+// Dia do deadline como as visões em grade mostram: "Fri 27" dentro da janela
+// de `weeks` semanas e "Apr 30" fora dela.
+export function formatDeadlineDay(key: string, todayKey: string, weeks = TASK_WINDOW_WEEKS): string {
+  const first = startOfWeekKey(todayKey)
+  if (key >= first && key <= addDaysKey(first, weeks * 7 - 1)) {
+    const d = parseKey(key)
+    return `${WEEKDAY_SHORT[d.getDay()]} ${d.getDate()}`
+  }
+  return formatDueShort(key)
+}
+
+// Relação do deadline de uma task com um dia da grade (o Target da linha
+// compacta): é o dia, ficou depois dele, ou o deadline já estourou.
+export type DeadlineMark = { kind: 'due' } | { kind: 'missed' } | { kind: 'after'; days: number }
+
+export function deadlineMarkOn(t: Task, dayKey: string, todayKey: string): DeadlineMark | null {
+  if (t.dueDate === null) return null
+  if (t.dueDate < todayKey) return { kind: 'missed' }
+  if (t.dueDate === dayKey) return { kind: 'due' }
+  if (dayKey > t.dueDate) return { kind: 'after', days: daysBetween(t.dueDate, dayKey) }
+  return null
+}
+
+// Linhas de um dia do Month: `capacity` é quantas linhas de task cabem e
+// `overflows[i]` diz se o título i não cabe numa linha. Faltando lugar, o
+// último vira "+N more"; sobrando, os títulos longos ganham a 2ª linha de
+// cima para baixo.
+export function fitDayRows(
+  capacity: number,
+  overflows: boolean[]
+): { shown: number; more: number; wrap: boolean[] } {
+  const cap = Math.max(1, capacity)
+  const n = overflows.length
+  if (n > cap) {
+    const shown = cap - 1
+    return { shown, more: n - shown, wrap: overflows.map(() => false) }
+  }
+  let spare = cap - n
+  const wrap = overflows.map((over) => {
+    if (!over || spare === 0) return false
+    spare--
+    return true
+  })
+  return { shown: n, more: 0, wrap }
+}
+
+// Patch do "Move deadline too" da barra de Undo: leva o deadline para `date`
+// e deixa o total de adiamentos como o do reagendamento junto do deadline, já
+// que o par arrasto + Move deadline too conta como um reagendamento só, igual
+// ao diálogo.
+export function deadlineAlongPatch(before: Task, date: string, todayKey: string): TaskPatch {
+  const after = applyTaskPatch(before, reschedulePatch(before, date, todayKey, true) ?? {}, 0)
+  return { dueDate: date, rescheduleCount: after.rescheduleCount }
 }
 
 export interface TaskGroups {

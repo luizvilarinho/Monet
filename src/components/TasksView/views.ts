@@ -10,8 +10,10 @@ export interface TaskViewDef {
 export const TASK_VIEWS: TaskViewDef[] = [
   { id: 'list', label: 'List' },
   { id: 'week', label: 'Week' },
+  { id: 'month', label: 'Month', title: 'Five weeks from this week' },
   { id: 'kanban', label: 'Kanban' },
   { id: 'projects', label: 'Projects', title: 'Columns by project' },
+  { id: 'deadlines', label: 'Deadlines', title: 'Projects by deadline week' },
   { id: 'todos', label: 'TODOS', title: 'Task columns by TODOS note' },
   { id: 'plan', label: 'My Day', title: 'Plan today' },
   { id: 'review', label: 'Review', title: 'Weekly review' },

@@ -10,10 +10,19 @@ import type { TaskChanges } from './useTaskKeyboard'
 
 const UNDO_MS = 6000
 
+// Opcional nas ações com Undo: `note` soma um aviso à mensagem; `extra` põe
+// uma ação a mais na barra (ex.: "Move deadline too") que aplica `changes` e
+// continua desfazível pelo mesmo Undo.
+export interface UndoOptions {
+  note?: string
+  extra?: { label: string; changes: TaskChanges; message: string }
+}
+
 interface UndoEntry {
   message: string
   // Estado das tasks antes da ação.
   before: Task[]
+  extra?: UndoOptions['extra']
 }
 
 interface Options {
@@ -39,19 +48,24 @@ export function useTaskActions({ tasksById, todayKey, onUpdateTasks, onDeleteTas
   }, [undo])
 
   // Roda a ação e guarda o estado anterior; `run` devolve false = nada mudou.
-  function track(verb: string, ids: string[], run: () => boolean | void) {
+  function track(verb: string, ids: string[], run: () => boolean | void, options?: UndoOptions) {
     const before = ids.map((id) => tasksRef.current.get(id)).filter((t): t is Task => !!t)
     if (run() === false || before.length === 0) return
-    setUndo({ message: before.length === 1 ? `Task ${verb}.` : `${before.length} tasks ${verb}.`, before })
+    const message = before.length === 1 ? `Task ${verb}.` : `${before.length} tasks ${verb}.`
+    setUndo({ message: options?.note ? `${message} ${options.note}` : message, before, extra: options?.extra })
   }
 
-  function update(changes: TaskChanges, verb: string) {
+  function update(changes: TaskChanges, verb: string, options?: UndoOptions) {
     if (changes.length === 0) return
-    track(verb, [...new Set(changes.map((c) => c.id))], () => onUpdateTasks(changes))
+    track(verb, [...new Set(changes.map((c) => c.id))], () => onUpdateTasks(changes), options)
   }
 
   // Novo do date por task. Deadline já estourado pergunta se ele vai junto.
-  async function reschedule(items: Array<{ id: string; date: string | null }>, verb = 'rescheduled') {
+  async function reschedule(
+    items: Array<{ id: string; date: string | null }>,
+    verb = 'rescheduled',
+    options?: UndoOptions
+  ) {
     const list = items.flatMap(({ id, date }) => {
       const task = tasksRef.current.get(id)
       return task ? [{ task, date }] : []
@@ -79,7 +93,16 @@ export function useTaskActions({ tasksById, todayKey, onUpdateTasks, onDeleteTas
       const patch = reschedulePatch(task, date, todayKey, moveDeadline && missedIds.has(task.id))
       if (patch) changes.push({ id: task.id, patch })
     }
-    update(changes, verb)
+    update(changes, verb, options)
+  }
+
+  // Ação extra da barra: aplica as mudanças dela e mantém o `before` original,
+  // então o Undo seguinte desfaz o arrasto e a ação extra juntos.
+  function runUndoExtra() {
+    if (!undo?.extra) return
+    onUpdateTasks(undo.extra.changes)
+    // Objeto novo: reinicia o prazo do Undo.
+    setUndo({ message: undo.extra.message, before: undo.before })
   }
 
   // Volta as tasks ao estado anterior: campos, projeto e a ocorrência gerada.
@@ -109,6 +132,8 @@ export function useTaskActions({ tasksById, todayKey, onUpdateTasks, onDeleteTas
     update,
     reschedule,
     undoMessage: undo?.message ?? null,
+    undoExtraLabel: undo?.extra?.label ?? null,
+    runUndoExtra,
     runUndo,
     dismissUndo: () => setUndo(null),
     modal,

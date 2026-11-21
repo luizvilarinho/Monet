@@ -14,11 +14,13 @@ import { formatMetadataValue, visibleMetadata } from '../../lib/metadata'
 import {
   describeRecurrence,
   formatDateLong,
+  formatDeadlineDay,
   formatElapsed,
   formatRelativeDay,
   isDone,
   isOpen,
   overdueKind,
+  scheduledAfterDeadline,
   SNOOZE_OPTIONS,
   statusColor,
   statusName,
@@ -53,6 +55,10 @@ interface TaskCardProps {
   // List: linha sem caixa; status e ações (fixas, à direita) na linha de
   // metadados, sob o título; deadline na linha do título; TODOS em roxo.
   list?: boolean
+  // Deadlines: célula da grade (usado com `list`). Deadline como dia ("Fri 27"),
+  // do date sempre ("No do date"), adiamentos e Flag na linha de contexto; sem
+  // rodapé nem metadados.
+  deadlinesCell?: boolean
   checklist?: ChecklistProgress | null
   // Task aberta no editor.
   selected?: boolean
@@ -81,6 +87,7 @@ export function TaskCard({
   compactStatus = false,
   maxMetadata = 3,
   list = false,
+  deadlinesCell = false,
   checklist = null,
   selected = false,
   cursor = false,
@@ -211,15 +218,50 @@ export function TaskCard({
       title={`${late === 'deadline' ? 'Deadline missed' : 'Deadline'}: ${formatDateLong(task.dueDate)}`}
     >
       <Target size={11} aria-hidden />
-      {formatRelativeDay(task.dueDate, todayKey)}
+      {deadlinesCell ? formatDeadlineDay(task.dueDate, todayKey) : formatRelativeDay(task.dueDate, todayKey)}
+    </span>
+  )
+  // Do date da célula do Deadlines: sempre presente ("No do date" sem ele);
+  // amarelo se já passou ou se ficou depois do deadline.
+  const doDateEl = !deadlinesCell ? null : task.scheduledDate ? (
+    <span
+      className={`${styles.chip} ${
+        scheduledAfterDeadline(task) || (open && task.scheduledDate < todayKey) ? styles.latePlan : ''
+      }`}
+      title={`${
+        scheduledAfterDeadline(task)
+          ? 'Do date is after the deadline'
+          : open && task.scheduledDate < todayKey
+            ? 'Do date passed'
+            : 'Do date'
+      }: ${formatDateLong(task.scheduledDate)}`}
+    >
+      <CalendarBlank size={11} aria-hidden />
+      {formatDeadlineDay(task.scheduledDate, todayKey)}
+    </span>
+  ) : (
+    <span className={`${styles.chip} ${styles.noDoDate}`} title="No do date yet">
+      <CalendarBlank size={11} aria-hidden />
+      No do date
+    </span>
+  )
+  const postponedEl = postponed >= 1 && (
+    <span className={`${styles.chip} ${postponed >= 3 ? styles.postponedHigh : ''}`} title={`Postponed ${postponed}×`}>
+      <ArrowClockwise size={11} aria-hidden />
+      {postponed}
+    </span>
+  )
+  const importantEl = task.important && (
+    <span className={`${styles.chip} ${styles.important}`} title="Important">
+      <Flag size={11} weight="fill" aria-hidden />
     </span>
   )
 
   return (
     <div
-      className={`${styles.card} ${list ? styles.listRow : ''} ${selected ? styles.selected : ''} ${
-        cursor ? styles.cursor : ''
-      } ${inSelection ? styles.inSelection : ''}`}
+      className={`${styles.card} ${list ? styles.listRow : ''} ${deadlinesCell ? styles.cellRow : ''} ${
+        selected ? styles.selected : ''
+      } ${cursor ? styles.cursor : ''} ${inSelection ? styles.inSelection : ''}`}
       style={{ '--st': statusColor(task.status, statuses) } as CSSProperties}
       data-task-id={task.id}
       onClick={onSelect}
@@ -255,6 +297,7 @@ export function TaskCard({
         {(list || projectName || todos) && (
           <div className={styles.ctx}>
             {list && task.status !== 'todo' && statusEl}
+            {doDateEl}
             {projectName && (
               <span className={styles.project}>
                 <span
@@ -282,11 +325,13 @@ export function TaskCard({
                 <span className={styles.ellipsis}>{todos}</span>
               </button>
             )}
+            {deadlinesCell && postponedEl}
+            {deadlinesCell && importantEl}
             {list && actionsEl}
           </div>
         )}
       </div>
-      {metadata.length > 0 && (
+      {metadata.length > 0 && !deadlinesCell && (
         <div className={styles.kv}>
           {metadata.slice(0, maxMetadata).map(({ def, value }) => {
             const text = formatMetadataValue(def, value)
@@ -304,7 +349,7 @@ export function TaskCard({
           )}
         </div>
       )}
-      {hasChips && (
+      {hasChips && !deadlinesCell && (
         <div className={styles.foot}>
           {scheduled && (
             <span
@@ -330,20 +375,8 @@ export function TaskCard({
               )}
             </span>
           )}
-          {postponed >= 1 && (
-            <span
-              className={`${styles.chip} ${postponed >= 3 ? styles.postponedHigh : ''}`}
-              title={`Postponed ${postponed}×`}
-            >
-              <ArrowClockwise size={11} aria-hidden />
-              {postponed}
-            </span>
-          )}
-          {task.important && (
-            <span className={`${styles.chip} ${styles.important}`} title="Important">
-              <Flag size={11} weight="fill" aria-hidden />
-            </span>
-          )}
+          {postponedEl}
+          {importantEl}
           {task.recurrence && (
             <span className={styles.chip} title={`Repeats ${describeRecurrence(task.recurrence)}`}>
               <Repeat size={11} aria-hidden />
