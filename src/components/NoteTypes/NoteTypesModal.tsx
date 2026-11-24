@@ -590,7 +590,7 @@ export function NoteTypesModal({
         <div className={own.columns}>
           <div className={own.types}>
             {reorder && (
-              <p className={own.reorderHint}>Drag the handle (or focus it and use the arrow keys) to set the order of “By type” in the notes list.</p>
+              <p className={own.reorderHint}>Drag the handle (or focus it and use the arrow keys) to set the order of the type groups in the notes list and of the types in the “New” menu.</p>
             )}
             <DndContext
               sensors={sensors}

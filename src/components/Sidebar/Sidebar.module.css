@@ -176,6 +176,109 @@
   outline-offset: -1px;
 }
 
+/* Cabeçalho de grupo por tipo (como o de Tasks): o <li> só leva o botão, sem o
+   estilo de linha. Fora da primeira posição, abre 4px de respiro do grupo de
+   cima. Sem recuo nas linhas de baixo: o título mantém a largura toda. */
+.list li.groupItem,
+.list li.groupItem:hover {
+  padding: 0;
+  background: transparent;
+  cursor: default;
+}
+
+.list li.groupItem:not(:first-child) {
+  margin-top: var(--space-1);
+}
+
+.groupHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+  box-sizing: border-box;
+  width: 100%;
+  min-height: var(--control-sm);
+  padding: var(--space-0) var(--space-1);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: var(--lh-ui);
+  text-align: left;
+  color: var(--text-muted, #606070);
+}
+
+.groupHeader svg {
+  flex-shrink: 0;
+}
+
+button.groupHeader {
+  cursor: pointer;
+}
+
+/* Hover com o mesmo fundo das linhas de nota; o cabeçalho travado (<div>) não ganha. */
+button.groupHeader:hover {
+  background: var(--surface-1, #1e1e22);
+  color: var(--text-secondary, #a0a0b8);
+}
+
+button.groupHeader:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+/* Grupo fechado com a nota aberta: a linha ativa em versão discreta, mais o
+   ponto de acento (a pista que não depende só de cor). O hover não a apaga. */
+button.groupHeaderActive,
+button.groupHeaderActive:hover {
+  background: color-mix(in srgb, var(--surface-2, #26262c) 60%, transparent);
+  color: var(--text-secondary, #a0a0b8);
+}
+
+.groupActiveDot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* 12px fixos: "No type" não tem ícone, mas reserva o lugar dele. */
+.groupIcon {
+  display: inline-flex;
+  flex-shrink: 0;
+  width: 12px;
+}
+
+.groupName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.groupCount {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding-left: var(--space-2);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted, #606070);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Texto só para leitor de tela: "notes" depois da contagem do cabeçalho travado. */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .row {
   display: flex;
   align-items: center;
@@ -620,8 +723,22 @@
   color: var(--accent, #7c6af5);
 }
 
-.subjectDropdown .sortExtra {
+/* Divisória entre as ordens e o resto do menu (agrupar, fechar/abrir todos,
+   "Reorder types…"), seja qual for o primeiro item que aparece. */
+.subjectDropdown [role='menuitemradio'] + .sortItem:not([role='menuitemradio']) {
   border-top: 1px solid var(--border, #333340);
+}
+
+/* Item sem efeito (por exemplo "Expand all groups" com todos abertos): marcado
+   com aria-disabled, que o deixa visível ao leitor de tela. */
+.subjectDropdown button[aria-disabled='true'] {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: transparent;
+  color: var(--text-secondary, #a0a0b8);
+}
+
+.subjectDropdown .sortExtra {
   color: var(--text-muted, #606070);
 }
 

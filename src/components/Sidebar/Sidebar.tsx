@@ -3,6 +3,7 @@ import {
   ArrowsDownUp,
   ArrowsMerge,
   CaretDown,
+  CaretRight,
   Check,
   DotsSixVertical,
   FolderSimple,
@@ -13,7 +14,7 @@ import {
   Trash,
   X,
 } from '@phosphor-icons/react'
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import {
   DndContext,
@@ -21,13 +22,13 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
+  type CollisionDetection,
   type DragEndEvent,
 } from '@dnd-kit/core'
 import {
   SortableContext,
   verticalListSortingStrategy,
   useSortable,
-  arrayMove,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import type { MetadataDef, Note, Notebook, NoteType, Subject } from '../../types'
@@ -35,7 +36,19 @@ import { useConfirm } from '../../hooks/useConfirm'
 import { CALENDAR_NOTEBOOK_ID } from '../../lib/calendar'
 import { isTodosNote, listPropertyValues } from '../../lib/noteTypes'
 import { formatDueShort, type TodosProgress } from '../../lib/tasks'
-import { NOTE_SORT_OPTIONS, type NoteSort } from '../../lib/noteOrder'
+import {
+  findGroupOf,
+  groupNotesByType,
+  isGroupCollapsed,
+  isNearGroup,
+  loadGroupCollapsed,
+  NOTE_SORT_OPTIONS,
+  reorderWithinGroup,
+  saveGroupCollapsed,
+  setGroupsCollapsed,
+  type NoteGroup,
+  type NoteSort,
+} from '../../lib/noteOrder'
 import { ArchivedNotesModal } from './ArchivedNotesModal'
 import { MergeNoteModal } from './MergeNoteModal'
 import { NotebookPickerModal } from '../NotebookPickerModal/NotebookPickerModal'
@@ -49,9 +62,10 @@ const EMPTY_NOTES: Note[] = []
 
 interface SortableNoteItemProps {
   note: Note
-  // Tipo da nota (ícone + nome acima do título, na cor do tipo); abaixo do
-  // título, numa linha que quebra, o progresso da TODOS e as propriedades
-  // "show in list". O título fica com a largura toda.
+  // Tipo da nota (ícone + nome acima do título, na cor do tipo); null na lista
+  // agrupada, onde o cabeçalho do grupo já diz o tipo. Abaixo do título, numa
+  // linha que quebra, o progresso da TODOS e as propriedades "show in list". O
+  // título fica com a largura toda.
   type: NoteType | null
   meta: { progress: string; due: string | null; tone: 'overdue' | 'complete' | null } | null
   properties: Array<{ def: MetadataDef; text: string }>
@@ -187,6 +201,70 @@ function SubjectMenu({
       )}
     </div>,
     document.body
+  )
+}
+
+// Cabeçalho de um grupo por tipo: botão que abre e fecha (seta, ícone e nome na
+// cor do tipo, contagem). `type` null = "No type", em cor neutra e sem ícone.
+// `locked` (filtro de texto ou de tipo ativo): grupo sempre aberto, sem seta nem
+// clique. `activeTitle`: grupo fechado com a nota aberta dentro (título dela, ou
+// 'untitled'); null nos outros casos.
+function GroupHeader({
+  type,
+  count,
+  collapsed,
+  locked,
+  activeTitle,
+  onToggle,
+}: {
+  type: NoteType | null
+  count: number
+  collapsed: boolean
+  locked: boolean
+  activeTitle: string | null
+  onToggle: () => void
+}) {
+  const name = type?.name ?? 'No type'
+  const hasActive = activeTitle !== null
+  const noun = count === 1 ? 'note' : 'notes'
+  // O ícone reserva o espaço também em "No type", para os nomes se alinharem. O
+  // botão tem o aria-label; o <div> travado ganha "notes" em texto só para leitor
+  // de tela, senão o número ficaria solto depois do nome.
+  const content = (
+    <>
+      {!locked && (collapsed ? <CaretRight size={10} aria-hidden /> : <CaretDown size={10} aria-hidden />)}
+      <span className={styles.groupIcon} style={{ color: type?.color ?? undefined }}>
+        {type && <TypeIcon name={type.icon} size={12} />}
+      </span>
+      <span className={styles.groupName} style={{ color: type?.color ?? undefined }}>
+        {name}
+      </span>
+      {hasActive && <span className={styles.groupActiveDot} aria-hidden />}
+      <span className={styles.groupCount}>
+        {count}
+        {locked && <span className={styles.srOnly}> {noun}</span>}
+      </span>
+    </>
+  )
+  return (
+    <li className={styles.groupItem}>
+      {locked ? (
+        <div className={styles.groupHeader} title={name}>
+          {content}
+        </div>
+      ) : (
+        <button
+          type="button"
+          className={`${styles.groupHeader} ${hasActive ? styles.groupHeaderActive : ''}`}
+          onClick={onToggle}
+          aria-expanded={!collapsed}
+          aria-label={`${name}, ${count} ${noun}${hasActive ? ', contains the open note' : ''}`}
+          title={hasActive ? `${name} · Contains the open note: ${activeTitle}` : name}
+        >
+          {content}
+        </button>
+      )}
+    </li>
   )
 }
 
@@ -410,10 +488,16 @@ export interface SidebarProps {
   subjectFilter?: string | null
   onSubjectFilterChange?: (subjectId: string | null) => void
   // Ordem da lista (as notas já chegam ordenadas); fora de 'manual', sem
-  // arrastar. "Reorder types…" abre o modal de tipos na ordem dos tipos.
+  // arrastar. "Reorder types…" abre o modal de tipos na ordem dos grupos.
   sort?: NoteSort
   onSortChange?: (sort: NoteSort) => void
   onReorderTypes?: () => void
+  // Agrupamento por tipo (item "Group by type" do menu de ordem). `groupScope`
+  // guarda o estado aberto/fechado dos grupos: id do caderno aberto, ou o
+  // escopo de "All notes".
+  groupByType?: boolean
+  onGroupByTypeChange?: (on: boolean) => void
+  groupScope: string
 }
 
 // Resumo abaixo do título: progresso na TODOS.
@@ -469,8 +553,20 @@ export function Sidebar({
   sort = 'manual',
   onSortChange,
   onReorderTypes,
+  groupByType = false,
+  onGroupByTypeChange,
+  groupScope,
 }: SidebarProps) {
   const typeById = new Map(noteTypes.map((t) => [t.id, t]))
+  // Agrupado: uma seção por tipo; plano (sem nenhuma nota com tipo, ou com o
+  // agrupamento desligado): uma seção só, sem cabeçalho. Com o filtro de texto
+  // ou o de tipo, os grupos ficam todos abertos e travados para nenhum
+  // resultado se esconder.
+  const groups = groupByType ? groupNotesByType(notes, noteTypes.map((t) => t.id)) : null
+  const sections: Array<NoteGroup<Note>> = groups ?? [{ key: 'flat', typeId: null, notes }]
+  const filterActive = filterText.trim() !== ''
+  const groupsLocked = filterActive || typeFilter !== null
+  const [collapsedGroups, setCollapsedGroups] = useState(loadGroupCollapsed)
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
   )
@@ -483,6 +579,9 @@ export function Sidebar({
   const [sortMenuOpen, setSortMenuOpen] = useState(false)
   const sortMenuRef = useRef<HTMLDivElement>(null)
   const sortLabel = NOTE_SORT_OPTIONS.find((o) => o.id === sort)?.label ?? 'Manual'
+  // "Group by type" só existe (e só conta no rótulo do botão) com tipos criados.
+  const canGroup = noteTypes.length > 0
+  const groupingOn = groupByType && canGroup
   const [archivedOpen, setArchivedOpen] = useState(false)
 
   useEffect(() => {
@@ -538,13 +637,40 @@ export function Sidebar({
     onMerge?.(sourceId, targetId)
   }
 
+  // Fecha ou abre os grupos `keys` do escopo atual (um, pelo cabeçalho; todos, pelo menu).
+  function setGroups(keys: string[], collapse: boolean) {
+    setCollapsedGroups((prev) => {
+      const next = setGroupsCollapsed(prev, groupScope, keys, collapse)
+      saveGroupCollapsed(next)
+      return next
+    })
+  }
+
+  // Colisão do arrasto (R10). Perto do grupo da nota arrastada (o centro dela
+  // dentro da extensão do grupo, com uma altura de linha de folga), só as notas
+  // do grupo são alvo: a nota "gruda" na ponta, e arrastar até a última ou a
+  // primeira posição não vira um gesto sem efeito. Longe, no meio de outro
+  // grupo, não há alvo e soltar não faz nada. Além da ponta da lista (acima do
+  // primeiro grupo, abaixo do último) não há outro grupo: a nota vai para a
+  // ponta. Lista plana ou um grupo só: o closestCenter de sempre, sem a regra.
+  const groupCollision: CollisionDetection = (args) => {
+    const group = findGroupOf(sections, args.active.id)
+    if (!group || sections.length < 2) return closestCenter(args)
+    const ids = group.notes.map((n) => n.id)
+    const { collisionRect } = args
+    const centerY = collisionRect.top + collisionRect.height / 2
+    const index = sections.indexOf(group)
+    const open = { above: index === 0, below: index === sections.length - 1 }
+    if (!isNearGroup(ids, args.droppableRects, centerY, collisionRect.height, open)) return []
+    const own = new Set<string | number>(ids)
+    return closestCenter({ ...args, droppableContainers: args.droppableContainers.filter((c) => own.has(c.id)) })
+  }
+
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event
-    if (!over || active.id === over.id) return
-    const oldIndex = notes.findIndex((n) => n.id === active.id)
-    const newIndex = notes.findIndex((n) => n.id === over.id)
-    const reordered = arrayMove(notes, oldIndex, newIndex)
-    onReorder(reordered.map((n) => n.id))
+    if (!over) return
+    const next = reorderWithinGroup(sections, notes.map((n) => n.id), active.id, over.id)
+    if (next) onReorder(next)
   }
 
   return (
@@ -661,10 +787,10 @@ export function Sidebar({
                   <button
                     className={`${styles.headerToggle} ${sort !== 'manual' ? styles.headerToggleOn : ''}`}
                     onClick={() => setSortMenuOpen((v) => !v)}
-                    aria-label={`sort notes: ${sortLabel}`}
+                    aria-label={groupingOn ? `sort and group notes: ${sortLabel}, grouped by type` : `sort notes: ${sortLabel}`}
                     aria-haspopup="menu"
                     aria-expanded={sortMenuOpen}
-                    title={`Sort: ${sortLabel}`}
+                    title={groupingOn ? `Sort and group: ${sortLabel}, grouped by type` : `Sort: ${sortLabel}`}
                     type="button"
                   >
                     <ArrowsDownUp size={16} aria-hidden />
@@ -687,6 +813,47 @@ export function Sidebar({
                           {o.label}
                         </button>
                       ))}
+                      {onGroupByTypeChange && canGroup && (
+                        <button
+                          type="button"
+                          role="menuitemcheckbox"
+                          aria-checked={groupByType}
+                          className={styles.sortItem}
+                          onClick={() => {
+                            setSortMenuOpen(false)
+                            onGroupByTypeChange(!groupByType)
+                          }}
+                        >
+                          <span className={styles.sortCheck}>{groupByType && <Check size={12} aria-hidden />}</span>
+                          Group by type
+                        </button>
+                      )}
+                      {groups && !groupsLocked &&
+                        [
+                          { label: 'Collapse all groups', collapse: true },
+                          { label: 'Expand all groups', collapse: false },
+                        ].map(({ label, collapse }) => {
+                          // Sem efeito (todos já fechados, ou todos já abertos):
+                          // aria-disabled, que mantém o item visível ao leitor de tela.
+                          const noEffect = !groups.some((g) => isGroupCollapsed(collapsedGroups, groupScope, g.key) !== collapse)
+                          return (
+                            <button
+                              key={label}
+                              type="button"
+                              role="menuitem"
+                              className={styles.sortItem}
+                              aria-disabled={noEffect}
+                              onClick={() => {
+                                if (noEffect) return
+                                setSortMenuOpen(false)
+                                setGroups(groups.map((g) => g.key), collapse)
+                              }}
+                            >
+                              <span className={styles.sortCheck} />
+                              {label}
+                            </button>
+                          )
+                        })}
                       {onReorderTypes && (
                         <button
                           type="button"
@@ -791,28 +958,48 @@ export function Sidebar({
                 {filterText.trim() ? `No notes match “${filterText.trim()}”` : 'No notes'}
               </li>
             ) : (
-              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                <SortableContext items={notes.map((n) => n.id)} strategy={verticalListSortingStrategy}>
-                  {notes.map((n) => (
-                    <SortableNoteItem
-                      key={n.id}
-                      note={n}
-                      type={(n.typeId && typeById.get(n.typeId)) || null}
-                      meta={noteMeta(n, todosProgress)}
-                      properties={listPropertyValues(n, noteDefs)}
-                      isActive={n.id === activeId}
-                      dragDisabled={sort !== 'manual'}
-                      onSelect={onSelect}
-                      onDelete={(id) => handleDeleteNote(id, n.title)}
-                      onArchive={onSetArchived ? (id) => onSetArchived(id, true) : undefined}
-                      onMerge={onMerge ? setMergeSourceId : undefined}
-                      onMoveNote={onMoveNote ? setMoveNoteId : undefined}
-                      subjectsFor={subjectsFor}
-                      onAssignSubject={onAssignSubject}
-                      currentSubjectId={n.subjectId}
-                    />
-                  ))}
-                </SortableContext>
+              <DndContext sensors={sensors} collisionDetection={groupCollision} onDragEnd={handleDragEnd}>
+                {sections.map((group) => {
+                  const groupCollapsed = groups !== null && !groupsLocked && isGroupCollapsed(collapsedGroups, groupScope, group.key)
+                  const activeNote = groupCollapsed ? group.notes.find((n) => n.id === activeId) : undefined
+                  return (
+                    <Fragment key={group.key}>
+                      {groups && (
+                        <GroupHeader
+                          type={(group.typeId && typeById.get(group.typeId)) || null}
+                          count={group.notes.length}
+                          collapsed={groupCollapsed}
+                          locked={groupsLocked}
+                          activeTitle={activeNote ? activeNote.title || 'untitled' : null}
+                          onToggle={() => setGroups([group.key], !groupCollapsed)}
+                        />
+                      )}
+                      {!groupCollapsed && (
+                        <SortableContext items={group.notes.map((n) => n.id)} strategy={verticalListSortingStrategy}>
+                          {group.notes.map((n) => (
+                            <SortableNoteItem
+                              key={n.id}
+                              note={n}
+                              type={groups ? null : (n.typeId && typeById.get(n.typeId)) || null}
+                              meta={noteMeta(n, todosProgress)}
+                              properties={listPropertyValues(n, noteDefs)}
+                              isActive={n.id === activeId}
+                              dragDisabled={sort !== 'manual'}
+                              onSelect={onSelect}
+                              onDelete={(id) => handleDeleteNote(id, n.title)}
+                              onArchive={onSetArchived ? (id) => onSetArchived(id, true) : undefined}
+                              onMerge={onMerge ? setMergeSourceId : undefined}
+                              onMoveNote={onMoveNote ? setMoveNoteId : undefined}
+                              subjectsFor={subjectsFor}
+                              onAssignSubject={onAssignSubject}
+                              currentSubjectId={n.subjectId}
+                            />
+                          ))}
+                        </SortableContext>
+                      )}
+                    </Fragment>
+                  )
+                })}
               </DndContext>
             )}
           </ul>

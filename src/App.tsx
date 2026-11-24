@@ -230,11 +230,14 @@ import {
   type ChunkResult,
 } from './lib/documents'
 import {
+  ALL_NOTES_SCOPE,
   applyOrder,
+  loadGroupByType,
   loadNoteOrder,
   loadNoteSort,
   loadOrder,
   mergeOrder,
+  saveGroupByType,
   saveNoteOrder,
   saveNoteSort,
   saveOrder,
@@ -2100,6 +2103,13 @@ function App() {
     saveNoteSort(sort)
   }, [])
 
+  // Agrupamento da lista por tipo (global), montado na Sidebar sobre a ordem acima.
+  const [groupByType, setGroupByTypeState] = useState(loadGroupByType)
+  const setGroupByType = useCallback((on: boolean) => {
+    setGroupByTypeState(on)
+    saveGroupByType(on)
+  }, [])
+
   // Arquivadas ficam fora da lista (rodapé "Archived · N" da Sidebar).
   const visibleNotes = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -2113,12 +2123,8 @@ function App() {
         n.tags.some((t) => t.toLowerCase().includes(q))
       )
     })
-    return sortNotes(
-      applyOrder(filtered, noteOrder),
-      noteSort,
-      noteTypes.types.map((t) => t.id)
-    )
-  }, [subjectFilteredNotes, search, activeTypeFilter, noteOrder, noteSort, noteTypes.types])
+    return sortNotes(applyOrder(filtered, noteOrder), noteSort)
+  }, [subjectFilteredNotes, search, activeTypeFilter, noteOrder, noteSort])
 
   // Arquivadas do caderno/subject atual, da mais recente para a mais antiga.
   const archivedNotes = useMemo(
@@ -4998,6 +5004,9 @@ function App() {
             onSubjectFilterChange={handleSelectSubject}
             sort={noteSort}
             onSortChange={setNoteSort}
+            groupByType={groupByType}
+            onGroupByTypeChange={setGroupByType}
+            groupScope={activeNotebookId ?? ALL_NOTES_SCOPE}
             onReorderTypes={() => setNoteTypesOpen({ focusTypeId: null, reorder: true })}
             onDelete={handleDeleteNote}
             onReorder={handleReorder}

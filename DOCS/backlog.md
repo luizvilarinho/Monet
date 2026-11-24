@@ -61,6 +61,15 @@ Bugs e ideias registrados pelo Coordenador ou deixados para trás nas entregas, 
 
 ## Ideias
 
+- **Grupos por tipo na coluna de anotações — o que ficou do uxAgent (2026-11-24):** sugestões do relatório `DOCS/reports/24-11-2026/uxreport_20261124113215.md` que não entraram na task do agrupamento:
+  - **Decisão pendente do Coordenador (S2):** mostrar a nota aberta sob o cabeçalho de um grupo fechado ("peek"), ou abrir o grupo quando a nota ativa muda por fora da lista (Ctrl+P, link, Calendar). Hoje o grupo continua fechado e o cabeçalho ganha um ponto de acento e a dica "Contains the open note".
+  - **Decisão pendente do Coordenador:** estado aberto/fechado global por tipo, em vez de por caderno (hoje `monet:note-groups-collapsed` guarda por caderno).
+  - Cabeçalho do grupo fixo no topo ao rolar um grupo longo (S3; pede um bloco por grupo para o `position: sticky`).
+  - Sinal agregado no cabeçalho fechado, como "1 overdue" das TODOS do grupo (S4).
+  - Arrastar uma nota para outro grupo troca o tipo dela (S5); hoje soltar no meio de outro grupo não faz nada.
+  - Posição do "No type" configurável em "Reorder types…" (S6); hoje é sempre o último.
+  - Recuo do nome do cabeçalho em relação ao título da nota (o nome fica uns 4px à direita do título, pelo cálculo do CSS); conferir em tela.
+- **`div`s do `DndContext` dentro do `<ul>` da lista de notas (2026-11-24):** sem `container`, o `DndContext` da `Sidebar` renderiza os `div`s de acessibilidade (HiddenText e LiveRegion) como filhos do `<ul class="list">`, o que é HTML inválido. Já existia antes do agrupamento. Apontado no review (`DOCS/reports/24-11-2026/reviewreport_20261124114651.md`).
 - **Mincer no MSIX (2026-10-31):** quando o `build-msix.ps1` for recuperado, copiar `ffmpeg.exe` e `yt-dlp.exe` de `target/release` para o staging; declarar `<DeviceCapability Name="microphone"/>` no AppxManifest; risco de certificação do modo YouTube na Store (flag de build para escondê-lo no MSIX).
 - **Mincer — licença e tamanho (2026-10-31):** aviso de licença GPLv3 do ffmpeg (origem: gyan.dev essentials 8.1.1) no About, ou troca por build LGPL só de áudio; o instalador cresce ~35–50 MB.
 - **Mincer — clique no toast (2026-10-31):** o `tauri-plugin-notification` 2.3.3 não tem callback de clique no Windows desktop, então o toast de fim de item só avisa. Ideia: toast via WinRT (`windows` crate, `ToastNotification` com `Activated`) para mostrar a janela e abrir o Mincer no item.
