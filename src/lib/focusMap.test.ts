@@ -111,6 +111,7 @@ function book(patch: Partial<Book> & { format?: 'pdf' | 'epub' } = {}): Book {
     addedAt: 0,
     lastOpenedAt: at('2026-11-15'),
     zoom: 1,
+    language: null,
   }
   return patch.format === 'epub'
     ? { ...base, format: 'epub', cfi: null, locationsJson: null, ...patch }

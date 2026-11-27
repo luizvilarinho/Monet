@@ -16,6 +16,7 @@ import type {
   TaskView,
   Tracker,
   TrackerMark,
+  VocabularyItem,
 } from '../types'
 import { TauriStorage } from './tauri'
 import { BrowserStorage } from './browser'
@@ -59,6 +60,9 @@ export interface StorageAdapter {
 
   getBooks(): Promise<Book[]>
   saveBook(book: Book): Promise<void>
+  // Única escrita de `books.language` depois do INSERT (o saveBook não a atualiza);
+  // a língua dos itens de vocabulário do livro acompanha.
+  setBookLanguage(id: string, language: string | null): Promise<void>
   deleteBook(id: string): Promise<void>
 
   getHighlights(bookId: string): Promise<BookHighlight[]>
@@ -68,6 +72,19 @@ export interface StorageAdapter {
 
   saveQuote(quote: BookQuote): Promise<void>
   deleteQuotesByBook(bookId: string): Promise<void>
+
+  // Vocabulário por livro (aba Vocabulary), em ordem de criação.
+  getBookVocabulary(bookId: string): Promise<VocabularyItem[]>
+  // Itens de todos os livros de uma língua base (as marcas no texto, entrega 3).
+  getVocabularyByLanguage(language: string): Promise<VocabularyItem[]>
+  // INSERT … ON CONFLICT(id) DO UPDATE de todos os campos (guardar, atualizar e restaurar).
+  saveVocabularyItem(item: VocabularyItem): Promise<void>
+  deleteVocabularyItem(id: string): Promise<void>
+  // Marca (ou, com null, desmarca) os itens como enviados a uma nota.
+  setVocabularySent(
+    ids: string[],
+    sent: { at: string; notebookId: string; noteId: string } | null,
+  ): Promise<void>
 
   getFiredReminderIds(noteId: string): Promise<string[]>
   markRemindersFired(ids: string[], noteId: string): Promise<void>

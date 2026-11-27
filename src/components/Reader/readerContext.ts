@@ -24,6 +24,9 @@ export interface ReaderContextInput {
   // Rótulo de posição de cada grifo. Ausente = PDF ("p. N"); o EPUB passa o
   // percentual da location do grifo.
   highlightLabel?: (h: BookHighlight) => string
+  // Bloco do professor de língua (ver lib/teacherContext.ts), acrescentado ao fim.
+  // Ausente, a saída é idêntica à de sempre.
+  teacherBlock?: string
 }
 
 function normalizeWhitespace(s: string): string {
@@ -77,6 +80,11 @@ export function buildReaderContext(input: ReaderContextInput): string {
       const label = input.highlightLabel ? input.highlightLabel(h) : `p. ${h.page}`
       lines.push(`- [${label}, ${formatDate(h.createdAt)}] "${text}"`)
     }
+  }
+
+  if (input.teacherBlock) {
+    lines.push('')
+    lines.push(input.teacherBlock)
   }
 
   return lines.join('\n')

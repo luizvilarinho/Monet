@@ -3,6 +3,7 @@ import type { PDFPageProxy, RenderTask } from 'pdfjs-dist'
 import {
   ArrowLeft,
   ArrowUUpLeft,
+  BookmarkSimple,
   CaretDown,
   CaretLeft,
   CaretRight,
@@ -15,6 +16,7 @@ import {
   Quotes,
   SidebarSimple,
   Sparkle,
+  SpeakerHigh,
   Trash,
   X,
 } from '@phosphor-icons/react'
@@ -26,18 +28,70 @@ import type {
   Notebook,
   NoteType,
   PdfBook,
+  VocabularyAnchor,
+  VocabularyItem,
 } from '../../types'
 import { storage } from '../../storage'
-import { booksReadFile } from '../../lib/books'
+import { booksReadFile, detectPdfLanguage } from '../../lib/books'
 import { openPdf, TextLayer, type PDFDocumentProxy } from '../../lib/pdf'
 import { useBookQuotes } from '../../hooks/useBookQuotes'
+import { useBookVocabulary } from '../../hooks/useBookVocabulary'
 import { useConfirm } from '../../hooks/useConfirm'
+import { useColumnBox } from '../../hooks/useColumnBox'
 import { loadHighlightColor, saveHighlightColor, useHighlights } from '../../hooks/useHighlights'
+import { useLanguageSettings } from '../../hooks/useLanguageSettings'
+import { useListenPlayer } from '../../hooks/useListenPlayer'
+import { useTtsCatalog } from '../../hooks/useTtsCatalog'
+import { useReaderTeacher } from '../../hooks/useReaderTeacher'
+import { useRetell } from '../../hooks/useRetell'
+import { useVocabularyMarks } from '../../hooks/useVocabularyMarks'
+import { useVocabularyRemoval } from '../../hooks/useVocabularyRemoval'
+import { useVocabularySend } from '../../hooks/useVocabularySend'
+import { ownsKeyboard } from '../../lib/keyboardTarget'
+import { languageToolsOn } from '../../lib/language'
+import {
+  getTtsSkipHeaders,
+  setNativeLanguage,
+  setVocabHideSenses,
+  setVocabMarks,
+} from '../../lib/languageSettings'
+import { clearPageMarks, markEntryAtPoint, setPageMarks, type MarkEntry } from '../../lib/pageMarks'
+import {
+  cleanPdfPage,
+  cleanPdfSelectionText,
+  pdfItemsToLines,
+  skippedNotice,
+  type CleanPageResult,
+  type PdfLine,
+  type PdfTextItem,
+} from '../../lib/pdfText'
+import { buildFeedbackMessage } from '../../lib/retell'
+import { splitSentences } from '../../lib/sentences'
+import { isTtsError, ttsErrorSentence } from '../../lib/speech'
+import { TRANSLATE_CHAR_LIMIT, classifySelection, type Translation } from '../../lib/translate'
+import { buildListenSource, translationFields, type VocabularyDraft } from '../../lib/vocabulary'
+import { contextSentenceAt, countTermBefore, findTermOccurrences, pdfSentenceAnchors } from '../../lib/vocabMatch'
+import { LanguageBar } from '../LanguageTools/LanguageBar'
+import { MiniPlayer } from '../LanguageTools/MiniPlayer'
+import { SavedWordPopover } from '../LanguageTools/SavedWordPopover'
+import { SendVocabularyModal } from '../LanguageTools/SendVocabularyModal'
+import { TranslatePopover } from '../LanguageTools/TranslatePopover'
+import { VocabularyTab } from '../LanguageTools/VocabularyTab'
+import type { SettingsSection } from '../Settings/SettingsModal'
+import {
+  buildJoinedPageText,
+  buildRangeFromOffsets,
+  findAllOccurrenceRanges,
+  getCaretFromPoint,
+  getPageSpans,
+  rangeToJoinedOffsets,
+  type PdfTextAnchor,
+} from './pdfTextLayer'
 import { QuoteToNoteModal } from './QuoteToNoteModal'
 import { ReaderChatPanel } from './ReaderChatPanel'
 import { ReaderNotesPanel } from './ReaderNotesPanel'
 import { useReaderToast } from './ReaderToast'
-import { placeSelectionToolbar } from './toolbarPlacement'
+import { placeSelectionToolbar, type PlacementAnchor } from './toolbarPlacement'
 import styles from './Reader.module.css'
 
 export interface ReaderProps {
@@ -45,6 +99,9 @@ export interface ReaderProps {
   book: PdfBook
   onBack: () => void
   onBookChange: (book: Book) => void
+  // A língua do livro foi detectada (primeira abertura) ou corrigida: o Library
+  // atualiza o `book` que passa ao leitor.
+  onBookLanguageChange: (language: string) => void
   // Chamado quando o documento não pôde ser carregado (arquivo ausente/ilegível).
   onLoadError?: () => void
   notebooks: Notebook[]
@@ -64,8 +121,31 @@ export interface ReaderProps {
   onSaveNote: (note: Note) => Promise<void>
   // Abre o Settings do app (ModelSelector e faixa sem chave do chat).
   onOpenSettings: () => void
+  // Abre o Settings numa seção (o "Open Settings" do Translate sem chave).
+  onOpenSettingsSection: (section: SettingsSection) => void
+  // O Mincer está gravando: o áudio do Listen entraria na gravação.
+  mincerRecording: boolean
+  // Cadernos com a IA desligada: a nota de perfil de língua de um deles não vale
+  // para o professor de língua.
+  disabledNotebookIds: ReadonlySet<string>
   // Tela de livro sem arquivo: tira o livro da Library (com confirmação).
   onRemoveBook?: () => void
+}
+
+// Estado do Translate aberto: o que a seleção era no momento do clique (o
+// popover mantém o texto mesmo que a seleção do navegador mude) e o Range
+// clonado, de onde sai o retângulo que acompanha a rolagem da página.
+interface TranslateState {
+  text: string
+  sentence: string
+  page: number
+  range: Range
+  anchor: PlacementAnchor
+}
+
+function rangeAnchor(range: Range): PlacementAnchor {
+  const box = range.getBoundingClientRect()
+  return { x: box.left, y: box.top, w: box.width, h: box.height }
 }
 
 // Rótulo de posição da citação no PDF. Fica aqui porque cada formato monta o
@@ -102,6 +182,8 @@ const SIDE_TAB_KEY = 'monet:reader-side-tab'
 // recolhida, largura fixa quando expandida).
 const SIDE_PANEL_COLLAPSED_KEY = 'monet:reader-sidepanel-collapsed'
 const SIDE_PANEL_WIDTH = 280
+// Com as ferramentas de língua a coluna ganha a aba Vocabulary e fica mais larga.
+const SIDE_PANEL_WIDTH_WITH_TOOLS = 300
 const SIDE_PANEL_COLLAPSED_WIDTH = 48
 
 // Acima disso o painel de grifos ganha o campo de busca.
@@ -138,7 +220,7 @@ function saveFitMode(bookId: string, mode: FitMode | null): void {
   }
 }
 
-type SidePanelTab = 'summary' | 'highlights'
+type SidePanelTab = 'summary' | 'highlights' | 'vocabulary'
 type SideTab = 'chat' | 'notes'
 
 interface PagePoint {
@@ -320,122 +402,11 @@ function findSpanElement(node: Node | null): HTMLElement | null {
   return null
 }
 
-interface CaretPoint {
-  node: Node
-  offset: number
-}
-
-function getCaretFromPoint(x: number, y: number): CaretPoint | null {
-  const docAny = document as Document & {
-    caretPositionFromPoint?: (x: number, y: number) => {
-      offsetNode: Node
-      offset: number
-    } | null
-    caretRangeFromPoint?: (x: number, y: number) => Range | null
-  }
-  if (typeof docAny.caretPositionFromPoint === 'function') {
-    const pos = docAny.caretPositionFromPoint(x, y)
-    if (pos) return { node: pos.offsetNode, offset: pos.offset }
-  } else if (typeof docAny.caretRangeFromPoint === 'function') {
-    const range = docAny.caretRangeFromPoint(x, y)
-    if (range) return { node: range.startContainer, offset: range.startOffset }
-  }
-  return null
-}
-
-// ─── Busca textual no ebook ─────────────────────────────────────────────
-// Reconstrói o texto de uma página a partir dos <span> renderizados pela
-// TextLayer do pdfjs, na mesma ordem em que são renderizados (1 span por
-// item de texto). Junta com um único espaço entre spans — MESMA
-// convenção usada por getPageText (`.map(item => item.str).join(' ')`),
-// para que a busca no DOM ao vivo encontre os mesmos termos que a
-// indexação em background encontrou no texto extraído.
-function getPageSpans(container: HTMLElement): HTMLElement[] {
-  return Array.from(container.querySelectorAll<HTMLElement>('span')).filter(
-    (s) => (s.textContent ?? '').length > 0,
-  )
-}
-
-interface SpanRange {
-  span: HTMLElement
-  start: number
-  end: number
-}
-
-function buildJoinedPageText(spans: HTMLElement[]): {
-  text: string
-  spanRanges: SpanRange[]
-} {
-  let text = ''
-  const spanRanges: SpanRange[] = []
-  spans.forEach((span, i) => {
-    const content = span.textContent ?? ''
-    const start = text.length
-    text += content
-    spanRanges.push({ span, start, end: text.length })
-    if (i < spans.length - 1) text += ' '
-  })
-  return { text, spanRanges }
-}
-
-function buildRangeFromOffsets(
-  spanRanges: SpanRange[],
-  start: number,
-  end: number,
-): Range | null {
-  let startInfo: { span: HTMLElement; offset: number } | null = null
-  let endInfo: { span: HTMLElement; offset: number } | null = null
-  for (const sr of spanRanges) {
-    if (!startInfo && start < sr.end) {
-      startInfo = { span: sr.span, offset: start - sr.start }
-    }
-    if (!endInfo && end <= sr.end) {
-      endInfo = { span: sr.span, offset: end - sr.start }
-      break
-    }
-  }
-  if (!startInfo || !endInfo) return null
-  const startTextNode = startInfo.span.firstChild
-  const endTextNode = endInfo.span.firstChild
-  if (!startTextNode || !endTextNode) return null
-  try {
-    const range = document.createRange()
-    range.setStart(startTextNode, Math.max(0, startInfo.offset))
-    range.setEnd(endTextNode, Math.max(0, endInfo.offset))
-    return range
-  } catch {
-    return null
-  }
-}
-
-// Localiza todas as ocorrências (case-insensitive) de `query` no texto
-// reconstruído da text layer e devolve um Range por ocorrência,
-// construído a partir dos spans que a ocorrência atravessa. Uma
-// ocorrência pode cruzar mais de um span (frase); nesse caso o Range
-// vai do offset inicial no primeiro span ao offset final no último.
-function findAllOccurrenceRanges(container: HTMLElement, query: string): Range[] {
-  if (!query) return []
-  const spans = getPageSpans(container)
-  if (spans.length === 0) return []
-  const { text, spanRanges } = buildJoinedPageText(spans)
-  const lower = text.toLowerCase()
-  const q = query.toLowerCase()
-  const ranges: Range[] = []
-  let searchFrom = 0
-  let idx = lower.indexOf(q, searchFrom)
-  while (idx !== -1) {
-    const range = buildRangeFromOffsets(spanRanges, idx, idx + q.length)
-    if (range) ranges.push(range)
-    searchFrom = idx + q.length
-    idx = lower.indexOf(q, searchFrom)
-  }
-  return ranges
-}
-
 export function Reader({
   book,
   onBack,
   onBookChange,
+  onBookLanguageChange,
   onLoadError,
   notebooks,
   notes,
@@ -444,6 +415,9 @@ export function Reader({
   onCreateNote,
   onSaveNote,
   onOpenSettings,
+  onOpenSettingsSection,
+  mincerRecording,
+  disabledNotebookIds,
   onRemoveBook,
 }: ReaderProps) {
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null)
@@ -474,6 +448,11 @@ export function Reader({
     changeColor,
   } = useHighlights(book.id, (message) => showToast({ message, tone: 'error' }))
   const [selection, setSelection] = useState<SelectionState | null>(null)
+  const languageSettings = useLanguageSettings()
+  // Ferramentas de língua (Translate): só em livro de outra língua, ou como
+  // o Settings › Language mandar. Sem elas o leitor fica como sempre foi.
+  const toolsOn = languageToolsOn(book.language, languageSettings.nativeLanguage, languageSettings.toolsMode)
+  const [translate, setTranslate] = useState<TranslateState | null>(null)
   // Última cor usada (comum aos leitores): é a do atalho H.
   const [activeColor, setActiveColor] = useState<string>(() =>
     loadHighlightColor(HIGHLIGHT_COLORS),
@@ -516,6 +495,8 @@ export function Reader({
     addQuoteToNote,
     addToNoteTitle,
     openNote,
+    showNote,
+    viewRequest,
     linkVersion,
     modal: quoteModal,
   } = useBookQuotes({
@@ -536,6 +517,98 @@ export function Reader({
   const highlightLayerRef = useRef<HTMLDivElement>(null)
   const toolbarRef = useRef<HTMLDivElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
+  const translatePopoverRef = useRef<HTMLDivElement>(null)
+  // Leitura em voz alta (Listen): o player, o catálogo de modelos de voz e a medida
+  // da coluna da página, de que o mini-player (`fixed`) se alinha. O catálogo só
+  // é buscado com as ferramentas de língua ligadas.
+  const catalog = useTtsCatalog(toolsOn)
+  const player = useListenPlayer({
+    bookId: book.id,
+    mincerRecording,
+    showToast,
+    models: catalog.models,
+    language: book.language ?? '',
+  })
+  const [playerHeight, setPlayerHeight] = useState(0)
+  const columnBox = useColumnBox(pageAreaRef, player.open)
+  // Vocabulário do livro (aba Vocabulary): só com as ferramentas de língua.
+  const vocabulary = useBookVocabulary(book, toolsOn)
+  const vocabSend = useVocabularySend({
+    book,
+    items: vocabulary.items,
+    notes,
+    notebooks,
+    noteTypes,
+    onCreateNotebook,
+    onCreateNote,
+    onSaveNote,
+    showToast,
+    showNote,
+    markSent: vocabulary.markSent,
+  })
+  // O professor de língua do chat, o "Retell" da aba e o "Ask for feedback" da aba
+  // Notes, que manda o reconto ao chat com o professor ligado.
+  const pageItems = useMemo(
+    () => vocabulary.items.filter((item) => item.page === pageNum),
+    [vocabulary.items, pageNum],
+  )
+  const { teacher, turnOn: turnTeacherOn } = useReaderTeacher({
+    book,
+    toolsOn,
+    nativeLanguage: languageSettings.nativeLanguage,
+    notes,
+    disabledNotebookIds,
+    pageItems,
+  })
+  const [pendingSend, setPendingSend] = useState<{ text: string } | null>(null)
+  const retell = useRetell({
+    book,
+    format: 'pdf',
+    items: vocabulary.items,
+    selectedIds: vocabSend.selectedIds,
+    notes,
+    notebooks,
+    noteTypes,
+    onCreateNotebook,
+    onCreateNote,
+    onSaveNote,
+    showToast,
+    openNote,
+  })
+  // O "Translate" de um item da aba que não tem tradução: o popover abre ao lado
+  // do botão, sem depender da seleção do texto.
+  const [itemTranslate, setItemTranslate] = useState<{
+    item: VocabularyItem
+    anchor: PlacementAnchor
+  } | null>(null)
+  const itemPopoverRef = useRef<HTMLDivElement>(null)
+  // Marca no texto: as palavras e frases guardadas neste livro e nos outros da mesma
+  // língua. Os ranges de cada marca ficam num ref para o clique achar a palavra.
+  const marksEnabled = toolsOn && languageSettings.vocabMarks
+  const marks = useVocabularyMarks({ book, enabled: marksEnabled, bookItems: vocabulary.items })
+  const markEntriesRef = useRef<MarkEntry[]>([])
+  const removeVocabularyItems = useVocabularyRemoval({ vocabulary, showToast })
+  // O clique numa palavra marcada ("onde você guardou") e o "Translate here" dela.
+  const [savedWord, setSavedWord] = useState<{
+    itemIds: string[]
+    term: string
+    range: Range
+    anchor: PlacementAnchor
+  } | null>(null)
+  const savedWordRef = useRef<HTMLDivElement>(null)
+  const [hereTranslate, setHereTranslate] = useState<{
+    text: string
+    sentence: string
+    page: number
+    anchor: PlacementAnchor
+    vocabAnchor: VocabularyAnchor
+  } | null>(null)
+  const herePopoverRef = useRef<HTMLDivElement>(null)
+  // Onde está a seleção que o player lê (offsets no texto juntado da página), para
+  // a faixa cinza voltar depois de cada nova renderização da camada de texto.
+  const listenAnchorRef = useRef<PdfTextAnchor | null>(null)
+  const pageNumRef = useRef(pageNum)
+  pageNumRef.current = pageNum
   const renderTaskRef = useRef<RenderTask | null>(null)
   const textLayerTaskRef = useRef<TextLayer | null>(null)
   const prevPageRef = useRef<PDFPageProxy | null>(null)
@@ -552,6 +625,9 @@ export function Reader({
   // demanda (só no envio de mensagem) para não travar a navegação de páginas.
   // `null` cacheado = página sem texto extraível (PDF escaneado).
   const pageTextCacheRef = useRef<Map<number, string | null>>(new Map())
+  // Linhas de cada página (com a altura dela), de onde sai o texto limpo do
+  // Translate. Cache por página; zera com o documento.
+  const pageLinesCacheRef = useRef<Map<number, { lines: PdfLine[]; height: number }>>(new Map())
   // Refs do controlador de seleção manual. Nada disso vai em state — não
   // queremos re-render por arrasto. `isDraggingRef` é true entre o
   // `mousedown` na text layer e o `mouseup` correspondente. `anchorRef`
@@ -577,6 +653,8 @@ export function Reader({
   bookRef.current = book
   const onBookChangeRef = useRef(onBookChange)
   onBookChangeRef.current = onBookChange
+  const onBookLanguageChangeRef = useRef(onBookLanguageChange)
+  onBookLanguageChangeRef.current = onBookLanguageChange
   const onLoadErrorRef = useRef(onLoadError)
   onLoadErrorRef.current = onLoadError
 
@@ -603,6 +681,16 @@ export function Reader({
         setPageNum(clampPage(opened.lastPage, d.numPages))
         setDoc(d)
         setLoading(false)
+        // Primeira abertura de um livro sem língua verificada (importado antes
+        // desta feature): detecta pela amostra do texto, com o documento aberto.
+        if (opened.language === null) {
+          const language = await detectPdfLanguage(d)
+          if (cancelled) return
+          void storage
+            .setBookLanguage(opened.id, language)
+            .catch((err) => console.error('failed to save book language', err))
+          onBookLanguageChangeRef.current(language)
+        }
       } catch {
         if (!cancelled) {
           setError(
@@ -680,6 +768,7 @@ export function Reader({
   // Cache de texto por página é do documento atual; zera ao (re)carregar.
   useEffect(() => {
     pageTextCacheRef.current = new Map()
+    pageLinesCacheRef.current = new Map()
   }, [doc])
 
   useEffect(() => {
@@ -713,6 +802,42 @@ export function Reader({
       }
     },
     [doc],
+  )
+
+  // Texto limpo da página (linhas juntadas, hífen de quebra desfeito, e com
+  // `skipHeaders` sem cabeçalho, rodapé e número de página). O getPageText
+  // acima, do chat e da busca, não muda.
+  const getPageCleanText = useCallback(
+    async (n: number, skipHeaders: boolean): Promise<CleanPageResult> => {
+      if (!doc) return { text: '', skipped: [] }
+      let entry = pageLinesCacheRef.current.get(n)
+      if (!entry) {
+        try {
+          const page = await doc.getPage(n)
+          const content = await page.getTextContent()
+          const items: PdfTextItem[] = []
+          for (const item of content.items) {
+            if (!('str' in item)) continue
+            items.push({
+              str: item.str,
+              hasEOL: item.hasEOL,
+              y: item.transform[5],
+              height: item.height,
+            })
+          }
+          entry = { lines: pdfItemsToLines(items), height: page.getViewport({ scale: 1 }).height }
+          pageLinesCacheRef.current.set(n, entry)
+        } catch (err) {
+          console.error('failed to extract clean page text', err)
+          return { text: '', skipped: [] }
+        }
+      }
+      return cleanPdfPage(entry.lines, entry.height, {
+        skipHeaders,
+        language: book.language ?? '',
+      })
+    },
+    [doc, book.language],
   )
 
   // Indexação full-document em background: dispara quando a busca é
@@ -810,6 +935,8 @@ export function Reader({
         if (cancelled) return
 
         computeSearchMatchRectsRef.current()
+        applyListenMarkRef.current(pageNum)
+        applyVocabMarksRef.current(pageNum)
 
         // Instala os listeners do controlador de seleção manual. Limpa
         // qualquer estado de drag anterior cujos nodes podem ter sido
@@ -1212,30 +1339,123 @@ export function Reader({
     setSelection(null)
     setRemovalCandidate(null)
     setPageMatchRects([])
+    setSavedWord(null)
+    setHereTranslate(null)
   }, [pageNum, scale])
 
   useEffect(() => {
     function onResize() {
       setSelection(null)
       setRemovalCandidate(null)
+      setSavedWord(null)
+      setHereTranslate(null)
     }
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
+  // O Translate só vive com a seleção e com as ferramentas ligadas: fechar a
+  // seleção (clique fora, troca de página, zoom, resize) ou desligar as
+  // ferramentas (Settings, "Change" do popover) fecha o popover.
+  useEffect(() => {
+    if (translate && (!selection || !toolsOn)) setTranslate(null)
+  }, [translate, selection, toolsOn])
+
+  useEffect(() => {
+    if (!toolsOn) {
+      setItemTranslate(null)
+      setHereTranslate(null)
+    }
+  }, [toolsOn])
+
+  // A palavra marcada some com a marca (a chave "Mark in text", as ferramentas de
+  // língua) e quando a página rola por baixo dela.
+  const savedWordOpen = savedWord !== null || hereTranslate !== null
+  useEffect(() => {
+    if (!marksEnabled) setSavedWord(null)
+  }, [marksEnabled])
+  useEffect(() => {
+    const area = pageAreaRef.current
+    if (!savedWordOpen || !area) return
+    const close = () => {
+      setSavedWord(null)
+      setHereTranslate(null)
+    }
+    area.addEventListener('scroll', close, { passive: true })
+    return () => area.removeEventListener('scroll', close)
+  }, [savedWordOpen])
+
+  // A página rola por dentro da área: o popover acompanha o texto selecionado.
+  const translateOpen = translate !== null
+  useEffect(() => {
+    const area = pageAreaRef.current
+    if (!translateOpen || !area) return
+    const follow = () => setTranslate((t) => (t ? { ...t, anchor: rangeAnchor(t.range) } : t))
+    area.addEventListener('scroll', follow, { passive: true })
+    return () => area.removeEventListener('scroll', follow)
+  }, [translateOpen])
+
+  // Sem player aberto não há faixa cinza, e ao fechar o leitor ela sai do registro
+  // da janela (que é de todos os leitores).
+  useEffect(() => {
+    if (!player.open) {
+      listenAnchorRef.current = null
+      clearPageMarks('listen')
+    }
+  }, [player.open])
+  useEffect(() => () => clearPageMarks('listen'), [])
+
+  // Desligar as ferramentas de língua (Settings, "Change" do Translate) fecha o
+  // player junto.
+  useEffect(() => {
+    if (!toolsOn && player.open) player.close()
+  }, [toolsOn, player])
+
+  // Trocar de página com áudio de outra página: pausa e o player oferece "Back to
+  // p. N". Voltar à página não retoma sozinho.
+  useEffect(() => {
+    const source = player.state.source
+    if (!source || source.page === null) return
+    if (source.page !== pageNum) player.pause('away')
+    else if (player.state.awayFromPage !== null) player.clearAway()
+    // Só a troca de página dispara; o player lido é o do render dela.
+  }, [pageNum])
+
   // Atalhos do leitor (ignorando inputs/textarea/contenteditable): ←/→ trocam
   // de página, Esc fecha a toolbar de seleção e o popover do grifo, H grifa a
-  // seleção com a última cor. O handler é trocado a cada render (ref) para
-  // ver a seleção atual.
+  // seleção com a última cor, T traduz e V guarda a seleção no vocabulário. Com o
+  // player aberto: Espaço toca e pausa, R repete e Shift+←/→ pulam de frase (sem
+  // virar a página). L lê a seleção, ou a página.
+  // O handler é trocado a cada render (ref) para ver a seleção atual.
   const keyHandlerRef = useRef<(e: KeyboardEvent) => void>(() => {})
   keyHandlerRef.current = (e: KeyboardEvent) => {
-    const target = e.target as HTMLElement | null
-    if (
-      target &&
-      (target.tagName === 'INPUT' ||
-        target.tagName === 'TEXTAREA' ||
-        target.isContentEditable)
-    ) {
+    // Campo, <select> (o do menu do player, o do Translate) e modal ficam com as
+    // teclas deles, setas inclusive.
+    if (ownsKeyboard(e.target)) return
+    const plain = !e.ctrlKey && !e.metaKey && !e.altKey
+    if (plain && player.open) {
+      if (e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        e.preventDefault()
+        if (e.key === 'ArrowLeft') player.prev()
+        else player.next()
+        return
+      }
+      if (e.key === ' ') {
+        // Com o foco num botão, o Espaço também o acionaria: o preventDefault o impede.
+        e.preventDefault()
+        if (!e.repeat) player.toggle()
+        return
+      }
+      if (e.key === 'r' || e.key === 'R') {
+        e.preventDefault()
+        player.repeat()
+        return
+      }
+    }
+    if (plain && toolsOn && (e.key === 'l' || e.key === 'L')) {
+      e.preventDefault()
+      if (selection) handleListen()
+      else void handleListenPage()
       return
     }
     if (e.key === 'ArrowLeft') {
@@ -1243,10 +1463,35 @@ export function Reader({
     } else if (e.key === 'ArrowRight' && doc) {
       const total = doc.numPages
       setPageNum((p) => Math.min(total, p + 1))
+    } else if (e.key === 'Escape' && translate) {
+      // Fecha o popover e devolve a barra; o Esc seguinte limpa a seleção.
+      setTranslate(null)
     } else if (e.key === 'Escape' && (selection || removalCandidate)) {
       setSelection(null)
       setRemovalCandidate(null)
       window.getSelection()?.removeAllRanges()
+    } else if (
+      (e.key === 't' || e.key === 'T') &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.altKey &&
+      toolsOn &&
+      selection &&
+      !translate
+    ) {
+      e.preventDefault()
+      void handleTranslate()
+    } else if (
+      (e.key === 'v' || e.key === 'V') &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.altKey &&
+      toolsOn &&
+      selection &&
+      !translate
+    ) {
+      e.preventDefault()
+      void handleAddToVocabulary()
     } else if (
       (e.key === 'h' || e.key === 'H') &&
       !e.ctrlKey &&
@@ -1379,6 +1624,59 @@ export function Reader({
   const computeSearchMatchRectsRef = useRef(computeSearchMatchRects)
   computeSearchMatchRectsRef.current = computeSearchMatchRects
 
+  // Faixa cinza do trecho em leitura. O Range sai dos offsets guardados, porque a
+  // camada de texto é refeita a cada página e a cada zoom; só vale na página de
+  // origem do áudio.
+  function applyListenMark(page: number) {
+    const anchor = listenAnchorRef.current
+    const container = textLayerRef.current
+    if (!anchor || anchor.page !== page || !container) {
+      clearPageMarks('listen')
+      return
+    }
+    const { spanRanges } = buildJoinedPageText(getPageSpans(container))
+    const range = buildRangeFromOffsets(spanRanges, anchor.start, anchor.end)
+    if (range) setPageMarks('listen', [range])
+    else clearPageMarks('listen')
+  }
+  const applyListenMarkRef = useRef(applyListenMark)
+  applyListenMarkRef.current = applyListenMark
+
+  // Pontilhado das palavras guardadas na página: todas as ocorrências da forma
+  // guardada e da base, por palavra inteira, e as frases guardadas nesta página no
+  // lugar de origem. As palavras vêm antes das frases na lista (o clique vale a
+  // primeira que contém o ponto). Refeito a cada renderização da camada de texto.
+  function applyVocabMarks(page: number) {
+    const container = textLayerRef.current
+    if (!marksEnabled || !container) {
+      markEntriesRef.current = []
+      clearPageMarks('vocab')
+      return
+    }
+    const { text, spanRanges } = buildJoinedPageText(getPageSpans(container))
+    const entries: MarkEntry[] = []
+    for (const occurrence of findTermOccurrences(text, marks.terms)) {
+      const range = buildRangeFromOffsets(spanRanges, occurrence.start, occurrence.end)
+      if (range) entries.push({ range, itemIds: occurrence.itemIds })
+    }
+    for (const anchor of pdfSentenceAnchors(marks.items, book.id, page)) {
+      const range = buildRangeFromOffsets(spanRanges, anchor.start, anchor.end)
+      if (range) entries.push({ range, itemIds: [anchor.itemId] })
+    }
+    markEntriesRef.current = entries
+    if (entries.length > 0) setPageMarks('vocab', entries.map((entry) => entry.range))
+    else clearPageMarks('vocab')
+  }
+  const applyVocabMarksRef = useRef(applyVocabMarks)
+  applyVocabMarksRef.current = applyVocabMarks
+
+  // A lista de itens mudou (guardar, remover, a chave "Mark in text", as
+  // ferramentas de língua): refaz as marcas da página que está na tela.
+  useEffect(() => {
+    applyVocabMarksRef.current(pageNumRef.current)
+  }, [marksEnabled, marks.terms, marks.items])
+  useEffect(() => () => clearPageMarks('vocab'), [])
+
   // Recalcula os retângulos de destaque quando o usuário digita/abre/fecha a
   // busca sem trocar de página (a troca de página já é coberta pela chamada
   // via computeSearchMatchRectsRef dentro do effect de renderização).
@@ -1447,6 +1745,7 @@ export function Reader({
       if (!target) return
       if (toolbarRef.current && toolbarRef.current.contains(target)) return
       if (popoverRef.current && popoverRef.current.contains(target)) return
+      if (translatePopoverRef.current && translatePopoverRef.current.contains(target)) return
       if (highlightLayerRef.current && highlightLayerRef.current.contains(target)) return
       setSelection(null)
       setRemovalCandidate(null)
@@ -1498,6 +1797,14 @@ export function Reader({
     setSideOpen(true)
   }
 
+  // "Ask for feedback": o reconto vai ao chat com o professor ligado, e o chat o envia.
+  function askFeedback(retelling: string) {
+    turnTeacherOn()
+    setPendingSend({ text: buildFeedbackMessage(retelling) })
+    setSideTab('chat')
+    setSideOpen(true)
+  }
+
   // Alterna a coluna lateral: clicar na aba já ativa (com a coluna aberta)
   // fecha a coluna; clicar em outra aba troca e garante a coluna aberta.
   function selectSideTab(tab: SideTab) {
@@ -1523,6 +1830,335 @@ export function Reader({
     askAiAbout(selection.text, pageNum)
     setSelection(null)
     window.getSelection()?.removeAllRanges()
+  }
+
+  // ─── Translate ────────────────────────────────────────────────────────
+  // A seleção continua marcada: o popover guarda o texto (limpo: sem quebra de
+  // linha nem hífen de fim de linha), a frase de contexto achada no texto limpo
+  // da página e o Range, de onde sai o retângulo ancorado.
+  async function handleTranslate() {
+    if (!selection || translate) return
+    const sel = window.getSelection()
+    if (!sel || sel.rangeCount === 0) return
+    const range = sel.getRangeAt(0).cloneRange()
+    const page = pageNum
+    const language = book.language ?? ''
+    const text = cleanPdfSelectionText(selection.text, language)
+    const occurrence = occurrenceOfRange(range, text)
+    // Acima do limite não há chamada: nem a frase de contexto é preciso achar.
+    const sentence =
+      text.length > TRANSLATE_CHAR_LIMIT
+        ? text
+        : contextSentenceAt((await getPageCleanText(page, false)).text, text, language, occurrence)
+    setTranslate({ text, sentence, page, range, anchor: rangeAnchor(range) })
+    // Abrir o Translate pausa o áudio durante a consulta.
+    player.pause('translate')
+  }
+
+  // ─── Listen ───────────────────────────────────────────────────────────
+  // A seleção vira frases (texto limpo) e o trecho inteiro fica em cinza na
+  // página, mesmo depois de a seleção sumir.
+  function handleListen() {
+    if (!selection) return
+    const language = book.language ?? ''
+    const text = cleanPdfSelectionText(selection.text, language)
+    const sentences = splitSentences(text, language)
+    if (sentences.length === 0) return
+    const sel = window.getSelection()
+    const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0).cloneRange() : null
+    const container = textLayerRef.current
+    const offsets =
+      range && container ? rangeToJoinedOffsets(buildJoinedPageText(getPageSpans(container)).spanRanges, range) : null
+    const page = pageNum
+    listenAnchorRef.current = offsets ? { page, ...offsets } : null
+    player.play({
+      id: crypto.randomUUID(),
+      kind: 'selection',
+      originLabel: `Selection · ${pdfPositionLabel(page)}`,
+      endLabel: 'End of the selection',
+      sentences,
+      chars: sentences.reduce((total, sentence) => total + sentence.length, 0),
+      page,
+      backLabel: pdfPositionLabel(page),
+      notice: null,
+    })
+    applyListenMark(page)
+    setSelection(null)
+    window.getSelection()?.removeAllRanges()
+  }
+
+  // A página inteira, sem cabeçalho, rodapé e número de página (se o menu ⋯ do
+  // player mandar). Sem faixa cinza: a página toda é o trecho.
+  async function handleListenPage() {
+    if (!doc || pageHasNoText) return
+    const page = pageNum
+    const { text, skipped } = await getPageCleanText(page, getTtsSkipHeaders())
+    if (pageNumRef.current !== page) return
+    const sentences = splitSentences(text, book.language ?? '')
+    if (sentences.length === 0) {
+      showToast({ message: 'Nothing to read on this page.' })
+      return
+    }
+    listenAnchorRef.current = null
+    clearPageMarks('listen')
+    player.play({
+      id: crypto.randomUUID(),
+      kind: 'page',
+      originLabel: `Page ${page}`,
+      endLabel: `End of page ${page}`,
+      sentences,
+      chars: sentences.reduce((total, sentence) => total + sentence.length, 0),
+      page,
+      backLabel: pdfPositionLabel(page),
+      notice: skippedNotice(skipped),
+    })
+  }
+
+  // Fala o termo ou o trecho sem mexer no que está no player.
+  function speakOnce(text: string) {
+    player.speakOnce(text, book.language ?? '').catch((e: unknown) => {
+      showToast({ message: isTtsError(e) ? ttsErrorSentence(e) : "Couldn't play the audio.", tone: 'error' })
+    })
+  }
+
+  // Listen do popover do Translate: o termo ou o trecho, sem mexer no player. Acima
+  // do limite do Translate é o trecho da seleção, que passa pelo player (e pela
+  // confirmação de trecho longo).
+  function handlePopoverListen(text: string) {
+    if (text.length > TRANSLATE_CHAR_LIMIT) {
+      handleListen()
+      return
+    }
+    speakOnce(text)
+  }
+
+  function changeBookLanguage(code: string) {
+    void storage
+      .setBookLanguage(book.id, code)
+      .catch((err) => console.error('failed to save book language', err))
+    onBookLanguageChange(code)
+  }
+
+  // ─── Vocabulário ──────────────────────────────────────────────────────
+  // O lugar da seleção: offsets no texto juntado da página (a camada de texto é
+  // refeita a cada página e zoom) e os mesmos retângulos que o grifo guarda. Sem
+  // offsets (seleção que vazou da camada de texto) o item aponta só a página.
+  function vocabularyAnchor(
+    page: number,
+    range: Range,
+    rects: BookHighlightRect[],
+  ): VocabularyAnchor {
+    const container = textLayerRef.current
+    const offsets = container
+      ? rangeToJoinedOffsets(buildJoinedPageText(getPageSpans(container)).spanRanges, range)
+      : null
+    return { format: 'pdf', page, start: offsets?.start ?? 0, end: offsets?.end ?? 0, rects }
+  }
+
+  // Qual ocorrência do termo (a 1ª, a 2ª…) o trecho é na página, contada no texto
+  // juntado da camada de texto: com o termo repetido, é ela que dá a frase certa.
+  function occurrenceOfRange(range: Range, term: string): number {
+    const container = textLayerRef.current
+    if (!container) return 0
+    const { text, spanRanges } = buildJoinedPageText(getPageSpans(container))
+    const offsets = rangeToJoinedOffsets(spanRanges, range)
+    return offsets ? countTermBefore(text, term, offsets.start) : 0
+  }
+
+  function vocabularyDraft(
+    text: string,
+    sentence: string,
+    page: number,
+    anchor: VocabularyAnchor,
+    translation: Translation | null,
+  ): VocabularyDraft {
+    return {
+      text,
+      sentence,
+      kind: classifySelection(text, sentence),
+      ...translationFields(translation),
+      page,
+      positionLabel: pdfPositionLabel(page),
+      anchor,
+    }
+  }
+
+  async function saveToVocabulary(draft: VocabularyDraft) {
+    try {
+      const result = await vocabulary.add(draft)
+      showToast({ message: result === 'added' ? 'Added to vocabulary' : 'Already in your vocabulary' })
+    } catch (err) {
+      console.error('failed to save the vocabulary item', err)
+      showToast({ message: "Couldn't save to vocabulary. Try again.", tone: 'error' })
+    }
+  }
+
+  // "Add to vocabulary" da barra (e a tecla V): o item entra sem tradução, sem
+  // chamar a IA. O texto e a frase de origem são os do Translate.
+  async function handleAddToVocabulary() {
+    if (!selection) return
+    const sel = window.getSelection()
+    if (!sel || sel.rangeCount === 0) return
+    const range = sel.getRangeAt(0).cloneRange()
+    const page = pageNum
+    const language = book.language ?? ''
+    const text = cleanPdfSelectionText(selection.text, language)
+    const anchor = vocabularyAnchor(page, range, selection.rects)
+    const occurrence = occurrenceOfRange(range, text)
+    setSelection(null)
+    sel.removeAllRanges()
+    const sentence =
+      text.length > TRANSLATE_CHAR_LIMIT
+        ? text
+        : contextSentenceAt((await getPageCleanText(page, false)).text, text, language, occurrence)
+    await saveToVocabulary(vocabularyDraft(text, sentence, page, anchor, null))
+  }
+
+  // "Add to vocabulary" do popover do Translate: o item entra com o sentido que
+  // estava na tela.
+  async function handleAddFromPopover(translation: Translation | null) {
+    if (!translate || !selection) return
+    const { text, sentence, page, range } = translate
+    const anchor = vocabularyAnchor(page, range, selection.rects)
+    setTranslate(null)
+    setSelection(null)
+    window.getSelection()?.removeAllRanges()
+    await saveToVocabulary(vocabularyDraft(text, sentence, page, anchor, translation))
+  }
+
+  function openVocabularyItem(item: VocabularyItem) {
+    if (!doc || item.anchor.format !== 'pdf' || item.page < 1 || item.page > doc.numPages) {
+      showToast({ message: "This item's place in the book wasn't found.", tone: 'error' })
+      return
+    }
+    jumpToPage(item.page)
+  }
+
+  // Os retângulos de um trecho, de 0 a 1 pela caixa da camada de texto: o que o
+  // grifo e o vocabulário guardam.
+  function pdfRangeRects(range: Range): BookHighlightRect[] {
+    const textRect = textLayerRef.current?.getBoundingClientRect()
+    if (!textRect || textRect.width === 0 || textRect.height === 0) return []
+    const rects: BookHighlightRect[] = []
+    for (const r of Array.from(range.getClientRects())) {
+      if (r.width === 0 || r.height === 0) continue
+      rects.push({
+        x: (r.left - textRect.left) / textRect.width,
+        y: (r.top - textRect.top) / textRect.height,
+        w: r.width / textRect.width,
+        h: r.height / textRect.height,
+      })
+    }
+    return rects
+  }
+
+  // ─── Palavra marcada no texto ─────────────────────────────────────────
+  function openSavedWord(entry: MarkEntry) {
+    const term = entry.range.toString().replace(/\s+/g, ' ').trim()
+    if (!term) return
+    setSelection(null)
+    setRemovalCandidate(null)
+    setSavedWord({ itemIds: entry.itemIds, term, range: entry.range, anchor: rangeAnchor(entry.range) })
+  }
+
+  // Os itens que a marca clicada mostra, na lista viva (remover um tira da lista).
+  const savedWordItems = useMemo(() => {
+    if (!savedWord) return []
+    const wanted = new Set(savedWord.itemIds)
+    return marks.items.filter((item) => wanted.has(item.id))
+  }, [savedWord, marks.items])
+  useEffect(() => {
+    if (savedWord && savedWordItems.length === 0) setSavedWord(null)
+  }, [savedWord, savedWordItems.length])
+
+  // A palavra clicada com a frase de AGORA, onde o usuário a achou: a frase é achada
+  // no texto limpo da página, e o lugar é o do trecho marcado.
+  async function savedWordContext(): Promise<{
+    term: string
+    sentence: string
+    page: number
+    anchor: PlacementAnchor
+    vocabAnchor: VocabularyAnchor
+  } | null> {
+    if (!savedWord) return null
+    const { term, range, anchor } = savedWord
+    const page = pageNum
+    const vocabAnchor = vocabularyAnchor(page, range, pdfRangeRects(range))
+    const occurrence = occurrenceOfRange(range, term)
+    const sentence = contextSentenceAt(
+      (await getPageCleanText(page, false)).text,
+      term,
+      book.language ?? '',
+      occurrence,
+    )
+    return { term, sentence, page, anchor, vocabAnchor }
+  }
+
+  async function handleSavedWordTranslateHere() {
+    const context = await savedWordContext()
+    if (!context) return
+    setSavedWord(null)
+    setHereTranslate({
+      text: context.term,
+      sentence: context.sentence,
+      page: context.page,
+      anchor: context.anchor,
+      vocabAnchor: context.vocabAnchor,
+    })
+    // Abrir o Translate pausa o áudio durante a consulta.
+    player.pause('translate')
+  }
+
+  // "Add this sentence": o mesmo termo, com a frase em que ele está agora; a regra
+  // de duplicata vale (o mesmo texto na mesma frase não entra duas vezes).
+  async function handleSavedWordAddSentence() {
+    const context = await savedWordContext()
+    if (!context) return
+    setSavedWord(null)
+    await saveToVocabulary(
+      vocabularyDraft(context.term, context.sentence, context.page, context.vocabAnchor, null),
+    )
+  }
+
+  // "Find in book": a busca do livro com a palavra preenchida.
+  function handleSavedWordFind() {
+    if (!savedWord) return
+    setSearchQuery(savedWord.term)
+    setSearchOpen(true)
+    setSavedWord(null)
+    searchInputRef.current?.focus()
+  }
+
+  // Remove só o que foi guardado neste livro; o que veio de outro livro fica.
+  function handleSavedWordRemove() {
+    const own = savedWordItems.filter((item) => item.bookId === book.id)
+    setSavedWord(null)
+    void removeVocabularyItems(own)
+  }
+
+  // O sentido do popover vira o do item (que estava sem tradução).
+  function saveItemTranslation(item: VocabularyItem, translation: Translation | null) {
+    const current = vocabulary.items.find((i) => i.id === item.id)
+    setItemTranslate(null)
+    if (!current || !translation) return
+    const { sense, baseForm } = translationFields(translation)
+    vocabulary
+      .update({ ...current, sense, baseForm: baseForm ?? current.baseForm })
+      .then(() => showToast({ message: 'Translation saved' }))
+      .catch((err) => {
+        console.error('failed to save the translation', err)
+        showToast({ message: "Couldn't save the translation. Try again.", tone: 'error' })
+      })
+  }
+
+  // "Listen to list": a frase de origem dos itens marcados (ou dos novos), no
+  // mesmo player, sem faixa cinza na página.
+  function handleListenToList() {
+    const source = buildListenSource(vocabSend.listenItems, book.language ?? '')
+    if (!source) return
+    listenAnchorRef.current = null
+    clearPageMarks('listen')
+    player.play(source)
   }
 
   // ─── Clicar em grifo → popover de remoção ─────────────────────────────
@@ -1568,8 +2204,19 @@ export function Reader({
     const wrap = pageWrapRef.current
     const textContainer = textLayerRef.current
     if (!wrap || !textContainer) return
+    // O clique num popover ou no player (portal, que borbulha até aqui pela árvore
+    // do React) não é um clique na página: nem grifo por baixo, nem palavra marcada.
+    if (!wrap.contains(e.target as Node)) return
     const hit = findHighlightAtPoint(e.clientX, e.clientY)
-    if (!hit) return
+    if (!hit) {
+      // Fora de um grifo (o grifo tem prioridade): uma palavra ou frase guardada
+      // abre o "onde você guardou".
+      if (marksEnabled) {
+        const entry = markEntryAtPoint(markEntriesRef.current, e.clientX, e.clientY)
+        if (entry) openSavedWord(entry)
+      }
+      return
+    }
     const wrapRect = wrap.getBoundingClientRect()
     const textRect = textContainer.getBoundingClientRect()
     const anchor: PagePoint = {
@@ -1641,7 +2288,9 @@ export function Reader({
     )
     el.style.left = `${left}px`
     el.style.top = `${top}px`
-  }, [selection])
+    // A barra é remontada quando o Translate fecha, e ganha a linha de língua
+    // quando as ferramentas ligam: mede de novo nos dois casos.
+  }, [selection, translateOpen, toolsOn])
 
   function popoverStyle(): React.CSSProperties {
     if (!removalCandidate) return { display: 'none' }
@@ -1651,6 +2300,12 @@ export function Reader({
       top: `${Math.max(8, anchor.y + anchor.h + 8)}px`,
     }
   }
+
+  // A aba Vocabulary só existe com as ferramentas de língua (e com elas a coluna
+  // é mais larga): sem elas, a aba aberta volta ao sumário.
+  const activeSideTab: SidePanelTab =
+    sidePanelTab === 'vocabulary' && !toolsOn ? 'summary' : sidePanelTab
+  const sidePanelWidth = toolsOn ? SIDE_PANEL_WIDTH_WITH_TOOLS : SIDE_PANEL_WIDTH
 
   if (error) {
     return (
@@ -1674,7 +2329,11 @@ export function Reader({
   }
 
   return (
-    <div className={styles.reader}>
+    <div
+      className={styles.reader}
+      // O aviso (toast) sobe com o mini-player: os dois usam a faixa de baixo.
+      style={player.open ? ({ '--reader-toast-offset': `${playerHeight + 12}px` } as React.CSSProperties) : undefined}
+    >
       <div className={styles.toolbar}>
         <button type="button" className={styles.backButton} onClick={onBack}>
           <ArrowLeft size={13} aria-hidden />
@@ -1791,6 +2450,24 @@ export function Reader({
           </div>
         )}
 
+        {toolsOn && (
+          <button
+            type="button"
+            className={`${styles.highlightsToggle} ${mincerRecording ? styles.listenRecording : ''}`}
+            onClick={(e) => {
+              // Sem o foco no botão, o Espaço do player não o aciona de novo.
+              e.currentTarget.blur()
+              void handleListenPage()
+            }}
+            disabled={!doc || pageHasNoText}
+            aria-label="Listen to page"
+            title={mincerRecording ? 'Mincer is recording' : 'Listen to the page (L)'}
+          >
+            <SpeakerHigh size={14} aria-hidden />
+            Listen to page
+          </button>
+        )}
+
         {jumpBackPage !== null && (
           <button
             type="button"
@@ -1873,8 +2550,9 @@ export function Reader({
 
       {doc && pageHasNoText && (
         <p className={styles.noTextBanner} role="status">
-          This page has no selectable text (scanned PDF). Highlights, search and page
-          context for the AI don&apos;t work here.
+          This page has no selectable text (scanned PDF). Highlights, search
+          {toolsOn ? ', translation, audio' : ''} and page context for the AI don&apos;t
+          work here.
         </p>
       )}
 
@@ -1884,7 +2562,7 @@ export function Reader({
             sidePanelCollapsed ? styles.sidePanelCollapsed : ''
           }`}
           style={{
-            width: sidePanelCollapsed ? SIDE_PANEL_COLLAPSED_WIDTH : SIDE_PANEL_WIDTH,
+            width: sidePanelCollapsed ? SIDE_PANEL_COLLAPSED_WIDTH : sidePanelWidth,
           }}
           aria-label="Book navigation"
         >
@@ -1926,10 +2604,26 @@ export function Reader({
                   <span className={styles.sidePanelRailBadge}>{highlights.length}</span>
                 )}
               </button>
+              {toolsOn && (
+                <button
+                  type="button"
+                  className={styles.sidePanelRailButton}
+                  onClick={() => {
+                    setSidePanelTab('vocabulary')
+                    setSidePanelCollapsed(false)
+                  }}
+                  aria-label="Show vocabulary"
+                  title="Vocabulary"
+                >
+                  <BookmarkSimple size={16} aria-hidden />
+                </button>
+              )}
             </div>
           ) : (
             <>
-              <div className={styles.sidePanelTabs}>
+              <div
+                className={`${styles.sidePanelTabs} ${toolsOn ? styles.sidePanelTabsDense : ''}`}
+              >
                 <button
                   type="button"
                   className={styles.sidePanelCollapseBtn}
@@ -1942,7 +2636,7 @@ export function Reader({
                 <button
                   type="button"
                   className={`${styles.sidePanelTab} ${
-                    sidePanelTab === 'summary' ? styles.sidePanelTabActive : ''
+                    activeSideTab === 'summary' ? styles.sidePanelTabActive : ''
                   }`}
                   onClick={() => setSidePanelTab('summary')}
                 >
@@ -1951,7 +2645,7 @@ export function Reader({
                 <button
                   type="button"
                   className={`${styles.sidePanelTab} ${
-                    sidePanelTab === 'highlights' ? styles.sidePanelTabActive : ''
+                    activeSideTab === 'highlights' ? styles.sidePanelTabActive : ''
                   }`}
                   onClick={() => setSidePanelTab('highlights')}
                 >
@@ -1960,9 +2654,20 @@ export function Reader({
                     <span className={styles.sidePanelTabBadge}>{highlights.length}</span>
                   )}
                 </button>
+                {toolsOn && (
+                  <button
+                    type="button"
+                    className={`${styles.sidePanelTab} ${
+                      activeSideTab === 'vocabulary' ? styles.sidePanelTabActive : ''
+                    }`}
+                    onClick={() => setSidePanelTab('vocabulary')}
+                  >
+                    Vocabulary
+                  </button>
+                )}
               </div>
 
-              {sidePanelTab === 'summary' ? (
+              {activeSideTab === 'summary' ? (
                 <div className={styles.summaryPanel}>
                   {outline === undefined ? (
                     <p className={styles.highlightsPanelEmpty}>Loading…</p>
@@ -1974,6 +2679,33 @@ export function Reader({
                     <OutlineList items={outline} depth={0} onNavigate={jumpToPage} />
                   )}
                 </div>
+              ) : activeSideTab === 'vocabulary' ? (
+                <VocabularyTab
+                  items={vocabulary.items}
+                  hideSenses={languageSettings.vocabHideSenses}
+                  onToggleHideSenses={() => setVocabHideSenses(!languageSettings.vocabHideSenses)}
+                  marksOn={languageSettings.vocabMarks}
+                  onToggleMarks={() => setVocabMarks(!languageSettings.vocabMarks)}
+                  selectedIds={vocabSend.selectedIds}
+                  onToggleSelected={vocabSend.toggleSelected}
+                  onOpenItem={openVocabularyItem}
+                  onListenItem={(item) => speakOnce(item.sentence)}
+                  onTranslateItem={(item, anchor) => {
+                    setItemTranslate({ item, anchor })
+                    // Abrir o Translate pausa o áudio durante a consulta.
+                    player.pause('translate')
+                  }}
+                  onRemoveItem={(item) => void removeVocabularyItems([item])}
+                  onOpenSent={vocabSend.openSent}
+                  sendLabel={vocabSend.sendLabel}
+                  canSend={vocabSend.canSend}
+                  onSend={vocabSend.send}
+                  destinationLabel={vocabSend.destinationLabel}
+                  onChangeDestination={vocabSend.openChange}
+                  onListenToList={handleListenToList}
+                  canRetell={retell.canRetell}
+                  onRetell={retell.retell}
+                />
               ) : (
                 <>
                   {(orderedHighlights.length > HIGHLIGHT_SEARCH_MIN || textFilter !== '') && (
@@ -2150,12 +2882,36 @@ export function Reader({
                   })}
               </div>
               <div ref={textLayerRef} className={styles.textLayer} />
-              {selection && (
+              {player.open && (
+                // Margem de rolagem embaixo da página, para a última linha subir acima
+                // do mini-player. Absoluto e fora do fluxo: não muda o tamanho da área
+                // (base do "Fit page") nem a posição da página.
+                <div
+                  className={styles.playerSpacer}
+                  style={{ height: playerHeight + 32 }}
+                  aria-hidden="true"
+                />
+              )}
+              {selection && !translate && (
                 <div
                   ref={toolbarRef}
-                  className={styles.highlightToolbar}
+                  className={`${styles.highlightToolbar} ${
+                    toolsOn ? styles.highlightToolbarStacked : ''
+                  }`}
                   onMouseDown={(e) => e.stopPropagation()}
                 >
+                  {toolsOn && (
+                    <LanguageBar
+                      onTranslate={() => void handleTranslate()}
+                      onListen={handleListen}
+                      onAddToVocabulary={() => void handleAddToVocabulary()}
+                    />
+                  )}
+                  <div
+                    className={
+                      toolsOn ? styles.highlightToolbarRow : styles.highlightToolbarContents
+                    }
+                  >
                   {HIGHLIGHT_COLORS.map((c) => (
                     <button
                       key={c}
@@ -2195,7 +2951,32 @@ export function Reader({
                   >
                     Ask AI
                   </button>
+                  </div>
                 </div>
+              )}
+              {translate && selection && toolsOn && (
+                <TranslatePopover
+                  open
+                  rootRef={translatePopoverRef}
+                  anchor={translate.anchor}
+                  text={translate.text}
+                  sentence={translate.sentence}
+                  positionLabel={pdfPositionLabel(translate.page)}
+                  sourceLanguage={book.language ?? ''}
+                  targetLanguage={languageSettings.nativeLanguage}
+                  model={languageSettings.translateModel}
+                  onListen={handlePopoverListen}
+                  onAddToVocabulary={(t) => void handleAddFromPopover(t)}
+                  onAddToNote={handleAddToNote}
+                  onAskAi={handleAskAi}
+                  onChangeBookLanguage={changeBookLanguage}
+                  onChangeTargetLanguage={setNativeLanguage}
+                  onOpenSettings={() => {
+                    setTranslate(null)
+                    onOpenSettingsSection('openrouter')
+                  }}
+                  onClose={() => setTranslate(null)}
+                />
               )}
               {removalCandidate && (
                 <div
@@ -2298,6 +3079,19 @@ export function Reader({
               </button>
             </>
           )}
+          {player.open && columnBox && (
+            <MiniPlayer
+              player={player}
+              column={columnBox}
+              models={catalog.models}
+              modelsLoading={catalog.loading}
+              bookId={book.id}
+              language={book.language ?? ''}
+              onBackToPage={goToPage}
+              onOpenSettingsSection={onOpenSettingsSection}
+              onHeightChange={setPlayerHeight}
+            />
+          )}
         </div>
 
         {/* SEMPRE montados (fora do ternário de loading): fechar o toggle só
@@ -2324,6 +3118,9 @@ export function Reader({
           onOpenNote={openNote}
           showToast={showToast}
           onOpenSettings={onOpenSettings}
+          teacher={teacher}
+          pendingSend={pendingSend}
+          onPendingSendConsumed={() => setPendingSend(null)}
         />
         <ReaderNotesPanel
           book={book}
@@ -2334,10 +3131,106 @@ export function Reader({
           onCreateNote={onCreateNote}
           onSaveNote={onSaveNote}
           linkVersion={linkVersion}
+          viewRequest={viewRequest}
           open={sideOpen && sideTab === 'notes'}
           onClose={() => setSideOpen(false)}
+          onAskFeedback={toolsOn ? askFeedback : undefined}
+          showToast={showToast}
         />
       </div>
+
+      {itemTranslate && toolsOn && (
+        <TranslatePopover
+          open
+          savedItem
+          rootRef={itemPopoverRef}
+          anchor={itemTranslate.anchor}
+          text={itemTranslate.item.text}
+          sentence={itemTranslate.item.sentence}
+          positionLabel={itemTranslate.item.positionLabel}
+          sourceLanguage={book.language ?? ''}
+          targetLanguage={languageSettings.nativeLanguage}
+          model={languageSettings.translateModel}
+          onListen={speakOnce}
+          onAddToVocabulary={(t) => saveItemTranslation(itemTranslate.item, t)}
+          onAddToNote={() => {
+            const { item } = itemTranslate
+            setItemTranslate(null)
+            addQuoteToNote(item.text, item.page, item.positionLabel)
+          }}
+          onAskAi={() => {
+            const { item } = itemTranslate
+            setItemTranslate(null)
+            askAiAbout(item.text, item.page)
+          }}
+          onChangeBookLanguage={changeBookLanguage}
+          onChangeTargetLanguage={setNativeLanguage}
+          onOpenSettings={() => {
+            setItemTranslate(null)
+            onOpenSettingsSection('openrouter')
+          }}
+          onClose={() => setItemTranslate(null)}
+        />
+      )}
+
+      {savedWord && marksEnabled && (
+        <SavedWordPopover
+          rootRef={savedWordRef}
+          anchor={savedWord.anchor}
+          term={savedWord.term}
+          items={savedWordItems}
+          bookId={book.id}
+          bookTitles={marks.titles}
+          onListen={speakOnce}
+          onTranslateHere={() => void handleSavedWordTranslateHere()}
+          onAddSentence={() => void handleSavedWordAddSentence()}
+          onFind={handleSavedWordFind}
+          onRemove={handleSavedWordRemove}
+          onClose={() => setSavedWord(null)}
+        />
+      )}
+
+      {hereTranslate && toolsOn && (
+        <TranslatePopover
+          open
+          standalone
+          rootRef={herePopoverRef}
+          anchor={hereTranslate.anchor}
+          text={hereTranslate.text}
+          sentence={hereTranslate.sentence}
+          positionLabel={pdfPositionLabel(hereTranslate.page)}
+          sourceLanguage={book.language ?? ''}
+          targetLanguage={languageSettings.nativeLanguage}
+          model={languageSettings.translateModel}
+          onListen={speakOnce}
+          onAddToVocabulary={(t) => {
+            const here = hereTranslate
+            setHereTranslate(null)
+            void saveToVocabulary(vocabularyDraft(here.text, here.sentence, here.page, here.vocabAnchor, t))
+          }}
+          onAddToNote={() => {
+            const here = hereTranslate
+            setHereTranslate(null)
+            addQuoteToNote(here.text, here.page, pdfPositionLabel(here.page))
+          }}
+          onAskAi={() => {
+            const here = hereTranslate
+            setHereTranslate(null)
+            askAiAbout(here.text, here.page)
+          }}
+          onChangeBookLanguage={changeBookLanguage}
+          onChangeTargetLanguage={setNativeLanguage}
+          onOpenSettings={() => {
+            setHereTranslate(null)
+            onOpenSettingsSection('openrouter')
+          }}
+          onClose={() => setHereTranslate(null)}
+        />
+      )}
+
+      {vocabSend.modalProps && <SendVocabularyModal {...vocabSend.modalProps} />}
+
+      {retell.modal}
 
       {quoteModal && (
         <QuoteToNoteModal

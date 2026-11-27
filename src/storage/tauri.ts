@@ -25,12 +25,16 @@ import type {
   TaskViewConfig,
   Tracker,
   TrackerMark,
+  VocabularyItem,
+  VocabularyKind,
 } from '../types'
 import { BUILTIN_STATUS_DEFS, TASK_COLOR_PALETTE } from '../lib/tasks'
 import { TODOS_DEFAULT_TEMPLATE, TODOS_TYPE_ID } from '../lib/noteTypes'
 import { parseBoardConfig } from '../lib/noteBoard'
 import { parseLogConfig } from '../lib/noteLog'
 import { CALENDAR_NOTEBOOK_ID, parseCalendarTitle } from '../lib/calendar'
+import { baseLanguage } from '../lib/language'
+import { parseVocabularyAnchor } from '../lib/vocabulary'
 import type { DailyCleanupResult, StorageAdapter } from './index'
 
 const DB_URL = 'sqlite:monet.db'
@@ -116,6 +120,8 @@ interface BookRow {
   format: string | null
   cfi: string | null
   locations_json: string | null
+  // Coluna posterior (BOOKS_EXTRA_COLUMNS). Ausente/NULL = nunca verificada.
+  language: string | null
 }
 
 interface AiResponseRow {
@@ -274,6 +280,7 @@ function rowToBook(r: BookRow): Book {
     addedAt: r.added_at,
     lastOpenedAt: r.last_opened_at,
     zoom: clampZoom(r.zoom),
+    language: r.language ?? null,
   }
   if (r.format === 'epub') {
     return {
@@ -353,6 +360,53 @@ function rowToHighlight(r: BookHighlightRow): BookHighlight {
     rects: parseHighlightRects(r.rects_json),
     cfi: r.cfi ?? null,
     createdAt: r.created_at,
+  }
+}
+
+interface VocabularyRow {
+  id: string
+  book_id: string
+  text: string
+  kind: string
+  sentence: string
+  sense: string | null
+  base_form: string | null
+  language: string
+  page: number
+  position_label: string
+  anchor_json: string
+  created_at: string
+  sent_at: string | null
+  sent_notebook_id: string | null
+  sent_note_id: string | null
+}
+
+// null quando a âncora não lê: o item sem lugar no livro é ignorado (e
+// registrado), para uma linha ruim não derrubar a lista inteira.
+function rowToVocabularyItem(r: VocabularyRow): VocabularyItem | null {
+  const anchor = parseVocabularyAnchor(r.anchor_json)
+  if (!anchor) {
+    console.error('vocabulary item ignored: unreadable anchor', r.id)
+    return null
+  }
+  const kind: VocabularyKind =
+    r.kind === 'expression' || r.kind === 'sentence' ? r.kind : 'word'
+  return {
+    id: r.id,
+    bookId: r.book_id,
+    text: r.text,
+    kind,
+    sentence: r.sentence,
+    sense: r.sense ?? null,
+    baseForm: r.base_form ?? null,
+    language: r.language,
+    page: r.page,
+    positionLabel: r.position_label,
+    anchor,
+    createdAt: r.created_at,
+    sentAt: r.sent_at ?? null,
+    sentNotebookId: r.sent_notebook_id ?? null,
+    sentNoteId: r.sent_note_id ?? null,
   }
 }
 
@@ -623,9 +677,15 @@ const NOTE_TYPES_EXTRA_COLUMNS = [
   { name: 'log', ddl: 'log TEXT' },
 ]
 
+// Colunas de books posteriores à v16. `language` = língua base do livro (ver
+// Book.language); NULL = nunca verificada.
+const BOOKS_EXTRA_COLUMNS = [{ name: 'language', ddl: 'language TEXT' }]
+
 // Listas explícitas das leituras (iguais às interfaces *Row), não `*`: ver o
 // comentário do getNoteTypes. Incluem as colunas dos *_EXTRA_COLUMNS, então o
 // ensure da tabela roda antes de cada leitura.
+const BOOK_COLUMNS =
+  'id, title, author, file_path, total_pages, last_page, added_at, last_opened_at, zoom, format, cfi, locations_json, language'
 const NOTE_COLUMNS =
   'id, notebook_id, subject_id, title, content, tags, date, created_at, updated_at, type_id, properties, archived_at'
 const NOTEBOOK_COLUMNS = 'id, name, created_at, updated_at, color'
@@ -635,6 +695,8 @@ const METADATA_DEF_COLUMNS = 'id, name, type, sort_order, created_at, scope, not
 const TRACKER_COLUMNS =
   'id, name, weekly_target, color, icon, sort_order, linked_type_id, archived_at, created_at, updated_at'
 const TRACKER_MARK_COLUMNS = 'tracker_id, day, created_at'
+const VOCABULARY_COLUMNS =
+  'id, book_id, text, kind, sentence, sense, base_form, language, page, position_label, anchor_json, created_at, sent_at, sent_notebook_id, sent_note_id'
 
 // Adiciona as colunas que faltam (PRAGMA table_info). Outra janela (main/keep)
 // pode ter adicionado a coluna entre o PRAGMA e o ALTER: "duplicate column
@@ -720,9 +782,11 @@ export class TauriStorage implements StorageAdapter {
   private tasksTablesReady: Promise<void> | null = null
   private notebookColorReady: Promise<void> | null = null
   private notesColumnsReady: Promise<void> | null = null
+  private booksColumnsReady: Promise<void> | null = null
   private noteTypesTableReady: Promise<void> | null = null
   private trackersTablesReady: Promise<void> | null = null
   private radarStateReady: Promise<void> | null = null
+  private vocabularyTableReady: Promise<void> | null = null
   // Fila das DDLs idempotentes (ensure*): uma por vez nesta janela, para não
   // disputarem entre si o lock de escrita do monet.db no cold start (que já
   // é disputado com as outras janelas e com o scan do Rust).
@@ -1235,6 +1299,20 @@ export class TauriStorage implements StorageAdapter {
     return this.notesColumnsReady
   }
 
+  // `books.language`, no padrão do ensureNotesColumns: roda antes de toda
+  // leitura e escrita de books (lista explícita BOOK_COLUMNS). Sem migration:
+  // elas não rodam no DB de produção.
+  private ensureBooksColumns(db: Database): Promise<void> {
+    if (!this.booksColumnsReady) {
+      const p = this.serialDdl(() => addMissingColumns(db, 'books', BOOKS_EXTRA_COLUMNS))
+      this.booksColumnsReady = p
+      p.catch(() => {
+        if (this.booksColumnsReady === p) this.booksColumnsReady = null
+      })
+    }
+    return this.booksColumnsReady
+  }
+
   private ensureNoteTypesTable(db: Database): Promise<void> {
     if (!this.noteTypesTableReady) {
       const p = this.serialDdl(async () => {
@@ -1302,6 +1380,46 @@ export class TauriStorage implements StorageAdapter {
       })
     }
     return this.trackersTablesReady
+  }
+
+  // Vocabulário por livro: tabela só do frontend, criada aqui (sem migration),
+  // no padrão do ensureTrackersTables. Memoizado; se falhar, zera para tentar
+  // de novo na próxima chamada.
+  private ensureVocabularyTable(db: Database): Promise<void> {
+    if (!this.vocabularyTableReady) {
+      const p = this.serialDdl(async () => {
+        await db.execute(
+          `CREATE TABLE IF NOT EXISTS book_vocabulary (
+            id TEXT PRIMARY KEY,
+            book_id TEXT NOT NULL,
+            text TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            sentence TEXT NOT NULL,
+            sense TEXT,
+            base_form TEXT,
+            language TEXT NOT NULL,
+            page INTEGER NOT NULL,
+            position_label TEXT NOT NULL,
+            anchor_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            sent_at TEXT,
+            sent_notebook_id TEXT,
+            sent_note_id TEXT
+          )`
+        )
+        await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_book_vocabulary_book ON book_vocabulary(book_id)'
+        )
+        await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_book_vocabulary_language ON book_vocabulary(language)'
+        )
+      })
+      this.vocabularyTableReady = p
+      p.catch(() => {
+        if (this.vocabularyTableReady === p) this.vocabularyTableReady = null
+      })
+    }
+    return this.vocabularyTableReady
   }
 
   // Última consulta do Radar por escopo: tabela só do frontend, criada aqui
@@ -1780,21 +1898,27 @@ export class TauriStorage implements StorageAdapter {
 
   async getBooks(): Promise<Book[]> {
     const db = await this.db()
+    await this.ensureBooksColumns(db)
     const rows = await db.select<BookRow[]>(
-      'SELECT * FROM books ORDER BY added_at DESC'
+      `SELECT ${BOOK_COLUMNS} FROM books ORDER BY added_at DESC`
     )
     return rows.map(rowToBook)
   }
 
   async saveBook(b: Book): Promise<void> {
     const db = await this.db()
+    await this.ensureBooksColumns(db)
     // COALESCE só no `locations_json`: o leitor de EPUB chama saveBook a cada
     // troca de posição e nem sempre carrega o cache de locations junto — sem
     // ele, cada movimento apagaria o cache. O `cfi` continua sobrescrevendo
     // normalmente; ele É a posição que está sendo salva.
+    //
+    // `language` só entra no INSERT, fora do DO UPDATE: um objeto Book antigo,
+    // salvo pelo leitor com `last_page`, não pode sobrescrever a língua
+    // (quem muda é o setBookLanguage).
     await db.execute(
-      `INSERT INTO books (id, title, author, file_path, total_pages, last_page, added_at, last_opened_at, zoom, format, cfi, locations_json)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      `INSERT INTO books (id, title, author, file_path, total_pages, last_page, added_at, last_opened_at, zoom, format, cfi, locations_json, language)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        ON CONFLICT(id) DO UPDATE SET
          title = excluded.title,
          author = excluded.author,
@@ -1817,8 +1941,24 @@ export class TauriStorage implements StorageAdapter {
         b.format,
         b.format === 'epub' ? b.cfi : null,
         b.format === 'epub' ? b.locationsJson : null,
+        b.language,
       ]
     )
+    this.scheduleCheckpoint()
+  }
+
+  async setBookLanguage(id: string, language: string | null): Promise<void> {
+    const db = await this.db()
+    await this.ensureBooksColumns(db)
+    await db.execute('UPDATE books SET language = $1 WHERE id = $2', [language, id])
+    this.scheduleCheckpoint()
+    // Corrigir a língua do livro corrige a dos itens de vocabulário dele: a marca no
+    // texto e o "Saved in another book" casam pela língua do item.
+    await this.ensureVocabularyTable(db)
+    await db.execute('UPDATE book_vocabulary SET language = $1 WHERE book_id = $2', [
+      baseLanguage(language),
+      id,
+    ])
     this.scheduleCheckpoint()
   }
 
@@ -1830,6 +1970,10 @@ export class TauriStorage implements StorageAdapter {
     await db.execute('DELETE FROM book_highlights WHERE book_id = $1', [id])
     this.scheduleCheckpoint()
     await db.execute('DELETE FROM book_quotes WHERE book_id = $1', [id])
+    this.scheduleCheckpoint()
+    // O vocabulário vai com o livro; o que já foi enviado a uma nota fica na nota.
+    await this.ensureVocabularyTable(db)
+    await db.execute('DELETE FROM book_vocabulary WHERE book_id = $1', [id])
     this.scheduleCheckpoint()
     await db.execute('DELETE FROM books WHERE id = $1', [id])
     this.scheduleCheckpoint()
@@ -1898,6 +2042,91 @@ export class TauriStorage implements StorageAdapter {
   async deleteQuotesByBook(bookId: string): Promise<void> {
     const db = await this.db()
     await db.execute('DELETE FROM book_quotes WHERE book_id = $1', [bookId])
+    this.scheduleCheckpoint()
+  }
+
+  async getBookVocabulary(bookId: string): Promise<VocabularyItem[]> {
+    const db = await this.db()
+    await this.ensureVocabularyTable(db)
+    const rows = await db.select<VocabularyRow[]>(
+      `SELECT ${VOCABULARY_COLUMNS} FROM book_vocabulary WHERE book_id = $1 ORDER BY created_at ASC, id ASC`,
+      [bookId]
+    )
+    return rows.map(rowToVocabularyItem).filter((item): item is VocabularyItem => item !== null)
+  }
+
+  async getVocabularyByLanguage(language: string): Promise<VocabularyItem[]> {
+    const db = await this.db()
+    await this.ensureVocabularyTable(db)
+    const rows = await db.select<VocabularyRow[]>(
+      `SELECT ${VOCABULARY_COLUMNS} FROM book_vocabulary WHERE language = $1 ORDER BY created_at ASC, id ASC`,
+      [language]
+    )
+    return rows.map(rowToVocabularyItem).filter((item): item is VocabularyItem => item !== null)
+  }
+
+  async saveVocabularyItem(item: VocabularyItem): Promise<void> {
+    const db = await this.db()
+    await this.ensureVocabularyTable(db)
+    await db.execute(
+      `INSERT INTO book_vocabulary (${VOCABULARY_COLUMNS})
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+       ON CONFLICT(id) DO UPDATE SET
+         book_id = excluded.book_id,
+         text = excluded.text,
+         kind = excluded.kind,
+         sentence = excluded.sentence,
+         sense = excluded.sense,
+         base_form = excluded.base_form,
+         language = excluded.language,
+         page = excluded.page,
+         position_label = excluded.position_label,
+         anchor_json = excluded.anchor_json,
+         created_at = excluded.created_at,
+         sent_at = excluded.sent_at,
+         sent_notebook_id = excluded.sent_notebook_id,
+         sent_note_id = excluded.sent_note_id`,
+      [
+        item.id,
+        item.bookId,
+        item.text,
+        item.kind,
+        item.sentence,
+        item.sense,
+        item.baseForm,
+        item.language,
+        item.page,
+        item.positionLabel,
+        JSON.stringify(item.anchor),
+        item.createdAt,
+        item.sentAt,
+        item.sentNotebookId,
+        item.sentNoteId,
+      ]
+    )
+    this.scheduleCheckpoint()
+  }
+
+  async deleteVocabularyItem(id: string): Promise<void> {
+    const db = await this.db()
+    await this.ensureVocabularyTable(db)
+    await db.execute('DELETE FROM book_vocabulary WHERE id = $1', [id])
+    this.scheduleCheckpoint()
+  }
+
+  // `sent` null apaga a marca de enviado dos itens (o Undo de um envio).
+  async setVocabularySent(
+    ids: string[],
+    sent: { at: string; notebookId: string; noteId: string } | null
+  ): Promise<void> {
+    if (ids.length === 0) return
+    const db = await this.db()
+    await this.ensureVocabularyTable(db)
+    const placeholders = ids.map((_, i) => `$${i + 4}`).join(', ')
+    await db.execute(
+      `UPDATE book_vocabulary SET sent_at = $1, sent_notebook_id = $2, sent_note_id = $3 WHERE id IN (${placeholders})`,
+      [sent?.at ?? null, sent?.notebookId ?? null, sent?.noteId ?? null, ...ids]
+    )
     this.scheduleCheckpoint()
   }
 

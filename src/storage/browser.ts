@@ -16,6 +16,7 @@ import type {
   TaskView,
   Tracker,
   TrackerMark,
+  VocabularyItem,
 } from '../types'
 import type { DailyCleanupResult, StorageAdapter } from './index'
 
@@ -80,6 +81,9 @@ export class BrowserStorage implements StorageAdapter {
   async saveBook(_book: Book): Promise<void> {
     throw new Error('BrowserStorage.saveBook not implemented')
   }
+  async setBookLanguage(_id: string, _language: string | null): Promise<void> {
+    throw new Error('BrowserStorage.setBookLanguage not implemented')
+  }
   async deleteBook(_id: string): Promise<void> {
     throw new Error('BrowserStorage.deleteBook not implemented')
   }
@@ -100,6 +104,24 @@ export class BrowserStorage implements StorageAdapter {
   }
   async deleteQuotesByBook(_bookId: string): Promise<void> {
     throw new Error('BrowserStorage.deleteQuotesByBook not implemented')
+  }
+  async getBookVocabulary(_bookId: string): Promise<VocabularyItem[]> {
+    throw new Error('BrowserStorage.getBookVocabulary not implemented')
+  }
+  async getVocabularyByLanguage(_language: string): Promise<VocabularyItem[]> {
+    throw new Error('BrowserStorage.getVocabularyByLanguage not implemented')
+  }
+  async saveVocabularyItem(_item: VocabularyItem): Promise<void> {
+    throw new Error('BrowserStorage.saveVocabularyItem not implemented')
+  }
+  async deleteVocabularyItem(_id: string): Promise<void> {
+    throw new Error('BrowserStorage.deleteVocabularyItem not implemented')
+  }
+  async setVocabularySent(
+    _ids: string[],
+    _sent: { at: string; notebookId: string; noteId: string } | null,
+  ): Promise<void> {
+    throw new Error('BrowserStorage.setVocabularySent not implemented')
   }
   // Estado de lembretes em localStorage (paridade de interface; o app em
   // browser não dispara notificações).

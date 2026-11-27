@@ -7,6 +7,9 @@
 // DOMParser/XMLSerializer nativos.
 import { Book as EpubjsBook, EpubCFI } from '@likecoin/epubjs'
 import type { Contents, Location, NavItem, Rendition } from '@likecoin/epubjs'
+import { baseLanguage } from './language'
+import { detectLanguage } from './languageDetect'
+import { countTermBefore } from './vocabMatch'
 
 // Tipos da lib reexportados: é o que permite ao EpubReader manipular book e
 // rendition sem importar `@likecoin/epubjs` direto.
@@ -55,6 +58,8 @@ export interface EpubInfo {
   locationCount: number
   // `locations.save()` serializado, para não regerar a cada abertura.
   locationsJson: string
+  // Língua base (ver detectEpubLanguage); '' = não reconhecida.
+  language: string
 }
 
 function normalizeMetaString(value: unknown): string | null {
@@ -162,10 +167,47 @@ async function readEpubInfo(data: Uint8Array): Promise<EpubInfo> {
       // clamp de `lastPage` no storage devolveria 0 ao abrir.
       locationCount: Math.max(1, book.locations.length()),
       locationsJson: book.locations.save(),
+      language: await detectEpubLanguage(book),
     }
   } finally {
     book.destroy()
   }
+}
+
+// Junta o texto do corpo dos primeiros itens do spine até `maxChars`, para a
+// detecção de língua. Um item ilegível é pulado, não derruba a amostra.
+async function sampleEpubText(
+  book: EpubBookHandle,
+  maxChars = 3000,
+): Promise<string> {
+  let text = ''
+  for (let i = 0; text.length < maxChars; i++) {
+    const section = book.spine.get(i)
+    if (!section) break
+    try {
+      // O `.d.ts` declara `load` devolvendo Document; no runtime é uma
+      // Promise<Element> (o documentElement da seção).
+      const root = (await section.load(
+        book.load.bind(book),
+      )) as unknown as Element | null
+      text += ` ${(root?.querySelector('body') ?? root)?.textContent ?? ''}`
+    } catch {
+      // item ilegível: segue para o próximo
+    } finally {
+      section.unload()
+    }
+  }
+  return text.replace(/\s+/g, ' ').trim().slice(0, maxChars)
+}
+
+// Língua base do livro: a do metadado do OPF (`dc:language`) e, sem ela,
+// a detecção local sobre uma amostra do texto. '' = não reconhecida. Chamar
+// com o livro aberto e SEM rendition em andamento: o `unload()` da amostra
+// descarrega as seções.
+export async function detectEpubLanguage(book: EpubBookHandle): Promise<string> {
+  const fromMetadata = baseLanguage(book.packaging?.metadata?.language)
+  if (fromMetadata) return fromMetadata
+  return detectLanguage(await sampleEpubText(book)) ?? ''
 }
 
 // Metadados do OPF + locations, tudo o que o import precisa. Rejeita com
@@ -389,7 +431,16 @@ function liveScreenRect(
     // `getRange` do rendition (não o do book): é o único que aponta para o
     // documento exibido no iframe — o do book carrega uma cópia separada.
     const range = rendition.getRange(cfi)
-    if (!range) return null
+    return range ? epubRangeScreenRect(range) : null
+  } catch {
+    return null
+  }
+}
+
+// O retângulo de um Range que vive no iframe do livro, em coordenadas do
+// documento pai. null quando o Range não está num iframe.
+export function epubRangeScreenRect(range: Range): EpubScreenRect | null {
+  try {
     const frame = range.startContainer.ownerDocument?.defaultView
       ?.frameElement as HTMLElement | null
     if (!frame) return null
@@ -403,6 +454,71 @@ function liveScreenRect(
     }
   } catch {
     return null
+  }
+}
+
+// Acima disso o texto do bloco vira uma janela em volta da seleção: há EPUB que
+// é um único `div` com o livro inteiro.
+const CONTEXT_BLOCK_MAX_CHARS = 6000
+
+// Texto do bloco (p, li, blockquote, div, h1–h6) onde a seleção começa, no
+// documento vivo: o contexto do Translate. `null` quando o CFI não resolve.
+export function epubContextText(
+  rendition: EpubRendition,
+  cfiRange: string,
+  selectionText: string,
+): string | null {
+  try {
+    const node = rendition.getRange(cfiRange)?.startContainer
+    const element = node?.nodeType === 1 ? (node as Element) : node?.parentElement
+    const block = element?.closest('p, li, blockquote, div, h1, h2, h3, h4, h5, h6')
+    const text = block?.textContent?.replace(/\s+/g, ' ').trim()
+    if (!text) return null
+    if (text.length <= CONTEXT_BLOCK_MAX_CHARS) return text
+    const at = Math.max(0, text.indexOf(selectionText))
+    const half = CONTEXT_BLOCK_MAX_CHARS / 2
+    return text.slice(Math.max(0, at - half), at + selectionText.length + half)
+  } catch {
+    return null
+  }
+}
+
+// O texto do bloco antes do ponto (nó, deslocamento) onde a seleção começa. Um nó
+// de texto conta até o deslocamento; um elemento, até o filho nesse deslocamento.
+function textBeforePoint(block: Element, container: Node, offset: number): string {
+  const ref = container.nodeType === 1 ? (container.childNodes[offset] ?? null) : null
+  const walker = block.ownerDocument.createTreeWalker(block, NodeFilter.SHOW_TEXT)
+  let before = ''
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const value = node.nodeValue ?? ''
+    if (node === container) return before + value.slice(0, offset)
+    if (container.nodeType === 1 && (ref ? ref === node || ref.contains(node) : !container.contains(node))) {
+      return before
+    }
+    before += value
+  }
+  return before
+}
+
+// Qual ocorrência do termo (a 1ª, a 2ª…) a seleção é no bloco onde ela começa,
+// contada no mesmo texto que o `epubContextText` devolve: com o termo repetido no
+// parágrafo, é ela que dá a frase certa. 0 quando o CFI não resolve.
+export function epubSelectionOccurrence(
+  rendition: EpubRendition,
+  cfiRange: string,
+  term: string,
+): number {
+  try {
+    const range = rendition.getRange(cfiRange)
+    const node = range?.startContainer
+    const element = node?.nodeType === 1 ? (node as Element) : node?.parentElement
+    const block = element?.closest('p, li, blockquote, div, h1, h2, h3, h4, h5, h6')
+    const text = block?.textContent?.replace(/\s+/g, ' ').trim()
+    if (!range || !block || !text) return 0
+    const before = textBeforePoint(block, range.startContainer, range.startOffset)
+    return countTermBefore(text, term, before.replace(/\s+/g, ' ').trimStart().length)
+  } catch {
+    return 0
   }
 }
 
@@ -530,6 +646,58 @@ export function epubHighlightScreenRect(
   return liveScreenRect(rendition, cfiRange)
 }
 
+// Range do trecho no documento VIVO do iframe (o do `getRange` do rendition, não
+// o do book, que é uma cópia): é onde a marca da página se registra. null quando a
+// seção do CFI não está exibida ou o CFI não resolve.
+export function epubLiveRange(rendition: EpubRendition, cfi: string): Range | null {
+  try {
+    return rendition.getRange(cfi) ?? null
+  } catch {
+    return null
+  }
+}
+
+// Os documentos exibidos agora (um por seção na tela; o spread de duas colunas
+// pode mostrar duas). O texto do livro mora neles, num iframe cada um.
+export function epubContentsDocuments(rendition: EpubRendition): Document[] {
+  try {
+    const contents = (rendition as unknown as { getContents: () => Contents[] }).getContents()
+    return contents.map((c) => c?.document).filter((doc): doc is Document => !!doc)
+  } catch {
+    return []
+  }
+}
+
+// O CFI de um Range que vive num documento exibido (o inverso do `epubLiveRange`).
+// null quando o Range não é de nenhum documento exibido.
+export function epubCfiFromRange(rendition: EpubRendition, range: Range): string | null {
+  try {
+    const contents = (rendition as unknown as { getContents: () => Contents[] }).getContents()
+    const owner = range.startContainer.ownerDocument
+    const match = contents.find((c) => c?.document === owner)
+    return match ? match.cfiFromRange(range) : null
+  } catch {
+    return null
+  }
+}
+
+// Clique dentro do texto do livro (evento do iframe repassado pelo epubjs), com
+// o documento onde caiu: de onde o clique numa palavra marcada acha a marca. O
+// clique num grifo chega depois, como `markClicked`.
+export function onEpubViewClick(
+  rendition: EpubRendition,
+  cb: (event: MouseEvent, doc: Document) => void,
+): () => void {
+  const handler = (event: unknown, contents: unknown) => {
+    const doc = (contents as Contents | undefined)?.document
+    if (doc && typeof (event as MouseEvent | undefined)?.clientX === 'number') cb(event as MouseEvent, doc)
+  }
+  rendition.on('click', handler)
+  return () => {
+    rendition.off('click', handler)
+  }
+}
+
 // Ordinal de leitura 1-based (mesmo valor gravado em `lastPage`) de um CFI
 // qualquer — é o `page` do grifo no contrato do useHighlights.
 export function epubLocationOrdinal(
@@ -545,6 +713,30 @@ export function epubLocationOrdinal(
     return loc >= 0 ? loc + 1 : null
   } catch {
     return null
+  }
+}
+
+// Identifica a tela pelo que ela mostra (início e fim), não pelo ordinal da
+// location: uma tela nova tem outra chave, e um `relocated` que repagina sem mudar
+// o que se vê não.
+export function epubViewKey(start: string, end: string | undefined): string {
+  return end ? `${start}|${end}` : start
+}
+
+// A tela atual (do `start` ao `end` do último `relocated`) ainda mostra este
+// ponto? É o que diz se o áudio lido está "na página": o ordinal da location não
+// serve, porque uma location pode ocupar mais de uma tela (fonte grande) e uma
+// tela pode atravessar duas locations. Um CFI de intervalo vale pelo começo. Se o
+// CFI não se compara, devolve true: sem certeza, o áudio não é interrompido.
+export function epubCfiInView(
+  cfi: string,
+  view: { start: string; end: string },
+): boolean {
+  try {
+    const cmp = new EpubCFI()
+    return cmp.compare(view.start, cfi) <= 0 && cmp.compare(cfi, view.end) <= 0
+  } catch {
+    return true
   }
 }
 

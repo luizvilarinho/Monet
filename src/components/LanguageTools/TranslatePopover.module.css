@@ -1,0 +1,232 @@
+/* Popover de Translate: `position: fixed` em portal, acima dos modais (1000) e
+   no mesmo nível do toast (1100). left/top/max-height vêm do layout effect
+   (placeFloatingPanel), contra a janela. */
+.popover {
+  position: fixed;
+  z-index: 1100;
+  width: 340px;
+  max-width: calc(100vw - var(--space-4));
+  max-height: 460px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.5);
+  font-size: 12px;
+}
+
+.wide {
+  width: 380px;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-3) 0;
+}
+
+.term {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: var(--lh-tight);
+  overflow-wrap: anywhere;
+}
+
+.kind {
+  flex: 1;
+  padding-top: var(--space-1);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}
+
+.close {
+  width: var(--control-sm);
+  height: var(--control-sm);
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.close:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.sub {
+  padding: var(--space-0) var(--space-3) 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.body {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  overflow-y: auto;
+}
+
+.meaning {
+  font-size: 14px;
+  line-height: var(--lh-ui);
+  color: var(--text-primary);
+}
+
+.passage {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-primary);
+}
+
+.context {
+  padding-left: var(--space-2);
+  border-left: 2px solid var(--hair);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.context strong {
+  color: var(--text-primary);
+}
+
+.context small {
+  display: block;
+  margin-top: var(--space-0);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.grammar {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.note {
+  padding: var(--space-1h) var(--space-2);
+  background: var(--surface-1);
+  border-radius: var(--radius-md);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.warning {
+  line-height: 1.5;
+  color: var(--accent-warn);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1h);
+  padding: 0 var(--space-3) var(--space-3);
+}
+
+.action {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1h);
+  padding: var(--space-1h) var(--space-2);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.action:hover {
+  border-color: var(--accent);
+  background: rgba(123, 110, 212, 0.1);
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+  padding: var(--space-1h) var(--space-3);
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.languages {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: var(--space-2);
+}
+
+.languageField {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.languageField select {
+  min-width: 0;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-0) var(--space-1);
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.change {
+  margin-left: auto;
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.change:hover {
+  color: var(--text-primary);
+}
+
+.skeleton {
+  height: 10px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(90deg, var(--surface-1) 0%, var(--surface-2) 50%, var(--surface-1) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}

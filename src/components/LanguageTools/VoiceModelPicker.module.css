@@ -1,0 +1,61 @@
+/* Menu ⋯ do player: rótulos em cima dos campos, 248 px. No Settings as classes
+   `label` e `select` chegam por prop e estes ficam sem uso. */
+.compact {
+  width: 248px;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.label {
+  margin-top: var(--space-1);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.compact > .label:first-child {
+  margin-top: 0;
+}
+
+.select {
+  width: 100%;
+  min-height: var(--control-md);
+  min-width: 0;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 0 var(--space-1h);
+  text-overflow: ellipsis;
+  outline: none;
+  cursor: pointer;
+}
+
+.select:focus-visible {
+  border-color: var(--accent);
+}
+
+.select:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}

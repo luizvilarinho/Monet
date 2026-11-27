@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { placeSelectionToolbar } from './toolbarPlacement'
+import { placeFloatingPanel, placeSelectionToolbar } from './toolbarPlacement'
 
 // Área visível de 0 a 600 (alto) por 0 a 800 (largo); toolbar de 200 × 40.
 const bounds = { left: 0, top: 0, right: 800, bottom: 600 }
@@ -38,5 +38,37 @@ describe('placeSelectionToolbar', () => {
   it('prende a toolbar às laterais', () => {
     expect(placeSelectionToolbar({ x: 700, y: 300, w: 50, h: 20 }, size, bounds).left).toBe(592)
     expect(placeSelectionToolbar({ x: -50, y: 300, w: 50, h: 20 }, size, bounds).left).toBe(8)
+  })
+})
+
+// Janela de 1280 × 800; popover de 340 × 276 (palavra).
+const viewport = { width: 1280, height: 800 }
+const panel = { width: 340, height: 276 }
+
+describe('placeFloatingPanel', () => {
+  it('abre abaixo da seleção, a 8 px', () => {
+    const r = placeFloatingPanel({ x: 300, y: 200, w: 80, h: 20 }, panel, viewport)
+    expect(r).toEqual({ left: 300, top: 228, maxHeight: 800 - 8 - 228 })
+  })
+
+  it('abre acima quando não cabe abaixo (seleção no fim da página)', () => {
+    const r = placeFloatingPanel({ x: 300, y: 600, w: 80, h: 20 }, panel, viewport)
+    expect(r.top).toBe(600 - 8 - 276)
+    expect(r.maxHeight).toBe(600 - 8 - 8)
+  })
+
+  it('prende o painel à borda direita, a 8 px', () => {
+    expect(placeFloatingPanel({ x: 1200, y: 200, w: 60, h: 20 }, panel, viewport).left).toBe(1280 - 340 - 8)
+    expect(placeFloatingPanel({ x: -40, y: 200, w: 60, h: 20 }, panel, viewport).left).toBe(8)
+  })
+
+  it('janela baixa: vai para o lado com mais espaço, com a altura máxima reduzida', () => {
+    const low = { width: 1280, height: 300 }
+    const below = placeFloatingPanel({ x: 300, y: 80, w: 80, h: 20 }, panel, low)
+    expect(below.top).toBe(108)
+    expect(below.maxHeight).toBe(300 - 8 - 108)
+    const above = placeFloatingPanel({ x: 300, y: 220, w: 80, h: 20 }, panel, low)
+    expect(above.top).toBe(8)
+    expect(above.maxHeight).toBe(220 - 8 - 8)
   })
 })

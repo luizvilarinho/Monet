@@ -3,7 +3,7 @@
 mod db;
 mod jobs;
 mod record;
-mod sidecar;
+pub(crate) mod sidecar;
 mod summarize;
 mod transcribe;
 mod webpage;

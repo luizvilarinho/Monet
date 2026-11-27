@@ -149,6 +149,12 @@ import { agendaPlanSummaries, isPlanType, planSaveChanges } from './lib/planNote
 import { loadReaderBooks, loadTrackersWeekText } from './lib/agents/agentData'
 import { STUDY_PROFILE_TAG } from './lib/studyProfile'
 import { RADAR_PROFILE_TAG } from './lib/radarProfile'
+import {
+  LANGUAGE_PROFILE_TAG,
+  buildLanguageProfileTemplate,
+  findLanguageProfile,
+} from './lib/languageProfile'
+import { defaultNotebooks } from './lib/vocabularyDestination'
 import { isPaperType, paperNoteAuthors, paperProperties } from './lib/papers'
 import { findReadingListNote, setUpPaperType } from './lib/paperSetup'
 import { requestOpenBook } from './lib/libraryOpen'
@@ -4086,11 +4092,46 @@ function App() {
   }, [onboardingActive])
   openSettingsRef.current = handleOpenSettings
 
-  const handleOpenMincerSettings = useCallback((section: SettingsSection) => {
+  const handleOpenSettingsSection = useCallback((section: SettingsSection) => {
     if (onboardingActive) return
     setSettingsSection(section)
     setSettingsOpen(true)
   }, [onboardingActive])
+
+  // "Open the note" do Settings › Language: vai para a nota de perfil de língua; sem
+  // ela, cria uma (tag `language profile` e o template) no primeiro caderno, como o
+  // "Save radar profile" faz, e abre. O Settings fecha para a nota aparecer.
+  const handleOpenLanguageProfile = useCallback(
+    async (input: { nativeLanguage: string; bookLanguage: string }): Promise<'opened' | 'no-notebook' | 'failed'> => {
+      const existing = findLanguageProfile(notes, disabledNotebookIds)
+      if (existing?.notebookId) {
+        setSettingsOpen(false)
+        handleNavigateToNote(existing.notebookId, existing.id, existing.subjectId)
+        return 'opened'
+      }
+      // O primeiro caderno que pode receber a nota: não o Calendar, e não um com a IA
+      // desligada (o professor não leria a nota de perfil dali).
+      const notebook = defaultNotebooks(orderedNotebooks, disabledNotebookIds)[0]
+      if (!notebook) return 'no-notebook'
+      try {
+        const created = await handleCreateNoteFromChat(
+          notebook.id,
+          'Language profile',
+          buildLanguageProfileTemplate(input.nativeLanguage, input.bookLanguage),
+          undefined,
+          null,
+          { tags: [LANGUAGE_PROFILE_TAG] },
+        )
+        setSettingsOpen(false)
+        handleNavigateToNote(notebook.id, created.id)
+        return 'opened'
+      } catch (err) {
+        console.error('failed to create the language profile note', err)
+        return 'failed'
+      }
+    },
+    [notes, disabledNotebookIds, orderedNotebooks, handleNavigateToNote, handleCreateNoteFromChat],
+  )
 
   const handleNotebookReorder = useCallback((newOrder: string[]) => {
     setNotebookOrder(newOrder)
@@ -4664,7 +4705,7 @@ function App() {
           <Mincer
             job={mincerJob}
             missingApiKey={apiKeyChecked && !hasApiKey}
-            onOpenSettings={handleOpenMincerSettings}
+            onOpenSettings={handleOpenSettingsSection}
             notebooks={orderedNotebooks}
             notes={notes}
             onCreateNotebook={handleCreateNotebookFromChat}
@@ -4689,6 +4730,9 @@ function App() {
               if (!(await saveNote(note))) throw new Error('Failed to save note.')
             }}
             onOpenSettings={handleOpenSettings}
+            onOpenSettingsSection={handleOpenSettingsSection}
+            mincerRecording={mincerJob.recording}
+            disabledNotebookIds={disabledNotebookIds}
           />
         </div>
       ) : activeMode === 'chat' ? (
@@ -4697,7 +4741,7 @@ function App() {
             models={models}
             modelsLoading={modelsLoading}
             modelsError={modelsError}
-            onOpenSettings={(section) => (section ? handleOpenMincerSettings(section) : handleOpenSettings())}
+            onOpenSettings={(section) => (section ? handleOpenSettingsSection(section) : handleOpenSettings())}
             notebooks={orderedNotebooks}
             notes={notes}
             onCreateNotebook={handleCreateNotebookFromChat}
@@ -5066,7 +5110,7 @@ function App() {
           }}
           onRetryResponse={(r) => void handleRetryResponse(r)}
           onStopResponse={stopResponse}
-          onOpenSettingsSection={handleOpenMincerSettings}
+          onOpenSettingsSection={handleOpenSettingsSection}
           openNoteContent={activeNote?.content ?? ''}
           blockNoteTitle={(id) => {
             const holder = notes.find((n) => n.content.includes(`data-cmd="${id}"`))
@@ -5097,7 +5141,7 @@ function App() {
               pendingExchange={pendingChatExchange}
               onPendingExchangeConsumed={handleChatExchangeConsumed}
               onOpenSettings={handleOpenSettings}
-              onOpenSettingsSection={handleOpenMincerSettings}
+              onOpenSettingsSection={handleOpenSettingsSection}
               canInsert={canInsertIntoNote}
               onInsertIntoNote={handleInsertIntoNote}
               onOpenMark={handleOpenMark}
@@ -5117,6 +5161,7 @@ function App() {
         onClose={() => setSettingsOpen(false)}
         onApiKeyChanged={handleApiKeyChanged}
         onUpdateFound={handleUpdateFound}
+        onOpenLanguageProfile={handleOpenLanguageProfile}
       />
       {updateDialog && (
         <UpdaterDialog
@@ -5148,7 +5193,7 @@ function App() {
         onClose={() => { setKbOpen(false); void refreshNotebooksWithDocs() }}
         onFolderErrorsChange={setKbFolderErrors}
         hasApiKey={hasApiKey}
-        onOpenSettings={() => { setKbOpen(false); void refreshNotebooksWithDocs(); handleOpenMincerSettings('openrouter') }}
+        onOpenSettings={() => { setKbOpen(false); void refreshNotebooksWithDocs(); handleOpenSettingsSection('openrouter') }}
         notebooks={orderedNotebooks}
         activeNotebookId={activeNotebookId}
       />

@@ -5,6 +5,7 @@ mod mincer;
 mod ocr;
 pub mod rag;
 mod screenshot;
+mod speech;
 mod sse;
 mod vec_db;
 
@@ -466,7 +467,7 @@ async fn export_csv(default_name: String, content: String) -> Result<bool, Strin
     save_text_with_dialog(default_name, content, "CSV", "csv").await
 }
 
-fn is_valid_model_id(model: &str) -> bool {
+pub(crate) fn is_valid_model_id(model: &str) -> bool {
     if model.is_empty() || model.len() > 200 {
         return false;
     }
@@ -1877,6 +1878,7 @@ pub fn run() {
         .manage(RequestRegistry(Mutex::new(HashMap::new())))
         .manage(mincer::MincerJobs::default())
         .manage(mincer::MincerRecording::default())
+        .manage(speech::SpeechRequests::default())
         // Foco em qualquer janela (main, assistant, keep): rescan das pastas
         // monitoradas, no máximo a cada 60 s.
         .on_window_event(|window, event| {
@@ -2125,6 +2127,13 @@ pub fn run() {
             mincer::mincer_record_status,
             mincer::mincer_record_set_title,
             mincer::mincer_record_devices,
+            speech::tts_catalog,
+            speech::tts_speak,
+            speech::tts_cancel,
+            speech::tts_clear_book,
+            speech::tts_clear_all,
+            speech::tts_cache_size,
+            speech::tts_usage,
             mincer_prepare_update
         ])
         .build(tauri::generate_context!())

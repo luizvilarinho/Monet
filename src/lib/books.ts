@@ -7,7 +7,8 @@ import {
   EPUB_TIMEOUT_ERROR_NAME,
   extractEpubInfo,
 } from './epub'
-import { extractPdfInfo, openPdf } from './pdf'
+import { detectLanguage } from './languageDetect'
+import { extractPdfInfo, openPdf, type PDFDocumentProxy } from './pdf'
 
 export interface BookImportResult {
   destPath: string
@@ -26,6 +27,31 @@ export async function booksReadFile(path: string): Promise<Uint8Array> {
 
 export async function booksDeleteFile(path: string): Promise<void> {
   await invoke('books_delete_file', { path })
+}
+
+// Amostra de texto para a detecção de língua: até 8 páginas a partir da 3ª (ou
+// da última, num PDF curto), até `maxChars`. Começar depois da capa e do
+// sumário pega prosa em vez de título.
+async function samplePdfText(doc: PDFDocumentProxy, maxChars = 3000): Promise<string> {
+  const first = Math.min(3, doc.numPages)
+  const last = Math.min(doc.numPages, first + 7)
+  let text = ''
+  for (let n = first; n <= last && text.length < maxChars; n++) {
+    try {
+      const page = await doc.getPage(n)
+      const content = await page.getTextContent()
+      text += ` ${content.items.map((item) => ('str' in item ? item.str : '')).join(' ')}`
+    } catch {
+      // página ilegível: segue para a próxima
+    }
+  }
+  return text.replace(/\s+/g, ' ').trim().slice(0, maxChars)
+}
+
+// Língua base do PDF pela amostra do texto; '' = não reconhecida (inclui PDF
+// sem camada de texto). O metadado de PDF quase nunca traz a língua.
+export async function detectPdfLanguage(doc: PDFDocumentProxy): Promise<string> {
+  return detectLanguage(await samplePdfText(doc)) ?? ''
 }
 
 // Baixa um PDF de acesso aberto para a pasta de livros (Rust); o registro no
@@ -76,10 +102,12 @@ export async function registerBookFile(
         totalPages: info.locationCount,
         cfi: null,
         locationsJson: info.locationsJson,
+        language: info.language,
       }
     } else {
       const doc = await openPdf(data)
       const info = await extractPdfInfo(doc)
+      const language = await detectPdfLanguage(doc)
       await doc.destroy()
       book = {
         ...common,
@@ -87,6 +115,7 @@ export async function registerBookFile(
         title: info.title ?? picked.fileName,
         author: info.author,
         totalPages: info.totalPages,
+        language,
       }
     }
   } catch (err) {

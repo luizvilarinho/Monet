@@ -1,6 +1,6 @@
 import { useEffect, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { ArrowDown, ArrowLeft, ArrowUp, X } from '@phosphor-icons/react'
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, X } from '@phosphor-icons/react'
 import styles from './ShortcutsOverlay.module.css'
 
 interface ShortcutsOverlayProps {
@@ -39,6 +39,25 @@ const GROUPS: Array<{ title: string; items: Shortcut[] }> = [
       { keys: ['[['], label: 'Link another note' },
       { keys: ['Ctrl', 'Shift', 'K'], label: 'Add or edit a link' },
       { keys: ['Ctrl', 'Shift', 'M'], label: 'Mark the selection for later' },
+    ],
+  },
+  {
+    title: 'In a book (Library)',
+    items: [
+      { keys: ['T'], label: 'Translate the selection (books in another language)' },
+      { keys: ['V'], label: 'Add the selection to vocabulary (books in another language)' },
+      { keys: ['L'], label: 'Listen to the selection, or to the page' },
+      { keys: ['Space'], label: 'Play or pause (with the player open)' },
+      { keys: ['R'], label: 'Repeat the sentence' },
+      {
+        keys: [
+          'Shift',
+          <ArrowLeft key="l" size={11} aria-label="Left arrow" />,
+          '/',
+          <ArrowRight key="r" size={11} aria-label="Right arrow" />,
+        ],
+        label: 'Previous or next sentence (with the player open)',
+      },
     ],
   },
   {

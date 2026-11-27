@@ -13,6 +13,7 @@ function book(id: string, patch: Partial<Book> = {}): Book {
     addedAt: 1000,
     lastOpenedAt: null,
     zoom: 1,
+    language: null,
     format: 'pdf',
     ...patch,
   } as Book

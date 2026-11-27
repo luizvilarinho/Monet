@@ -35,3 +35,23 @@ export function placeSelectionToolbar(
   const top = Math.max(minTop, Math.min(anchor.y + anchor.h + GAP_PX, maxTop))
   return { left, top }
 }
+
+// Painel flutuante (popover de Translate): `position: fixed`, então tudo em
+// coordenadas da janela. Abre abaixo do anchor; sem espaço, acima; sem espaço
+// em nenhum dos dois, do lado que tem mais, com `maxHeight` reduzido (o painel
+// rola por dentro). Sempre a `margin` das bordas da janela.
+export function placeFloatingPanel(
+  anchor: PlacementAnchor,
+  size: { width: number; height: number },
+  viewport: { width: number; height: number },
+  margin = EDGE_PX,
+): { left: number; top: number; maxHeight: number } {
+  const left = Math.max(margin, Math.min(anchor.x, viewport.width - size.width - margin))
+  const below = anchor.y + anchor.h + GAP_PX
+  const spaceBelow = viewport.height - margin - below
+  const spaceAbove = anchor.y - GAP_PX - margin
+  if (size.height <= spaceBelow) return { left, top: below, maxHeight: spaceBelow }
+  if (size.height <= spaceAbove) return { left, top: anchor.y - GAP_PX - size.height, maxHeight: spaceAbove }
+  if (spaceBelow >= spaceAbove) return { left, top: below, maxHeight: Math.max(0, spaceBelow) }
+  return { left, top: margin, maxHeight: Math.max(0, spaceAbove) }
+}

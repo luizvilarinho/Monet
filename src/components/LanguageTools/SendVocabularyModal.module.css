@@ -1,0 +1,229 @@
+/* "Send vocabulary to a note": portal acima dos modais (1000), no nível do
+   toast e dos popovers (1100). 520×584: cabe sem rolagem, só a prévia rola. */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 10, 14, 0.7);
+  backdrop-filter: blur(2px);
+}
+
+.modal {
+  width: min(520px, 90vw);
+  max-height: min(584px, 90vh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.4);
+  outline: none;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--pad-modal);
+  border-bottom: 1px solid var(--border);
+}
+
+.title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.close {
+  width: var(--control-sm);
+  height: var(--control-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.close:hover {
+  color: var(--text-primary);
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--pad-modal);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.step {
+  margin: var(--space-2) 0 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.step:first-child {
+  margin-top: 0;
+}
+
+.options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.option {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+}
+
+.option:hover {
+  border-color: var(--accent);
+}
+
+.optionOn {
+  border-color: rgba(93, 202, 165, 0.45);
+  background: rgba(93, 202, 165, 0.06);
+}
+
+.optionLabel {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.optionLabel input {
+  margin: 0;
+  accent-color: var(--accent-ai);
+}
+
+.optionText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.optionSub {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-left: var(--space-6);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.select {
+  min-width: 0;
+  max-width: 100%;
+  height: var(--control-sm);
+  padding: 0 var(--space-2);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.check input {
+  margin: 0;
+  accent-color: var(--accent-ai);
+}
+
+.help {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.preview {
+  margin: 0;
+  max-height: 160px;
+  overflow: auto;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--pad-modal);
+  border-top: 1px solid var(--border);
+}
+
+.primary,
+.secondary {
+  height: var(--control-lg);
+  padding: 0 var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.primary {
+  background: var(--accent-ai);
+  border-color: var(--accent-ai);
+  color: #0e0e10;
+  font-weight: 500;
+}
+
+.primary:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
+.primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.secondary {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.secondary:hover {
+  color: var(--text-primary);
+  border-color: var(--text-muted);
+}

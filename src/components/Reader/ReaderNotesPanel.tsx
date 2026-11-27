@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, X } from '@phosphor-icons/react'
+import { Plus, Sparkle, X } from '@phosphor-icons/react'
 import type { Book, Note, NoteType, Notebook } from '../../types'
+import type { NoteViewRequest } from '../../hooks/useBookQuotes'
 import {
   getReaderNoteLink,
   setReaderNoteLink,
   unlinkBookFromReaderNote,
 } from '../../lib/readerNoteLink'
 import { collectNoteMarks, summarizeMarks } from '../../lib/noteMarks'
+import { extractLastRetell, hasRetell } from '../../lib/retell'
 import { Editor } from '../Editor/Editor'
 import { NoteTypePicker } from '../NoteTypes/NoteTypePicker'
+import type { ShowReaderToast } from './ReaderToast'
 import styles from './ReaderNotesPanel.module.css'
 
 // Aba "Notes" da coluna lateral do Reader, no mesmo padrão SEMPRE MONTADO do
@@ -46,8 +49,16 @@ interface ReaderNotesPanelProps {
   // Sobe quando o vínculo livro → nota muda fora daqui (checkbox do modal de
   // citação, "Open" de um toast): a aba relê o vínculo e mostra a nota.
   linkVersion: number
+  // "Só mostrar esta nota" (o "Open" do envio de vocabulário): a aba exibe a nota
+  // pedida sem trocar a vinculada ao livro. Sem pedido, a aba é a de sempre.
+  viewRequest: NoteViewRequest | null
   open: boolean
   onClose: () => void
+  // "Ask for feedback": manda o reconto da nota ao chat do leitor, com o professor
+  // ligado. Só existe com as ferramentas de língua; a nota precisa ter um bloco de
+  // Retell.
+  onAskFeedback?: (retelling: string) => void
+  showToast: ShowReaderToast
 }
 
 export function ReaderNotesPanel({
@@ -59,8 +70,11 @@ export function ReaderNotesPanel({
   onCreateNote,
   onSaveNote,
   linkVersion,
+  viewRequest,
   open,
   onClose,
+  onAskFeedback,
+  showToast,
 }: ReaderNotesPanelProps) {
   const [selectedNotebookId, setSelectedNotebookId] = useState<string | null>(null)
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null)
@@ -71,6 +85,11 @@ export function ReaderNotesPanel({
   const notebookRestoreDoneRef = useRef(false)
   const noteRestoreDoneRef = useRef(false)
   const seenLinkVersionRef = useRef(linkVersion)
+  // A nota que a aba mostra foi pedida só para ver e pode não ser a vinculada ao
+  // livro (ver `viewingUnlinked`). Escolher caderno ou nota pelos seletores, criar
+  // nota ou uma troca de vínculo fora da aba encerram isso.
+  const [viewing, setViewing] = useState(false)
+  const seenViewSeqRef = useRef(viewRequest?.seq ?? 0)
 
   // ─── Largura redimensionável (padrão do ReaderChatPanel) ────────────────
   const [width, setWidth] = useState(() => {
@@ -194,34 +213,84 @@ export function ReaderNotesPanel({
     noteRestoreDoneRef.current = true
     setSelectedNotebookId(link.notebookId)
     setSelectedNoteId(link.noteId)
+    setViewing(false)
   }, [linkVersion, book.id])
 
-  // Efeito C — recuperação "notebook apagado em outra sessão/janela".
+  // Pedido de "só mostrar" a nota (o "Open" do vocabulário): seleciona caderno e
+  // nota sem gravar o vínculo, e encerra a restauração inicial.
+  useEffect(() => {
+    if (!viewRequest || viewRequest.seq === seenViewSeqRef.current) return
+    seenViewSeqRef.current = viewRequest.seq
+    notebookRestoreDoneRef.current = true
+    noteRestoreDoneRef.current = true
+    setSelectedNotebookId(viewRequest.notebookId)
+    setSelectedNoteId(viewRequest.noteId)
+    setViewing(true)
+  }, [viewRequest])
+
+  // A nota mostrada só para ver, e que não é a vinculada ao livro. O vínculo é lido
+  // a cada render: ele muda pelos seletores, pelo modal de citação e pelo Retell.
+  const linkedNoteId = viewing ? (getReaderNoteLink(book.id)?.noteId ?? null) : null
+  const viewingUnlinked = viewing && selectedNoteId !== null && linkedNoteId !== selectedNoteId
+
+  // Volta a mostrar a nota vinculada ao livro (ou nenhuma, se não há vínculo).
+  const showLinked = useCallback(() => {
+    setViewing(false)
+    const link = getReaderNoteLink(book.id)
+    setSelectedNotebookId(link?.notebookId ?? null)
+    setSelectedNoteId(link?.noteId ?? null)
+  }, [book.id])
+
+  // Efeito C — recuperação "notebook apagado em outra sessão/janela". O caderno
+  // de uma nota só vista não é o do vínculo: apagá-lo não apaga o vínculo.
   useEffect(() => {
     if (!selectedNotebookId) return
     if (notebooks.length === 0) return // guarda contra o mesmo race de carregamento
     if (notebooks.some((nb) => nb.id === selectedNotebookId)) return
+    if (viewingUnlinked) {
+      showLinked()
+      return
+    }
     setSelectedNotebookId(null)
     setSelectedNoteId(null)
     unlinkBookFromReaderNote(book.id)
-  }, [notebooks, selectedNotebookId, book.id])
+  }, [notebooks, selectedNotebookId, book.id, viewingUnlinked, showLinked])
 
   // Efeito D — recuperação "nota apagada em outra sessão/janela ou dali mesmo".
+  // Uma nota só vista que some (apagar a de vocabulário) volta à vinculada, sem
+  // apagar o vínculo da nota do livro.
   useEffect(() => {
     if (!selectedNoteId) return
     if (notes.length === 0) return
     if (notes.some((n) => n.id === selectedNoteId)) return
+    if (viewingUnlinked) {
+      showLinked()
+      return
+    }
     setSelectedNoteId(null)
     if (selectedNotebookId) setReaderNoteLink(book.id, selectedNotebookId, null)
-  }, [notes, selectedNoteId, selectedNotebookId, book.id])
+  }, [notes, selectedNoteId, selectedNotebookId, book.id, viewingUnlinked, showLinked])
+
+  // O comentário lê o último reconto escrito na nota; sem texto, avisa o que falta.
+  function handleAskFeedback() {
+    if (!activeNote || !onAskFeedback) return
+    const retelling = extractLastRetell(activeNote.content)
+    if (!retelling) {
+      showToast({ message: 'Write your retelling below the word list first.' })
+      return
+    }
+    onAskFeedback(retelling)
+  }
 
   function handleSelectNotebook(id: string) {
+    setViewing(false)
     setSelectedNotebookId(id)
     setSelectedNoteId(null)
     setReaderNoteLink(book.id, id, null)
   }
 
   function handleSelectNote(id: string) {
+    setViewing(false)
     setSelectedNoteId(id)
     if (selectedNotebookId) setReaderNoteLink(book.id, selectedNotebookId, id)
   }
@@ -245,6 +314,7 @@ export function ReaderNotesPanel({
     if (!selectedNotebookId) return
     // O 4º parâmetro é o `requestId` (a assinatura do Chat) — aqui não existe.
     const note = await onCreateNote(selectedNotebookId, '', '', undefined, pendingTypeId)
+    setViewing(false)
     setSelectedNoteId(note.id)
     setReaderNoteLink(book.id, selectedNotebookId, note.id)
   }
@@ -268,6 +338,17 @@ export function ReaderNotesPanel({
       <div className={styles.resizeHandle} onMouseDown={onResizeMouseDown} />
       <div className={styles.header}>
         <h3 className={styles.title}>Notes</h3>
+        {onAskFeedback && activeNote && hasRetell(activeNote.content) && (
+          <button
+            type="button"
+            className={styles.feedbackBtn}
+            onClick={handleAskFeedback}
+            title="Send your last retelling to the chat, with the Language teacher on. The AI comments and doesn't rewrite it."
+          >
+            <Sparkle size={12} aria-hidden />
+            Ask for feedback
+          </button>
+        )}
         <button
           type="button"
           className={styles.closeBtn}
@@ -278,6 +359,17 @@ export function ReaderNotesPanel({
           <X size={14} aria-hidden />
         </button>
       </div>
+
+      {viewingUnlinked && (
+        <div className={styles.unlinkedBar} role="status">
+          <span>Not linked to this book</span>
+          {getReaderNoteLink(book.id) && (
+            <button type="button" className={styles.unlinkedBack} onClick={showLinked}>
+              Back to the book&apos;s note
+            </button>
+          )}
+        </div>
+      )}
 
       <div className={styles.selectBar}>
         <select

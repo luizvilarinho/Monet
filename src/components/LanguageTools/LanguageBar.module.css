@@ -1,0 +1,29 @@
+/* Linha de língua da barra de seleção: mesma largura da linha de baixo (o
+   contêiner estica as duas), separada dela por uma borda. */
+.bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+  padding: var(--space-1h) var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.button:hover {
+  background: rgba(123, 110, 212, 0.18);
+}

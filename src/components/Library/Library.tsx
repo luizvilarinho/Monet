@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Plus, X } from '@phosphor-icons/react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Check, Plus, X } from '@phosphor-icons/react'
 import type { Book, Note, Notebook, NoteType } from '../../types'
 import { storage } from '../../storage'
 import { booksDeleteFile, importBook } from '../../lib/books'
+import { ttsClearBook } from '../../lib/speech'
 import { filterBooks, showBookFilter } from '../../lib/bookList'
+import { LANGUAGE_CODES, languageName, languageTag } from '../../lib/language'
 import { useConfirm } from '../../hooks/useConfirm'
 import {
   countReaderBookChatConversations,
@@ -24,6 +26,7 @@ import {
   type DocsFolder,
 } from '../../lib/docsFolder'
 import { DocsReader } from './DocsReader'
+import type { SettingsSection } from '../Settings/SettingsModal'
 import { EpubReader } from '../Reader/EpubReader'
 import { Reader } from '../Reader/Reader'
 import styles from './Library.module.css'
@@ -45,6 +48,13 @@ export interface LibraryProps {
   onSaveNote: (note: Note) => Promise<void>
   // Abre o Settings do app (repassado ao chat dos leitores).
   onOpenSettings: () => void
+  // Abre o Settings numa seção (repassado aos leitores: "Open Settings" do Translate).
+  onOpenSettingsSection: (section: SettingsSection) => void
+  // O Mincer está gravando: o Listen dos leitores avisa antes de tocar.
+  mincerRecording: boolean
+  // Cadernos com a IA desligada: a nota de perfil de língua de um deles não vale
+  // para o professor de língua do chat dos leitores.
+  disabledNotebookIds: ReadonlySet<string>
 }
 
 // Mesma pasta escolhida duas vezes (Windows: caixa e barra final variam).
@@ -58,6 +68,13 @@ function formatDate(ms: number): string {
 
 function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? '' : 's'}`
+}
+
+// Opções do seletor de língua: as da lista e, se o livro veio com outra (o
+// metadado do EPUB aceita qualquer língua), a dele, para o valor aparecer.
+function languageOptions(current: string): readonly string[] {
+  const known: readonly string[] = LANGUAGE_CODES
+  return current && !known.includes(current) ? [...known, current] : known
 }
 
 // Progresso em % nos dois formatos (no EPUB, `lastPage`/`totalPages` são
@@ -75,6 +92,9 @@ export function Library({
   onCreateNote,
   onSaveNote,
   onOpenSettings,
+  onOpenSettingsSection,
+  mincerRecording,
+  disabledNotebookIds,
 }: LibraryProps) {
   const [books, setBooks] = useState<Book[]>([])
   const [loading, setLoading] = useState(true)
@@ -84,6 +104,16 @@ export function Library({
   const [editingId, setEditingId] = useState<string | null>(null)
   const [titleDraft, setTitleDraft] = useState('')
   const [authorDraft, setAuthorDraft] = useState('')
+  const [languageDraft, setLanguageDraft] = useState('')
+  // "Change"/"Choose" da faixa do import abrem a edição com o foco na língua.
+  const focusLanguageRef = useRef(false)
+  const languageSelectRef = useRef<HTMLSelectElement>(null)
+  // Faixa de aviso do último import (some em 12 s, ao fechar ou em outro import).
+  const [importNotice, setImportNotice] = useState<{
+    bookId: string
+    title: string
+    language: string
+  } | null>(null)
   const [bookFilter, setBookFilter] = useState('')
   // Pastas de documentação .md: persistidas em localStorage (id + root +
   // alias); o DocsReader abre como um modo próprio, como o Reader dos livros,
@@ -134,12 +164,35 @@ export function Library({
     setOpenBook((prev) => (prev && prev.id === updated.id ? updated : prev))
   }
 
+  // A língua do livro aberto mudou (detecção na primeira abertura ou "Change"
+  // do popover): o leitor recebe o livro novo, e a barra e as abas reagem na hora.
+  function handleBookLanguageChange(bookId: string, language: string) {
+    setBooks((prev) => prev.map((b) => (b.id === bookId ? { ...b, language } : b)))
+    setOpenBook((prev) => (prev && prev.id === bookId ? { ...prev, language } : prev))
+  }
+
+  useEffect(() => {
+    if (!importNotice) return
+    const timer = window.setTimeout(() => setImportNotice(null), 12_000)
+    return () => window.clearTimeout(timer)
+  }, [importNotice])
+
+  useEffect(() => {
+    if (!editingId || !focusLanguageRef.current) return
+    focusLanguageRef.current = false
+    languageSelectRef.current?.focus()
+  }, [editingId])
+
   async function handleImport() {
     setErrorMessage(null)
+    setImportNotice(null)
     setImporting(true)
     try {
       const book = await importBook()
-      if (book) setBooks((prev) => [book, ...prev])
+      if (book) {
+        setBooks((prev) => [book, ...prev])
+        setImportNotice({ bookId: book.id, title: book.title, language: book.language ?? '' })
+      }
     } catch (e) {
       setErrorMessage(e instanceof Error ? e.message : String(e))
     } finally {
@@ -147,24 +200,31 @@ export function Library({
     }
   }
 
-  function startEdit(book: Book) {
+  function startEdit(book: Book, focusLanguage = false) {
+    focusLanguageRef.current = focusLanguage
     setEditingId(book.id)
     setTitleDraft(book.title)
     setAuthorDraft(book.author ?? '')
+    setLanguageDraft(book.language ?? '')
   }
 
   function cancelEdit() {
     setEditingId(null)
     setTitleDraft('')
     setAuthorDraft('')
+    setLanguageDraft('')
   }
 
   async function saveEdit(book: Book) {
     const title = titleDraft.trim() || book.title
     const author = authorDraft.trim() || null
-    const updated = { ...book, title, author }
+    // Língua nunca verificada (null) e "—" escolhido ('') são o mesmo para o
+    // usuário: só grava quando ele mudou de fato.
+    const languageChanged = (book.language ?? '') !== languageDraft
+    const updated = { ...book, title, author, language: languageChanged ? languageDraft : book.language }
     try {
       await storage.saveBook(updated)
+      if (languageChanged) await storage.setBookLanguage(book.id, languageDraft)
       handleBookChange(updated)
       cancelEdit()
     } catch (e) {
@@ -186,7 +246,7 @@ export function Library({
     const highlights =
       highlightCount === null ? 'highlights' : plural(highlightCount, 'highlight')
     const ok = await confirm(
-      `Delete "${book.title}"? This also deletes its ${highlights} and ${conversations}. Quotes already saved in your notes are kept.`,
+      `Delete "${book.title}"? This also deletes its ${highlights} and ${conversations}. Its vocabulary list and saved audio are deleted too. Quotes already saved in your notes, and vocabulary already sent to a note, are kept.`,
       {
         title: 'Delete book',
         confirmLabel: 'Delete book',
@@ -198,6 +258,8 @@ export function Library({
     setErrorMessage(null)
     try {
       await booksDeleteFile(book.filePath)
+      // O áudio guardado do livro (Listen). Falha aqui não impede apagar o livro.
+      await ttsClearBook(book.id).catch((err) => console.error('failed to delete the book audio', err))
       await storage.deleteBook(book.id)
       // Cascata: a PASTA de chat do leitor deste livro (com todas as
       // conversas) é REMOVIDA junto com o livro (decisão explícita — sem
@@ -346,6 +408,7 @@ export function Library({
           book={openBook}
           onBack={closeReader}
           onBookChange={handleBookChange}
+          onBookLanguageChange={(language) => handleBookLanguageChange(openBook.id, language)}
           onLoadError={() => localStorage.removeItem(OPEN_BOOK_KEY)}
           notebooks={notebooks}
           notes={notes}
@@ -354,6 +417,9 @@ export function Library({
           onCreateNote={onCreateNote}
           onSaveNote={onSaveNote}
           onOpenSettings={onOpenSettings}
+          onOpenSettingsSection={onOpenSettingsSection}
+          mincerRecording={mincerRecording}
+          disabledNotebookIds={disabledNotebookIds}
           onRemoveBook={() => void handleRemoveOpenBook(openBook)}
         />
         {confirmModal}
@@ -368,6 +434,7 @@ export function Library({
           book={openBook}
           onBack={closeReader}
           onBookChange={handleBookChange}
+          onBookLanguageChange={(language) => handleBookLanguageChange(openBook.id, language)}
           onLoadError={() => localStorage.removeItem(OPEN_BOOK_KEY)}
           notebooks={notebooks}
           notes={notes}
@@ -376,12 +443,17 @@ export function Library({
           onCreateNote={onCreateNote}
           onSaveNote={onSaveNote}
           onOpenSettings={onOpenSettings}
+          onOpenSettingsSection={onOpenSettingsSection}
+          mincerRecording={mincerRecording}
+          disabledNotebookIds={disabledNotebookIds}
           onRemoveBook={() => void handleRemoveOpenBook(openBook)}
         />
         {confirmModal}
       </>
     )
   }
+
+  const noticeBook = importNotice ? books.find((b) => b.id === importNotice.bookId) : undefined
 
   return (
     <div className={styles.library}>
@@ -425,6 +497,39 @@ export function Library({
       )}
 
       <div className={styles.body}>
+        {importNotice && (
+          <div className={styles.importNotice} role="status">
+            <Check size={13} aria-hidden />
+            <span className={styles.importNoticeText}>
+              Imported <b>{importNotice.title}</b>.{' '}
+              {importNotice.language ? (
+                <>
+                  Language detected: <b>{languageName(importNotice.language)}</b>.
+                </>
+              ) : (
+                'Language not detected.'
+              )}
+            </span>
+            {noticeBook && (
+              <button
+                type="button"
+                className={styles.noticeAction}
+                onClick={() => startEdit(noticeBook, true)}
+              >
+                {importNotice.language ? 'Change' : 'Choose'}
+              </button>
+            )}
+            <button
+              type="button"
+              className={styles.noticeDismiss}
+              onClick={() => setImportNotice(null)}
+              aria-label="Dismiss"
+              title="Dismiss"
+            >
+              <X size={14} aria-hidden />
+            </button>
+          </div>
+        )}
         {(pendingDocsRoot !== null || docsFolders.length > 0) && (
           <section className={styles.docsSection} aria-label="Docs folders">
             <h3 className={styles.docsSectionTitle}>Docs folders</h3>
@@ -579,6 +684,7 @@ export function Library({
               <tr>
                 <th className={styles.colTitle}>Title</th>
                 <th className={styles.colAuthor}>Author</th>
+                <th className={styles.colLanguage}>Language</th>
                 <th className={styles.colPages}>Pages</th>
                 <th className={styles.colProgress}>Progress</th>
                 <th className={styles.colDate}>Added</th>
@@ -635,6 +741,35 @@ export function Library({
                         />
                       ) : (
                         book.author ?? '—'
+                      )}
+                    </td>
+                    <td className={styles.cellMeta}>
+                      {isEditing ? (
+                        <select
+                          ref={languageSelectRef}
+                          className={styles.editInput}
+                          value={languageDraft}
+                          onChange={(e) => setLanguageDraft(e.target.value)}
+                          onClick={(e) => e.stopPropagation()}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Escape') cancelEdit()
+                          }}
+                          aria-label="Book language"
+                        >
+                          <option value="">—</option>
+                          {languageOptions(languageDraft).map((code) => (
+                            <option key={code} value={code}>
+                              {languageName(code)}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span
+                          className={styles.languageBadge}
+                          title={book.language ? languageName(book.language) : 'Language not set'}
+                        >
+                          {languageTag(book.language ?? '')}
+                        </span>
                       )}
                     </td>
                     <td className={styles.cellMeta}>

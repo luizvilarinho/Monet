@@ -50,6 +50,60 @@
   color: var(--text-primary, #ddddf1);
 }
 
+.feedbackBtn {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1h);
+  min-height: var(--control-sm);
+  padding: 0 var(--space-2);
+  background: transparent;
+  border: 1px solid var(--border, #333340);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary, #9898a4);
+  font-family: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.feedbackBtn:hover {
+  color: var(--accent-ai, #5dcaa5);
+  border-color: var(--accent-ai, #5dcaa5);
+}
+
+/* A nota mostrada só para ver (o "Open" do vocabulário): avisa que não é a do
+   livro e leva de volta a ela. */
+.unlinkedBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border-bottom: 1px solid var(--border, #333340);
+  color: var(--text-muted, #7c7c93);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.unlinkedBack {
+  min-height: var(--control-sm);
+  padding: 0 var(--space-2);
+  background: transparent;
+  border: 1px solid var(--border, #333340);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary, #9898a4);
+  font-family: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.unlinkedBack:hover {
+  color: var(--text-primary, #ddddf1);
+  border-color: var(--accent, #7b6ed4);
+}
+
 .closeBtn {
   /* área clicável mínima de 24×24 */
   min-width: var(--control-sm);

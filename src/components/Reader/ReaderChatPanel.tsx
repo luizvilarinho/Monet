@@ -1,5 +1,16 @@
 import { openUrl } from '@tauri-apps/plugin-opener'
-import { Stop, Sliders, Files, Brain, X, NotePencil, Copy, Check, WarningCircle } from '@phosphor-icons/react'
+import {
+  Stop,
+  Sliders,
+  Files,
+  Brain,
+  X,
+  NotePencil,
+  Copy,
+  Check,
+  WarningCircle,
+  ChalkboardTeacher,
+} from '@phosphor-icons/react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   useChat,
@@ -60,6 +71,19 @@ const MIN_WIDTH = 260
 const MAX_WIDTH = 560
 const DEFAULT_WIDTH = 340
 
+// O professor de língua (ver lib/teacherContext.ts): o interruptor da linha do Send,
+// o bloco que vai ao contexto e o que o chip "AI sees" diz dele. Ausente, ou com
+// `available` falso, o chat é o de sempre.
+export interface ReaderTeacher {
+  available: boolean
+  on: boolean
+  onToggle: () => void
+  // O bloco acrescentado ao contexto efêmero quando `on`.
+  block: string
+  // "French teacher (B1) · 5 saved".
+  chipLabel: string
+}
+
 interface ReaderChatPanelProps {
   book: Book
   pageNum: number
@@ -95,6 +119,11 @@ interface ReaderChatPanelProps {
   onOpenNote: (notebookId: string, noteId: string) => void
   showToast: ShowReaderToast
   onOpenSettings: () => void
+  teacher?: ReaderTeacher
+  // Mensagem a enviar já (o "Ask for feedback" do reconto): o painel a envia assim
+  // que o chat está pronto e avisa em `onPendingSendConsumed`.
+  pendingSend?: { text: string } | null
+  onPendingSendConsumed?: () => void
 }
 
 export function ReaderChatPanel({
@@ -118,6 +147,9 @@ export function ReaderChatPanel({
   onOpenNote,
   showToast,
   onOpenSettings,
+  teacher,
+  pendingSend,
+  onPendingSendConsumed,
 }: ReaderChatPanelProps) {
   const [models, setModels] = useState<AiModel[]>([])
   const [modelsLoading, setModelsLoading] = useState(false)
@@ -155,6 +187,8 @@ export function ReaderChatPanel({
   } = useChat(models, { mode: 'reader' })
 
   const [draft, setDraft] = useState('')
+  // A prévia do que o professor acrescenta ao contexto (o chip "AI sees" abre e fecha).
+  const [teacherPreviewOpen, setTeacherPreviewOpen] = useState(false)
   const [bookFolderId, setBookFolderId] = useState<string | null>(null)
   const [promptOpen, setPromptOpen] = useState(false)
   const [docsOpen, setDocsOpen] = useState(false)
@@ -389,21 +423,24 @@ export function ReaderChatPanel({
     return null
   }, [isStreaming, messages])
 
-  const canSend =
-    !isStreaming &&
-    hasApiKey &&
-    draft.trim().length > 0 &&
-    !!model &&
-    models.length > 0 &&
-    !!activeId
+  const ready = !isStreaming && hasApiKey && !!model && models.length > 0 && !!activeId
+  const canSend = ready && draft.trim().length > 0
+  const teacherOn = !!teacher?.available && teacher.on
+  // O que a linha "AI sees" diz: a posição e os grifos (o professor, quando ligado, acrescenta o seu).
+  const highlightCount = Math.min(highlights.length, MAX_HIGHLIGHTS)
+  const contextChipText =
+    `AI sees: ${contextChipLabel ?? `p. ${pageNum}`}` +
+    (highlightCount > 0 ? ` · ${highlightCount} highlight${highlightCount === 1 ? '' : 's'}` : '')
 
-  async function handleSend() {
-    if (!canSend) return
+  // `override` é a mensagem pronta do "Ask for feedback"; sem ela, vale o que está
+  // no campo.
+  async function handleSend(override?: string) {
+    if (override === undefined ? !canSend : !ready) return
     // Idempotente; recria a pasta (e refresca o ref usado pelo fallback do
     // send) caso ela tenha sido apagada em outra janela durante a sessão.
     ensureScopedFolder({ kind: 'book', id: book.id, title: book.title })
-    const text = draft
-    setDraft('')
+    const text = override ?? draft
+    if (override === undefined) setDraft('')
     // Contexto montado NO MOMENTO do envio: cada envio usa a página e os
     // grifos atuais; navegação posterior não afeta a resposta em streaming.
     const pageText = await getPageText(pageNum).catch(() => null)
@@ -416,9 +453,31 @@ export function ReaderChatPanel({
       highlights,
       positionLabel,
       highlightLabel,
+      teacherBlock: teacherOn ? teacher?.block : undefined,
     })
     void send(text, undefined, undefined, { ephemeralContext })
   }
+
+  // "Ask for feedback": espera o chat ficar pronto (a chave checada, os modelos
+  // carregados e a conversa ativa) e envia uma vez. Sem chave, o aviso do chat já
+  // está na tela. Sem modelo (a lista não carregou), a mensagem fica no campo.
+  const handleSendRef = useRef(handleSend)
+  handleSendRef.current = handleSend
+  useEffect(() => {
+    if (!pendingSend || !apiKeyChecked || modelsLoading) return
+    if (!hasApiKey) {
+      onPendingSendConsumed?.()
+      return
+    }
+    if (!model || models.length === 0) {
+      setDraft((prev) => (prev ? `${prev}\n\n${pendingSend.text}` : pendingSend.text))
+      onPendingSendConsumed?.()
+      return
+    }
+    if (!ready) return
+    onPendingSendConsumed?.()
+    void handleSendRef.current(pendingSend.text)
+  }, [pendingSend, apiKeyChecked, modelsLoading, hasApiKey, model, models.length, ready, onPendingSendConsumed])
 
   return (
     <aside
@@ -587,16 +646,26 @@ export function ReaderChatPanel({
 
       <div className={styles.composer}>
         {ragSearching && <RagSearchStatus />}
-        <p
-          className={styles.contextChip}
-          title={`Sent with each message: the text you are reading and your ${MAX_HIGHLIGHTS} most recent highlights.`}
-        >
-          AI sees: {contextChipLabel ?? `p. ${pageNum}`}
-          {highlights.length > 0 &&
-            ` · ${Math.min(highlights.length, MAX_HIGHLIGHTS)} highlight${
-              Math.min(highlights.length, MAX_HIGHLIGHTS) === 1 ? '' : 's'
-            }`}
-        </p>
+        {teacherOn && teacher ? (
+          // Com o professor ligado o chip é um botão: abre e fecha o que ele acrescenta.
+          <button
+            type="button"
+            className={`${styles.contextChip} ${styles.contextChipButton}`}
+            onClick={() => setTeacherPreviewOpen((v) => !v)}
+            aria-expanded={teacherPreviewOpen}
+            title="Sent with each message: the text you are reading, your most recent highlights and the Language teacher block. Click to see the block."
+          >
+            {contextChipText} · <b>{teacher.chipLabel}</b>
+          </button>
+        ) : (
+          <p
+            className={styles.contextChip}
+            title={`Sent with each message: the text you are reading and your ${MAX_HIGHLIGHTS} most recent highlights.`}
+          >
+            {contextChipText}
+          </p>
+        )}
+        {teacherOn && teacher && teacherPreviewOpen && <pre className={styles.teacherPreview}>{teacher.block}</pre>}
         <textarea
           ref={inputRef}
           className={styles.input}
@@ -616,6 +685,20 @@ export function ReaderChatPanel({
           aria-label="message"
         />
         <div className={styles.actions}>
+          {teacher?.available && (
+            <button
+              type="button"
+              className={styles.teacherSwitch}
+              role="switch"
+              aria-checked={teacher.on}
+              onClick={teacher.onToggle}
+              title="Adds the book's language, your language, your level and this page's saved words to what the AI sees"
+            >
+              <i aria-hidden="true" />
+              <ChalkboardTeacher size={13} aria-hidden />
+              Language teacher
+            </button>
+          )}
           {isStreaming ? (
             <button type="button" className={styles.stopBtn} onClick={cancel}>
               <Stop size={13} weight="fill" />

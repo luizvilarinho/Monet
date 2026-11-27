@@ -23,6 +23,14 @@ export interface UseBookQuotesParams {
   onShowNotes: () => void
 }
 
+// Pedido de "só mostrar esta nota" à aba Notes, sem trocar o vínculo do livro. A
+// `seq` sobe a cada pedido (mesmo pedido repetido vale de novo).
+export interface NoteViewRequest {
+  notebookId: string
+  noteId: string
+  seq: number
+}
+
 // Tudo que o chamador precisa para montar o QuoteToNoteModal. É `null`
 // enquanto não há citação pendente.
 export interface BookQuoteModalState {
@@ -35,8 +43,10 @@ export interface BookQuoteModalState {
   onClose: () => void
 }
 
-// Toast de um bloco anexado direto a uma nota (citação ou resposta do chat),
-// com Open e Undo. O Undo tira o bloco da versão atual da nota.
+// Toast de um bloco anexado direto a uma nota (citação, resposta do chat ou
+// vocabulário), com Open e Undo. O Undo tira o bloco da versão atual da nota.
+// `message` troca o "Added to …" e `onUndone` roda só quando o bloco saiu da
+// nota (o vocabulário devolve aí a marca de enviado dos itens).
 export function announceAppendedBlock(params: {
   showToast: ShowReaderToast
   destination: string
@@ -44,23 +54,27 @@ export function announceAppendedBlock(params: {
   getNotes: () => Note[]
   onSaveNote: (note: Note) => Promise<void>
   onOpen: () => void
+  message?: string
+  onUndone?: () => void
 }): void {
-  const { showToast, destination, appended, getNotes, onSaveNote, onOpen } = params
+  const { showToast, destination, appended, getNotes, onSaveNote, onOpen, message, onUndone } =
+    params
   showToast({
-    message: `Added to ${destination}`,
+    message: message ?? `Added to ${destination}`,
     actions: [
       { label: 'Open', onClick: onOpen },
       {
         label: 'Undo',
         onClick: () => {
           undoAppendedBlock(getNotes, onSaveNote, appended)
-            .then((ok) =>
+            .then((ok) => {
+              if (ok) onUndone?.()
               showToast(
                 ok
                   ? { message: 'Removed from the note' }
                   : { message: "Couldn't undo: the note was edited.", tone: 'error' },
-              ),
-            )
+              )
+            })
             .catch((err) => {
               console.error('failed to undo append', err)
               showToast({ message: "Couldn't undo. Try again.", tone: 'error' })
@@ -83,6 +97,7 @@ export function useBookQuotes(params: UseBookQuotesParams) {
   // Sobe quando o vínculo livro → nota muda fora da aba Notes (checkbox do
   // modal, "Open"): a aba relê o vínculo e passa a mostrar a nota nova.
   const [linkVersion, setLinkVersion] = useState(0)
+  const [viewRequest, setViewRequest] = useState<NoteViewRequest | null>(null)
 
   // Os parâmetros são lidos por ref dentro dos callbacks: capturá-los na
   // closure faria uma citação disparada depois de o pai atualizar `notes`
@@ -115,6 +130,14 @@ export function useBookQuotes(params: UseBookQuotesParams) {
     },
     [linkNote],
   )
+
+  // Mostra a nota na aba Notes SEM vinculá-la ao livro: as próximas citações, o
+  // Retell e o "Save to note" do chat continuam indo para a nota vinculada (e a
+  // nota Paper segue com o livro). É o "Open" do envio de vocabulário.
+  const showNote = useCallback((notebookId: string, noteId: string) => {
+    setViewRequest((prev) => ({ notebookId, noteId, seq: (prev?.seq ?? 0) + 1 }))
+    paramsRef.current.onShowNotes()
+  }, [])
 
   const handleSavedQuote = useCallback(
     async (quote: BookQuote) => {
@@ -191,5 +214,5 @@ export function useBookQuotes(params: UseBookQuotesParams) {
         }
       : null
 
-  return { addQuoteToNote, addToNoteTitle, openNote, linkVersion, modal }
+  return { addQuoteToNote, addToNoteTitle, openNote, showNote, viewRequest, linkVersion, modal }
 }

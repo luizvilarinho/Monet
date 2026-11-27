@@ -1,0 +1,30 @@
+/* Popover "onde você guardou": a casca (posição fixa, 340px, z-index 1100, cabeçalho,
+   corpo e ações) é a do TranslatePopover; aqui só o que as linhas de itens têm a mais. */
+.section {
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}
+
+.sense {
+  margin-top: var(--space-1);
+  font-size: 13px;
+  line-height: var(--lh-ui);
+  color: var(--text-primary);
+}
+
+.sentenceSense {
+  margin-top: var(--space-1);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.noSense {
+  margin-top: var(--space-1);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.otherBook {
+  color: var(--accent-ai);
+}

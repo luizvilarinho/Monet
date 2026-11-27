@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings e Library · Library para línguas</title>
+<style>
+/* ===== Tokens copiados de src/App.css (o app só tem tema escuro) ===== */
+:root {
+  --bg-app: #1f1f2f;
+  --bg-panel: #161625;
+  --surface-1: #1d1d34;
+  --surface-2: #292959;
+  --surface-3: #2e2e36;
+  --text-primary: #ddddf1;
+  --text-secondary: #a2a2ae;
+  --text-muted: #9494ad;
+  --accent: #7b6ed4;
+  --accent-ai: #5dcaa5;
+  --accent-warn: #ef9f27;
+  --accent-danger: #e05555;
+  --nm: #eeb54a;
+  --border: #2e2f2cb3;
+  --hair: #34344f;
+  --space-0: 2px; --space-1: 4px; --space-1h: 6px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 20px; --space-6: 24px;
+  --radius-sm: 4px; --radius-md: 6px; --radius-lg: 8px; --radius-xl: 10px;
+  --control-sm: 24px; --control-md: 28px; --control-lg: 32px; --control-xl: 40px;
+  --lh-ui: 1.45;
+  /* Proposta deste estudo: duas cores novas, só para a página do livro (fundo branco).
+     Nenhuma repete os quatro grifos, a seleção (roxo) ou a busca (laranja). */
+  --listen-range: rgba(31, 31, 47, 0.11);   /* trecho que está sendo lido: cinza, sem matiz */
+  --listen-now: rgba(31, 31, 47, 0.26);     /* frase atual, na opção (b) */
+  --vocab-ink: #0e7c86;                     /* item do vocabulário: pontilhado, sem preenchimento */
+  --vocab-ui: #57b8c2;                      /* a mesma marca sobre o tema escuro */
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: #121220;
+  color: var(--text-primary);
+  /* Fonte de produção do app no Windows: Segoe UI (sem recurso externo). */
+  font: 14px/1.45 'Segoe UI', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+button, input, select, textarea { font-family: inherit; }
+button { cursor: pointer; }
+a { color: var(--accent); }
+.i { fill: currentColor; flex-shrink: 0; display: block; }
+[hidden] { display: none !important; }
+kbd { font-family: inherit; font-size: 11px; color: var(--text-muted); border: 1px solid var(--hair); border-radius: var(--radius-sm); padding: 0 var(--space-1); white-space: nowrap; }
+
+/* ===== Barra do estudo (fora do mockup) ===== */
+.study-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; padding: 8px 16px; font-size: 12px; color: var(--text-secondary); border-bottom: 1px solid var(--hair); }
+.study-bar strong { color: var(--text-primary); font-weight: 600; }
+.study-bar nav { display: flex; flex-wrap: wrap; gap: 10px; }
+.study-bar nav a.on { color: var(--text-primary); text-decoration: none; font-weight: 600; }
+.study-bar .lbl { color: var(--text-muted); margin-right: -8px; }
+.study-bar label.chk { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.study-bar select { background: #18182a; color: var(--text-primary); border: 1px solid var(--hair); border-radius: var(--radius-sm); font-size: 12px; padding: 1px 4px; }
+.seg { display: inline-flex; border: 1px solid var(--hair); border-radius: var(--radius-sm); overflow: hidden; }
+.seg button { background: transparent; border: none; border-right: 1px solid var(--hair); color: var(--text-secondary); font-size: 12px; padding: 2px 8px; }
+.seg button:last-child { border-right: none; }
+.seg button:hover { color: var(--text-primary); }
+.seg button.on { background: var(--surface-2); color: var(--text-primary); }
+.study-bar .tonotes { margin-left: auto; }
+.stage { padding: 12px 0; overflow-x: auto; }
+
+/* ===== Janela do app. "Ajustar": nunca menor que a janela padrão (1280×800)
+   e cresce com o navegador. Os outros modos fixam o tamanho. ===== */
+.window {
+  width: max(1280px, calc(100% - 32px));
+  height: max(800px, calc(100vh - 66px));
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-app);
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px var(--hair);
+  overflow: hidden;
+  position: relative;
+}
+body[data-size='1280'] .window { width: 1280px; height: 800px; }
+body[data-size='1920'] .window { width: 1920px; height: 1080px; }
+body[data-size='full'] .study-bar { display: none; }
+body[data-size='full'] .stage { padding: 0; overflow: visible; }
+body[data-size='full'] .window { width: 100%; height: 100vh; border-radius: 0; box-shadow: none; }
+body[data-size='full'] .page { display: none; }
+
+/* Toolbar do app (44px) */
+.tb { height: 44px; flex-shrink: 0; display: flex; align-items: center; gap: 16px; padding: 8px 16px; background: var(--bg-panel); border-bottom: 1px solid var(--border); }
+.tb .brand { font-size: 15px; font-weight: 600; letter-spacing: .04em; color: var(--text-primary); }
+.tb .modes { margin-left: auto; display: flex; gap: 4px; }
+.tb .modes > span { padding: 4px 12px; font-size: 13px; line-height: 1.4; color: var(--text-secondary); border-bottom: 2px solid transparent; display: inline-flex; align-items: center; }
+.tb .modes > span.on { color: var(--accent); border-bottom-color: var(--accent); }
+.tb .rec { display: inline-flex; align-items: center; gap: var(--space-1); margin-left: var(--space-1h); color: var(--accent-danger); font-size: 12px; font-variant-numeric: tabular-nums; }
+.tb .rec i { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-danger); animation: recPulse 1.4s ease-in-out infinite; }
+@keyframes recPulse { 50% { opacity: .35; } }
+
+/* ===== Toast (ReaderToast: fixo embaixo ao centro) ===== */
+.toast { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 1100; display: none; align-items: center; gap: var(--space-2); background: var(--accent-ai); color: #0e0e10; font-size: 12px; font-weight: 500; border-radius: var(--radius-md); padding: var(--space-1h) var(--space-3); box-shadow: 0 6px 18px rgba(0, 0, 0, .45); max-width: 80%; }
+.toast.show { display: flex; }
+.toast button { background: transparent; border: 1px solid rgba(14, 14, 16, .45); border-radius: var(--radius-sm); color: #0e0e10; font-size: 12px; font-weight: 600; padding: 0 var(--space-2); min-height: 22px; }
+
+/* ===== Modal (QuoteToNoteModal / SettingsModal) ===== */
+.overlay { position: absolute; inset: 0; z-index: 1000; background: rgba(10, 10, 14, .7); display: none; align-items: center; justify-content: center; }
+.overlay.show { display: flex; }
+.modal { width: 520px; max-width: 90%; max-height: 80%; background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius-xl); display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 24px 48px rgba(0, 0, 0, .4); }
+.modal > header { display: flex; align-items: center; justify-content: space-between; padding: var(--space-3) var(--space-5); border-bottom: 1px solid var(--border); }
+.modal > header h2 { margin: 0; font-size: 14px; font-weight: 500; }
+.modal .x { width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; border-radius: var(--radius-sm); color: var(--text-muted); padding: 0; }
+.modal .x:hover { color: var(--text-primary); }
+.modal .mbody { flex: 1; min-height: 0; overflow-y: auto; padding: var(--space-5); display: flex; flex-direction: column; gap: var(--space-4); }
+.modal .mbody > * { flex-shrink: 0; }
+.modal .step { margin: 0 0 -6px; font-size: 12px; font-weight: 500; color: var(--text-muted); }
+.modal .foot { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-2); }
+.btn-p, .btn-s { height: var(--control-lg); border-radius: var(--radius-md); padding: 0 var(--space-4); font-size: 13px; border: 1px solid var(--border); }
+.btn-p { background: var(--accent-ai); color: #0e0e10; border-color: var(--accent-ai); font-weight: 500; }
+.btn-p:disabled { opacity: .55; cursor: not-allowed; }
+.btn-s { background: transparent; color: var(--text-secondary); }
+.btn-s:hover { color: var(--text-primary); border-color: var(--text-muted); }
+
+/* ===== Notas do estudo, abaixo do mockup ===== */
+.page { max-width: 1180px; margin: 0 auto; padding: 8px 16px 64px; }
+.page h1 { font-size: 20px; margin: 24px 0 6px; }
+.page h2 { font-size: 15px; margin: 28px 0 8px; }
+.page p, .page li { color: var(--text-secondary); max-width: 92ch; }
+.page code { font-size: 12px; color: var(--text-primary); background: #1b1b30; padding: 0 4px; border-radius: 3px; }
+.notes-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 900px) { .notes-grid { grid-template-columns: 1fr; } }
+.notes-box { background: #18182a; border: 1px solid var(--hair); border-radius: 8px; padding: 12px 16px; margin-top: 12px; }
+.notes-box h3 { font-size: 13px; margin: 0 0 6px; color: var(--text-primary); }
+.notes-box ul, .notes-box ol { margin: 0; padding-left: 18px; }
+.notes-box li { font-size: 13px; margin: 3px 0; }
+.notes-box table, table.cmp { border-collapse: collapse; width: 100%; font-size: 12px; margin-top: 4px; }
+.notes-box th, .notes-box td, table.cmp th, table.cmp td { border: 1px solid var(--hair); padding: 5px 8px; text-align: left; vertical-align: top; color: var(--text-secondary); }
+.notes-box th, table.cmp th { color: var(--text-primary); font-weight: 500; background: #18182a; }
+table.cmp { font-size: 13px; margin-top: 8px; }
+.sw { display: inline-block; width: 26px; height: 12px; border-radius: 2px; vertical-align: -1px; margin-right: 4px; border: 1px solid rgba(255, 255, 255, .15); }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; margin-top: 16px; }
+.card { display: block; text-decoration: none; background: #18182a; border: 1px solid var(--hair); border-radius: 8px; padding: 14px 16px; color: var(--text-secondary); }
+.card:hover { border-color: var(--accent); }
+.card h3 { margin: 0 0 6px; font-size: 15px; color: var(--text-primary); display: flex; align-items: center; gap: 8px; }
+.card p { margin: 0 0 8px; font-size: 13px; }
+.card .axis { font-size: 12px; color: var(--text-muted); }
+/* ===== Library (espelha Library.module.css) ===== */
+.library { display: flex; flex-direction: column; flex: 1; min-height: 0; background: var(--bg-app); }
+.lib-h { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 24px; border-bottom: 1px solid var(--border); background: var(--bg-panel); flex-shrink: 0; }
+.lib-h h2 { margin: 0; font-size: 15px; font-weight: 500; }
+.lib-h .acts { display: flex; gap: var(--space-2); }
+.lib-b { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 24px; }
+.lbtn { display: inline-flex; align-items: center; gap: var(--space-1); border-radius: 6px; padding: 6px 12px; font-size: 12px; border: 1px solid var(--border); background: transparent; color: var(--text-secondary); white-space: nowrap; }
+.lbtn:hover { color: var(--text-primary); border-color: var(--accent); }
+.lbtn.p { background: var(--accent-ai); color: #0e0e10; border-color: var(--accent-ai); font-weight: 500; }
+.lbtn.d { color: var(--text-muted); }
+.ltable { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 13px; }
+.ltable th { text-align: left; font-weight: 500; color: var(--text-muted); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.ltable td { padding: 10px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ltable tbody tr:hover td { background: rgba(123, 110, 212, .06); }
+.ltable tr.editing td { background: rgba(123, 110, 212, .06); }
+.ltable .meta { color: var(--text-muted); font-size: 12px; }
+.ltable .auth { color: var(--text-secondary); }
+.ltable .acts { text-align: right; }
+.ltable .acts button + button { margin-left: 6px; }
+.fmt { display: inline-block; margin-right: 8px; padding: 1px 5px; border: 1px solid var(--border); border-radius: 4px; color: var(--text-muted); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; vertical-align: middle; }
+.lang { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; color: var(--text-secondary); font-size: 11px; letter-spacing: .04em; }
+.lang.study { color: var(--vocab-ui); border-color: rgba(87, 184, 194, .45); }
+.lang.none { color: var(--accent-warn); border-color: rgba(239, 159, 39, .4); }
+.ltable input.ed, .ltable select.ed { width: 100%; background: var(--surface-1); border: 1px solid var(--border); border-radius: 6px; color: var(--text-primary); padding: 5px 8px; font-size: 12px; }
+.lib-toast { margin: 0 0 12px; display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary); background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 8px 12px; }
+.lib-toast b { color: var(--text-primary); font-weight: 500; }
+.lib-toast button { background: transparent; border: none; padding: 0; color: var(--text-secondary); font-size: 12px; text-decoration: underline; }
+
+/* ===== Settings (espelha SettingsModal.module.css) ===== */
+.modal.settings { width: 720px; }
+.set-body { display: flex; flex: 1; min-height: 0; }
+.set-side { width: 200px; flex-shrink: 0; border-right: 1px solid var(--border); padding: var(--space-3) var(--space-2); background: var(--bg-app); display: flex; flex-direction: column; gap: var(--space-1); }
+.set-side span { padding: var(--space-2) 10px; border-radius: var(--radius-md); font-size: 13px; color: var(--text-secondary); }
+.set-side span.on { background: var(--surface-2); color: var(--accent); }
+.set-side span.new::after { content: 'new'; margin-left: 6px; font-size: 10px; padding: 0 5px; border-radius: 4px; background: rgba(123, 110, 212, .25); color: #b9b0f5; }
+.set-content { flex: 1; padding: var(--space-5); overflow-y: auto; }
+.form { display: flex; flex-direction: column; gap: var(--space-1h); max-width: 420px; }
+.form h3 { margin: 0; font-size: 14px; font-weight: 600; }
+.form .help { margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+.form label.l { font-size: 12px; color: var(--text-secondary); margin-top: 10px; }
+.form select, .form input[type='text'] { background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-md); height: var(--control-lg); padding: 0 var(--space-2); color: var(--text-primary); font-size: 13px; outline: none; }
+.form .fn { color: var(--text-muted); font-size: 11px; line-height: 1.5; margin: 0; }
+.form .line { display: flex; align-items: center; gap: var(--space-2); }
+.form .line select { flex: 1; min-width: 0; }
+.form .chk { display: flex; align-items: flex-start; gap: var(--space-2); font-size: 12px; color: var(--text-primary); margin-top: 10px; cursor: pointer; line-height: 1.45; }
+.form .chk input { margin-top: 2px; accent-color: var(--accent); }
+.form .box { margin-top: 12px; border: 1px solid var(--border); border-radius: var(--radius-md); padding: 10px 12px; font-size: 12px; line-height: 1.6; color: var(--text-secondary); background: var(--surface-1); }
+.form .box b { color: var(--text-primary); font-weight: 500; }
+.form .box table { width: 100%; border-collapse: collapse; margin: 4px 0; }
+.form .box td { padding: 2px 0; }
+.form .box td:last-child { text-align: right; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.form .sbtn2 { border-radius: var(--radius-md); padding: var(--space-1h) var(--space-3); font-size: 12px; border: 1px solid var(--border); background: transparent; color: var(--text-secondary); white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
+.form .sbtn2:hover { color: var(--text-primary); border-color: var(--accent); }
+.form .sec { margin: 18px 0 0; font-size: 12px; font-weight: 600; color: var(--text-primary); border-top: 1px solid var(--border); padding-top: 14px; }
+
+/* ===== Nota de perfil (modo Notebook, simplificado) ===== */
+.nbmode { display: flex; flex: 1; min-height: 0; }
+.nbcol { width: 180px; flex-shrink: 0; background: var(--bg-panel); border-right: 1px solid var(--border); padding: var(--space-4) var(--space-2); display: flex; flex-direction: column; gap: 2px; font-size: 13px; color: var(--text-secondary); }
+.nbcol h6 { margin: 0 0 4px; padding: 0 4px; font-size: 12px; font-weight: 500; color: var(--text-muted); }
+.nbcol span { display: flex; align-items: center; gap: 6px; padding: 7px 8px; border-radius: var(--radius-md); }
+.nbcol span.on { background: var(--surface-2); color: var(--text-primary); }
+.ntcol { width: 250px; flex-shrink: 0; background: var(--bg-panel); border-right: 1px solid var(--border); padding: var(--space-3); display: flex; flex-direction: column; gap: var(--space-2); }
+.ntcard { background: var(--surface-1); border: 1px solid transparent; border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); font-size: 12px; color: var(--text-secondary); display: flex; flex-direction: column; gap: 2px; }
+.ntcard.on { border-color: var(--accent); }
+.ntcard b { color: var(--text-primary); font-weight: 500; font-size: 13px; }
+.edcol { flex: 1; min-width: 0; padding: 32px 40px; overflow-y: auto; }
+.edcol h1 { margin: 0 0 6px; font-size: 24px; font-weight: 600; }
+.edcol .props { display: flex; gap: 8px; align-items: center; margin-bottom: 20px; font-size: 12px; color: var(--text-muted); }
+.pill { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); font-size: 11px; color: var(--text-secondary); }
+.edcol p { margin: 0 0 8px; font-size: 14px; line-height: 1.6; max-width: 70ch; }
+.edcol p b { font-weight: 600; }
+.edcol .hint { color: var(--text-muted); font-size: 12px; margin-top: 20px; }
+</style>
+</head>
+<body data-size="fit" data-bar="2" data-navw="300">
+<!-- Barra do estudo: não faz parte do app. -->
+<div class="study-bar">
+  <strong>Estudo: Library para línguas</strong>
+  <nav><a href="index.html">Índice</a><a href="translate.html">Translate</a><a href="listen.html">Listen</a><a href="vocabulary.html">Vocabulary</a><a href="practice.html">Practice</a><a href="settings.html" class="on">Settings</a></nav>
+  <span class="lbl">Janela</span>
+  <span class="seg" id="sizeSeg">
+    <button type="button" data-v="fit" title="Nunca menor que 1280×800; cresce com o navegador">Ajustar</button>
+    <button type="button" data-v="1280" title="Janela padrão do app">1280×800</button>
+    <button type="button" data-v="1920">1920×1080</button>
+    <button type="button" data-v="full" title="Só o app, no tamanho do navegador. Esc sai">Tela cheia</button>
+  </span>
+  <span class="lbl">Cena</span><span class="seg" id="sceneSeg"><button type="button" data-v="settings" class="on">Settings › Language</button><button type="button" data-v="library">Library: língua por livro</button><button type="button" data-v="profile">Nota de perfil de língua</button></span>
+  <a class="tonotes" href="#notas">Como testar e regras</a>
+</div>
+<div class="stage">
+<div class="window" id="window">
+  <header class="tb"><span class="brand">Monet</span><span class="modes"><span id="mNb">Notebook</span><span>Chat</span><span class="on" id="mLib">Library</span><span>Mincer</span></span></header>
+  <div class="library" id="libScene">
+    <header class="lib-h"><h2>Library</h2><div class="acts"><button type="button" class="lbtn"><svg class="i" width="12" height="12" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-plus"/></svg>Add docs folder</button><button type="button" class="lbtn p"><svg class="i" width="12" height="12" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-plus"/></svg>Import book</button></div></header>
+    <div class="lib-b">
+      <p class="lib-toast" id="impNote"><svg class="i" width="13" height="13" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-check"/></svg><span>Imported <b>La Maison des dunes</b>. Language detected: <b>French</b>.</span><button type="button" data-edit="0">Change</button></p>
+      <table class="ltable">
+        <colgroup><col style="width:22%"><col style="width:15%"><col style="width:10%"><col style="width:7%"><col style="width:9%"><col style="width:9%"><col style="width:10%"><col style="width:18%"></colgroup>
+        <thead><tr><th>Title</th><th>Author</th><th>Language</th><th>Pages</th><th>Progress</th><th>Added</th><th>Last opened</th><th style="text-align:right">Actions</th></tr></thead>
+        <tbody id="libRows"></tbody>
+      </table>
+    </div>
+  </div>
+  <div class="nbmode" id="noteScene" hidden>
+    <aside class="nbcol"><h6>Views</h6><span><svg class="i" width="16" height="16" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-calendar"/></svg>Calendar</span><span><svg class="i" width="16" height="16" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-lightning"/></svg>Quick Notes</span><span><svg class="i" width="16" height="16" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-list-checks"/></svg>Tasks</span><h6 style="margin-top:12px">Notebooks</h6><span class="on"><svg class="i" width="14" height="14" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-notebook"/></svg>Français</span><span><svg class="i" width="14" height="14" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-notebook"/></svg>Leituras</span><span><svg class="i" width="14" height="14" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-notebook"/></svg>Trabalho</span></aside>
+    <aside class="ntcol"><div class="ntcard on"><b>Language profile</b><span>Config · language profile</span></div><div class="ntcard"><b>Vocabulary — La Maison des dunes</b><span>Nov 26 · 8 items from the book</span></div><div class="ntcard"><b>Passé simple: quando aparece</b><span>Nov 21</span></div></aside>
+    <div class="edcol">
+      <h1>Language profile</h1>
+      <div class="props"><span class="pill">Config</span><span class="pill"><svg class="i" width="11" height="11" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-tag"/></svg>language profile</span><span>read by Translate, Listen and the Language teacher</span></div>
+      <p><b>Native language:</b> Portuguese (Brazil)</p>
+      <p><b>French:</b> B1, rusty. I read novels slowly and want to read without stopping at every line.</p>
+      <p><b>English:</b> C1. No help needed for technical books.</p>
+      <p><b>Explain:</b> grammar in Portuguese, short, with one example from the page.</p>
+      <p><b>Don’t:</b> translate whole pages for me. Don’t rewrite what I write; point at what to fix.</p>
+      <p class="hint">Nota comum, editável como qualquer outra. O app a encontra pela tag <code>language profile</code>, no mesmo padrão da nota de perfil do Radar, e lê as linhas "Rótulo: valor". Sem a nota, vale o que está em Settings › Language.</p>
+    </div>
+  </div>
+  <div class="overlay show" id="setOverlay" role="dialog" aria-modal="true" aria-label="Settings">
+    <div class="modal settings">
+      <header><h2>Settings</h2><button type="button" class="x" id="setX" aria-label="Close"><svg class="i" width="16" height="16" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-x"/></svg></button></header>
+      <div class="set-body">
+        <nav class="set-side"><span>OpenRouter Integration</span><span>Web Search</span><span>Knowledge Base</span><span>Agenda</span><span>Mincer</span><span class="on new">Language</span><span>About &amp; Updates</span></nav>
+        <div class="set-content"><div class="form">
+          <h3>Language</h3>
+          <p class="help">For books in a language you are learning: translation, reading aloud and vocabulary. Uses your OpenRouter key.</p>
+          <label class="l" for="s-native">Your language</label>
+          <select id="s-native"><option>Portuguese (from the system)</option><option>English</option><option>Spanish</option><option>French</option></select>
+          <p class="fn">Translations and grammar notes are written in this language.</p>
+          <label class="l" for="s-show">Show language tools</label>
+          <select id="s-show"><option>In books in another language</option><option>In every book</option><option>Never</option></select>
+          <p class="fn">Translate, Listen, Add to vocabulary and the Vocabulary tab. The language of each book is set in the Library.</p>
+          <label class="l" for="s-tr">Translation model</label>
+          <input type="text" id="s-tr" placeholder="same as Chat model" value="">
+          <p class="fn">OpenRouter model id. A small, fast model is enough: about $0.0001 per word and $0.001 per paragraph.</p>
+          <p class="sec">Reading aloud</p>
+          <label class="l" for="s-vm">Voice model</label>
+          <select id="s-vm"><option>google/gemini-3.8-flash-tts</option><option>elevenlabs/eleven-v4-turbo</option><option>mistralai/voxtral-mini-tts-3-0</option><option>microsoft/mai-voice-2.1</option></select>
+          <label class="l" for="s-v">Voice</label>
+          <div class="line"><select id="s-v"><option>Voice 1 (default of the model)</option><option>Voice 2</option><option>Voice 3</option></select><button type="button" class="sbtn2" id="testVoice"><svg class="i" width="13" height="13" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-speaker-high"/></svg>Test voice</button></div>
+          <p class="fn">The test reads a short French paragraph with the traps that matter: liaisons, numbers, a name. About $0.01.</p>
+          <label class="l" for="s-sp">Default speed</label>
+          <select id="s-sp"><option>0.75×</option><option selected>0.85×</option><option>1.0×</option></select>
+          <p class="fn">Slowed in the player, so the same audio serves every speed.</p>
+          <div class="box">
+            <b>Cost of audio with this voice</b>
+            <table><tr><td>One page (about 2,400 characters)</td><td>~ $0.03</td></tr><tr><td>One hour of listening</td><td>~ $0.82</td></tr><tr><td>This month: 31 pages listened</td><td>~ $0.84</td></tr><tr><td>Saved audio on this device</td><td>412 sentences · 19 MB</td></tr></table>
+            You only pay for what you listen to, once: repeating a sentence or a page is free while its audio is saved.
+            <div style="margin-top:8px"><button type="button" class="sbtn2"><svg class="i" width="13" height="13" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-trash"/></svg>Clear saved audio</button></div>
+          </div>
+          <p class="sec">Vocabulary</p>
+          <label class="chk"><input type="checkbox" checked> Mark vocabulary items in the text of every book in the same language</label>
+          <label class="chk"><input type="checkbox"> Recall first: on an item you saved, show its sentence and keep the meaning one click away</label>
+          <p class="sec">Language profile</p>
+          <p class="help">A note tagged <b>language profile</b> tells the AI your level in each language and how you want explanations. <button type="button" class="sbtn2" id="openProfile" style="margin-top:6px"><svg class="i" width="13" height="13" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-notebook"/></svg>Open the note</button></p>
+        </div></div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+<div class="page" id="notas">
+  <h1>Configuração: Settings, língua por livro e nota de perfil</h1>
+  <p>Livros, autores e números desta página são <b>inventados</b>. Os preços seguem a ordem de grandeza do relatório de voz (2026-11-26) e mudam com o modelo escolhido.</p>
+  <div class="notes-grid">
+    <div class="notes-box"><h3>Como testar</h3><ul>
+      <li>"Cena" troca entre a seção <b>Language</b> do Settings, o <b>Library</b> com a coluna Language (a primeira linha abre em edição) e a <b>nota de perfil</b>.</li>
+      <li>No Library, <b>Edit</b> numa linha mostra o seletor de língua junto de título e autor. <b>Save</b> atualiza a etiqueta.</li>
+      <li>No Settings, "Open the note" leva à nota de perfil.</li>
+    </ul></div>
+    <div class="notes-box"><h3>Regras</h3><ul>
+      <li><b>Língua do livro:</b> detectada no import por amostra de texto (EPUB: pelo metadado). Aparece como etiqueta na linha do livro e é editável ali. Sem camada de texto, fica "—" até o usuário escolher.</li>
+      <li><b>Quando as ações de língua aparecem:</b> por padrão, só em livro de língua diferente da nativa. A opção "In every book" cobre quem quer ouvir um livro na própria língua.</li>
+      <li><b>Onde o custo aparece:</b> aqui (preço por página e por hora, total do mês, áudio guardado) e no menu ⋯ do mini-player (total do livro). Durante a leitura normal, nada.</li>
+      <li><b>Test voice</b> serve para escolher a voz de ouvido antes de usar, com o parágrafo de teste do relatório de voz.</li>
+      <li><b>Velocidade</b> é do player (0,75 a 1,0): não gera áudio novo.</li>
+      <li><b>Perfil de língua</b> é uma nota com a tag <code>language profile</code>: nível por língua e como explicar. O Settings guarda só o que é técnico (modelos, voz).</li>
+    </ul></div>
+  </div>
+</div>
+<!-- Ícones Phosphor (peso regular; play e pause em fill), embutidos. -->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <symbol id="i-arrow-left" viewBox="0 0 256 256"><path d="M224,128a8,8,0,0,1-8,8H59.31l58.35,58.34a8,8,0,0,1-11.32,11.32l-72-72a8,8,0,0,1,0-11.32l72-72a8,8,0,0,1,11.32,11.32L59.31,120H216A8,8,0,0,1,224,128Z"/></symbol>
+  <symbol id="i-caret-left" viewBox="0 0 256 256"><path d="M165.66,202.34a8,8,0,0,1-11.32,11.32l-80-80a8,8,0,0,1,0-11.32l80-80a8,8,0,0,1,11.32,11.32L91.31,128Z"/></symbol>
+  <symbol id="i-caret-right" viewBox="0 0 256 256"><path d="M181.66,133.66l-80,80a8,8,0,0,1-11.32-11.32L164.69,128,90.34,53.66a8,8,0,0,1,11.32-11.32l80,80A8,8,0,0,1,181.66,133.66Z"/></symbol>
+  <symbol id="i-caret-down" viewBox="0 0 256 256"><path d="M213.66,101.66l-80,80a8,8,0,0,1-11.32,0l-80-80A8,8,0,0,1,53.66,90.34L128,164.69l74.34-74.35a8,8,0,0,1,11.32,11.32Z"/></symbol>
+  <symbol id="i-magnifying-glass" viewBox="0 0 256 256"><path d="M229.66,218.34l-50.07-50.06a88.11,88.11,0,1,0-11.31,11.31l50.06,50.07a8,8,0,0,0,11.32-11.32ZM40,112a72,72,0,1,1,72,72A72.08,72.08,0,0,1,40,112Z"/></symbol>
+  <symbol id="i-magnifying-glass-minus" viewBox="0 0 256 256"><path d="M152,112a8,8,0,0,1-8,8H80a8,8,0,0,1,0-16h64A8,8,0,0,1,152,112Zm77.66,117.66a8,8,0,0,1-11.32,0l-50.06-50.07a88.11,88.11,0,1,1,11.31-11.31l50.07,50.06A8,8,0,0,1,229.66,229.66ZM112,184a72,72,0,1,0-72-72A72.08,72.08,0,0,0,112,184Z"/></symbol>
+  <symbol id="i-magnifying-glass-plus" viewBox="0 0 256 256"><path d="M152,112a8,8,0,0,1-8,8H120v24a8,8,0,0,1-16,0V120H80a8,8,0,0,1,0-16h24V80a8,8,0,0,1,16,0v24h24A8,8,0,0,1,152,112Zm77.66,117.66a8,8,0,0,1-11.32,0l-50.06-50.07a88.11,88.11,0,1,1,11.31-11.31l50.07,50.06A8,8,0,0,1,229.66,229.66ZM112,184a72,72,0,1,0-72-72A72.08,72.08,0,0,0,112,184Z"/></symbol>
+  <symbol id="i-sidebar-simple" viewBox="0 0 256 256"><path d="M216,40H40A16,16,0,0,0,24,56V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A16,16,0,0,0,216,40ZM40,56H80V200H40ZM216,200H96V56H216V200Z"/></symbol>
+  <symbol id="i-sparkle" viewBox="0 0 256 256"><path d="M197.58,129.06,146,110l-19-51.62a15.92,15.92,0,0,0-29.88,0L78,110l-51.62,19a15.92,15.92,0,0,0,0,29.88L78,178l19,51.62a15.92,15.92,0,0,0,29.88,0L146,178l51.62-19a15.92,15.92,0,0,0,0-29.88ZM137,164.22a8,8,0,0,0-4.74,4.74L112,223.85,91.78,169A8,8,0,0,0,87,164.22L32.15,144,87,123.78A8,8,0,0,0,91.78,119L112,64.15,132.22,119a8,8,0,0,0,4.74,4.74L191.85,144ZM144,40a8,8,0,0,1,8-8h16V16a8,8,0,0,1,16,0V32h16a8,8,0,0,1,0,16H184V64a8,8,0,0,1-16,0V48H152A8,8,0,0,1,144,40ZM248,88a8,8,0,0,1-8,8h-8v8a8,8,0,0,1-16,0V96h-8a8,8,0,0,1,0-16h8V72a8,8,0,0,1,16,0v8h8A8,8,0,0,1,248,88Z"/></symbol>
+  <symbol id="i-quotes" viewBox="0 0 256 256"><path d="M100,56H40A16,16,0,0,0,24,72v64a16,16,0,0,0,16,16h60v8a32,32,0,0,1-32,32,8,8,0,0,0,0,16,48.05,48.05,0,0,0,48-48V72A16,16,0,0,0,100,56Zm0,80H40V72h60ZM216,56H156a16,16,0,0,0-16,16v64a16,16,0,0,0,16,16h60v8a32,32,0,0,1-32,32,8,8,0,0,0,0,16,48.05,48.05,0,0,0,48-48V72A16,16,0,0,0,216,56Zm0,80H156V72h60Z"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 256 256"><path d="M216,48H176V40a24,24,0,0,0-24-24H104A24,24,0,0,0,80,40v8H40a8,8,0,0,0,0,16h8V208a16,16,0,0,0,16,16H192a16,16,0,0,0,16-16V64h8a8,8,0,0,0,0-16ZM96,40a8,8,0,0,1,8-8h48a8,8,0,0,1,8,8v8H96Zm96,168H64V64H192ZM112,104v64a8,8,0,0,1-16,0V104a8,8,0,0,1,16,0Zm48,0v64a8,8,0,0,1-16,0V104a8,8,0,0,1,16,0Z"/></symbol>
+  <symbol id="i-x" viewBox="0 0 256 256"><path d="M205.66,194.34a8,8,0,0,1-11.32,11.32L128,139.31,61.66,205.66a8,8,0,0,1-11.32-11.32L116.69,128,50.34,61.66A8,8,0,0,1,61.66,50.34L128,116.69l66.34-66.35a8,8,0,0,1,11.32,11.32L139.31,128Z"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 256 256"><path d="M64,105V40a8,8,0,0,0-16,0v65a32,32,0,0,0,0,62v49a8,8,0,0,0,16,0V167a32,32,0,0,0,0-62Zm-8,47a16,16,0,1,1,16-16A16,16,0,0,1,56,152Zm80-95V40a8,8,0,0,0-16,0V57a32,32,0,0,0,0,62v97a8,8,0,0,0,16,0V119a32,32,0,0,0,0-62Zm-8,47a16,16,0,1,1,16-16A16,16,0,0,1,128,104Zm104,64a32.06,32.06,0,0,0-24-31V40a8,8,0,0,0-16,0v97a32,32,0,0,0,0,62v17a8,8,0,0,0,16,0V199A32.06,32.06,0,0,0,232,168Zm-32,16a16,16,0,1,1,16-16A16,16,0,0,1,200,184Z"/></symbol>
+  <symbol id="i-files" viewBox="0 0 256 256"><path d="M213.66,66.34l-40-40A8,8,0,0,0,168,24H88A16,16,0,0,0,72,40V56H56A16,16,0,0,0,40,72V216a16,16,0,0,0,16,16H168a16,16,0,0,0,16-16V200h16a16,16,0,0,0,16-16V72A8,8,0,0,0,213.66,66.34ZM168,216H56V72h76.69L168,107.31v84.53c0,.06,0,.11,0,.16s0,.1,0,.16V216Zm32-32H184V104a8,8,0,0,0-2.34-5.66l-40-40A8,8,0,0,0,136,56H88V40h76.69L200,75.31Zm-56-32a8,8,0,0,1-8,8H88a8,8,0,0,1,0-16h48A8,8,0,0,1,144,152Zm0,32a8,8,0,0,1-8,8H88a8,8,0,0,1,0-16h48A8,8,0,0,1,144,184Z"/></symbol>
+  <symbol id="i-brain" viewBox="0 0 256 256"><path d="M248,124a56.11,56.11,0,0,0-32-50.61V72a48,48,0,0,0-88-26.49A48,48,0,0,0,40,72v1.39a56,56,0,0,0,0,101.2V176a48,48,0,0,0,88,26.49A48,48,0,0,0,216,176v-1.41A56.09,56.09,0,0,0,248,124ZM88,208a32,32,0,0,1-31.81-28.56A55.87,55.87,0,0,0,64,180h8a8,8,0,0,0,0-16H64A40,40,0,0,1,50.67,86.27,8,8,0,0,0,56,78.73V72a32,32,0,0,1,64,0v68.26A47.8,47.8,0,0,0,88,128a8,8,0,0,0,0,16,32,32,0,0,1,0,64Zm104-44h-8a8,8,0,0,0,0,16h8a55.87,55.87,0,0,0,7.81-.56A32,32,0,1,1,168,144a8,8,0,0,0,0-16,47.8,47.8,0,0,0-32,12.26V72a32,32,0,0,1,64,0v6.73a8,8,0,0,0,5.33,7.54A40,40,0,0,1,192,164Zm16-52a8,8,0,0,1-8,8h-4a36,36,0,0,1-36-36V80a8,8,0,0,1,16,0v4a20,20,0,0,0,20,20h4A8,8,0,0,1,208,112ZM60,120H56a8,8,0,0,1,0-16h4A20,20,0,0,0,80,84V80a8,8,0,0,1,16,0v4A36,36,0,0,1,60,120Z"/></symbol>
+  <symbol id="i-broom" viewBox="0 0 256 256"><path d="M235.5,216.81c-22.56-11-35.5-34.58-35.5-64.8V134.73a15.94,15.94,0,0,0-10.09-14.87L165,110a8,8,0,0,1-4.48-10.34l21.32-53a28,28,0,0,0-16.1-37,28.14,28.14,0,0,0-35.82,16,.61.61,0,0,0,0,.12L108.9,79a8,8,0,0,1-10.37,4.49L73.11,73.14A15.89,15.89,0,0,0,55.74,76.8C34.68,98.45,24,123.75,24,152a111.45,111.45,0,0,0,31.18,77.53A8,8,0,0,0,61,232H232a8,8,0,0,0,3.5-15.19ZM67.14,88l25.41,10.3a24,24,0,0,0,31.23-13.45l21-53c2.56-6.11,9.47-9.27,15.43-7a12,12,0,0,1,6.88,15.92L145.69,93.76a24,24,0,0,0,13.43,31.14L184,134.73V152c0,.33,0,.66,0,1L55.77,101.71A108.84,108.84,0,0,1,67.14,88Zm48,128a87.53,87.53,0,0,1-24.34-42,8,8,0,0,0-15.49,4,105.16,105.16,0,0,0,18.36,38H64.44A95.54,95.54,0,0,1,40,152a85.9,85.9,0,0,1,7.73-36.29l137.8,55.12c3,18,10.56,33.48,21.89,45.16Z"/></symbol>
+  <symbol id="i-translate" viewBox="0 0 256 256"><path d="M247.15,212.42l-56-112a8,8,0,0,0-14.31,0l-21.71,43.43A88,88,0,0,1,108,126.93,103.65,103.65,0,0,0,135.69,64H160a8,8,0,0,0,0-16H104V32a8,8,0,0,0-16,0V48H32a8,8,0,0,0,0,16h87.63A87.76,87.76,0,0,1,96,116.35a87.74,87.74,0,0,1-19-31,8,8,0,1,0-15.08,5.34A103.63,103.63,0,0,0,84,127a87.55,87.55,0,0,1-52,17,8,8,0,0,0,0,16,103.46,103.46,0,0,0,64-22.08,104.18,104.18,0,0,0,51.44,21.31l-26.6,53.19a8,8,0,0,0,14.31,7.16L148.94,192h70.11l13.79,27.58A8,8,0,0,0,240,224a8,8,0,0,0,7.15-11.58ZM156.94,176,184,121.89,211.05,176Z"/></symbol>
+  <symbol id="i-speaker-high" viewBox="0 0 256 256"><path d="M155.51,24.81a8,8,0,0,0-8.42.88L77.25,80H32A16,16,0,0,0,16,96v64a16,16,0,0,0,16,16H77.25l69.84,54.31A8,8,0,0,0,160,224V32A8,8,0,0,0,155.51,24.81ZM32,96H72v64H32ZM144,207.64,88,164.09V91.91l56-43.55Zm54-106.08a40,40,0,0,1,0,52.88,8,8,0,0,1-12-10.58,24,24,0,0,0,0-31.72,8,8,0,0,1,12-10.58ZM248,128a79.9,79.9,0,0,1-20.37,53.34,8,8,0,0,1-11.92-10.67,64,64,0,0,0,0-85.33,8,8,0,1,1,11.92-10.67A79.83,79.83,0,0,1,248,128Z"/></symbol>
+  <symbol id="i-skip-back" viewBox="0 0 256 256"><path d="M199.81,34a16,16,0,0,0-16.24.43L64,109.23V40a8,8,0,0,0-16,0V216a8,8,0,0,0,16,0V146.77l119.57,74.78A15.95,15.95,0,0,0,208,208.12V47.88A15.86,15.86,0,0,0,199.81,34ZM192,208,64.16,128,192,48.07Z"/></symbol>
+  <symbol id="i-skip-forward" viewBox="0 0 256 256"><path d="M200,32a8,8,0,0,0-8,8v69.23L72.43,34.45A15.95,15.95,0,0,0,48,47.88V208.12a16,16,0,0,0,24.43,13.43L192,146.77V216a8,8,0,0,0,16,0V40A8,8,0,0,0,200,32ZM64,207.93V48.05l127.84,80Z"/></symbol>
+  <symbol id="i-arrow-counter-clockwise" viewBox="0 0 256 256"><path d="M224,128a96,96,0,0,1-94.71,96H128A95.38,95.38,0,0,1,62.1,197.8a8,8,0,0,1,11-11.63A80,80,0,1,0,71.43,71.39a3.07,3.07,0,0,1-.26.25L44.59,96H72a8,8,0,0,1,0,16H24a8,8,0,0,1-8-8V56a8,8,0,0,1,16,0V85.8L60.25,60A96,96,0,0,1,224,128Z"/></symbol>
+  <symbol id="i-headphones" viewBox="0 0 256 256"><path d="M201.89,54.66A103.43,103.43,0,0,0,128.79,24H128A104,104,0,0,0,24,128v56a24,24,0,0,0,24,24H64a24,24,0,0,0,24-24V144a24,24,0,0,0-24-24H40.36A88,88,0,0,1,128,40h.67a87.71,87.71,0,0,1,87,80H192a24,24,0,0,0-24,24v40a24,24,0,0,0,24,24h16a24,24,0,0,0,24-24V128A103.41,103.41,0,0,0,201.89,54.66ZM64,136a8,8,0,0,1,8,8v40a8,8,0,0,1-8,8H48a8,8,0,0,1-8-8V136Zm152,48a8,8,0,0,1-8,8H192a8,8,0,0,1-8-8V144a8,8,0,0,1,8-8h24Z"/></symbol>
+  <symbol id="i-check" viewBox="0 0 256 256"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></symbol>
+  <symbol id="i-circle-notch" viewBox="0 0 256 256"><path d="M232,128a104,104,0,0,1-208,0c0-41,23.81-78.36,60.66-95.27a8,8,0,0,1,6.68,14.54C60.15,61.59,40,93.27,40,128a88,88,0,0,0,176,0c0-34.73-20.15-66.41-51.34-80.73a8,8,0,0,1,6.68-14.54C208.19,49.64,232,87,232,128Z"/></symbol>
+  <symbol id="i-warning-circle" viewBox="0 0 256 256"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm-8-80V80a8,8,0,0,1,16,0v56a8,8,0,0,1-16,0Zm20,36a12,12,0,1,1-12-12A12,12,0,0,1,140,172Z"/></symbol>
+  <symbol id="i-gear-six" viewBox="0 0 256 256"><path d="M128,80a48,48,0,1,0,48,48A48.05,48.05,0,0,0,128,80Zm0,80a32,32,0,1,1,32-32A32,32,0,0,1,128,160Zm109.94-52.79a8,8,0,0,0-3.89-5.4l-29.83-17-.12-33.62a8,8,0,0,0-2.83-6.08,111.91,111.91,0,0,0-36.72-20.67,8,8,0,0,0-6.46.59L128,41.85,97.88,25a8,8,0,0,0-6.47-.6A112.1,112.1,0,0,0,54.73,45.15a8,8,0,0,0-2.83,6.07l-.15,33.65-29.83,17a8,8,0,0,0-3.89,5.4,106.47,106.47,0,0,0,0,41.56,8,8,0,0,0,3.89,5.4l29.83,17,.12,33.62a8,8,0,0,0,2.83,6.08,111.91,111.91,0,0,0,36.72,20.67,8,8,0,0,0,6.46-.59L128,214.15,158.12,231a7.91,7.91,0,0,0,3.9,1,8.09,8.09,0,0,0,2.57-.42,112.1,112.1,0,0,0,36.68-20.73,8,8,0,0,0,2.83-6.07l.15-33.65,29.83-17a8,8,0,0,0,3.89-5.4A106.47,106.47,0,0,0,237.94,107.21Zm-15,34.91-28.57,16.25a8,8,0,0,0-3,3c-.58,1-1.19,2.06-1.81,3.06a7.94,7.94,0,0,0-1.22,4.21l-.15,32.25a95.89,95.89,0,0,1-25.37,14.3L134,199.13a8,8,0,0,0-3.91-1h-.19c-1.21,0-2.43,0-3.64,0a8.08,8.08,0,0,0-4.1,1l-28.84,16.1A96,96,0,0,1,67.88,201l-.11-32.2a8,8,0,0,0-1.22-4.22c-.62-1-1.23-2-1.8-3.06a8.09,8.09,0,0,0-3-3.06l-28.6-16.29a90.49,90.49,0,0,1,0-28.26L61.67,97.63a8,8,0,0,0,3-3c.58-1,1.19-2.06,1.81-3.06a7.94,7.94,0,0,0,1.22-4.21l.15-32.25a95.89,95.89,0,0,1,25.37-14.3L122,56.87a8,8,0,0,0,4.1,1c1.21,0,2.43,0,3.64,0a8.08,8.08,0,0,0,4.1-1l28.84-16.1A96,96,0,0,1,188.12,55l.11,32.2a8,8,0,0,0,1.22,4.22c.62,1,1.23,2,1.8,3.06a8.09,8.09,0,0,0,3,3.06l28.6,16.29A90.49,90.49,0,0,1,222.9,142.12Z"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 256 256"><path d="M224,128a8,8,0,0,1-8,8H136v80a8,8,0,0,1-16,0V136H40a8,8,0,0,1,0-16h80V40a8,8,0,0,1,16,0v80h80A8,8,0,0,1,224,128Z"/></symbol>
+  <symbol id="i-pencil-simple" viewBox="0 0 256 256"><path d="M227.31,73.37,182.63,28.68a16,16,0,0,0-22.63,0L36.69,152A15.86,15.86,0,0,0,32,163.31V208a16,16,0,0,0,16,16H92.69A15.86,15.86,0,0,0,104,219.31L227.31,96a16,16,0,0,0,0-22.63ZM92.69,208H48V163.31l88-88L180.69,120ZM192,108.68,147.31,64l24-24L216,84.68Z"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 256 256"><path d="M247.31,124.76c-.35-.79-8.82-19.58-27.65-38.41C194.57,61.26,162.88,48,128,48S61.43,61.26,36.34,86.35C17.51,105.18,9,124,8.69,124.76a8,8,0,0,0,0,6.5c.35.79,8.82,19.57,27.65,38.4C61.43,194.74,93.12,208,128,208s66.57-13.26,91.66-38.34c18.83-18.83,27.3-37.61,27.65-38.4A8,8,0,0,0,247.31,124.76ZM128,192c-30.78,0-57.67-11.19-79.93-33.25A133.47,133.47,0,0,1,25,128,133.33,133.33,0,0,1,48.07,97.25C70.33,75.19,97.22,64,128,64s57.67,11.19,79.93,33.25A133.46,133.46,0,0,1,231.05,128C223.84,141.46,192.43,192,128,192Zm0-112a48,48,0,1,0,48,48A48.05,48.05,0,0,0,128,80Zm0,80a32,32,0,1,1,32-32A32,32,0,0,1,128,160Z"/></symbol>
+  <symbol id="i-eye-slash" viewBox="0 0 256 256"><path d="M53.92,34.62A8,8,0,1,0,42.08,45.38L61.32,66.55C25,88.84,9.38,123.2,8.69,124.76a8,8,0,0,0,0,6.5c.35.79,8.82,19.57,27.65,38.4C61.43,194.74,93.12,208,128,208a127.11,127.11,0,0,0,52.07-10.83l22,24.21a8,8,0,1,0,11.84-10.76Zm47.33,75.84,41.67,45.85a32,32,0,0,1-41.67-45.85ZM128,192c-30.78,0-57.67-11.19-79.93-33.25A133.16,133.16,0,0,1,25,128c4.69-8.79,19.66-33.39,47.35-49.38l18,19.75a48,48,0,0,0,63.66,70l14.73,16.2A112,112,0,0,1,128,192Zm6-95.43a8,8,0,0,1,3-15.72,48.16,48.16,0,0,1,38.77,42.64,8,8,0,0,1-7.22,8.71,6.39,6.39,0,0,1-.75,0,8,8,0,0,1-8-7.26A32.09,32.09,0,0,0,134,96.57Zm113.28,34.69c-.42.94-10.55,23.37-33.36,43.8a8,8,0,1,1-10.67-11.92A132.77,132.77,0,0,0,231.05,128a133.15,133.15,0,0,0-23.12-30.77C185.67,75.19,158.78,64,128,64a118.37,118.37,0,0,0-19.36,1.57A8,8,0,1,1,106,49.79,134,134,0,0,1,128,48c34.88,0,66.57,13.26,91.66,38.35,18.83,18.83,27.3,37.62,27.65,38.41A8,8,0,0,1,247.31,131.26Z"/></symbol>
+  <symbol id="i-info" viewBox="0 0 256 256"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm16-40a8,8,0,0,1-8,8,16,16,0,0,1-16-16V128a8,8,0,0,1,0-16,16,16,0,0,1,16,16v40A8,8,0,0,1,144,176ZM112,84a12,12,0,1,1,12,12A12,12,0,0,1,112,84Z"/></symbol>
+  <symbol id="i-dots-three" viewBox="0 0 256 256"><path d="M140,128a12,12,0,1,1-12-12A12,12,0,0,1,140,128Zm56-12a12,12,0,1,0,12,12A12,12,0,0,0,196,116ZM60,116a12,12,0,1,0,12,12A12,12,0,0,0,60,116Z"/></symbol>
+  <symbol id="i-bookmark-simple" viewBox="0 0 256 256"><path d="M184,32H72A16,16,0,0,0,56,48V224a8,8,0,0,0,12.24,6.78L128,193.43l59.77,37.35A8,8,0,0,0,200,224V48A16,16,0,0,0,184,32Zm0,177.57-51.77-32.35a8,8,0,0,0-8.48,0L72,209.57V48H184Z"/></symbol>
+  <symbol id="i-list-magnifying-glass" viewBox="0 0 256 256"><path d="M32,64a8,8,0,0,1,8-8H216a8,8,0,0,1,0,16H40A8,8,0,0,1,32,64Zm8,72h72a8,8,0,0,0,0-16H40a8,8,0,0,0,0,16Zm88,48H40a8,8,0,0,0,0,16h88a8,8,0,0,0,0-16Zm109.66,13.66a8,8,0,0,1-11.32,0L206,177.36A40,40,0,1,1,217.36,166l20.3,20.3A8,8,0,0,1,237.66,197.66ZM184,168a24,24,0,1,0-24-24A24,24,0,0,0,184,168Z"/></symbol>
+  <symbol id="i-notebook" viewBox="0 0 256 256"><path d="M184,112a8,8,0,0,1-8,8H112a8,8,0,0,1,0-16h64A8,8,0,0,1,184,112Zm-8,24H112a8,8,0,0,0,0,16h64a8,8,0,0,0,0-16Zm48-88V208a16,16,0,0,1-16,16H48a16,16,0,0,1-16-16V48A16,16,0,0,1,48,32H208A16,16,0,0,1,224,48ZM48,208H72V48H48Zm160,0V48H88V208H208Z"/></symbol>
+  <symbol id="i-graduation-cap" viewBox="0 0 256 256"><path d="M251.76,88.94l-120-64a8,8,0,0,0-7.52,0l-120,64a8,8,0,0,0,0,14.12L32,117.87v48.42a15.91,15.91,0,0,0,4.06,10.65C49.16,191.53,78.51,216,128,216a130,130,0,0,0,48-8.76V240a8,8,0,0,0,16,0V199.51a115.63,115.63,0,0,0,27.94-22.57A15.91,15.91,0,0,0,224,166.29V117.87l27.76-14.81a8,8,0,0,0,0-14.12ZM128,200c-43.27,0-68.72-21.14-80-33.71V126.4l76.24,40.66a8,8,0,0,0,7.52,0L176,143.47v46.34C163.4,195.69,147.52,200,128,200Zm80-33.75a97.83,97.83,0,0,1-16,14.25V134.93l16-8.53ZM188,118.94l-.22-.13-56-29.87a8,8,0,0,0-7.52,14.12L171,128l-43,22.93L25,96,128,41.07,231,96Z"/></symbol>
+  <symbol id="i-wrench" viewBox="0 0 256 256"><path d="M226.76,69a8,8,0,0,0-12.84-2.88l-40.3,37.19-17.23-3.7-3.7-17.23,37.19-40.3A8,8,0,0,0,187,29.24,72,72,0,0,0,88,96,72.34,72.34,0,0,0,94,124.94L33.79,177c-.15.12-.29.26-.43.39a32,32,0,0,0,45.26,45.26c.13-.13.27-.28.39-.42L131.06,162A72,72,0,0,0,232,96,71.56,71.56,0,0,0,226.76,69ZM160,152a56.14,56.14,0,0,1-27.07-7,8,8,0,0,0-9.92,1.77L67.11,211.51a16,16,0,0,1-22.62-22.62L109.18,133a8,8,0,0,0,1.77-9.93,56,56,0,0,1,58.36-82.31l-31.2,33.81a8,8,0,0,0-1.94,7.1L141.83,108a8,8,0,0,0,6.14,6.14l26.35,5.66a8,8,0,0,0,7.1-1.94l33.81-31.2A56.06,56.06,0,0,1,160,152Z"/></symbol>
+  <symbol id="i-calendar" viewBox="0 0 256 256"><path d="M208,32H184V24a8,8,0,0,0-16,0v8H88V24a8,8,0,0,0-16,0v8H48A16,16,0,0,0,32,48V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V48A16,16,0,0,0,208,32ZM72,48v8a8,8,0,0,0,16,0V48h80v8a8,8,0,0,0,16,0V48h24V80H48V48ZM208,208H48V96H208V208Zm-96-88v64a8,8,0,0,1-16,0V132.94l-4.42,2.22a8,8,0,0,1-7.16-14.32l16-8A8,8,0,0,1,112,120Zm59.16,30.45L152,176h16a8,8,0,0,1,0,16H136a8,8,0,0,1-6.4-12.8l28.78-38.37A8,8,0,1,0,145.07,132a8,8,0,1,1-13.85-8A24,24,0,0,1,176,136,23.76,23.76,0,0,1,171.16,150.45Z"/></symbol>
+  <symbol id="i-lightning" viewBox="0 0 256 256"><path d="M215.79,118.17a8,8,0,0,0-5-5.66L153.18,90.9l14.66-73.33a8,8,0,0,0-13.69-7l-112,120a8,8,0,0,0,3,13l57.63,21.61L88.16,238.43a8,8,0,0,0,13.69,7l112-120A8,8,0,0,0,215.79,118.17ZM109.37,214l10.47-52.38a8,8,0,0,0-5-9.06L62,132.71l84.62-90.66L136.16,94.43a8,8,0,0,0,5,9.06l52.8,19.8Z"/></symbol>
+  <symbol id="i-list-checks" viewBox="0 0 256 256"><path d="M224,128a8,8,0,0,1-8,8H128a8,8,0,0,1,0-16h88A8,8,0,0,1,224,128ZM128,72h88a8,8,0,0,0,0-16H128a8,8,0,0,0,0,16Zm88,112H128a8,8,0,0,0,0,16h88a8,8,0,0,0,0-16ZM82.34,42.34,56,68.69,45.66,58.34A8,8,0,0,0,34.34,69.66l16,16a8,8,0,0,0,11.32,0l32-32A8,8,0,0,0,82.34,42.34Zm0,64L56,132.69,45.66,122.34a8,8,0,0,0-11.32,11.32l16,16a8,8,0,0,0,11.32,0l32-32a8,8,0,0,0-11.32-11.32Zm0,64L56,196.69,45.66,186.34a8,8,0,0,0-11.32,11.32l16,16a8,8,0,0,0,11.32,0l32-32a8,8,0,0,0-11.32-11.32Z"/></symbol>
+  <symbol id="i-tag" viewBox="0 0 256 256"><path d="M243.31,136,144,36.69A15.86,15.86,0,0,0,132.69,32H40a8,8,0,0,0-8,8v92.69A15.86,15.86,0,0,0,36.69,144L136,243.31a16,16,0,0,0,22.63,0l84.68-84.68a16,16,0,0,0,0-22.63Zm-96,96L48,132.69V48h84.69L232,147.31ZM96,84A12,12,0,1,1,84,72,12,12,0,0,1,96,84Z"/></symbol>
+  <symbol id="i-keyboard" viewBox="0 0 256 256"><path d="M224,48H32A16,16,0,0,0,16,64V192a16,16,0,0,0,16,16H224a16,16,0,0,0,16-16V64A16,16,0,0,0,224,48Zm0,144H32V64H224V192Zm-16-64a8,8,0,0,1-8,8H56a8,8,0,0,1,0-16H200A8,8,0,0,1,208,128Zm0-32a8,8,0,0,1-8,8H56a8,8,0,0,1,0-16H200A8,8,0,0,1,208,96ZM72,160a8,8,0,0,1-8,8H56a8,8,0,0,1,0-16h8A8,8,0,0,1,72,160Zm96,0a8,8,0,0,1-8,8H96a8,8,0,0,1,0-16h64A8,8,0,0,1,168,160Zm40,0a8,8,0,0,1-8,8h-8a8,8,0,0,1,0-16h8A8,8,0,0,1,208,160Z"/></symbol>
+  <symbol id="i-play-fill" viewBox="0 0 256 256"><path d="M240,128a15.74,15.74,0,0,1-7.6,13.51L88.32,229.65a16,16,0,0,1-16.2.3A15.86,15.86,0,0,1,64,216.13V39.87a15.86,15.86,0,0,1,8.12-13.82,16,16,0,0,1,16.2.3L232.4,114.49A15.74,15.74,0,0,1,240,128Z"/></symbol>
+  <symbol id="i-pause-fill" viewBox="0 0 256 256"><path d="M216,48V208a16,16,0,0,1-16,16H160a16,16,0,0,1-16-16V48a16,16,0,0,1,16-16h40A16,16,0,0,1,216,48ZM96,32H56A16,16,0,0,0,40,48V208a16,16,0,0,0,16,16H96a16,16,0,0,0,16-16V48A16,16,0,0,0,96,32Z"/></symbol>
+</svg>
+<script>
+const BOOKS = [["pdf","La Maison des dunes","A. Morvan","FR","French",212,"20%","Nov 10","Nov 26","study"],["epub","Le Jardin d’hiver","C. Lenoir","FR","French","—","64%","Oct 2","Nov 12","study"],["pdf","Designing Small Systems","R. Halloway","EN","English",348,"37%","Sep 14","Nov 16","study"],["pdf","Cartas de um faroleiro","M. Teixeira","PT","Portuguese",180,"100%","Aug 3","Oct 9",""],["pdf","Atlas dos ventos (scan)","—","—","",96,"5%","Nov 24","Nov 24","none"]];
+const $ = (s) => document.querySelector(s), $$ = (s) => [...document.querySelectorAll(s)];
+const ic = (n, sz = 14) => '<svg class="i" width="' + sz + '" height="' + sz + '" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-' + n + '"/></svg>';
+const langSel = (cur) => `<select class="ed" aria-label="Book language" title="Detected on import. Change it here if it is wrong.">${['Not set', 'French', 'English', 'Portuguese', 'Spanish', 'German', 'Italian'].map((l) => `<option${l === cur ? ' selected' : ''}>${l}</option>`).join('')}</select>`;
+const bookRow = (b, i, editing) => editing
+  ? `<tr class="editing"><td><input class="ed" value="${b[1]}" aria-label="Book title"></td><td><input class="ed" value="${b[2]}" aria-label="Book author"></td><td>${langSel(b[4])}</td><td class="meta">${b[5]}</td><td class="meta">${b[6]}</td><td class="meta">${b[7]}</td><td class="meta">${b[8]}</td><td class="acts"><button type="button" class="lbtn" data-save="${i}">Save</button><button type="button" class="lbtn" data-cancel="1">Cancel</button></td></tr>`
+  : `<tr><td title="${b[1]}"><span class="fmt">${b[0]}</span>${b[1]}</td><td class="auth">${b[2]}</td><td><span class="lang ${b[9]}" title="${b[4] ? b[4] + ' · detected on import. Edit to change.' : 'Not detected: this PDF has no text layer. Edit to set it.'}">${b[3]}</span></td><td class="meta">${b[5]}</td><td class="meta">${b[6]}</td><td class="meta">${b[7]}</td><td class="meta">${b[8]}</td><td class="acts"><button type="button" class="lbtn p">Open</button><button type="button" class="lbtn" data-edit="${i}">Edit</button><button type="button" class="lbtn d">Delete</button></td></tr>`;
+let editing = -1;
+function rows() { $('#libRows').innerHTML = BOOKS.map((b, i) => bookRow(b, i, i === editing)).join(''); }
+document.addEventListener('click', (e) => {
+  const ed = e.target.closest('[data-edit]'), sv = e.target.closest('[data-save]'), ca = e.target.closest('[data-cancel]');
+  if (ed) { editing = +ed.dataset.edit; rows(); }
+  if (sv) { const i = +sv.dataset.save, v = $('#libRows select').value; BOOKS[i][4] = v === 'Not set' ? '' : v; BOOKS[i][3] = v === 'Not set' ? '—' : v.slice(0, 2).toUpperCase(); BOOKS[i][9] = v === 'Not set' ? 'none' : v === 'Portuguese' ? '' : 'study'; editing = -1; rows(); }
+  if (ca) { editing = -1; rows(); }
+});
+function scene(v) {
+  $$('#sceneSeg button').forEach((b) => b.classList.toggle('on', b.dataset.v === v));
+  $('#setOverlay').classList.toggle('show', v === 'settings');
+  $('#libScene').hidden = v === 'profile'; $('#noteScene').hidden = v !== 'profile';
+  $('#mNb').classList.toggle('on', v === 'profile'); $('#mLib').classList.toggle('on', v !== 'profile');
+  if (v === 'library') { editing = 0; rows(); }
+}
+$('#sceneSeg').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) scene(b.dataset.v); });
+$('#setX').onclick = () => scene('library');
+$('#openProfile').onclick = () => scene('profile');
+$('#testVoice').onclick = (e) => { const b = e.currentTarget; b.style.color = 'var(--accent-ai)'; setTimeout(() => (b.style.color = ''), 1200); };
+$('#sizeSeg').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; document.body.dataset.size = b.dataset.v; $$('#sizeSeg button').forEach((x) => x.classList.toggle('on', x === b)); });
+$$('#sizeSeg button').forEach((x) => x.classList.toggle('on', x.dataset.v === document.body.dataset.size));
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && document.body.dataset.size === 'full') document.body.dataset.size = 'fit'; });
+rows();
+</script>
+</body>
+</html>

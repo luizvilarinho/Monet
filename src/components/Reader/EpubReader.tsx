@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
   ArrowsOutLineHorizontal,
   ArrowUUpLeft,
+  BookmarkSimple,
   CaretLeft,
   CaretRight,
   Highlighter,
@@ -12,6 +13,7 @@ import {
   Quotes,
   SidebarSimple,
   Sparkle,
+  SpeakerHigh,
   TextAa,
   Trash,
 } from '@phosphor-icons/react'
@@ -22,22 +24,33 @@ import type {
   Note,
   Notebook,
   NoteType,
+  VocabularyItem,
 } from '../../types'
 import { storage } from '../../storage'
 import { booksReadFile } from '../../lib/books'
 import {
   clearEpubSelection,
+  detectEpubLanguage,
   displayEpubAt,
   drawEpubHighlight,
+  epubCfiFromRange,
+  epubCfiInView,
+  epubContentsDocuments,
+  epubContextText,
   ensureEpubLocations,
   epubCfiPercentage,
   epubHighlightScreenRect,
+  epubLiveRange,
   epubLocationOrdinal,
+  epubRangeScreenRect,
+  epubSelectionOccurrence,
+  epubViewKey,
   getEpubLocationText,
   getEpubRangeText,
   loadEpubToc,
   onEpubHighlightClick,
   onEpubSelection,
+  onEpubViewClick,
   onEpubViewMouseDown,
   openEpubForReading,
   removeEpubHighlight,
@@ -52,13 +65,47 @@ import {
   type EpubTocEntry,
 } from '../../lib/epub'
 import { useBookQuotes } from '../../hooks/useBookQuotes'
+import { useBookVocabulary } from '../../hooks/useBookVocabulary'
+import { useColumnBox } from '../../hooks/useColumnBox'
 import { useConfirm } from '../../hooks/useConfirm'
 import { loadHighlightColor, saveHighlightColor, useHighlights } from '../../hooks/useHighlights'
+import { useLanguageSettings } from '../../hooks/useLanguageSettings'
+import { useListenPlayer } from '../../hooks/useListenPlayer'
+import { useTtsCatalog } from '../../hooks/useTtsCatalog'
+import { useReaderTeacher } from '../../hooks/useReaderTeacher'
+import { useRetell } from '../../hooks/useRetell'
+import { useVocabularyMarks } from '../../hooks/useVocabularyMarks'
+import { useVocabularyRemoval } from '../../hooks/useVocabularyRemoval'
+import { useVocabularySend } from '../../hooks/useVocabularySend'
+import { ownsKeyboard } from '../../lib/keyboardTarget'
+import { languageToolsOn } from '../../lib/language'
+import { setNativeLanguage, setVocabHideSenses, setVocabMarks } from '../../lib/languageSettings'
+import {
+  buildJoinedNodeText,
+  clearPageMarks,
+  markEntryAtPoint,
+  rangeFromNodeOffsets,
+  setPageMarks,
+  type MarkEntry,
+} from '../../lib/pageMarks'
+import { buildFeedbackMessage } from '../../lib/retell'
+import { splitSentences } from '../../lib/sentences'
+import { isTtsError, ttsErrorSentence } from '../../lib/speech'
+import { TRANSLATE_CHAR_LIMIT, classifySelection, type Translation } from '../../lib/translate'
+import { buildListenSource, translationFields, type VocabularyDraft } from '../../lib/vocabulary'
+import { contextSentenceAt, epubSentenceAnchors, findTermOccurrences, type MatchTerm } from '../../lib/vocabMatch'
+import { LanguageBar } from '../LanguageTools/LanguageBar'
+import { MiniPlayer } from '../LanguageTools/MiniPlayer'
+import { SavedWordPopover } from '../LanguageTools/SavedWordPopover'
+import { SendVocabularyModal } from '../LanguageTools/SendVocabularyModal'
+import { TranslatePopover } from '../LanguageTools/TranslatePopover'
+import { VocabularyTab } from '../LanguageTools/VocabularyTab'
+import type { SettingsSection } from '../Settings/SettingsModal'
 import { QuoteToNoteModal } from './QuoteToNoteModal'
 import { ReaderChatPanel } from './ReaderChatPanel'
 import { ReaderNotesPanel } from './ReaderNotesPanel'
 import { useReaderToast } from './ReaderToast'
-import { placeSelectionToolbar } from './toolbarPlacement'
+import { placeSelectionToolbar, type PlacementAnchor } from './toolbarPlacement'
 import styles from './EpubReader.module.css'
 
 export interface EpubReaderProps {
@@ -66,6 +113,9 @@ export interface EpubReaderProps {
   book: EpubBook
   onBack: () => void
   onBookChange: (book: Book) => void
+  // A língua do livro foi detectada (primeira abertura) ou corrigida: o Library
+  // atualiza o `book` que passa ao leitor.
+  onBookLanguageChange: (language: string) => void
   // Chamado quando o documento não pôde ser carregado (arquivo ausente/ilegível).
   onLoadError?: () => void
   notebooks: Notebook[]
@@ -85,6 +135,13 @@ export interface EpubReaderProps {
   onSaveNote: (note: Note) => Promise<void>
   // Abre o Settings do app (ModelSelector e faixa sem chave do chat).
   onOpenSettings: () => void
+  // Abre o Settings numa seção (o "Open Settings" do Translate sem chave).
+  onOpenSettingsSection: (section: SettingsSection) => void
+  // O Mincer está gravando: o áudio do Listen entraria na gravação.
+  mincerRecording: boolean
+  // Cadernos com a IA desligada: a nota de perfil de língua de um deles não vale
+  // para o professor de língua.
+  disabledNotebookIds: ReadonlySet<string>
   // Tela de livro sem arquivo: tira o livro da Library (com confirmação).
   onRemoveBook?: () => void
 }
@@ -104,6 +161,8 @@ const RESIZE_DEBOUNCE_MS = 150
 
 const SIDE_PANEL_COLLAPSED_KEY = 'monet:epub-reader-sidepanel-collapsed'
 const SIDE_PANEL_WIDTH = 280
+// Com as ferramentas de língua a coluna ganha a aba Vocabulary e fica mais larga.
+const SIDE_PANEL_WIDTH_WITH_TOOLS = 300
 const SIDE_PANEL_COLLAPSED_WIDTH = 48
 
 // Mesma paleta do leitor de PDF (duplicação deliberada — os leitores são
@@ -135,7 +194,7 @@ const MAX_MARGIN_PX = 160
 const MARGIN_STEP_PX = 16
 const DEFAULT_MARGIN_PX = 0
 
-type SidePanelTab = 'contents' | 'highlights'
+type SidePanelTab = 'contents' | 'highlights' | 'vocabulary'
 type SideTab = 'chat' | 'notes'
 
 interface PagePoint {
@@ -154,6 +213,17 @@ interface SelectionState {
 interface RemovalCandidate {
   highlight: BookHighlight
   anchor: PagePoint
+}
+
+// Translate aberto para uma seleção (identificada pelo cfiRange). O anchor é o
+// retângulo da seleção em coordenadas da janela: no EPUB a página não rola, e
+// a virada de página fecha o popover.
+interface TranslateState {
+  cfiRange: string
+  text: string
+  sentence: string
+  positionLabel: string
+  anchor: PlacementAnchor
 }
 
 function formatHighlightDate(ms: number): string {
@@ -236,6 +306,7 @@ export function EpubReader({
   book,
   onBack,
   onBookChange,
+  onBookLanguageChange,
   onLoadError,
   notebooks,
   notes,
@@ -244,6 +315,9 @@ export function EpubReader({
   onCreateNote,
   onSaveNote,
   onOpenSettings,
+  onOpenSettingsSection,
+  mincerRecording,
+  disabledNotebookIds,
   onRemoveBook,
 }: EpubReaderProps) {
   const [loading, setLoading] = useState(true)
@@ -274,6 +348,11 @@ export function EpubReader({
     changeColor,
   } = useHighlights(book.id, (message) => showToast({ message, tone: 'error' }))
   const [selection, setSelection] = useState<SelectionState | null>(null)
+  const languageSettings = useLanguageSettings()
+  // Ferramentas de língua (Translate): só em livro de outra língua, ou como
+  // o Settings › Language mandar. Sem elas o leitor fica como sempre foi.
+  const toolsOn = languageToolsOn(book.language, languageSettings.nativeLanguage, languageSettings.toolsMode)
+  const [translate, setTranslate] = useState<TranslateState | null>(null)
   // Última cor usada (comum aos leitores): é a do atalho H.
   const [activeColor, setActiveColor] = useState<string>(() =>
     loadHighlightColor(HIGHLIGHT_COLORS),
@@ -325,6 +404,8 @@ export function EpubReader({
     addQuoteToNote,
     addToNoteTitle,
     openNote,
+    showNote,
+    viewRequest,
     linkVersion,
     modal: quoteModal,
   } = useBookQuotes({
@@ -342,6 +423,107 @@ export function EpubReader({
   const pageAreaRef = useRef<HTMLDivElement>(null)
   const toolbarRef = useRef<HTMLDivElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
+  const translatePopoverRef = useRef<HTMLDivElement>(null)
+  // Leitura em voz alta (Listen): o player, o catálogo de modelos de voz e a medida
+  // da coluna da página, de que o mini-player (`fixed`) se alinha. O catálogo só
+  // é buscado com as ferramentas de língua ligadas.
+  const catalog = useTtsCatalog(toolsOn)
+  const player = useListenPlayer({
+    bookId: book.id,
+    mincerRecording,
+    showToast,
+    models: catalog.models,
+    language: book.language ?? '',
+  })
+  const [playerHeight, setPlayerHeight] = useState(0)
+  const columnBox = useColumnBox(pageAreaRef, player.open)
+  // Vocabulário do livro (aba Vocabulary): só com as ferramentas de língua.
+  const vocabulary = useBookVocabulary(book, toolsOn)
+  const vocabSend = useVocabularySend({
+    book,
+    items: vocabulary.items,
+    notes,
+    notebooks,
+    noteTypes,
+    onCreateNotebook,
+    onCreateNote,
+    onSaveNote,
+    showToast,
+    showNote,
+    markSent: vocabulary.markSent,
+  })
+  // O professor de língua do chat, o "Retell" da aba e o "Ask for feedback" da aba
+  // Notes, que manda o reconto ao chat com o professor ligado.
+  const pageItems = useMemo(
+    () => vocabulary.items.filter((item) => item.page === pageNum),
+    [vocabulary.items, pageNum],
+  )
+  const { teacher, turnOn: turnTeacherOn } = useReaderTeacher({
+    book,
+    toolsOn,
+    nativeLanguage: languageSettings.nativeLanguage,
+    notes,
+    disabledNotebookIds,
+    pageItems,
+  })
+  const [pendingSend, setPendingSend] = useState<{ text: string } | null>(null)
+  const retell = useRetell({
+    book,
+    format: 'epub',
+    items: vocabulary.items,
+    selectedIds: vocabSend.selectedIds,
+    notes,
+    notebooks,
+    noteTypes,
+    onCreateNotebook,
+    onCreateNote,
+    onSaveNote,
+    showToast,
+    openNote,
+  })
+  // O "Translate" de um item da aba que não tem tradução: o popover abre ao lado
+  // do botão, sem depender da seleção do texto.
+  const [itemTranslate, setItemTranslate] = useState<{
+    item: VocabularyItem
+    anchor: PlacementAnchor
+  } | null>(null)
+  const itemPopoverRef = useRef<HTMLDivElement>(null)
+  // Marca no texto: as palavras e frases guardadas neste livro e nos outros da mesma
+  // língua. Os ranges de cada marca ficam num ref para o clique achar a palavra.
+  const marksEnabled = toolsOn && languageSettings.vocabMarks
+  const marks = useVocabularyMarks({ book, enabled: marksEnabled, bookItems: vocabulary.items })
+  const markEntriesRef = useRef<MarkEntry[]>([])
+  // O capítulo inteiro está no DOM: as ocorrências de um documento só se refazem
+  // quando a lista de formas muda, não a cada virada de página.
+  const docMarksRef = useRef(new WeakMap<Document, { terms: MatchTerm[]; entries: MarkEntry[] }>())
+  const removeVocabularyItems = useVocabularyRemoval({ vocabulary, showToast })
+  // O clique numa palavra marcada ("onde você guardou") e o "Translate here" dela.
+  const [savedWord, setSavedWord] = useState<{
+    itemIds: string[]
+    term: string
+    range: Range
+    anchor: PlacementAnchor
+  } | null>(null)
+  const savedWordRef = useRef<HTMLDivElement>(null)
+  const [hereTranslate, setHereTranslate] = useState<{
+    cfiRange: string
+    text: string
+    sentence: string
+    positionLabel: string
+    anchor: PlacementAnchor
+  } | null>(null)
+  const herePopoverRef = useRef<HTMLDivElement>(null)
+  // Sobe a cada `markClicked` de um grifo: o clique que um grifo tratou não abre o
+  // "onde você guardou" da palavra que está embaixo dele.
+  const highlightClickSeqRef = useRef(0)
+  // CFI da seleção que o player lê: a faixa cinza se refaz a partir dele a cada
+  // virada de página e troca de capítulo (o iframe é outro documento).
+  const listenCfiRef = useRef<string | null>(null)
+  // O que a tela mostra (início e fim do último `relocated`): muda a cada virada de
+  // página e a cada repaginação que mexe no que se vê. É por ela, e não pelo
+  // ordinal da location, que o áudio sabe se o texto lido saiu da tela.
+  const [viewKey, setViewKey] = useState('')
+  const viewKeyRef = useRef('')
   const renditionRef = useRef<EpubRendition | null>(null)
   const bookHandleRef = useRef<EpubBookHandle | null>(null)
   // Marcas desenhadas no marks-pane, por id de grifo — é o que permite à
@@ -370,6 +552,8 @@ export function EpubReader({
   bookRef.current = book
   const onBookChangeRef = useRef(onBookChange)
   onBookChangeRef.current = onBookChange
+  const onBookLanguageChangeRef = useRef(onBookLanguageChange)
+  onBookLanguageChangeRef.current = onBookLanguageChange
   const onLoadErrorRef = useRef(onLoadError)
   onLoadErrorRef.current = onLoadError
   const tocRef = useRef(toc)
@@ -430,6 +614,63 @@ export function EpubReader({
     onBookChangeRef.current(updated)
   }, [])
 
+  // Faixa cinza do trecho em leitura: o Range vivo vem do CFI da seleção, no
+  // documento da seção exibida. Refeita a cada virada de página e troca de capítulo.
+  function applyListenMark() {
+    const rendition = renditionRef.current
+    const cfi = listenCfiRef.current
+    const range = rendition && cfi ? epubLiveRange(rendition, cfi) : null
+    if (range) setPageMarks('listen', [range])
+    else clearPageMarks('listen')
+  }
+  const applyListenMarkRef = useRef(applyListenMark)
+  applyListenMarkRef.current = applyListenMark
+
+  // Pontilhado das palavras guardadas: todas as ocorrências da forma guardada e da
+  // base, por palavra inteira, em cada documento exibido, e as frases guardadas
+  // neste livro, no lugar de origem. As palavras vêm antes das frases na lista (o
+  // clique vale a primeira que contém o ponto). Refeito a cada virada de página e
+  // troca de capítulo.
+  function applyVocabMarks() {
+    const rendition = renditionRef.current
+    if (!rendition || !marksEnabled) {
+      markEntriesRef.current = []
+      clearPageMarks('vocab')
+      return
+    }
+    const entries: MarkEntry[] = []
+    for (const doc of epubContentsDocuments(rendition)) {
+      let cached = docMarksRef.current.get(doc)
+      if (!cached || cached.terms !== marks.terms) {
+        const { text, nodes } = buildJoinedNodeText(doc.body)
+        const found: MarkEntry[] = []
+        for (const occurrence of findTermOccurrences(text, marks.terms)) {
+          const range = rangeFromNodeOffsets(doc, nodes, occurrence.start, occurrence.end)
+          if (range) found.push({ range, itemIds: occurrence.itemIds })
+        }
+        cached = { terms: marks.terms, entries: found }
+        docMarksRef.current.set(doc, cached)
+      }
+      entries.push(...cached.entries)
+    }
+    for (const anchor of epubSentenceAnchors(marks.items, book.id)) {
+      const range = epubLiveRange(rendition, anchor.cfiRange)
+      if (range) entries.push({ range, itemIds: [anchor.itemId] })
+    }
+    markEntriesRef.current = entries
+    if (entries.length > 0) setPageMarks('vocab', entries.map((entry) => entry.range))
+    else clearPageMarks('vocab')
+  }
+  const applyVocabMarksRef = useRef(applyVocabMarks)
+  applyVocabMarksRef.current = applyVocabMarks
+
+  // A lista de itens mudou (guardar, remover, a chave "Mark in text", as
+  // ferramentas de língua): refaz as marcas do que está na tela.
+  useEffect(() => {
+    applyVocabMarksRef.current()
+  }, [marksEnabled, marks.terms, marks.items])
+  useEffect(() => () => clearPageMarks('vocab'), [])
+
   // ─── Navegação ──────────────────────────────────────────────────────────
   const goNext = useCallback(() => {
     void renditionRef.current?.next().catch(() => {})
@@ -441,26 +682,74 @@ export function EpubReader({
 
   // Atalhos do leitor (ignorando inputs/textarea/contenteditable): ←/→ trocam
   // de página, Esc fecha a toolbar de seleção e o popover do grifo, H grifa a
-  // seleção com a última cor. O listener dentro do iframe é registrado uma
+  // seleção com a última cor, T traduz e V guarda a seleção no vocabulário. O
+  // listener dentro do iframe é registrado uma
   // vez, na carga; a ref, trocada a cada render, mantém o handler atual (e a
   // seleção atual) sem precisar reregistrar.
   const handleKeyRef = useRef<(e: KeyboardEvent) => void>(() => {})
   handleKeyRef.current = (e: KeyboardEvent) => {
-    const target = e.target as HTMLElement | null
-    if (
-      target &&
-      (target.tagName === 'INPUT' ||
-        target.tagName === 'TEXTAREA' ||
-        target.isContentEditable)
-    ) {
+    // Campo, <select> (o do menu do player, o do Translate) e modal ficam com as
+    // teclas deles, setas inclusive.
+    if (ownsKeyboard(e.target)) return
+    // Com o player aberto: Espaço toca e pausa, R repete e Shift+←/→ pulam de
+    // frase, sem virar a página. L lê a seleção, ou o trecho visível.
+    const plain = !e.ctrlKey && !e.metaKey && !e.altKey
+    if (plain && player.open) {
+      if (e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        e.preventDefault()
+        if (e.key === 'ArrowLeft') player.prev()
+        else player.next()
+        return
+      }
+      if (e.key === ' ') {
+        // Com o foco num botão, o Espaço também o acionaria: o preventDefault o impede.
+        e.preventDefault()
+        if (!e.repeat) player.toggle()
+        return
+      }
+      if (e.key === 'r' || e.key === 'R') {
+        e.preventDefault()
+        player.repeat()
+        return
+      }
+    }
+    if (plain && toolsOn && (e.key === 'l' || e.key === 'L')) {
+      e.preventDefault()
+      if (selection) handleListen()
+      else void handleListenPage()
       return
     }
     if (e.key === 'ArrowLeft') goPrevious()
     else if (e.key === 'ArrowRight') goNext()
-    else if (e.key === 'Escape' && (selection || removalCandidate)) {
+    else if (e.key === 'Escape' && translate) {
+      // Fecha o popover e devolve a barra; o Esc seguinte limpa a seleção.
+      setTranslate(null)
+    } else if (e.key === 'Escape' && (selection || removalCandidate)) {
       setSelection(null)
       setRemovalCandidate(null)
       clearIframeSelection()
+    } else if (
+      (e.key === 't' || e.key === 'T') &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.altKey &&
+      toolsOn &&
+      selection &&
+      !translate
+    ) {
+      e.preventDefault()
+      void handleTranslate()
+    } else if (
+      (e.key === 'v' || e.key === 'V') &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.altKey &&
+      toolsOn &&
+      selection &&
+      !translate
+    ) {
+      e.preventDefault()
+      void handleAddToVocabulary()
     } else if (
       (e.key === 'h' || e.key === 'H') &&
       !e.ctrlKey &&
@@ -490,6 +779,7 @@ export function EpubReader({
     let offSelection: (() => void) | null = null
     let offMarkClick: (() => void) | null = null
     let offViewMouseDown: (() => void) | null = null
+    let offViewClick: (() => void) | null = null
 
     const opened: EpubBook = { ...bookRef.current, lastOpenedAt: Date.now() }
     onBookChangeRef.current(opened)
@@ -533,6 +823,18 @@ export function EpubReader({
             .catch((err) => console.error('failed to save epub locations', err))
         }
 
+        // Primeira abertura de um livro sem língua verificada (importado antes
+        // desta feature): metadado do OPF e, sem ele, amostra do texto. Antes do
+        // renderTo, porque a amostra descarrega as seções.
+        if (opened.language === null) {
+          const language = await detectEpubLanguage(handle)
+          if (aborted()) return
+          void storage
+            .setBookLanguage(opened.id, language)
+            .catch((err) => console.error('failed to save book language', err))
+          onBookLanguageChangeRef.current(language)
+        }
+
         // O sumário carrega em paralelo com o texto: um livro sem navegação
         // utilizável não pode atrasar a primeira página.
         void loadEpubToc(handle).then((entries) => {
@@ -565,6 +867,8 @@ export function EpubReader({
           currentCfiRef.current = start.cfi
           const end = location.end?.cfi
           visibleRangeRef.current = end ? { start: start.cfi, end } : null
+          viewKeyRef.current = epubViewKey(start.cfi, end)
+          setViewKey(viewKeyRef.current)
           setAtStart(location.atStart === true)
           setAtEnd(location.atEnd === true)
           setPercent(
@@ -586,7 +890,17 @@ export function EpubReader({
           setSelection(null)
           setRemovalCandidate(null)
           clearEpubSelection(rendition)
+          setSavedWord(null)
+          setHereTranslate(null)
           schedulePositionSave(start.cfi, page)
+          applyListenMarkRef.current()
+          applyVocabMarksRef.current()
+        })
+        // Capítulo novo = documento novo no iframe: a faixa cinza e o pontilhado se refazem.
+        rendition.on('rendered', () => {
+          if (cancelled) return
+          applyListenMarkRef.current()
+          applyVocabMarksRef.current()
         })
         // O texto do livro vive num iframe: sem isto, as setas param de
         // funcionar assim que o foco entra nele.
@@ -611,6 +925,7 @@ export function EpubReader({
         })
         offMarkClick = onEpubHighlightClick(rendition, (cfi) => {
           if (cancelled) return
+          highlightClickSeqRef.current += 1
           const h = highlightsRef.current.find((x) => x.cfi === cfi)
           const rect = epubHighlightScreenRect(rendition, cfi)
           const area = pageAreaRef.current?.getBoundingClientRect()
@@ -632,6 +947,28 @@ export function EpubReader({
           if (cancelled) return
           setSelection(null)
           setRemovalCandidate(null)
+          setSavedWord(null)
+          // Os popovers (Translate de um item ou de uma palavra marcada) e o menu ⋯ do
+          // player fecham no clique fora, que eles escutam no documento pai: o clique
+          // no iframe chega a eles como um mousedown fora de tudo.
+          document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+        })
+        // O clique numa palavra ou frase guardada abre o "onde você guardou". O grifo
+        // tem prioridade: o clique que o grifo tratou (o `markClicked` chega na mesma
+        // rodada do evento) não abre nada, e uma seleção em curso também não.
+        offViewClick = onEpubViewClick(rendition, (event, doc) => {
+          if (cancelled || markEntriesRef.current.length === 0) return
+          if (doc.defaultView?.getSelection()?.toString().trim()) return
+          const clickSeq = highlightClickSeqRef.current
+          const { clientX, clientY } = event
+          setTimeout(() => {
+            if (cancelled || highlightClickSeqRef.current !== clickSeq) return
+            const inDoc = markEntriesRef.current.filter(
+              (entry) => entry.range.startContainer.ownerDocument === doc,
+            )
+            const entry = markEntryAtPoint(inDoc, clientX, clientY)
+            if (entry) openSavedWordRef.current(entry)
+          }, 0)
         })
 
         try {
@@ -699,6 +1036,7 @@ export function EpubReader({
       offSelection?.()
       offMarkClick?.()
       offViewMouseDown?.()
+      offViewClick?.()
       renditionRef.current = null
       bookHandleRef.current = null
       // `book.destroy()` já destrói a rendition (e com ela o iframe e o
@@ -835,12 +1173,61 @@ export function EpubReader({
       if (!target) return
       if (toolbarRef.current && toolbarRef.current.contains(target)) return
       if (popoverRef.current && popoverRef.current.contains(target)) return
+      if (translatePopoverRef.current && translatePopoverRef.current.contains(target)) return
       setSelection(null)
       setRemovalCandidate(null)
     }
     document.addEventListener('mousedown', onDocMouseDown)
     return () => document.removeEventListener('mousedown', onDocMouseDown)
   }, [])
+
+  // O Translate só vive com a seleção em que foi aberto e com as ferramentas
+  // ligadas: a virada de página, um clique fora, uma seleção nova (o evento
+  // `selected` chega 250 ms depois e com outro cfiRange) ou desligar as
+  // ferramentas fecha o popover. Um `selected` repetido do mesmo trecho não.
+  useEffect(() => {
+    if (translate && (!selection || selection.cfiRange !== translate.cfiRange || !toolsOn)) {
+      setTranslate(null)
+    }
+  }, [translate, selection, toolsOn])
+
+  useEffect(() => {
+    if (!toolsOn) {
+      setItemTranslate(null)
+      setHereTranslate(null)
+    }
+  }, [toolsOn])
+
+  // Sem player aberto não há faixa cinza, e ao fechar o leitor ela sai do registro
+  // da janela (que é de todos os leitores).
+  useEffect(() => {
+    if (!player.open) {
+      listenCfiRef.current = null
+      clearPageMarks('listen')
+    }
+  }, [player.open])
+  useEffect(() => () => clearPageMarks('listen'), [])
+
+  // Desligar as ferramentas de língua (Settings, "Change" do Translate) fecha o
+  // player junto.
+  useEffect(() => {
+    if (!toolsOn && player.open) player.close()
+  }, [toolsOn, player])
+
+  // Virar a página com o texto do áudio fora da tela: pausa e o player oferece
+  // "Back to". Voltar à tela do áudio tira o aviso, mas não retoma sozinho. O
+  // texto lido é conferido pelo CFI contra o que a tela mostra (ver `viewKey`).
+  useEffect(() => {
+    const source = player.state.source
+    const view = visibleRangeRef.current
+    if (!source?.cfi || !view) return
+    if (epubCfiInView(source.cfi, view)) {
+      if (player.state.awayFromPage !== null) player.clearAway()
+    } else {
+      player.pause('away')
+    }
+    // Só uma tela nova dispara; o player lido é o do render dela.
+  }, [viewKey])
 
   function clearIframeSelection() {
     const rendition = renditionRef.current
@@ -850,15 +1237,19 @@ export function EpubReader({
   // Navegação "de citação" (item do sumário ou grifo do painel): marca a
   // posição atual como ponto de retorno antes de saltar. ‹›/setas não mexem
   // no marcador — paridade com o `jumpToPage` do leitor de PDF.
-  function jumpToCfi(target: string) {
+  function jumpToCfi(target: string, onFail?: () => void) {
     const rendition = renditionRef.current
-    if (!rendition) return
+    if (!rendition) {
+      onFail?.()
+      return
+    }
     const current = currentCfiRef.current
     if (current && current !== target) {
       setJumpBack({ cfi: current, percent })
     }
     void displayEpubAt(rendition, target).catch((err) => {
       console.error('failed to navigate', err)
+      onFail?.()
     })
   }
 
@@ -947,6 +1338,14 @@ export function EpubReader({
     setSideOpen(true)
   }
 
+  // "Ask for feedback": o reconto vai ao chat com o professor ligado, e o chat o envia.
+  function askFeedback(retelling: string) {
+    turnTeacherOn()
+    setPendingSend({ text: buildFeedbackMessage(retelling) })
+    setSideTab('chat')
+    setSideOpen(true)
+  }
+
   function handleAddToNote() {
     if (!selection) return
     const { text, cfiRange } = selection
@@ -967,6 +1366,316 @@ export function EpubReader({
     void citationLabelFor(cfiRange).then((label) =>
       askAiAbout(text, page, label),
     )
+  }
+
+  // ─── Translate ────────────────────────────────────────────────────────
+  // A seleção continua marcada. A frase de contexto é a do bloco onde a
+  // seleção começa (parágrafo, item, citação…).
+  async function handleTranslate() {
+    const rendition = renditionRef.current
+    if (!selection || translate || !rendition) return
+    const { cfiRange } = selection
+    const text = selection.text.replace(/\s+/g, ' ').trim()
+    const rect = epubHighlightScreenRect(rendition, cfiRange)
+    if (!rect) return
+    const sentence =
+      text.length > TRANSLATE_CHAR_LIMIT
+        ? text
+        : contextSentenceAt(
+            epubContextText(rendition, cfiRange, text) ?? text,
+            text,
+            book.language ?? '',
+            epubSelectionOccurrence(rendition, cfiRange, text),
+          )
+    const positionLabel = await citationLabelFor(cfiRange)
+    setTranslate({
+      cfiRange,
+      text,
+      sentence,
+      positionLabel,
+      anchor: { x: rect.left, y: rect.top, w: rect.width, h: rect.height },
+    })
+    // Abrir o Translate pausa o áudio durante a consulta.
+    player.pause('translate')
+  }
+
+  // ─── Listen ───────────────────────────────────────────────────────────
+  // A seleção vira frases e o trecho inteiro fica em cinza na página, mesmo
+  // depois de a seleção sumir.
+  function handleListen() {
+    if (!selection) return
+    const { cfiRange } = selection
+    const text = selection.text.replace(/\s+/g, ' ').trim()
+    const sentences = splitSentences(text, book.language ?? '')
+    if (sentences.length === 0) return
+    const page = pageOfCfi(cfiRange)
+    setSelection(null)
+    clearIframeSelection()
+    void citationLabelFor(cfiRange).then((label) => {
+      listenCfiRef.current = cfiRange
+      player.play({
+        id: crypto.randomUUID(),
+        kind: 'selection',
+        originLabel: `Selection · ${label}`,
+        endLabel: 'End of the selection',
+        sentences,
+        chars: sentences.reduce((total, sentence) => total + sentence.length, 0),
+        page,
+        cfi: cfiRange,
+        backLabel: label,
+        notice: null,
+      })
+      applyListenMark()
+    })
+  }
+
+  // O trecho visível (as duas colunas, no spread), pelo mesmo texto que vai ao
+  // chat: com a reserva da fatia da location (cerca de 1.600 caracteres) quando o
+  // intervalo não resolve. Sem faixa cinza: o trecho todo é a página.
+  async function handleListenPage() {
+    if (loading || !bookHandleRef.current) return
+    const page = pageNum
+    const view = viewKeyRef.current
+    const startCfi = visibleRangeRef.current?.start ?? positionCfi
+    const text = await getPageText(page)
+    if (viewKeyRef.current !== view) return
+    const sentences = text ? splitSentences(text, book.language ?? '') : []
+    if (sentences.length === 0) {
+      showToast({ message: 'Nothing to read on this page.' })
+      return
+    }
+    const label = startCfi ? await citationLabelFor(startCfi) : `${percent}%`
+    if (viewKeyRef.current !== view) return
+    listenCfiRef.current = null
+    clearPageMarks('listen')
+    player.play({
+      id: crypto.randomUUID(),
+      kind: 'page',
+      originLabel: label,
+      endLabel: 'End of the visible text',
+      sentences,
+      chars: sentences.reduce((total, sentence) => total + sentence.length, 0),
+      page,
+      cfi: startCfi ?? undefined,
+      backLabel: label,
+      notice: null,
+    })
+  }
+
+  // "Back to …": volta ao início do trecho que o player lê.
+  function handleBackToSource() {
+    const cfi = player.state.source?.cfi
+    const rendition = renditionRef.current
+    if (cfi && rendition) void displayEpubAt(rendition, cfi).catch(() => {})
+  }
+
+  // Fala o termo ou o trecho sem mexer no que está no player.
+  function speakOnce(text: string) {
+    player.speakOnce(text, book.language ?? '').catch((e: unknown) => {
+      showToast({ message: isTtsError(e) ? ttsErrorSentence(e) : "Couldn't play the audio.", tone: 'error' })
+    })
+  }
+
+  // Listen do popover do Translate: o termo ou o trecho, sem mexer no player. Acima
+  // do limite do Translate é o trecho da seleção, que passa pelo player (e pela
+  // confirmação de trecho longo).
+  function handlePopoverListen(text: string) {
+    if (text.length > TRANSLATE_CHAR_LIMIT) {
+      handleListen()
+      return
+    }
+    speakOnce(text)
+  }
+
+  function changeBookLanguage(code: string) {
+    void storage
+      .setBookLanguage(book.id, code)
+      .catch((err) => console.error('failed to save book language', err))
+    onBookLanguageChange(code)
+  }
+
+  // ─── Vocabulário ──────────────────────────────────────────────────────
+  function vocabularyDraft(
+    text: string,
+    sentence: string,
+    cfiRange: string,
+    positionLabel: string,
+    translation: Translation | null,
+  ): VocabularyDraft {
+    return {
+      text,
+      sentence,
+      kind: classifySelection(text, sentence),
+      ...translationFields(translation),
+      page: pageOfCfi(cfiRange),
+      positionLabel,
+      anchor: { format: 'epub', cfiRange },
+    }
+  }
+
+  async function saveToVocabulary(draft: VocabularyDraft) {
+    try {
+      const result = await vocabulary.add(draft)
+      showToast({ message: result === 'added' ? 'Added to vocabulary' : 'Already in your vocabulary' })
+    } catch (err) {
+      console.error('failed to save the vocabulary item', err)
+      showToast({ message: "Couldn't save to vocabulary. Try again.", tone: 'error' })
+    }
+  }
+
+  // "Add to vocabulary" da barra (e a tecla V): o item entra sem tradução, sem
+  // chamar a IA. O texto e a frase de origem são os do Translate.
+  async function handleAddToVocabulary() {
+    const rendition = renditionRef.current
+    if (!selection || !rendition) return
+    const { cfiRange } = selection
+    const text = selection.text.replace(/\s+/g, ' ').trim()
+    const sentence =
+      text.length > TRANSLATE_CHAR_LIMIT
+        ? text
+        : contextSentenceAt(
+            epubContextText(rendition, cfiRange, text) ?? text,
+            text,
+            book.language ?? '',
+            epubSelectionOccurrence(rendition, cfiRange, text),
+          )
+    setSelection(null)
+    clearIframeSelection()
+    const positionLabel = await citationLabelFor(cfiRange)
+    await saveToVocabulary(vocabularyDraft(text, sentence, cfiRange, positionLabel, null))
+  }
+
+  // "Add to vocabulary" do popover do Translate: o item entra com o sentido que
+  // estava na tela.
+  async function handleAddFromPopover(translation: Translation | null) {
+    if (!translate) return
+    const { text, sentence, cfiRange, positionLabel } = translate
+    setTranslate(null)
+    setSelection(null)
+    clearIframeSelection()
+    await saveToVocabulary(vocabularyDraft(text, sentence, cfiRange, positionLabel, translation))
+  }
+
+  function openVocabularyItem(item: VocabularyItem) {
+    const notFound = () =>
+      showToast({ message: "This item's place in the book wasn't found.", tone: 'error' })
+    if (item.anchor.format !== 'epub') {
+      notFound()
+      return
+    }
+    jumpToCfi(item.anchor.cfiRange, notFound)
+  }
+
+  // ─── Palavra marcada no texto ─────────────────────────────────────────
+  function openSavedWord(entry: MarkEntry) {
+    const term = entry.range.toString().replace(/\s+/g, ' ').trim()
+    const rect = epubRangeScreenRect(entry.range)
+    if (!term || !rect) return
+    setSelection(null)
+    setRemovalCandidate(null)
+    setSavedWord({
+      itemIds: entry.itemIds,
+      term,
+      range: entry.range,
+      anchor: { x: rect.left, y: rect.top, w: rect.width, h: rect.height },
+    })
+  }
+  const openSavedWordRef = useRef(openSavedWord)
+  openSavedWordRef.current = openSavedWord
+
+  // Os itens que a marca clicada mostra, na lista viva (remover um tira da lista).
+  const savedWordItems = useMemo(() => {
+    if (!savedWord) return []
+    const wanted = new Set(savedWord.itemIds)
+    return marks.items.filter((item) => wanted.has(item.id))
+  }, [savedWord, marks.items])
+  useEffect(() => {
+    if (savedWord && savedWordItems.length === 0) setSavedWord(null)
+  }, [savedWord, savedWordItems.length])
+
+  useEffect(() => {
+    if (!marksEnabled) setSavedWord(null)
+  }, [marksEnabled])
+
+  // A palavra clicada com a frase de AGORA, onde o usuário a achou: o bloco onde ela
+  // está, e o lugar é o do trecho marcado.
+  async function savedWordContext(): Promise<{
+    term: string
+    sentence: string
+    cfiRange: string
+    positionLabel: string
+    anchor: PlacementAnchor
+  } | null> {
+    const rendition = renditionRef.current
+    if (!savedWord || !rendition) return null
+    const { term, range, anchor } = savedWord
+    const cfiRange = epubCfiFromRange(rendition, range)
+    if (!cfiRange) return null
+    const sentence = contextSentenceAt(
+      epubContextText(rendition, cfiRange, term) ?? term,
+      term,
+      book.language ?? '',
+      epubSelectionOccurrence(rendition, cfiRange, term),
+    )
+    return { term, sentence, cfiRange, positionLabel: await citationLabelFor(cfiRange), anchor }
+  }
+
+  async function handleSavedWordTranslateHere() {
+    const context = await savedWordContext()
+    if (!context) return
+    setSavedWord(null)
+    setHereTranslate({
+      cfiRange: context.cfiRange,
+      text: context.term,
+      sentence: context.sentence,
+      positionLabel: context.positionLabel,
+      anchor: context.anchor,
+    })
+    // Abrir o Translate pausa o áudio durante a consulta.
+    player.pause('translate')
+  }
+
+  // "Add this sentence": o mesmo termo, com a frase em que ele está agora; a regra
+  // de duplicata vale (o mesmo texto na mesma frase não entra duas vezes).
+  async function handleSavedWordAddSentence() {
+    const context = await savedWordContext()
+    if (!context) return
+    setSavedWord(null)
+    await saveToVocabulary(
+      vocabularyDraft(context.term, context.sentence, context.cfiRange, context.positionLabel, null),
+    )
+  }
+
+  // Remove só o que foi guardado neste livro; o que veio de outro livro fica.
+  function handleSavedWordRemove() {
+    const own = savedWordItems.filter((item) => item.bookId === book.id)
+    setSavedWord(null)
+    void removeVocabularyItems(own)
+  }
+
+  // O sentido do popover vira o do item (que estava sem tradução).
+  function saveItemTranslation(item: VocabularyItem, translation: Translation | null) {
+    const current = vocabulary.items.find((i) => i.id === item.id)
+    setItemTranslate(null)
+    if (!current || !translation) return
+    const { sense, baseForm } = translationFields(translation)
+    vocabulary
+      .update({ ...current, sense, baseForm: baseForm ?? current.baseForm })
+      .then(() => showToast({ message: 'Translation saved' }))
+      .catch((err) => {
+        console.error('failed to save the translation', err)
+        showToast({ message: "Couldn't save the translation. Try again.", tone: 'error' })
+      })
+  }
+
+  // "Listen to list": a frase de origem dos itens marcados (ou dos novos), no
+  // mesmo player, sem faixa cinza na página.
+  function handleListenToList() {
+    const source = buildListenSource(vocabSend.listenItems, book.language ?? '')
+    if (!source) return
+    listenCfiRef.current = null
+    clearPageMarks('listen')
+    player.play(source)
   }
 
   // ─── Popover do grifo ──────────────────────────────────────────────────
@@ -1071,7 +1780,9 @@ export function EpubReader({
     )
     el.style.left = `${left}px`
     el.style.top = `${top}px`
-  }, [selection])
+    // A barra é remontada quando o Translate fecha, e ganha a linha de língua
+    // quando as ferramentas ligam: mede de novo nos dois casos.
+  }, [selection, translate, toolsOn])
 
   function popoverStyle(): React.CSSProperties {
     if (!removalCandidate) return { display: 'none' }
@@ -1114,6 +1825,12 @@ export function EpubReader({
     }, SAVE_DEBOUNCE_MS)
   }
 
+  // A aba Vocabulary só existe com as ferramentas de língua (e com elas a coluna
+  // é mais larga): sem elas, a aba aberta volta ao sumário.
+  const activeSideTab: SidePanelTab =
+    sidePanelTab === 'vocabulary' && !toolsOn ? 'contents' : sidePanelTab
+  const sidePanelWidth = toolsOn ? SIDE_PANEL_WIDTH_WITH_TOOLS : SIDE_PANEL_WIDTH
+
   if (error) {
     return (
       <div className={styles.reader}>
@@ -1135,7 +1852,11 @@ export function EpubReader({
   }
 
   return (
-    <div className={styles.reader}>
+    <div
+      className={styles.reader}
+      // O aviso (toast) sobe com o mini-player: os dois usam a faixa de baixo.
+      style={player.open ? ({ '--reader-toast-offset': `${playerHeight + 12}px` } as React.CSSProperties) : undefined}
+    >
       <div className={styles.toolbar}>
         <button type="button" className={styles.backButton} onClick={onBack}>
           <ArrowLeft size={13} aria-hidden />
@@ -1229,6 +1950,24 @@ export function EpubReader({
           </button>
         </div>
 
+        {toolsOn && (
+          <button
+            type="button"
+            className={`${styles.highlightsToggle} ${mincerRecording ? styles.listenRecording : ''}`}
+            onClick={(e) => {
+              // Sem o foco no botão, o Espaço do player não o aciona de novo.
+              e.currentTarget.blur()
+              void handleListenPage()
+            }}
+            disabled={loading}
+            aria-label="Listen to page"
+            title={mincerRecording ? 'Mincer is recording' : 'Listen to the visible text (L)'}
+          >
+            <SpeakerHigh size={14} aria-hidden />
+            Listen to page
+          </button>
+        )}
+
         {jumpBack !== null && (
           <button
             type="button"
@@ -1312,7 +2051,7 @@ export function EpubReader({
           style={{
             width: sidePanelCollapsed
               ? SIDE_PANEL_COLLAPSED_WIDTH
-              : SIDE_PANEL_WIDTH,
+              : sidePanelWidth,
           }}
           aria-label="Book navigation"
         >
@@ -1356,10 +2095,26 @@ export function EpubReader({
                   </span>
                 )}
               </button>
+              {toolsOn && (
+                <button
+                  type="button"
+                  className={styles.sidePanelRailButton}
+                  onClick={() => {
+                    setSidePanelTab('vocabulary')
+                    setSidePanelCollapsed(false)
+                  }}
+                  aria-label="Show vocabulary"
+                  title="Vocabulary"
+                >
+                  <BookmarkSimple size={16} aria-hidden />
+                </button>
+              )}
             </div>
           ) : (
             <>
-              <div className={styles.sidePanelTabs}>
+              <div
+                className={`${styles.sidePanelTabs} ${toolsOn ? styles.sidePanelTabsDense : ''}`}
+              >
                 <button
                   type="button"
                   className={styles.sidePanelCollapseBtn}
@@ -1372,7 +2127,7 @@ export function EpubReader({
                 <button
                   type="button"
                   className={`${styles.sidePanelTab} ${
-                    sidePanelTab === 'contents' ? styles.sidePanelTabActive : ''
+                    activeSideTab === 'contents' ? styles.sidePanelTabActive : ''
                   }`}
                   onClick={() => setSidePanelTab('contents')}
                 >
@@ -1381,7 +2136,7 @@ export function EpubReader({
                 <button
                   type="button"
                   className={`${styles.sidePanelTab} ${
-                    sidePanelTab === 'highlights'
+                    activeSideTab === 'highlights'
                       ? styles.sidePanelTabActive
                       : ''
                   }`}
@@ -1394,9 +2149,20 @@ export function EpubReader({
                     </span>
                   )}
                 </button>
+                {toolsOn && (
+                  <button
+                    type="button"
+                    className={`${styles.sidePanelTab} ${
+                      activeSideTab === 'vocabulary' ? styles.sidePanelTabActive : ''
+                    }`}
+                    onClick={() => setSidePanelTab('vocabulary')}
+                  >
+                    Vocabulary
+                  </button>
+                )}
               </div>
 
-              {sidePanelTab === 'contents' ? (
+              {activeSideTab === 'contents' ? (
                 <div className={styles.tocPanel}>
                   {toc === null ? (
                     <p className={styles.tocEmpty}>Loading…</p>
@@ -1408,6 +2174,33 @@ export function EpubReader({
                     <TocList items={toc} depth={0} onNavigate={goToHref} />
                   )}
                 </div>
+              ) : activeSideTab === 'vocabulary' ? (
+                <VocabularyTab
+                  items={vocabulary.items}
+                  hideSenses={languageSettings.vocabHideSenses}
+                  onToggleHideSenses={() => setVocabHideSenses(!languageSettings.vocabHideSenses)}
+                  marksOn={languageSettings.vocabMarks}
+                  onToggleMarks={() => setVocabMarks(!languageSettings.vocabMarks)}
+                  selectedIds={vocabSend.selectedIds}
+                  onToggleSelected={vocabSend.toggleSelected}
+                  onOpenItem={openVocabularyItem}
+                  onListenItem={(item) => speakOnce(item.sentence)}
+                  onTranslateItem={(item, anchor) => {
+                    setItemTranslate({ item, anchor })
+                    // Abrir o Translate pausa o áudio durante a consulta.
+                    player.pause('translate')
+                  }}
+                  onRemoveItem={(item) => void removeVocabularyItems([item])}
+                  onOpenSent={vocabSend.openSent}
+                  sendLabel={vocabSend.sendLabel}
+                  canSend={vocabSend.canSend}
+                  onSend={vocabSend.send}
+                  destinationLabel={vocabSend.destinationLabel}
+                  onChangeDestination={vocabSend.openChange}
+                  onListenToList={handleListenToList}
+                  canRetell={retell.canRetell}
+                  onRetell={retell.retell}
+                />
               ) : (
                 <>
                   {(orderedHighlights.length > HIGHLIGHT_SEARCH_MIN || textFilter !== '') && (
@@ -1568,12 +2361,24 @@ export function EpubReader({
               </button>
             </>
           )}
-          {selection && (
+          {selection && !translate && (
             <div
               ref={toolbarRef}
-              className={styles.highlightToolbar}
+              className={`${styles.highlightToolbar} ${
+                toolsOn ? styles.highlightToolbarStacked : ''
+              }`}
               onMouseDown={(e) => e.stopPropagation()}
             >
+              {toolsOn && (
+                <LanguageBar
+                  onTranslate={() => void handleTranslate()}
+                  onListen={handleListen}
+                  onAddToVocabulary={() => void handleAddToVocabulary()}
+                />
+              )}
+              <div
+                className={toolsOn ? styles.highlightToolbarRow : styles.highlightToolbarContents}
+              >
               {HIGHLIGHT_COLORS.map((c) => (
                 <button
                   key={c}
@@ -1613,7 +2418,45 @@ export function EpubReader({
               >
                 Ask AI
               </button>
+              </div>
             </div>
+          )}
+          {translate && selection && toolsOn && (
+            <TranslatePopover
+              open
+              rootRef={translatePopoverRef}
+              anchor={translate.anchor}
+              text={translate.text}
+              sentence={translate.sentence}
+              positionLabel={translate.positionLabel}
+              sourceLanguage={book.language ?? ''}
+              targetLanguage={languageSettings.nativeLanguage}
+              model={languageSettings.translateModel}
+              onListen={handlePopoverListen}
+              onAddToVocabulary={(t) => void handleAddFromPopover(t)}
+              onAddToNote={handleAddToNote}
+              onAskAi={handleAskAi}
+              onChangeBookLanguage={changeBookLanguage}
+              onChangeTargetLanguage={setNativeLanguage}
+              onOpenSettings={() => {
+                setTranslate(null)
+                onOpenSettingsSection('openrouter')
+              }}
+              onClose={() => setTranslate(null)}
+            />
+          )}
+          {player.open && columnBox && (
+            <MiniPlayer
+              player={player}
+              column={columnBox}
+              models={catalog.models}
+              modelsLoading={catalog.loading}
+              bookId={book.id}
+              language={book.language ?? ''}
+              onBackToPage={handleBackToSource}
+              onOpenSettingsSection={onOpenSettingsSection}
+              onHeightChange={setPlayerHeight}
+            />
           )}
           {removalCandidate && (
             <div
@@ -1728,6 +2571,9 @@ export function EpubReader({
           onOpenNote={openNote}
           showToast={showToast}
           onOpenSettings={onOpenSettings}
+          teacher={teacher}
+          pendingSend={pendingSend}
+          onPendingSendConsumed={() => setPendingSend(null)}
         />
         <ReaderNotesPanel
           book={book}
@@ -1738,10 +2584,107 @@ export function EpubReader({
           onCreateNote={onCreateNote}
           onSaveNote={onSaveNote}
           linkVersion={linkVersion}
+          viewRequest={viewRequest}
           open={sideOpen && sideTab === 'notes'}
           onClose={() => setSideOpen(false)}
+          onAskFeedback={toolsOn ? askFeedback : undefined}
+          showToast={showToast}
         />
       </div>
+
+      {itemTranslate && toolsOn && (
+        <TranslatePopover
+          open
+          savedItem
+          rootRef={itemPopoverRef}
+          anchor={itemTranslate.anchor}
+          text={itemTranslate.item.text}
+          sentence={itemTranslate.item.sentence}
+          positionLabel={itemTranslate.item.positionLabel}
+          sourceLanguage={book.language ?? ''}
+          targetLanguage={languageSettings.nativeLanguage}
+          model={languageSettings.translateModel}
+          onListen={speakOnce}
+          onAddToVocabulary={(t) => saveItemTranslation(itemTranslate.item, t)}
+          onAddToNote={() => {
+            const { item } = itemTranslate
+            setItemTranslate(null)
+            addQuoteToNote(item.text, item.page, item.positionLabel)
+          }}
+          onAskAi={() => {
+            const { item } = itemTranslate
+            setItemTranslate(null)
+            askAiAbout(item.text, item.page, item.positionLabel)
+          }}
+          onChangeBookLanguage={changeBookLanguage}
+          onChangeTargetLanguage={setNativeLanguage}
+          onOpenSettings={() => {
+            setItemTranslate(null)
+            onOpenSettingsSection('openrouter')
+          }}
+          onClose={() => setItemTranslate(null)}
+        />
+      )}
+
+      {savedWord && marksEnabled && (
+        <SavedWordPopover
+          rootRef={savedWordRef}
+          anchor={savedWord.anchor}
+          term={savedWord.term}
+          items={savedWordItems}
+          bookId={book.id}
+          bookTitles={marks.titles}
+          onListen={speakOnce}
+          onTranslateHere={() => void handleSavedWordTranslateHere()}
+          onAddSentence={() => void handleSavedWordAddSentence()}
+          onRemove={handleSavedWordRemove}
+          onClose={() => setSavedWord(null)}
+        />
+      )}
+
+      {hereTranslate && toolsOn && (
+        <TranslatePopover
+          open
+          standalone
+          rootRef={herePopoverRef}
+          anchor={hereTranslate.anchor}
+          text={hereTranslate.text}
+          sentence={hereTranslate.sentence}
+          positionLabel={hereTranslate.positionLabel}
+          sourceLanguage={book.language ?? ''}
+          targetLanguage={languageSettings.nativeLanguage}
+          model={languageSettings.translateModel}
+          onListen={speakOnce}
+          onAddToVocabulary={(t) => {
+            const here = hereTranslate
+            setHereTranslate(null)
+            void saveToVocabulary(
+              vocabularyDraft(here.text, here.sentence, here.cfiRange, here.positionLabel, t),
+            )
+          }}
+          onAddToNote={() => {
+            const here = hereTranslate
+            setHereTranslate(null)
+            addQuoteToNote(here.text, pageOfCfi(here.cfiRange), here.positionLabel)
+          }}
+          onAskAi={() => {
+            const here = hereTranslate
+            setHereTranslate(null)
+            askAiAbout(here.text, pageOfCfi(here.cfiRange), here.positionLabel)
+          }}
+          onChangeBookLanguage={changeBookLanguage}
+          onChangeTargetLanguage={setNativeLanguage}
+          onOpenSettings={() => {
+            setHereTranslate(null)
+            onOpenSettingsSection('openrouter')
+          }}
+          onClose={() => setHereTranslate(null)}
+        />
+      )}
+
+      {vocabSend.modalProps && <SendVocabularyModal {...vocabSend.modalProps} />}
+
+      {retell.modal}
 
       {quoteModal && (
         <QuoteToNoteModal

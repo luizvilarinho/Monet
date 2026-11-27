@@ -42,9 +42,10 @@ import {
   loadWorkCapacity,
   saveWorkCapacity,
 } from '../../lib/workCapacity'
+import { LanguageSettings, type ProfileOpenResult } from './LanguageSettings'
 import styles from './SettingsModal.module.css'
 
-export type SettingsSection = 'openrouter' | 'search' | 'knowledge' | 'agenda' | 'mincer' | 'about'
+export type SettingsSection = 'openrouter' | 'search' | 'knowledge' | 'agenda' | 'mincer' | 'language' | 'about'
 
 export interface SettingsModalProps {
   open: boolean
@@ -53,6 +54,8 @@ export interface SettingsModalProps {
   onClose: () => void
   onApiKeyChanged: (hasKey: boolean) => void
   onUpdateFound: (update: Update, mandatory: boolean) => void
+  /** "Open the note" do Settings › Language: abre (ou cria) a nota de perfil de língua. */
+  onOpenLanguageProfile: (input: { nativeLanguage: string; bookLanguage: string }) => Promise<ProfileOpenResult>
 }
 
 const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
@@ -61,6 +64,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: 'knowledge', label: 'Knowledge Base' },
   { id: 'agenda', label: 'Agenda' },
   { id: 'mincer', label: 'Mincer' },
+  { id: 'language', label: 'Language' },
   { id: 'about', label: 'About & Updates' },
 ]
 
@@ -96,6 +100,7 @@ export function SettingsModal({
   onClose,
   onApiKeyChanged,
   onUpdateFound,
+  onOpenLanguageProfile,
 }: SettingsModalProps) {
   const [section, setSection] = useState<SettingsSection>('openrouter')
 
@@ -940,6 +945,15 @@ export function SettingsModal({
                   Recordings can last up to {MAX_RECORD_HOURS} hours.
                 </p>
               </div>
+            )}
+
+            {section === 'language' && (
+              <LanguageSettings
+                savedBadge={savedBadge}
+                markSaved={markSaved}
+                onOpenSection={setSection}
+                onOpenLanguageProfile={onOpenLanguageProfile}
+              />
             )}
 
             {section === 'about' && (

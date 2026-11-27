@@ -2,7 +2,8 @@
    aparece com ele ainda aberto. */
 .toast {
   position: fixed;
-  bottom: var(--space-6);
+  /* Sobe com o mini-player do leitor, que usa a mesma faixa de baixo. */
+  bottom: calc(var(--space-6) + var(--reader-toast-offset, 0px));
   left: 50%;
   transform: translateX(-50%);
   z-index: 1100;

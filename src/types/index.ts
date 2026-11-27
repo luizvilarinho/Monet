@@ -250,6 +250,9 @@ interface BookBase {
   addedAt: number
   lastOpenedAt: number | null
   zoom: number
+  // Língua base do livro (ISO 639-1 minúsculo, só a base: 'pt-BR' vira 'pt').
+  // `null` = nunca verificado; `''` = verificado e não reconhecido ("—").
+  language: string | null
 }
 
 export interface PdfBook extends BookBase {
@@ -295,6 +298,35 @@ export interface BookQuote {
   text: string
   targetNoteId: string | null
   createdAt: number
+}
+
+export type VocabularyKind = 'word' | 'expression' | 'sentence'
+
+// Onde o item foi guardado no livro. No PDF, os offsets são os do texto juntado
+// da página (a camada de texto do pdf.js é determinística para o mesmo
+// documento) e `rects` são os mesmos retângulos normalizados que o grifo guarda.
+export type VocabularyAnchor =
+  | { format: 'pdf'; page: number; start: number; end: number; rects: BookHighlightRect[] }
+  | { format: 'epub'; cfiRange: string }
+
+// Palavra, expressão ou frase guardada de um livro (aba Vocabulary). Sem estado
+// de aprendizado: a lista só serve para reencontrar e levar ao caderno.
+export interface VocabularyItem {
+  id: string
+  bookId: string
+  text: string // como foi selecionado
+  kind: VocabularyKind
+  sentence: string // frase de origem; = text quando kind = 'sentence'
+  sense: string | null // sentido nesta frase, ou a tradução da frase
+  baseForm: string | null
+  language: string // código base, copiado do livro ao guardar
+  page: number // página no PDF; ordinal de location no EPUB (o mesmo do BookQuote)
+  positionLabel: string // "p. 42" | "Chapter 3, 41%"
+  anchor: VocabularyAnchor
+  createdAt: string // ISO
+  sentAt: string | null
+  sentNotebookId: string | null
+  sentNoteId: string | null
 }
 
 // Ciclo de um slash: `preparing` (card criado no Enter, montando o contexto;

@@ -8,7 +8,7 @@ import styles from './QuoteToNoteModal.module.css'
 
 const LAST_NOTEBOOK_KEY = 'monet:quote-save-last-notebook-id'
 
-export interface QuoteToNoteModalProps {
+interface QuoteToNoteModalBaseProps {
   open: boolean
   notebooks: Notebook[]
   notes: Note[]
@@ -25,6 +25,12 @@ export interface QuoteToNoteModalProps {
     typeId?: string | null
   ) => Promise<Note>
   onSaveNote: (note: Note) => Promise<void>
+  onClose: () => void
+}
+
+// Modo de sempre: grava a citação na nota escolhida.
+interface QuoteModeProps {
+  onPickDestination?: undefined
   quoteText: string
   bookTitle: string
   // Ordinal de leitura gravado no BookQuote (página no PDF, location no EPUB).
@@ -36,8 +42,17 @@ export interface QuoteToNoteModalProps {
   // Checkbox "Send future quotes from this book here" do sucesso: vincula a
   // nota ao livro ao fechar o modal.
   onLinkNote: (notebookId: string, noteId: string) => void
-  onClose: () => void
 }
+
+// Modo "escolher destino": os mesmos dois passos (caderno e nota, ou nota nova
+// com título), mas nada é escrito. A nota escolhida (ou a recém-criada, vazia)
+// volta por `onPickDestination` e o modal fecha, sem a tela de sucesso.
+interface DestinationModeProps {
+  onPickDestination: (notebookId: string, note: Note) => void
+}
+
+export type QuoteToNoteModalProps = QuoteToNoteModalBaseProps &
+  (QuoteModeProps | DestinationModeProps)
 
 type Stage =
   | { kind: 'notebook-select' }
@@ -59,7 +74,8 @@ type Stage =
       retry: () => void
     }
 
-function loadLastNotebookId(): string | null {
+// O último caderno em que uma citação foi guardada (o Send vocabulary parte dele).
+export function loadLastNotebookId(): string | null {
   try {
     const raw = localStorage.getItem(LAST_NOTEBOOK_KEY)
     return raw && raw.length > 0 ? raw : null
@@ -76,23 +92,19 @@ function saveLastNotebookId(id: string): void {
   }
 }
 
-export function QuoteToNoteModal({
-  open,
-  notebooks,
-  notes,
-  noteTypes,
-  onCreateNotebook,
-  onCreateNote,
-  onSaveNote,
-  quoteText,
-  bookTitle,
-  page,
-  positionLabel,
-  bookId,
-  onSaved,
-  onLinkNote,
-  onClose,
-}: QuoteToNoteModalProps) {
+export function QuoteToNoteModal(props: QuoteToNoteModalProps) {
+  const {
+    open,
+    notebooks,
+    notes,
+    noteTypes,
+    onCreateNotebook,
+    onCreateNote,
+    onSaveNote,
+    onClose,
+  } = props
+  // Os campos da citação só existem no modo de sempre.
+  const quote = props.onPickDestination ? null : props
   const [stage, setStage] = useState<Stage>(() => initialStage(notebooks.length))
   const [newNotebookName, setNewNotebookName] = useState('')
   const [newNoteTitle, setNewNoteTitle] = useState('')
@@ -134,7 +146,9 @@ export function QuoteToNoteModal({
   // Toda saída do modal passa por aqui: no sucesso, aplica o checkbox
   // "Send future quotes from this book here".
   function handleClose() {
-    if (stage.kind === 'success' && sendHere) onLinkNote(stage.notebookId, stage.noteId)
+    if (quote && stage.kind === 'success' && sendHere) {
+      quote.onLinkNote(stage.notebookId, stage.noteId)
+    }
     onClose()
   }
   const handleCloseRef = useRef(handleClose)
@@ -198,11 +212,16 @@ export function QuoteToNoteModal({
   }
 
   async function appendToExistingNote(notebookId: string, note: Note) {
+    if (!quote) {
+      props.onPickDestination?.(notebookId, note)
+      onClose()
+      return
+    }
     setStage({ kind: 'saving', notebookId })
     const { content: block, truncated } = buildQuoteBlock(
-      quoteText,
-      bookTitle,
-      positionLabel,
+      quote.quoteText,
+      quote.bookTitle,
+      quote.positionLabel,
     )
     const newContent = appendQuoteToContent(note.content, block)
     try {
@@ -211,11 +230,11 @@ export function QuoteToNoteModal({
         content: newContent,
         updatedAt: Date.now(),
       })
-      const quote: BookQuote = {
+      const saved: BookQuote = {
         id: crypto.randomUUID(),
-        bookId,
-        page,
-        text: quoteText,
+        bookId: quote.bookId,
+        page: quote.page,
+        text: quote.quoteText,
         targetNoteId: note.id,
         createdAt: Date.now(),
       }
@@ -229,7 +248,7 @@ export function QuoteToNoteModal({
         noteTitle: note.title.trim() || 'Untitled',
         truncated,
       })
-      onSaved(quote)
+      quote.onSaved(saved)
     } catch (err) {
       const message =
         err instanceof Error ? err.message : 'Failed to save quote to note.'
@@ -242,20 +261,36 @@ export function QuoteToNoteModal({
   }
 
   async function createAndSaveNewNote(notebookId: string, title: string) {
+    if (!quote) {
+      // Modo destino: a nota nasce vazia; quem escolheu o destino escreve nela.
+      setStage({ kind: 'saving', notebookId })
+      try {
+        const note = await onCreateNote(notebookId, title, '', undefined, pendingTypeId)
+        props.onPickDestination?.(notebookId, note)
+        onClose()
+      } catch (err) {
+        setStage({
+          kind: 'error',
+          message: err instanceof Error ? err.message : 'Failed to create note.',
+          retry: () => void createAndSaveNewNote(notebookId, title),
+        })
+      }
+      return
+    }
     setStage({ kind: 'saving', notebookId })
     const { content: block, truncated } = buildQuoteBlock(
-      quoteText,
-      bookTitle,
-      positionLabel,
+      quote.quoteText,
+      quote.bookTitle,
+      quote.positionLabel,
     )
     try {
       // O 4º parâmetro é o `requestId` (a assinatura do Chat) — aqui não existe.
       const note = await onCreateNote(notebookId, title, block, undefined, pendingTypeId)
-      const quote: BookQuote = {
+      const saved: BookQuote = {
         id: crypto.randomUUID(),
-        bookId,
-        page,
-        text: quoteText,
+        bookId: quote.bookId,
+        page: quote.page,
+        text: quote.quoteText,
         targetNoteId: note.id,
         createdAt: Date.now(),
       }
@@ -269,7 +304,7 @@ export function QuoteToNoteModal({
         noteTitle: note.title.trim() || title,
         truncated,
       })
-      onSaved(quote)
+      quote.onSaved(saved)
     } catch (err) {
       const message =
         err instanceof Error ? err.message : 'Failed to create note.'
@@ -297,7 +332,9 @@ export function QuoteToNoteModal({
         <div className={styles.body}>
           <p className={styles.emptyTitle}>You have no notebooks yet</p>
           <p className={styles.emptyHelp}>
-            Create a notebook to save this quote as a note.
+            {quote
+              ? 'Create a notebook to save this quote as a note.'
+              : 'Create a notebook to put the note in.'}
           </p>
           <input
             ref={newNotebookInputRef}
@@ -446,7 +483,7 @@ export function QuoteToNoteModal({
             onKeyDown={(e) => {
               if (e.key === 'Enter') handleConfirmNewNoteTitle(notebookId)
             }}
-            placeholder="e.g.: Quotes from this book"
+            placeholder={quote ? 'e.g.: Quotes from this book' : 'Note title'}
             aria-label="New note title"
             aria-invalid={!!titleError}
           />
@@ -481,7 +518,7 @@ export function QuoteToNoteModal({
               className={styles.btnPrimary}
               onClick={() => handleConfirmNewNoteTitle(notebookId)}
             >
-              Create and save
+              {quote ? 'Create and save' : 'Create note'}
             </button>
           </div>
         </div>
@@ -570,14 +607,14 @@ export function QuoteToNoteModal({
       className={styles.overlay}
       role="dialog"
       aria-modal="true"
-      aria-label="Add quote to a note"
+      aria-label={quote ? 'Add quote to a note' : 'Choose a note'}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) handleClose()
       }}
     >
       <div className={styles.modal}>
         <header className={styles.header}>
-          <h2 className={styles.title}>Add quote to note</h2>
+          <h2 className={styles.title}>{quote ? 'Add quote to note' : 'Choose a note'}</h2>
           <button
             type="button"
             className={styles.close}

@@ -1,0 +1,1508 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Practice · Library para línguas</title>
+<style>
+/* ===== Tokens copiados de src/App.css (o app só tem tema escuro) ===== */
+:root {
+  --bg-app: #1f1f2f;
+  --bg-panel: #161625;
+  --surface-1: #1d1d34;
+  --surface-2: #292959;
+  --surface-3: #2e2e36;
+  --text-primary: #ddddf1;
+  --text-secondary: #a2a2ae;
+  --text-muted: #9494ad;
+  --accent: #7b6ed4;
+  --accent-ai: #5dcaa5;
+  --accent-warn: #ef9f27;
+  --accent-danger: #e05555;
+  --nm: #eeb54a;
+  --border: #2e2f2cb3;
+  --hair: #34344f;
+  --space-0: 2px; --space-1: 4px; --space-1h: 6px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 20px; --space-6: 24px;
+  --radius-sm: 4px; --radius-md: 6px; --radius-lg: 8px; --radius-xl: 10px;
+  --control-sm: 24px; --control-md: 28px; --control-lg: 32px; --control-xl: 40px;
+  --lh-ui: 1.45;
+  /* Proposta deste estudo: duas cores novas, só para a página do livro (fundo branco).
+     Nenhuma repete os quatro grifos, a seleção (roxo) ou a busca (laranja). */
+  --listen-range: rgba(31, 31, 47, 0.11);   /* trecho que está sendo lido: cinza, sem matiz */
+  --listen-now: rgba(31, 31, 47, 0.26);     /* frase atual, na opção (b) */
+  --vocab-ink: #0e7c86;                     /* item do vocabulário: pontilhado, sem preenchimento */
+  --vocab-ui: #57b8c2;                      /* a mesma marca sobre o tema escuro */
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: #121220;
+  color: var(--text-primary);
+  /* Fonte de produção do app no Windows: Segoe UI (sem recurso externo). */
+  font: 14px/1.45 'Segoe UI', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+button, input, select, textarea { font-family: inherit; }
+button { cursor: pointer; }
+a { color: var(--accent); }
+.i { fill: currentColor; flex-shrink: 0; display: block; }
+[hidden] { display: none !important; }
+kbd { font-family: inherit; font-size: 11px; color: var(--text-muted); border: 1px solid var(--hair); border-radius: var(--radius-sm); padding: 0 var(--space-1); white-space: nowrap; }
+
+/* ===== Barra do estudo (fora do mockup) ===== */
+.study-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; padding: 8px 16px; font-size: 12px; color: var(--text-secondary); border-bottom: 1px solid var(--hair); }
+.study-bar strong { color: var(--text-primary); font-weight: 600; }
+.study-bar nav { display: flex; flex-wrap: wrap; gap: 10px; }
+.study-bar nav a.on { color: var(--text-primary); text-decoration: none; font-weight: 600; }
+.study-bar .lbl { color: var(--text-muted); margin-right: -8px; }
+.study-bar label.chk { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.study-bar select { background: #18182a; color: var(--text-primary); border: 1px solid var(--hair); border-radius: var(--radius-sm); font-size: 12px; padding: 1px 4px; }
+.seg { display: inline-flex; border: 1px solid var(--hair); border-radius: var(--radius-sm); overflow: hidden; }
+.seg button { background: transparent; border: none; border-right: 1px solid var(--hair); color: var(--text-secondary); font-size: 12px; padding: 2px 8px; }
+.seg button:last-child { border-right: none; }
+.seg button:hover { color: var(--text-primary); }
+.seg button.on { background: var(--surface-2); color: var(--text-primary); }
+.study-bar .tonotes { margin-left: auto; }
+.stage { padding: 12px 0; overflow-x: auto; }
+
+/* ===== Janela do app. "Ajustar": nunca menor que a janela padrão (1280×800)
+   e cresce com o navegador. Os outros modos fixam o tamanho. ===== */
+.window {
+  width: max(1280px, calc(100% - 32px));
+  height: max(800px, calc(100vh - 66px));
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-app);
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px var(--hair);
+  overflow: hidden;
+  position: relative;
+}
+body[data-size='1280'] .window { width: 1280px; height: 800px; }
+body[data-size='1920'] .window { width: 1920px; height: 1080px; }
+body[data-size='full'] .study-bar { display: none; }
+body[data-size='full'] .stage { padding: 0; overflow: visible; }
+body[data-size='full'] .window { width: 100%; height: 100vh; border-radius: 0; box-shadow: none; }
+body[data-size='full'] .page { display: none; }
+
+/* Toolbar do app (44px) */
+.tb { height: 44px; flex-shrink: 0; display: flex; align-items: center; gap: 16px; padding: 8px 16px; background: var(--bg-panel); border-bottom: 1px solid var(--border); }
+.tb .brand { font-size: 15px; font-weight: 600; letter-spacing: .04em; color: var(--text-primary); }
+.tb .modes { margin-left: auto; display: flex; gap: 4px; }
+.tb .modes > span { padding: 4px 12px; font-size: 13px; line-height: 1.4; color: var(--text-secondary); border-bottom: 2px solid transparent; display: inline-flex; align-items: center; }
+.tb .modes > span.on { color: var(--accent); border-bottom-color: var(--accent); }
+.tb .rec { display: inline-flex; align-items: center; gap: var(--space-1); margin-left: var(--space-1h); color: var(--accent-danger); font-size: 12px; font-variant-numeric: tabular-nums; }
+.tb .rec i { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-danger); animation: recPulse 1.4s ease-in-out infinite; }
+@keyframes recPulse { 50% { opacity: .35; } }
+
+/* ===== Toast (ReaderToast: fixo embaixo ao centro) ===== */
+.toast { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 1100; display: none; align-items: center; gap: var(--space-2); background: var(--accent-ai); color: #0e0e10; font-size: 12px; font-weight: 500; border-radius: var(--radius-md); padding: var(--space-1h) var(--space-3); box-shadow: 0 6px 18px rgba(0, 0, 0, .45); max-width: 80%; }
+.toast.show { display: flex; }
+.toast button { background: transparent; border: 1px solid rgba(14, 14, 16, .45); border-radius: var(--radius-sm); color: #0e0e10; font-size: 12px; font-weight: 600; padding: 0 var(--space-2); min-height: 22px; }
+
+/* ===== Modal (QuoteToNoteModal / SettingsModal) ===== */
+.overlay { position: absolute; inset: 0; z-index: 1000; background: rgba(10, 10, 14, .7); display: none; align-items: center; justify-content: center; }
+.overlay.show { display: flex; }
+.modal { width: 520px; max-width: 90%; max-height: 80%; background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius-xl); display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 24px 48px rgba(0, 0, 0, .4); }
+.modal > header { display: flex; align-items: center; justify-content: space-between; padding: var(--space-3) var(--space-5); border-bottom: 1px solid var(--border); }
+.modal > header h2 { margin: 0; font-size: 14px; font-weight: 500; }
+.modal .x { width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; border-radius: var(--radius-sm); color: var(--text-muted); padding: 0; }
+.modal .x:hover { color: var(--text-primary); }
+.modal .mbody { flex: 1; min-height: 0; overflow-y: auto; padding: var(--space-5); display: flex; flex-direction: column; gap: var(--space-4); }
+.modal .mbody > * { flex-shrink: 0; }
+.modal .step { margin: 0 0 -6px; font-size: 12px; font-weight: 500; color: var(--text-muted); }
+.modal .foot { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-2); }
+.btn-p, .btn-s { height: var(--control-lg); border-radius: var(--radius-md); padding: 0 var(--space-4); font-size: 13px; border: 1px solid var(--border); }
+.btn-p { background: var(--accent-ai); color: #0e0e10; border-color: var(--accent-ai); font-weight: 500; }
+.btn-p:disabled { opacity: .55; cursor: not-allowed; }
+.btn-s { background: transparent; color: var(--text-secondary); }
+.btn-s:hover { color: var(--text-primary); border-color: var(--text-muted); }
+
+/* ===== Notas do estudo, abaixo do mockup ===== */
+.page { max-width: 1180px; margin: 0 auto; padding: 8px 16px 64px; }
+.page h1 { font-size: 20px; margin: 24px 0 6px; }
+.page h2 { font-size: 15px; margin: 28px 0 8px; }
+.page p, .page li { color: var(--text-secondary); max-width: 92ch; }
+.page code { font-size: 12px; color: var(--text-primary); background: #1b1b30; padding: 0 4px; border-radius: 3px; }
+.notes-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 900px) { .notes-grid { grid-template-columns: 1fr; } }
+.notes-box { background: #18182a; border: 1px solid var(--hair); border-radius: 8px; padding: 12px 16px; margin-top: 12px; }
+.notes-box h3 { font-size: 13px; margin: 0 0 6px; color: var(--text-primary); }
+.notes-box ul, .notes-box ol { margin: 0; padding-left: 18px; }
+.notes-box li { font-size: 13px; margin: 3px 0; }
+.notes-box table, table.cmp { border-collapse: collapse; width: 100%; font-size: 12px; margin-top: 4px; }
+.notes-box th, .notes-box td, table.cmp th, table.cmp td { border: 1px solid var(--hair); padding: 5px 8px; text-align: left; vertical-align: top; color: var(--text-secondary); }
+.notes-box th, table.cmp th { color: var(--text-primary); font-weight: 500; background: #18182a; }
+table.cmp { font-size: 13px; margin-top: 8px; }
+.sw { display: inline-block; width: 26px; height: 12px; border-radius: 2px; vertical-align: -1px; margin-right: 4px; border: 1px solid rgba(255, 255, 255, .15); }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; margin-top: 16px; }
+.card { display: block; text-decoration: none; background: #18182a; border: 1px solid var(--hair); border-radius: 8px; padding: 14px 16px; color: var(--text-secondary); }
+.card:hover { border-color: var(--accent); }
+.card h3 { margin: 0 0 6px; font-size: 15px; color: var(--text-primary); display: flex; align-items: center; gap: 8px; }
+.card p { margin: 0 0 8px; font-size: 13px; }
+.card .axis { font-size: 12px; color: var(--text-muted); }
+/* ===== Leitor (espelha Reader.module.css / EpubReader.module.css) ===== */
+.reader { display: flex; flex-direction: column; flex: 1; min-height: 0; background: var(--bg-app); }
+.rtb { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2) var(--space-3); padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--border); background: var(--bg-panel); flex-shrink: 0; }
+.rtb .grp { display: flex; align-items: center; gap: 8px; }
+.tbtn { display: inline-flex; align-items: center; gap: var(--space-1h); background: transparent; border: 1px solid var(--border); border-radius: 6px; color: var(--text-secondary); min-height: 28px; padding: 0 10px; font-size: 12px; white-space: nowrap; }
+.tbtn:hover:not(:disabled) { color: var(--text-primary); border-color: var(--accent); }
+.tbtn.on { color: var(--text-primary); border-color: var(--accent); background: rgba(123, 110, 212, .12); }
+.tbtn:disabled { opacity: .4; cursor: not-allowed; }
+.tbtn.sq { width: 28px; padding: 0; justify-content: center; }
+.tbtn .warn-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent-danger); }
+.rtb input.pg { width: 56px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 6px; color: var(--text-primary); padding: 5px 8px; font-size: 12px; text-align: center; }
+.rtb .ind { font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
+.rtb .zoom { font-size: 12px; color: var(--text-secondary); min-width: 42px; text-align: center; }
+.banner { margin: 0; flex-shrink: 0; background: rgba(239, 159, 39, .08); border-bottom: 1px solid rgba(239, 159, 39, .3); color: var(--accent-warn); padding: var(--space-2) var(--space-4); font-size: 12px; line-height: var(--lh-ui); text-align: center; }
+.rbody { display: flex; flex: 1; min-height: 0; }
+
+/* Coluna de navegação: 280px hoje; a proposta usa 300px para caber a 3ª aba. */
+.nav { width: 300px; flex-shrink: 0; border-right: 1px solid var(--border); background: var(--bg-panel); display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+body[data-navw='280'] .nav { width: 280px; }
+.nav-tabs { display: flex; align-items: center; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.nav-col { display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none; border-right: 1px solid var(--border); color: var(--text-muted); padding: var(--space-2) var(--space-3); }
+.nav-tab { display: flex; align-items: center; gap: var(--space-1h); background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--text-secondary); padding: var(--space-2) var(--space-2); line-height: 20px; font-size: 12px; font-weight: 500; white-space: nowrap; }
+body[data-navw='280'] .nav-tab { padding: var(--space-2) var(--space-1h); }
+.nav-tab:hover { color: var(--text-primary); }
+.nav-tab.on { color: var(--text-primary); border-bottom-color: var(--accent); }
+.badge { background: var(--accent); color: #0e0e10; font-weight: 600; font-size: 10px; padding: 1px 6px; border-radius: 999px; min-width: 18px; text-align: center; }
+.nav-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.outline { flex: 1; min-height: 0; overflow-y: auto; padding: var(--space-3); display: flex; flex-direction: column; gap: 2px; }
+.outline div { display: flex; align-items: baseline; gap: 8px; padding: var(--space-1h) var(--space-2); font-size: 12px; border-radius: var(--radius-md); color: var(--text-primary); }
+.outline div.cur { background: rgba(123, 110, 212, .1); }
+.outline div span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.outline div span:last-child { font-size: 11px; color: var(--text-muted); }
+.hl-list, .vc-list { list-style: none; margin: 0; padding: var(--space-3); display: flex; flex-direction: column; gap: var(--space-2); overflow-y: auto; flex: 1; min-height: 0; }
+.hl-item { position: relative; background: var(--surface-1); border: 1px solid transparent; border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); display: flex; flex-direction: column; gap: var(--space-1h); font-size: 12px; }
+.hl-item:hover { border-color: var(--accent); }
+.hl-top { display: flex; align-items: center; gap: var(--space-2); font-size: 11px; color: var(--text-muted); }
+.hl-top .sq { width: 10px; height: 10px; border-radius: 3px; border: 1px solid rgba(0, 0, 0, .3); }
+.hl-top b { font-weight: 500; color: var(--text-secondary); }
+.hl-text { line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.hl-filter { display: flex; justify-content: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); border-top: 1px solid var(--border); flex-shrink: 0; }
+.swatch { width: 18px; height: 18px; border-radius: 50%; border: 1px solid rgba(0, 0, 0, .35); padding: 0; flex-shrink: 0; }
+.swatch.on { box-shadow: 0 0 0 2px var(--accent); }
+
+/* ----- Aba Vocabulary (proposta) ----- */
+.vc-head { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3) 0; flex-shrink: 0; }
+.switch { display: inline-flex; align-items: center; gap: var(--space-1h); background: transparent; border: none; padding: 0; color: var(--text-secondary); font-size: 12px; min-height: 24px; }
+.switch i { width: 26px; height: 14px; border-radius: 999px; background: var(--surface-3); border: 1px solid var(--hair); position: relative; flex-shrink: 0; }
+.switch i::after { content: ''; position: absolute; top: 1px; left: 1px; width: 10px; height: 10px; border-radius: 50%; background: var(--text-muted); transition: left .12s; }
+.switch[aria-pressed='true'] i { background: rgba(87, 184, 194, .3); border-color: var(--vocab-ui); }
+.switch[aria-pressed='true'] i::after { left: 13px; background: var(--vocab-ui); }
+.switch.ai[aria-pressed='true'] { color: var(--accent-ai); }
+.switch.ai[aria-pressed='true'] i { background: rgba(93, 202, 165, .25); border-color: var(--accent-ai); }
+.switch.ai[aria-pressed='true'] i::after { background: var(--accent-ai); }
+.mini { display: inline-flex; align-items: center; gap: var(--space-1); background: transparent; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-secondary); font-size: 11px; min-height: 24px; padding: 0 var(--space-2); white-space: nowrap; }
+.mini:hover:not(:disabled) { color: var(--text-primary); border-color: var(--accent); }
+.mini.on { color: var(--text-primary); border-color: var(--accent); background: rgba(123, 110, 212, .12); }
+.mini:disabled { opacity: .45; cursor: default; }
+.vc-sec { font-size: 11px; color: var(--text-muted); font-weight: 500; padding: var(--space-1) 0 0; display: flex; align-items: center; gap: var(--space-1h); }
+.vc-item { position: relative; background: var(--surface-1); border: 1px solid transparent; border-radius: var(--radius-md); padding: var(--space-2) 54px var(--space-2) 30px; display: flex; flex-direction: column; gap: 3px; font-size: 12px; cursor: pointer; }
+.vc-item:hover { border-color: var(--accent); }
+.vc-item.flash { border-color: var(--vocab-ui); }
+.vc-item input[type='checkbox'] { position: absolute; left: 9px; top: 10px; width: 13px; height: 13px; margin: 0; accent-color: var(--accent-ai); cursor: pointer; }
+.vc-term { font-size: 13px; font-weight: 600; color: var(--text-primary); text-decoration: underline dotted var(--vocab-ui); text-decoration-thickness: 1.5px; text-underline-offset: 3px; }
+.vc-item.sentence .vc-term { font-weight: 500; font-size: 12px; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.vc-mean { color: var(--text-primary); line-height: 1.4; }
+.vc-mean.hid { color: var(--text-muted); font-size: 11px; text-decoration: underline; cursor: pointer; }
+.vc-src { color: var(--text-secondary); line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.vc-src b { color: var(--text-primary); font-weight: 600; }
+.vc-meta { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1h); font-size: 11px; color: var(--text-muted); }
+.chip-sent { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; letter-spacing: .02em; padding: 0 6px; border-radius: 999px; background: rgba(93, 202, 165, .14); color: var(--accent-ai); border: 1px solid rgba(93, 202, 165, .35); white-space: nowrap; cursor: pointer; }
+.vc-acts { position: absolute; top: var(--space-1h); right: var(--space-1h); display: flex; gap: 2px; }
+.act { width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--text-muted); padding: 0; }
+.act:hover { color: var(--accent); background: rgba(123, 110, 212, .12); border-color: rgba(123, 110, 212, .35); }
+.act.del:hover { color: var(--accent-warn); background: rgba(239, 159, 39, .12); border-color: rgba(239, 159, 39, .45); }
+.vc-empty { padding: var(--space-4) var(--space-3); font-size: 12px; color: var(--text-muted); text-align: center; line-height: 1.5; }
+.vc-foot { flex-shrink: 0; border-top: 1px solid var(--border); padding: var(--space-2) var(--space-3); display: flex; flex-direction: column; gap: var(--space-1h); }
+.vc-foot .row { display: flex; align-items: center; gap: var(--space-1h); }
+.vc-send { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: var(--space-1h); min-height: 28px; background: var(--accent-ai); color: #0e0e10; border: 1px solid var(--accent-ai); border-radius: var(--radius-md); font-size: 12px; font-weight: 600; padding: 0 var(--space-2); }
+.vc-send:disabled { opacity: .5; cursor: default; }
+.vc-dest { font-size: 11px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; min-height: 16px; }
+.vc-dest span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vc-dest button { flex-shrink: 0; background: transparent; border: none; padding: 0; color: var(--text-secondary); font-size: 11px; text-decoration: underline; }
+
+/* ----- Área da página ----- */
+/* .pcol não rola: os botões flutuantes e o mini-player ficam presos à parte visível. */
+.pcol { position: relative; flex: 1; min-width: 0; min-height: 0; display: flex; container-type: inline-size; }
+.parea { flex: 1; min-width: 0; min-height: 0; overflow: auto; scrollbar-gutter: stable; display: flex; justify-content: center; align-items: flex-start; padding: 24px; }
+.parea.has-player { padding-bottom: 96px; }
+.parea.has-player.cap { padding-bottom: 150px; }
+.pwrap { position: relative; margin: auto; width: min(100%, 700px); }
+.sheet { position: relative; background: #fff; color: #17171c; box-shadow: 0 8px 24px rgba(0, 0, 0, .35); container-type: inline-size; color-scheme: only light; }
+.sheet-in { font: 2.9cqw/1.62 Georgia, 'Times New Roman', serif; padding: 9cqw 11.5cqw 8cqw; min-height: 138cqw; display: flex; flex-direction: column; }
+.sheet .hdr { text-align: center; font-size: .72em; letter-spacing: .14em; color: #666; margin-bottom: 5cqw; }
+.sheet .pnum { text-align: center; font-size: .8em; color: #555; margin-top: auto; padding-top: 4cqw; }
+.sheet p { margin: 0; text-align: justify; hyphens: none; text-indent: 1.4em; }
+.sheet p.first, .sheet p.cont { text-indent: 0; }
+.sheet ::selection { background: rgba(123, 110, 212, .35); }
+.sheet.epub .sheet-in { font-size: 2.6cqw; padding: 6cqw 9cqw; min-height: 120cqw; }
+.sheet.epub .hdr, .sheet.epub .pnum { display: none; }
+.sheet .chap { font-size: 1.25em; font-weight: 600; text-align: center; margin: 0 0 4cqw; }
+.sheet.pdf .chap { display: none; }
+/* Página escaneada: só imagem, sem camada de texto. */
+.scan { padding: 9cqw 11.5cqw; min-height: 138cqw; display: flex; flex-direction: column; gap: 2.2cqw; user-select: none; background: #f4f1ea; }
+.scan i { display: block; height: 1.5cqw; border-radius: 2px; background: #c9c3b6; }
+/* Grifos (cores e opacidade do app) */
+.hl { border-radius: 2px; }
+.hl.y { background: rgba(255, 235, 59, .35); }
+.hl.p { background: rgba(244, 143, 177, .35); }
+.hl.g { background: rgba(165, 214, 167, .35); }
+.hl.b { background: rgba(144, 202, 249, .35); }
+/* Busca (para a legenda de cores) */
+.srch { background: rgba(255, 165, 0, .35); border-radius: 2px; }
+/* Item do vocabulário marcado no texto: pontilhado, sem preenchimento. */
+body:not(.marks-off) .w.mk, body:not(.marks-off) .s.mk-s { text-decoration: underline dotted var(--vocab-ink); text-decoration-thickness: .11em; text-underline-offset: .22em; cursor: pointer; }
+body:not(.marks-off) .w.mk:hover { background: rgba(14, 124, 134, .1); border-radius: 2px; }
+.w.flash, .s.flash { background: rgba(14, 124, 134, .18); border-radius: 2px; transition: background .4s; }
+/* Trecho em leitura e frase atual: CSS Custom Highlight API, sem alterar o DOM. */
+::highlight(listen-range) { background-color: rgba(31, 31, 47, .11); }
+::highlight(listen-now) { background-color: rgba(31, 31, 47, .26); }
+::highlight(hl-y) { background-color: rgba(255, 235, 59, .35); }
+::highlight(hl-g) { background-color: rgba(165, 214, 167, .35); }
+::highlight(hl-b) { background-color: rgba(144, 202, 249, .35); }
+::highlight(hl-p) { background-color: rgba(244, 143, 177, .35); }
+
+/* Botões flutuantes de página (40px, bottom 20, left/right 20, z 5) */
+.fnav { position: absolute; bottom: 20px; z-index: 5; width: 40px; height: 40px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: var(--bg-panel); border: 1px solid var(--border); color: var(--text-primary); opacity: .55; }
+.fnav:hover:not(:disabled) { opacity: 1; border-color: var(--accent); }
+.fnav:disabled { opacity: .2; cursor: not-allowed; }
+.fnav.l { left: 20px; } .fnav.r { right: 20px; }
+
+/* ----- Barra de seleção (.highlightToolbar) ----- */
+.selbar { position: absolute; z-index: 6; display: flex; flex-direction: column; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 18px rgba(0, 0, 0, .45); white-space: nowrap; }
+.selbar .row { display: flex; align-items: center; gap: 6px; padding: 6px 8px; }
+.selbar .row.lang { border-bottom: 1px solid var(--border); }
+body[data-bar='1'] .selbar { flex-direction: row-reverse; }
+body[data-bar='1'] .selbar .row.lang { border-bottom: none; border-left: 1px solid var(--border); }
+.selbar .div { width: 1px; height: 18px; background: var(--border); margin: 0 2px; }
+.sbtn { display: inline-flex; align-items: center; gap: 5px; background: transparent; border: none; color: var(--text-primary); font-size: 11px; font-weight: 500; padding: 4px 8px; border-radius: 4px; }
+.sbtn:hover { background: rgba(123, 110, 212, .18); }
+.sbtn.done { color: var(--vocab-ui); }
+.sbtn kbd { font-size: 10px; padding: 0 3px; }
+
+/* ----- Popover de tradução / do item (fixed, em portal, acima de 1000) ----- */
+.pop { position: fixed; z-index: 1050; width: 340px; max-width: calc(100vw - 16px); display: flex; flex-direction: column; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 22px rgba(0, 0, 0, .5); font-size: 12px; }
+.pop.wide { width: 380px; }
+.pop-h { display: flex; align-items: flex-start; gap: var(--space-2); padding: 10px 12px 0; }
+.pop-h .term { flex: 1; min-width: 0; font-size: 15px; font-weight: 600; color: var(--text-primary); line-height: 1.3; overflow-wrap: anywhere; }
+.pop-h .kind { flex: 1; font-size: 11px; color: var(--text-muted); letter-spacing: .02em; padding-top: 4px; }
+.pop-sub { padding: 2px 12px 0; color: var(--text-muted); font-size: 11px; }
+.pop-b { padding: 8px 12px 10px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; min-height: 0; }
+.pop .meaning { font-size: 14px; color: var(--text-primary); line-height: 1.45; }
+.pop .tr { font-size: 13px; color: var(--text-primary); line-height: 1.55; }
+.pop .ctx { color: var(--text-secondary); line-height: 1.5; border-left: 2px solid var(--hair); padding-left: 8px; }
+.pop .ctx b { color: var(--text-primary); }
+.pop .ctx small { display: block; color: var(--text-muted); font-size: 11px; margin-top: 2px; }
+.pop .gnote { color: var(--text-secondary); line-height: 1.5; background: var(--surface-1); border-radius: var(--radius-md); padding: 6px 8px; }
+.pop .gnote b { color: var(--text-primary); font-weight: 500; }
+.pop-a { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 10px; }
+.pbtn { display: inline-flex; align-items: center; gap: 6px; background: transparent; border: 1px solid var(--border); border-radius: 5px; color: var(--text-primary); padding: 5px 10px; font-size: 12px; white-space: nowrap; }
+.pbtn:hover:not(:disabled) { border-color: var(--accent); background: rgba(123, 110, 212, .1); }
+.pbtn.done { color: var(--vocab-ui); border-color: rgba(87, 184, 194, .5); }
+.pbtn.warn { background: var(--accent-warn); border-color: var(--accent-warn); color: #0e0e10; font-weight: 500; }
+.pbtn.speaking { color: var(--accent-ai); border-color: var(--accent-ai); }
+.pop-f { display: flex; align-items: center; gap: var(--space-1h); border-top: 1px solid var(--border); padding: 6px 12px; color: var(--text-muted); font-size: 11px; }
+.pop-f button { background: transparent; border: none; padding: 0; color: var(--text-secondary); font-size: 11px; text-decoration: underline; }
+.pop .ibtn { width: 24px; height: 24px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none; border-radius: var(--radius-sm); color: var(--text-muted); padding: 0; }
+.pop .ibtn:hover { color: var(--text-primary); background: rgba(255, 255, 255, .06); }
+.pop .warnbox { color: var(--accent-warn); line-height: 1.5; }
+.pop .sec { font-size: 11px; color: var(--text-muted); font-weight: 500; }
+.skel { height: 10px; border-radius: 4px; background: linear-gradient(90deg, var(--surface-1) 0%, var(--surface-2) 50%, var(--surface-1) 100%); background-size: 200% 100%; animation: shimmer 1.4s linear infinite; }
+@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ----- Mini-player (proposta): flutua entre os dois botões de página ----- */
+.player { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 6; width: min(560px, calc(100cqw - 144px)); display: flex; flex-direction: column; background: var(--bg-panel); border: 1px solid var(--hair); border-radius: 14px; box-shadow: 0 6px 18px rgba(0, 0, 0, .45); }
+.pl-cap { padding: 10px 14px 2px; font-size: 13px; line-height: 1.5; color: var(--text-primary); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; min-height: 31px; }
+.pl-cap.dim { color: var(--text-muted); }
+.pl-msg { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; padding: 8px 14px 2px; font-size: 12px; line-height: 1.45; color: var(--text-secondary); }
+.pl-msg.warn { color: var(--accent-warn); }
+.pl-msg .txt { flex: 1; min-width: 180px; }
+.pl-msg .recdot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-danger); flex-shrink: 0; }
+.pl-row { display: flex; align-items: center; gap: 4px; padding: 6px 8px; }
+.pl-b { width: 28px; height: 28px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none; border-radius: 50%; color: var(--text-secondary); padding: 0; }
+.pl-b:hover:not(:disabled) { color: var(--text-primary); background: rgba(255, 255, 255, .06); }
+.pl-b:disabled { opacity: .35; cursor: default; }
+.pl-play { width: 32px; height: 32px; background: var(--accent-ai); color: #0e0e10; }
+.pl-play:hover:not(:disabled) { background: var(--accent-ai); color: #0e0e10; filter: brightness(1.06); }
+.pl-rep { width: auto; border-radius: 14px; padding: 0 8px; gap: 5px; font-size: 12px; }
+.pl-src { flex-shrink: 0; font-size: 11px; color: var(--text-muted); margin-left: 6px; white-space: nowrap; }
+.pl-prog { flex: 1; min-width: 40px; display: flex; gap: 2px; align-items: center; margin: 0 6px; }
+.pl-prog i { flex: 1; height: 3px; border-radius: 2px; background: var(--surface-3); }
+.pl-prog i.done { background: rgba(93, 202, 165, .55); }
+.pl-prog i.cur { background: var(--accent-ai); height: 5px; }
+.pl-speed { flex-shrink: 0; min-width: 46px; height: 24px; background: transparent; border: 1px solid var(--border); border-radius: 12px; color: var(--text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; padding: 0 6px; }
+.pl-speed:hover { color: var(--text-primary); border-color: var(--accent); }
+@container (max-width: 600px) { .pl-rep span { display: none; } .pl-rep { width: 28px; padding: 0; border-radius: 50%; } }
+.pl-menu { position: absolute; right: 8px; bottom: calc(100% + 6px); width: 280px; z-index: 7; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 22px rgba(0, 0, 0, .5); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; font-size: 12px; color: var(--text-secondary); }
+.pl-menu label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.pl-menu select { width: 100%; background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-md); color: var(--text-primary); font-size: 12px; min-height: 26px; padding: 0 6px; }
+.pl-menu .cost { border-top: 1px solid var(--border); padding-top: 8px; color: var(--text-muted); font-size: 11px; line-height: 1.5; }
+.pl-menu button.link { background: transparent; border: none; padding: 0; text-align: left; color: var(--text-secondary); font-size: 12px; text-decoration: underline; }
+
+/* ----- Coluna direita: Chat e Notes (340px) ----- */
+.side { width: 340px; flex-shrink: 0; position: relative; border-left: 1px solid var(--border); background: var(--bg-panel); display: flex; flex-direction: column; min-height: 0; }
+.side-h { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-3); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.side-h h3 { margin: 0; font-size: 12px; font-weight: 500; }
+.side-h .acts { display: flex; align-items: center; gap: var(--space-1); min-width: 0; }
+.icb { display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none; color: var(--text-muted); min-width: 24px; min-height: 24px; padding: 4px 6px; border-radius: var(--radius-sm); }
+.icb:hover { background: rgba(255, 255, 255, .06); color: var(--text-primary); }
+.modelsel { font-size: 11px; color: var(--text-secondary); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 2px 6px; white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; }
+.convbar { display: flex; align-items: center; gap: var(--space-1h); padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.convbar .sel { flex: 1; min-width: 0; background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-md); color: var(--text-primary); font-size: 12px; min-height: 28px; padding: 4px 6px; display: flex; align-items: center; justify-content: space-between; overflow: hidden; white-space: nowrap; }
+.convbar .nb { flex-shrink: 0; background: transparent; border: 1px solid var(--border); border-radius: var(--radius-md); color: var(--text-secondary); min-height: 28px; padding: 4px 12px; font-size: 12px; white-space: nowrap; }
+.history { flex: 1; min-height: 0; overflow-y: auto; padding: var(--space-3); display: flex; flex-direction: column; gap: var(--space-3); }
+.history .empty { margin: auto; text-align: center; color: var(--text-muted); font-size: 12px; padding: 0 var(--space-4); line-height: 1.5; }
+.bub-u { align-self: flex-end; max-width: 90%; background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-xl); padding: var(--space-2) var(--space-3); font-size: 13px; white-space: pre-wrap; word-break: break-word; }
+.bub-u blockquote { margin: 0 0 6px; padding-left: 8px; border-left: 2px solid var(--hair); color: var(--text-secondary); font-size: 12px; }
+.bub-a { align-self: flex-start; max-width: 100%; font-size: 13px; line-height: 1.5; word-break: break-word; }
+.bub-a p { margin: 0 0 8px; } .bub-a p:last-child { margin: 0; }
+.bub-a em { color: var(--text-primary); }
+.composer { flex-shrink: 0; border-top: 1px solid var(--border); padding: var(--space-3); }
+.ctxchip { margin: 0 0 var(--space-2); color: var(--text-muted); font-size: 11px; line-height: var(--lh-ui); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctxchip b { color: var(--accent-ai); font-weight: 500; }
+.ctxdetail { margin: 0 0 var(--space-2); background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 6px 8px; font: 11px/1.5 Consolas, monospace; color: var(--text-secondary); white-space: pre-wrap; max-height: 150px; overflow-y: auto; }
+.composer textarea { width: 100%; resize: none; background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-lg); color: var(--text-primary); font-size: 13px; line-height: 1.4; padding: var(--space-2) var(--space-3); }
+.composer textarea:focus { outline: none; border-color: var(--accent-ai); }
+.composer .actions { display: flex; align-items: center; justify-content: space-between; gap: var(--space-1h); margin-top: var(--space-2); }
+.send { background: var(--accent-ai); color: #0e0e10; border: none; border-radius: var(--radius-md); min-height: 28px; padding: 4px 12px; font-size: 12px; font-weight: 600; }
+/* Notes */
+.notebar { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.notebar .sel { flex: 1; min-width: 0; background: var(--surface-1); border: 1px solid var(--border); border-radius: 6px; color: var(--text-primary); font-size: 12px; padding: 5px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note { flex: 1; min-height: 0; overflow-y: auto; padding: var(--space-4) var(--space-3); font-size: 13px; line-height: 1.6; }
+.note h4 { margin: 0 0 8px; font-size: 16px; font-weight: 600; }
+.note h5 { margin: 16px 0 6px; font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.note p { margin: 0 0 8px; color: var(--text-primary); }
+.note blockquote { margin: 0 0 6px; padding-left: 10px; border-left: 2px solid var(--hair); color: var(--text-secondary); }
+.note .cite { color: var(--text-muted); font-size: 12px; margin: 0 0 12px; }
+.note .tog { margin: 0 0 12px; font-size: 12px; color: var(--text-secondary); }
+.note .tog summary { cursor: pointer; color: var(--text-muted); }
+.note .vis { margin: 0 0 12px; font-size: 12px; color: var(--accent-ai); }
+.note .write { min-height: 96px; border: 1px dashed var(--hair); border-radius: var(--radius-md); padding: 8px 10px; outline: none; color: var(--text-primary); white-space: pre-wrap; }
+.note .write:empty::before { content: attr(data-ph); color: var(--text-muted); }
+.note .write:focus { border-color: var(--accent); border-style: solid; }
+.retell-words { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 8px; }
+.rw { font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--hair); color: var(--text-secondary); display: inline-flex; align-items: center; gap: 4px; }
+.rw.used { color: var(--accent-ai); border-color: rgba(93, 202, 165, .45); background: rgba(93, 202, 165, .1); }
+.retell-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+
+/* ----- Modal Send to notebook ----- */
+.dest { display: flex; flex-direction: column; gap: var(--space-1); }
+.dest label { display: flex; align-items: center; gap: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); font-size: 13px; cursor: pointer; }
+.dest label:hover { border-color: var(--accent); }
+.dest label.sel { border-color: rgba(93, 202, 165, .45); background: rgba(93, 202, 165, .06); }
+.dest label small { color: var(--text-muted); font-size: 11px; margin-left: auto; white-space: nowrap; }
+.dest input { accent-color: var(--accent-ai); }
+#sendBody { gap: var(--space-3); }
+.prev { background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 10px 12px; max-height: 130px; overflow-y: auto; }
+.prev .note { padding: 0; overflow: visible; font-size: 12px; }
+.modal .seg { align-self: flex-start; }
+.modal .seg button { padding: 4px 10px; }
+.modal .chkline { display: flex; align-items: center; gap: var(--space-2); color: var(--text-secondary); font-size: 12px; cursor: pointer; }
+.modal .help { margin: -4px 0 0; font-size: 11px; color: var(--text-muted); line-height: 1.5; }
+</style>
+</head>
+<body data-size="fit" data-bar="2" data-navw="300">
+<!-- Barra do estudo: não faz parte do app. -->
+<div class="study-bar">
+  <strong>Estudo: Library para línguas</strong>
+  <nav><a href="index.html">Índice</a><a href="translate.html">Translate</a><a href="listen.html">Listen</a><a href="vocabulary.html">Vocabulary</a><a href="practice.html" class="on">Practice</a><a href="settings.html">Settings</a></nav>
+  <span class="lbl">Janela</span>
+  <span class="seg" id="sizeSeg">
+    <button type="button" data-v="fit" title="Nunca menor que 1280×800; cresce com o navegador">Ajustar</button>
+    <button type="button" data-v="1280" title="Janela padrão do app">1280×800</button>
+    <button type="button" data-v="1920">1920×1080</button>
+    <button type="button" data-v="full" title="Só o app, no tamanho do navegador. Esc sai">Tela cheia</button>
+  </span>
+  <span class="lbl">Leitor</span><span class="seg" id="fmtSeg"><button type="button" data-v="pdf">PDF</button><button type="button" data-v="epub">EPUB</button></span>
+  <label class="chk" title="Usa a voz do Windows só para sentir o ritmo. A voz proposta no estudo é outra, bem melhor."><input type="checkbox" id="stSound"> som (voz do sistema)</label>
+  <label class="chk"><input type="checkbox" id="stFast"> avançar rápido</label>
+  <a class="tonotes" href="#notas">Como testar e regras</a>
+</div>
+<div class="stage">
+<div class="window" id="window">
+  <header class="tb">
+    <span class="brand">Monet</span>
+    <span class="modes"><span>Notebook</span><span>Chat</span><span class="on">Library</span><span>Mincer<span class="rec" id="mincerRec" hidden><i></i>12:41</span></span></span>
+  </header>
+  <div class="reader">
+    <div class="rtb">
+      <button type="button" class="tbtn"><svg class="i" width="13" height="13" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-arrow-left"/></svg>Library</button>
+      <div class="grp">
+        <button type="button" class="tbtn sq" id="pgPrev" aria-label="Previous page"><svg class="i" width="14" height="14" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-caret-left"/></svg></button>
+        <input class="pg" id="pgInput" value="42" aria-label="Go to page">
+        <span class="ind" id="pgInd">Page 42 of 212</span>
+        <button type="button" class="tbtn sq" id="pgNext" aria-label="Next page"><svg class="i" width="14" height="14" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-caret-right"/></svg></button>
+      </div>
+      <button type="button" class="tbtn" id="searchBtn" title="Search in book (Ctrl+F)"><svg class="i" width="14" height="14" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-magnifying-glass"/></svg>Search</button>
+      <!-- Proposta: "Listen to page" mora aqui, ao lado de Search. -->
+      <button type="button" class="tbtn" id="btnPage"><svg class="i" width="14" height="14" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-headphones"/></svg>Listen to page</button>
+      <div class="grp">
+        <button type="button" class="tbtn sq" aria-label="Zoom out"><svg class="i" width="14" height="14" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-magnifying-glass-minus"/></svg></button><span class="zoom">100%</span><button type="button" class="tbtn sq" aria-label="Zoom in"><svg class="i" width="14" height="14" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-magnifying-glass-plus"/></svg></button>
+        <button type="button" class="tbtn on">Fit width</button><button type="button" class="tbtn">Fit page</button>
+      </div>
+      <div class="grp" style="gap:6px"><button type="button" class="tbtn" id="btnChat">Chat</button><button type="button" class="tbtn" id="btnNotes">Notes</button></div>
+    </div>
+    <p class="banner" id="noText" hidden>This page has no selectable text (scanned PDF). Highlights, search, translation, audio and page context for the AI don’t work here.</p>
+    <div class="rbody">
+      <aside class="nav" id="nav" aria-label="Book navigation">
+        <div class="nav-tabs">
+          <button type="button" class="nav-col" aria-label="Collapse panel"><svg class="i" width="16" height="16" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-sidebar-simple"/></svg></button>
+          <button type="button" class="nav-tab" data-tab="contents">Contents</button>
+          <button type="button" class="nav-tab" data-tab="highlights">Highlights<span class="badge">17</span></button>
+          <!-- Proposta: 3ª aba. Sem contador (não há contagem de vocabulário como meta). -->
+          <button type="button" class="nav-tab" data-tab="vocab" id="tabVocab">Vocabulary</button>
+        </div>
+        <div class="nav-panel" data-tab="contents"><div class="outline" id="outline"></div></div>
+        <div class="nav-panel" data-tab="highlights" hidden><ul class="hl-list" id="hlList"></ul><div class="hl-filter"><button type="button" class="swatch" style="background:#FFEB3B" aria-label="Filter by yellow"></button><button type="button" class="swatch" style="background:#A5D6A7" aria-label="Filter by green"></button><button type="button" class="swatch" style="background:#90CAF9" aria-label="Filter by blue"></button><button type="button" class="swatch" style="background:#F48FB1" aria-label="Filter by pink"></button></div></div>
+        <div class="nav-panel" data-tab="vocab" hidden>
+          <div class="vc-head">
+            <button type="button" class="switch" id="vcMarks" aria-pressed="true" title="Show or hide the dotted marks in the text of every book in this language"><i></i>Mark in text</button>
+            <span style="flex:1"></span>
+            <button type="button" class="mini" id="vcRecall" title="Hide the meanings until you ask for them"></button>
+          </div>
+          <ul class="vc-list" id="vcList"></ul>
+          <div class="vc-foot">
+            <div class="row"><button type="button" class="vc-send" id="vcSend"></button></div>
+            <div class="vc-dest" id="vcDest"></div>
+            <div class="row"><button type="button" class="mini" id="vcListen" title="Plays the sentence of each item"><svg class="i" width="12" height="12" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-headphones"/></svg>Listen to list</button><button type="button" class="mini" id="vcRetell" title="Write the passage in your own words, in the book’s note"><svg class="i" width="12" height="12" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-pencil-simple"/></svg>Retell</button></div>
+          </div>
+        </div>
+      </aside>
+      <div class="pcol" id="pcol">
+        <div class="parea" id="parea">
+          <div class="pwrap" id="pwrap">
+            <div class="sheet pdf" id="sheet42"></div>
+            <div class="sheet pdf" id="sheet43" hidden></div>
+            <div class="selbar" id="selbar" hidden>
+              <!-- Proposta: linha de língua, só em livro de língua diferente da nativa. -->
+              <div class="row lang" id="barLang">
+                <button type="button" class="sbtn" data-act="translate" title="Translate (T)"><svg class="i" width="13" height="13" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-translate"/></svg>Translate</button>
+                <button type="button" class="sbtn" data-act="listen" title="Read the selection aloud (L)"><svg class="i" width="13" height="13" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-speaker-high"/></svg>Listen</button>
+                <button type="button" class="sbtn" data-act="vocab" title="Add to this book’s vocabulary (V)"><svg class="i" width="13" height="13" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-bookmark-simple"/></svg>Add to vocabulary</button>
+              </div>
+              <!-- Barra de hoje, sem mudança. -->
+              <div class="row">
+                <button type="button" class="swatch on" style="background:#FFEB3B" data-act="hl" data-c="y" aria-label="Highlight with yellow"></button><button type="button" class="swatch" style="background:#A5D6A7" data-act="hl" data-c="g" aria-label="Highlight with green"></button><button type="button" class="swatch" style="background:#90CAF9" data-act="hl" data-c="b" aria-label="Highlight with blue"></button><button type="button" class="swatch" style="background:#F48FB1" data-act="hl" data-c="p" aria-label="Highlight with pink"></button>
+                <span class="div"></span>
+                <button type="button" class="sbtn" data-act="copy">Copy</button>
+                <button type="button" class="sbtn" data-act="note">Add to note</button>
+                <button type="button" class="sbtn" data-act="ask">Ask AI</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <button type="button" class="fnav l" id="fPrev" aria-label="Previous page"><svg class="i" width="18" height="18" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-caret-left"/></svg></button>
+        <button type="button" class="fnav r" id="fNext" aria-label="Next page"><svg class="i" width="18" height="18" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-caret-right"/></svg></button>
+        <!-- Proposta: mini-player. Só aparece enquanto há um trecho em leitura. -->
+        <div class="player" id="player" hidden role="group" aria-label="Read aloud">
+          <div class="pl-msg" id="plMsg" hidden></div>
+          <div class="pl-cap" id="plCap"></div>
+          <div class="pl-row">
+            <button type="button" class="pl-b" id="plPrev" title="Back one sentence (Shift+←)" aria-label="Back one sentence"><svg class="i" width="15" height="15" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-skip-back"/></svg></button>
+            <button type="button" class="pl-b pl-play" id="plPlay" aria-label="Play or pause"><svg class="i" width="16" height="16" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-play-fill"/></svg></button>
+            <button type="button" class="pl-b" id="plNext" title="Next sentence (Shift+→)" aria-label="Next sentence"><svg class="i" width="15" height="15" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-skip-forward"/></svg></button>
+            <button type="button" class="pl-b pl-rep" id="plRep" title="Repeat this sentence (R)"><svg class="i" width="14" height="14" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-arrow-counter-clockwise"/></svg><span>Repeat</span></button>
+            <span class="pl-src" id="plSrc"></span>
+            <div class="pl-prog" id="plProg" aria-hidden="true"></div>
+            <button type="button" class="pl-speed" id="plSpeed" title="Speed: 0.75×, 0.85× or 1.0×">0.85×</button>
+            <button type="button" class="pl-b" id="plMore" title="Voice and options" aria-label="Voice and options"><svg class="i" width="16" height="16" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-dots-three"/></svg></button>
+            <button type="button" class="pl-b" id="plClose" title="Close" aria-label="Close player"><svg class="i" width="14" height="14" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-x"/></svg></button>
+          </div>
+          <div class="pl-menu" id="plMenu" hidden>
+            <div>Voice<select aria-label="Voice"><option>Voice 1 (default of the model)</option><option>Voice 2</option><option>Voice 3</option></select></div>
+            <label><input type="checkbox" id="plText" checked> Show the text in the player</label>
+            <label><input type="checkbox" id="plStep"> Pause after each sentence</label>
+            <label><input type="checkbox" id="plSkip" checked> Skip page headers and numbers</label>
+            <div class="cost">This book: 14 pages listened, about $0.38. Audio you already heard replays for free.</div>
+            <button type="button" class="link" id="plSettings">Language settings…</button>
+          </div>
+        </div>
+      </div>
+      <aside class="side" id="chatPanel" aria-label="Book chat">
+        <div class="side-h"><h3>Chat</h3><div class="acts">
+          <button type="button" class="icb" title="System prompt"><svg class="i" width="14" height="14" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-sliders"/></svg></button><button type="button" class="icb" title="Book documents"><svg class="i" width="14" height="14" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-files"/></svg></button><button type="button" class="icb" title="Book memory"><svg class="i" width="14" height="14" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-brain"/></svg></button><button type="button" class="icb" title="Clear all"><svg class="i" width="14" height="14" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-broom"/></svg></button><button type="button" class="icb" title="Tools"><svg class="i" width="14" height="14" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-wrench"/></svg></button>
+          <span class="modelsel">gpt-4.1-mini<svg class="i" width="10" height="10" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-caret-down"/></svg></span>
+          <button type="button" class="icb side-x" aria-label="Close chat panel"><svg class="i" width="14" height="14" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-x"/></svg></button></div></div>
+        <div class="convbar"><span class="sel">New conversation<svg class="i" width="10" height="10" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-caret-down"/></svg></span><button type="button" class="nb">New chat</button><button type="button" class="nb">Clear</button></div>
+        <div class="history" id="chatHist"></div>
+        <div class="composer">
+          <p class="ctxchip" id="ctxChip" title="Sent with each message. Click to see what the Language teacher adds."></p>
+          <pre class="ctxdetail" id="ctxDetail" hidden></pre>
+          <textarea id="chatInput" rows="3" placeholder="Ask about this book..." aria-label="message"></textarea>
+          <div class="actions">
+            <!-- Proposta: o interruptor mora aqui, na linha do Send, e não no cabeçalho (que já está cheio a 340px). -->
+            <button type="button" class="switch ai" id="teacher" aria-pressed="false" title="Adds the book’s language, your native language, your level and this page’s vocabulary to what the AI sees"><i></i><svg class="i" width="13" height="13" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-graduation-cap"/></svg>Language teacher</button>
+            <button type="button" class="send" id="chatSend">Send</button>
+          </div>
+        </div>
+      </aside>
+      <aside class="side" id="notesPanel" aria-label="Book notes" hidden>
+        <div class="side-h"><h3>Notes</h3><button type="button" class="icb side-x" aria-label="Close notes panel"><svg class="i" width="14" height="14" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-x"/></svg></button></div>
+        <div class="notebar"><span class="sel" id="noteSel"></span><button type="button" class="mini"><svg class="i" width="12" height="12" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-plus"/></svg>New note</button></div>
+        <div class="note" id="noteBody"></div>
+      </aside>
+    </div>
+  </div>
+  <div class="toast" id="toast" role="status"></div>
+  <div class="overlay" id="sendOverlay" role="dialog" aria-modal="true" aria-label="Send vocabulary to a note">
+    <div class="modal"><header><h2>Send vocabulary to a note</h2><button type="button" class="x" id="sendX" aria-label="Close"><svg class="i" width="14" height="14" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-x"/></svg></button></header><div class="mbody" id="sendBody"></div></div>
+  </div>
+</div>
+</div>
+<div class="page" id="notas">
+  <h1>Practice: professor no chat e recontar</h1>
+  <p>Livro, autor, texto em francês, traduções e itens de vocabulário são <b>inventados</b> para este estudo. Não há IA, rede nem áudio gerado: as respostas vêm de uma tabela de amostra e o tempo de cada frase é simulado.</p>
+  <div class="notes-grid">
+    <div class="notes-box"><h3>Como testar</h3><ul>
+      <li><b>Language teacher</b>, na linha do Send, liga e desliga o bloco de língua. Com ele ligado, clique na linha "AI sees…" para ver o que é acrescentado ao contexto.</li>
+      <li>Na aba Vocabulary, <b>Retell</b> abre a nota do livro (aba Notes) com as palavras guardadas e um espaço para escrever.</li>
+      <li>Escreva em francês, ou use "Fill with a sample". As palavras usadas ganham um visto, sem contador.</li>
+      <li><b>Ask for feedback</b> manda o reconto ao chat, com o professor ligado. A IA comenta e não reescreve.</li>
+      <li><b>Listen to list</b> toca a frase de origem de cada item do vocabulário, no mesmo mini-player.</li>
+    </ul></div>
+    <div class="notes-box"><h3>Regras</h3><ul>
+      <li><b>O professor é um interruptor do contexto</b>, não um agente. Acrescenta ao bloco efêmero: língua do livro, língua nativa, nível (lido da nota de perfil) e o vocabulário guardado nesta página. O padrão do chat por página fica intacto.</li>
+      <li><b>Desligado por padrão</b> e lembrado por livro. Livro técnico em inglês não vira aula de inglês.</li>
+      <li><b>Lugar:</b> a linha do Send, que hoje tem a metade esquerda vazia. O cabeçalho do chat já usa quase toda a largura de 340px.</li>
+      <li><b>Recontar</b> é a prática: o texto fica na nota (que dura), o comentário vem no chat (que é efêmero). Nada de lista para revisar.</li>
+      <li><b>O convite não interrompe:</b> é um botão na aba Vocabulary e na nota do livro. Sem aviso no fim da sessão.</li>
+      <li><b>Depois:</b> ditado, repetir em voz alta com gravação, recontar falando.</li>
+    </ul></div>
+  </div>
+</div>
+<!-- Ícones Phosphor (peso regular; play e pause em fill), embutidos. -->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <symbol id="i-arrow-left" viewBox="0 0 256 256"><path d="M224,128a8,8,0,0,1-8,8H59.31l58.35,58.34a8,8,0,0,1-11.32,11.32l-72-72a8,8,0,0,1,0-11.32l72-72a8,8,0,0,1,11.32,11.32L59.31,120H216A8,8,0,0,1,224,128Z"/></symbol>
+  <symbol id="i-caret-left" viewBox="0 0 256 256"><path d="M165.66,202.34a8,8,0,0,1-11.32,11.32l-80-80a8,8,0,0,1,0-11.32l80-80a8,8,0,0,1,11.32,11.32L91.31,128Z"/></symbol>
+  <symbol id="i-caret-right" viewBox="0 0 256 256"><path d="M181.66,133.66l-80,80a8,8,0,0,1-11.32-11.32L164.69,128,90.34,53.66a8,8,0,0,1,11.32-11.32l80,80A8,8,0,0,1,181.66,133.66Z"/></symbol>
+  <symbol id="i-caret-down" viewBox="0 0 256 256"><path d="M213.66,101.66l-80,80a8,8,0,0,1-11.32,0l-80-80A8,8,0,0,1,53.66,90.34L128,164.69l74.34-74.35a8,8,0,0,1,11.32,11.32Z"/></symbol>
+  <symbol id="i-magnifying-glass" viewBox="0 0 256 256"><path d="M229.66,218.34l-50.07-50.06a88.11,88.11,0,1,0-11.31,11.31l50.06,50.07a8,8,0,0,0,11.32-11.32ZM40,112a72,72,0,1,1,72,72A72.08,72.08,0,0,1,40,112Z"/></symbol>
+  <symbol id="i-magnifying-glass-minus" viewBox="0 0 256 256"><path d="M152,112a8,8,0,0,1-8,8H80a8,8,0,0,1,0-16h64A8,8,0,0,1,152,112Zm77.66,117.66a8,8,0,0,1-11.32,0l-50.06-50.07a88.11,88.11,0,1,1,11.31-11.31l50.07,50.06A8,8,0,0,1,229.66,229.66ZM112,184a72,72,0,1,0-72-72A72.08,72.08,0,0,0,112,184Z"/></symbol>
+  <symbol id="i-magnifying-glass-plus" viewBox="0 0 256 256"><path d="M152,112a8,8,0,0,1-8,8H120v24a8,8,0,0,1-16,0V120H80a8,8,0,0,1,0-16h24V80a8,8,0,0,1,16,0v24h24A8,8,0,0,1,152,112Zm77.66,117.66a8,8,0,0,1-11.32,0l-50.06-50.07a88.11,88.11,0,1,1,11.31-11.31l50.07,50.06A8,8,0,0,1,229.66,229.66ZM112,184a72,72,0,1,0-72-72A72.08,72.08,0,0,0,112,184Z"/></symbol>
+  <symbol id="i-sidebar-simple" viewBox="0 0 256 256"><path d="M216,40H40A16,16,0,0,0,24,56V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A16,16,0,0,0,216,40ZM40,56H80V200H40ZM216,200H96V56H216V200Z"/></symbol>
+  <symbol id="i-sparkle" viewBox="0 0 256 256"><path d="M197.58,129.06,146,110l-19-51.62a15.92,15.92,0,0,0-29.88,0L78,110l-51.62,19a15.92,15.92,0,0,0,0,29.88L78,178l19,51.62a15.92,15.92,0,0,0,29.88,0L146,178l51.62-19a15.92,15.92,0,0,0,0-29.88ZM137,164.22a8,8,0,0,0-4.74,4.74L112,223.85,91.78,169A8,8,0,0,0,87,164.22L32.15,144,87,123.78A8,8,0,0,0,91.78,119L112,64.15,132.22,119a8,8,0,0,0,4.74,4.74L191.85,144ZM144,40a8,8,0,0,1,8-8h16V16a8,8,0,0,1,16,0V32h16a8,8,0,0,1,0,16H184V64a8,8,0,0,1-16,0V48H152A8,8,0,0,1,144,40ZM248,88a8,8,0,0,1-8,8h-8v8a8,8,0,0,1-16,0V96h-8a8,8,0,0,1,0-16h8V72a8,8,0,0,1,16,0v8h8A8,8,0,0,1,248,88Z"/></symbol>
+  <symbol id="i-quotes" viewBox="0 0 256 256"><path d="M100,56H40A16,16,0,0,0,24,72v64a16,16,0,0,0,16,16h60v8a32,32,0,0,1-32,32,8,8,0,0,0,0,16,48.05,48.05,0,0,0,48-48V72A16,16,0,0,0,100,56Zm0,80H40V72h60ZM216,56H156a16,16,0,0,0-16,16v64a16,16,0,0,0,16,16h60v8a32,32,0,0,1-32,32,8,8,0,0,0,0,16,48.05,48.05,0,0,0,48-48V72A16,16,0,0,0,216,56Zm0,80H156V72h60Z"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 256 256"><path d="M216,48H176V40a24,24,0,0,0-24-24H104A24,24,0,0,0,80,40v8H40a8,8,0,0,0,0,16h8V208a16,16,0,0,0,16,16H192a16,16,0,0,0,16-16V64h8a8,8,0,0,0,0-16ZM96,40a8,8,0,0,1,8-8h48a8,8,0,0,1,8,8v8H96Zm96,168H64V64H192ZM112,104v64a8,8,0,0,1-16,0V104a8,8,0,0,1,16,0Zm48,0v64a8,8,0,0,1-16,0V104a8,8,0,0,1,16,0Z"/></symbol>
+  <symbol id="i-x" viewBox="0 0 256 256"><path d="M205.66,194.34a8,8,0,0,1-11.32,11.32L128,139.31,61.66,205.66a8,8,0,0,1-11.32-11.32L116.69,128,50.34,61.66A8,8,0,0,1,61.66,50.34L128,116.69l66.34-66.35a8,8,0,0,1,11.32,11.32L139.31,128Z"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 256 256"><path d="M64,105V40a8,8,0,0,0-16,0v65a32,32,0,0,0,0,62v49a8,8,0,0,0,16,0V167a32,32,0,0,0,0-62Zm-8,47a16,16,0,1,1,16-16A16,16,0,0,1,56,152Zm80-95V40a8,8,0,0,0-16,0V57a32,32,0,0,0,0,62v97a8,8,0,0,0,16,0V119a32,32,0,0,0,0-62Zm-8,47a16,16,0,1,1,16-16A16,16,0,0,1,128,104Zm104,64a32.06,32.06,0,0,0-24-31V40a8,8,0,0,0-16,0v97a32,32,0,0,0,0,62v17a8,8,0,0,0,16,0V199A32.06,32.06,0,0,0,232,168Zm-32,16a16,16,0,1,1,16-16A16,16,0,0,1,200,184Z"/></symbol>
+  <symbol id="i-files" viewBox="0 0 256 256"><path d="M213.66,66.34l-40-40A8,8,0,0,0,168,24H88A16,16,0,0,0,72,40V56H56A16,16,0,0,0,40,72V216a16,16,0,0,0,16,16H168a16,16,0,0,0,16-16V200h16a16,16,0,0,0,16-16V72A8,8,0,0,0,213.66,66.34ZM168,216H56V72h76.69L168,107.31v84.53c0,.06,0,.11,0,.16s0,.1,0,.16V216Zm32-32H184V104a8,8,0,0,0-2.34-5.66l-40-40A8,8,0,0,0,136,56H88V40h76.69L200,75.31Zm-56-32a8,8,0,0,1-8,8H88a8,8,0,0,1,0-16h48A8,8,0,0,1,144,152Zm0,32a8,8,0,0,1-8,8H88a8,8,0,0,1,0-16h48A8,8,0,0,1,144,184Z"/></symbol>
+  <symbol id="i-brain" viewBox="0 0 256 256"><path d="M248,124a56.11,56.11,0,0,0-32-50.61V72a48,48,0,0,0-88-26.49A48,48,0,0,0,40,72v1.39a56,56,0,0,0,0,101.2V176a48,48,0,0,0,88,26.49A48,48,0,0,0,216,176v-1.41A56.09,56.09,0,0,0,248,124ZM88,208a32,32,0,0,1-31.81-28.56A55.87,55.87,0,0,0,64,180h8a8,8,0,0,0,0-16H64A40,40,0,0,1,50.67,86.27,8,8,0,0,0,56,78.73V72a32,32,0,0,1,64,0v68.26A47.8,47.8,0,0,0,88,128a8,8,0,0,0,0,16,32,32,0,0,1,0,64Zm104-44h-8a8,8,0,0,0,0,16h8a55.87,55.87,0,0,0,7.81-.56A32,32,0,1,1,168,144a8,8,0,0,0,0-16,47.8,47.8,0,0,0-32,12.26V72a32,32,0,0,1,64,0v6.73a8,8,0,0,0,5.33,7.54A40,40,0,0,1,192,164Zm16-52a8,8,0,0,1-8,8h-4a36,36,0,0,1-36-36V80a8,8,0,0,1,16,0v4a20,20,0,0,0,20,20h4A8,8,0,0,1,208,112ZM60,120H56a8,8,0,0,1,0-16h4A20,20,0,0,0,80,84V80a8,8,0,0,1,16,0v4A36,36,0,0,1,60,120Z"/></symbol>
+  <symbol id="i-broom" viewBox="0 0 256 256"><path d="M235.5,216.81c-22.56-11-35.5-34.58-35.5-64.8V134.73a15.94,15.94,0,0,0-10.09-14.87L165,110a8,8,0,0,1-4.48-10.34l21.32-53a28,28,0,0,0-16.1-37,28.14,28.14,0,0,0-35.82,16,.61.61,0,0,0,0,.12L108.9,79a8,8,0,0,1-10.37,4.49L73.11,73.14A15.89,15.89,0,0,0,55.74,76.8C34.68,98.45,24,123.75,24,152a111.45,111.45,0,0,0,31.18,77.53A8,8,0,0,0,61,232H232a8,8,0,0,0,3.5-15.19ZM67.14,88l25.41,10.3a24,24,0,0,0,31.23-13.45l21-53c2.56-6.11,9.47-9.27,15.43-7a12,12,0,0,1,6.88,15.92L145.69,93.76a24,24,0,0,0,13.43,31.14L184,134.73V152c0,.33,0,.66,0,1L55.77,101.71A108.84,108.84,0,0,1,67.14,88Zm48,128a87.53,87.53,0,0,1-24.34-42,8,8,0,0,0-15.49,4,105.16,105.16,0,0,0,18.36,38H64.44A95.54,95.54,0,0,1,40,152a85.9,85.9,0,0,1,7.73-36.29l137.8,55.12c3,18,10.56,33.48,21.89,45.16Z"/></symbol>
+  <symbol id="i-translate" viewBox="0 0 256 256"><path d="M247.15,212.42l-56-112a8,8,0,0,0-14.31,0l-21.71,43.43A88,88,0,0,1,108,126.93,103.65,103.65,0,0,0,135.69,64H160a8,8,0,0,0,0-16H104V32a8,8,0,0,0-16,0V48H32a8,8,0,0,0,0,16h87.63A87.76,87.76,0,0,1,96,116.35a87.74,87.74,0,0,1-19-31,8,8,0,1,0-15.08,5.34A103.63,103.63,0,0,0,84,127a87.55,87.55,0,0,1-52,17,8,8,0,0,0,0,16,103.46,103.46,0,0,0,64-22.08,104.18,104.18,0,0,0,51.44,21.31l-26.6,53.19a8,8,0,0,0,14.31,7.16L148.94,192h70.11l13.79,27.58A8,8,0,0,0,240,224a8,8,0,0,0,7.15-11.58ZM156.94,176,184,121.89,211.05,176Z"/></symbol>
+  <symbol id="i-speaker-high" viewBox="0 0 256 256"><path d="M155.51,24.81a8,8,0,0,0-8.42.88L77.25,80H32A16,16,0,0,0,16,96v64a16,16,0,0,0,16,16H77.25l69.84,54.31A8,8,0,0,0,160,224V32A8,8,0,0,0,155.51,24.81ZM32,96H72v64H32ZM144,207.64,88,164.09V91.91l56-43.55Zm54-106.08a40,40,0,0,1,0,52.88,8,8,0,0,1-12-10.58,24,24,0,0,0,0-31.72,8,8,0,0,1,12-10.58ZM248,128a79.9,79.9,0,0,1-20.37,53.34,8,8,0,0,1-11.92-10.67,64,64,0,0,0,0-85.33,8,8,0,1,1,11.92-10.67A79.83,79.83,0,0,1,248,128Z"/></symbol>
+  <symbol id="i-skip-back" viewBox="0 0 256 256"><path d="M199.81,34a16,16,0,0,0-16.24.43L64,109.23V40a8,8,0,0,0-16,0V216a8,8,0,0,0,16,0V146.77l119.57,74.78A15.95,15.95,0,0,0,208,208.12V47.88A15.86,15.86,0,0,0,199.81,34ZM192,208,64.16,128,192,48.07Z"/></symbol>
+  <symbol id="i-skip-forward" viewBox="0 0 256 256"><path d="M200,32a8,8,0,0,0-8,8v69.23L72.43,34.45A15.95,15.95,0,0,0,48,47.88V208.12a16,16,0,0,0,24.43,13.43L192,146.77V216a8,8,0,0,0,16,0V40A8,8,0,0,0,200,32ZM64,207.93V48.05l127.84,80Z"/></symbol>
+  <symbol id="i-arrow-counter-clockwise" viewBox="0 0 256 256"><path d="M224,128a96,96,0,0,1-94.71,96H128A95.38,95.38,0,0,1,62.1,197.8a8,8,0,0,1,11-11.63A80,80,0,1,0,71.43,71.39a3.07,3.07,0,0,1-.26.25L44.59,96H72a8,8,0,0,1,0,16H24a8,8,0,0,1-8-8V56a8,8,0,0,1,16,0V85.8L60.25,60A96,96,0,0,1,224,128Z"/></symbol>
+  <symbol id="i-headphones" viewBox="0 0 256 256"><path d="M201.89,54.66A103.43,103.43,0,0,0,128.79,24H128A104,104,0,0,0,24,128v56a24,24,0,0,0,24,24H64a24,24,0,0,0,24-24V144a24,24,0,0,0-24-24H40.36A88,88,0,0,1,128,40h.67a87.71,87.71,0,0,1,87,80H192a24,24,0,0,0-24,24v40a24,24,0,0,0,24,24h16a24,24,0,0,0,24-24V128A103.41,103.41,0,0,0,201.89,54.66ZM64,136a8,8,0,0,1,8,8v40a8,8,0,0,1-8,8H48a8,8,0,0,1-8-8V136Zm152,48a8,8,0,0,1-8,8H192a8,8,0,0,1-8-8V144a8,8,0,0,1,8-8h24Z"/></symbol>
+  <symbol id="i-check" viewBox="0 0 256 256"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></symbol>
+  <symbol id="i-circle-notch" viewBox="0 0 256 256"><path d="M232,128a104,104,0,0,1-208,0c0-41,23.81-78.36,60.66-95.27a8,8,0,0,1,6.68,14.54C60.15,61.59,40,93.27,40,128a88,88,0,0,0,176,0c0-34.73-20.15-66.41-51.34-80.73a8,8,0,0,1,6.68-14.54C208.19,49.64,232,87,232,128Z"/></symbol>
+  <symbol id="i-warning-circle" viewBox="0 0 256 256"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm-8-80V80a8,8,0,0,1,16,0v56a8,8,0,0,1-16,0Zm20,36a12,12,0,1,1-12-12A12,12,0,0,1,140,172Z"/></symbol>
+  <symbol id="i-gear-six" viewBox="0 0 256 256"><path d="M128,80a48,48,0,1,0,48,48A48.05,48.05,0,0,0,128,80Zm0,80a32,32,0,1,1,32-32A32,32,0,0,1,128,160Zm109.94-52.79a8,8,0,0,0-3.89-5.4l-29.83-17-.12-33.62a8,8,0,0,0-2.83-6.08,111.91,111.91,0,0,0-36.72-20.67,8,8,0,0,0-6.46.59L128,41.85,97.88,25a8,8,0,0,0-6.47-.6A112.1,112.1,0,0,0,54.73,45.15a8,8,0,0,0-2.83,6.07l-.15,33.65-29.83,17a8,8,0,0,0-3.89,5.4,106.47,106.47,0,0,0,0,41.56,8,8,0,0,0,3.89,5.4l29.83,17,.12,33.62a8,8,0,0,0,2.83,6.08,111.91,111.91,0,0,0,36.72,20.67,8,8,0,0,0,6.46-.59L128,214.15,158.12,231a7.91,7.91,0,0,0,3.9,1,8.09,8.09,0,0,0,2.57-.42,112.1,112.1,0,0,0,36.68-20.73,8,8,0,0,0,2.83-6.07l.15-33.65,29.83-17a8,8,0,0,0,3.89-5.4A106.47,106.47,0,0,0,237.94,107.21Zm-15,34.91-28.57,16.25a8,8,0,0,0-3,3c-.58,1-1.19,2.06-1.81,3.06a7.94,7.94,0,0,0-1.22,4.21l-.15,32.25a95.89,95.89,0,0,1-25.37,14.3L134,199.13a8,8,0,0,0-3.91-1h-.19c-1.21,0-2.43,0-3.64,0a8.08,8.08,0,0,0-4.1,1l-28.84,16.1A96,96,0,0,1,67.88,201l-.11-32.2a8,8,0,0,0-1.22-4.22c-.62-1-1.23-2-1.8-3.06a8.09,8.09,0,0,0-3-3.06l-28.6-16.29a90.49,90.49,0,0,1,0-28.26L61.67,97.63a8,8,0,0,0,3-3c.58-1,1.19-2.06,1.81-3.06a7.94,7.94,0,0,0,1.22-4.21l.15-32.25a95.89,95.89,0,0,1,25.37-14.3L122,56.87a8,8,0,0,0,4.1,1c1.21,0,2.43,0,3.64,0a8.08,8.08,0,0,0,4.1-1l28.84-16.1A96,96,0,0,1,188.12,55l.11,32.2a8,8,0,0,0,1.22,4.22c.62,1,1.23,2,1.8,3.06a8.09,8.09,0,0,0,3,3.06l28.6,16.29A90.49,90.49,0,0,1,222.9,142.12Z"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 256 256"><path d="M224,128a8,8,0,0,1-8,8H136v80a8,8,0,0,1-16,0V136H40a8,8,0,0,1,0-16h80V40a8,8,0,0,1,16,0v80h80A8,8,0,0,1,224,128Z"/></symbol>
+  <symbol id="i-pencil-simple" viewBox="0 0 256 256"><path d="M227.31,73.37,182.63,28.68a16,16,0,0,0-22.63,0L36.69,152A15.86,15.86,0,0,0,32,163.31V208a16,16,0,0,0,16,16H92.69A15.86,15.86,0,0,0,104,219.31L227.31,96a16,16,0,0,0,0-22.63ZM92.69,208H48V163.31l88-88L180.69,120ZM192,108.68,147.31,64l24-24L216,84.68Z"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 256 256"><path d="M247.31,124.76c-.35-.79-8.82-19.58-27.65-38.41C194.57,61.26,162.88,48,128,48S61.43,61.26,36.34,86.35C17.51,105.18,9,124,8.69,124.76a8,8,0,0,0,0,6.5c.35.79,8.82,19.57,27.65,38.4C61.43,194.74,93.12,208,128,208s66.57-13.26,91.66-38.34c18.83-18.83,27.3-37.61,27.65-38.4A8,8,0,0,0,247.31,124.76ZM128,192c-30.78,0-57.67-11.19-79.93-33.25A133.47,133.47,0,0,1,25,128,133.33,133.33,0,0,1,48.07,97.25C70.33,75.19,97.22,64,128,64s57.67,11.19,79.93,33.25A133.46,133.46,0,0,1,231.05,128C223.84,141.46,192.43,192,128,192Zm0-112a48,48,0,1,0,48,48A48.05,48.05,0,0,0,128,80Zm0,80a32,32,0,1,1,32-32A32,32,0,0,1,128,160Z"/></symbol>
+  <symbol id="i-eye-slash" viewBox="0 0 256 256"><path d="M53.92,34.62A8,8,0,1,0,42.08,45.38L61.32,66.55C25,88.84,9.38,123.2,8.69,124.76a8,8,0,0,0,0,6.5c.35.79,8.82,19.57,27.65,38.4C61.43,194.74,93.12,208,128,208a127.11,127.11,0,0,0,52.07-10.83l22,24.21a8,8,0,1,0,11.84-10.76Zm47.33,75.84,41.67,45.85a32,32,0,0,1-41.67-45.85ZM128,192c-30.78,0-57.67-11.19-79.93-33.25A133.16,133.16,0,0,1,25,128c4.69-8.79,19.66-33.39,47.35-49.38l18,19.75a48,48,0,0,0,63.66,70l14.73,16.2A112,112,0,0,1,128,192Zm6-95.43a8,8,0,0,1,3-15.72,48.16,48.16,0,0,1,38.77,42.64,8,8,0,0,1-7.22,8.71,6.39,6.39,0,0,1-.75,0,8,8,0,0,1-8-7.26A32.09,32.09,0,0,0,134,96.57Zm113.28,34.69c-.42.94-10.55,23.37-33.36,43.8a8,8,0,1,1-10.67-11.92A132.77,132.77,0,0,0,231.05,128a133.15,133.15,0,0,0-23.12-30.77C185.67,75.19,158.78,64,128,64a118.37,118.37,0,0,0-19.36,1.57A8,8,0,1,1,106,49.79,134,134,0,0,1,128,48c34.88,0,66.57,13.26,91.66,38.35,18.83,18.83,27.3,37.62,27.65,38.41A8,8,0,0,1,247.31,131.26Z"/></symbol>
+  <symbol id="i-info" viewBox="0 0 256 256"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm16-40a8,8,0,0,1-8,8,16,16,0,0,1-16-16V128a8,8,0,0,1,0-16,16,16,0,0,1,16,16v40A8,8,0,0,1,144,176ZM112,84a12,12,0,1,1,12,12A12,12,0,0,1,112,84Z"/></symbol>
+  <symbol id="i-dots-three" viewBox="0 0 256 256"><path d="M140,128a12,12,0,1,1-12-12A12,12,0,0,1,140,128Zm56-12a12,12,0,1,0,12,12A12,12,0,0,0,196,116ZM60,116a12,12,0,1,0,12,12A12,12,0,0,0,60,116Z"/></symbol>
+  <symbol id="i-bookmark-simple" viewBox="0 0 256 256"><path d="M184,32H72A16,16,0,0,0,56,48V224a8,8,0,0,0,12.24,6.78L128,193.43l59.77,37.35A8,8,0,0,0,200,224V48A16,16,0,0,0,184,32Zm0,177.57-51.77-32.35a8,8,0,0,0-8.48,0L72,209.57V48H184Z"/></symbol>
+  <symbol id="i-list-magnifying-glass" viewBox="0 0 256 256"><path d="M32,64a8,8,0,0,1,8-8H216a8,8,0,0,1,0,16H40A8,8,0,0,1,32,64Zm8,72h72a8,8,0,0,0,0-16H40a8,8,0,0,0,0,16Zm88,48H40a8,8,0,0,0,0,16h88a8,8,0,0,0,0-16Zm109.66,13.66a8,8,0,0,1-11.32,0L206,177.36A40,40,0,1,1,217.36,166l20.3,20.3A8,8,0,0,1,237.66,197.66ZM184,168a24,24,0,1,0-24-24A24,24,0,0,0,184,168Z"/></symbol>
+  <symbol id="i-notebook" viewBox="0 0 256 256"><path d="M184,112a8,8,0,0,1-8,8H112a8,8,0,0,1,0-16h64A8,8,0,0,1,184,112Zm-8,24H112a8,8,0,0,0,0,16h64a8,8,0,0,0,0-16Zm48-88V208a16,16,0,0,1-16,16H48a16,16,0,0,1-16-16V48A16,16,0,0,1,48,32H208A16,16,0,0,1,224,48ZM48,208H72V48H48Zm160,0V48H88V208H208Z"/></symbol>
+  <symbol id="i-graduation-cap" viewBox="0 0 256 256"><path d="M251.76,88.94l-120-64a8,8,0,0,0-7.52,0l-120,64a8,8,0,0,0,0,14.12L32,117.87v48.42a15.91,15.91,0,0,0,4.06,10.65C49.16,191.53,78.51,216,128,216a130,130,0,0,0,48-8.76V240a8,8,0,0,0,16,0V199.51a115.63,115.63,0,0,0,27.94-22.57A15.91,15.91,0,0,0,224,166.29V117.87l27.76-14.81a8,8,0,0,0,0-14.12ZM128,200c-43.27,0-68.72-21.14-80-33.71V126.4l76.24,40.66a8,8,0,0,0,7.52,0L176,143.47v46.34C163.4,195.69,147.52,200,128,200Zm80-33.75a97.83,97.83,0,0,1-16,14.25V134.93l16-8.53ZM188,118.94l-.22-.13-56-29.87a8,8,0,0,0-7.52,14.12L171,128l-43,22.93L25,96,128,41.07,231,96Z"/></symbol>
+  <symbol id="i-wrench" viewBox="0 0 256 256"><path d="M226.76,69a8,8,0,0,0-12.84-2.88l-40.3,37.19-17.23-3.7-3.7-17.23,37.19-40.3A8,8,0,0,0,187,29.24,72,72,0,0,0,88,96,72.34,72.34,0,0,0,94,124.94L33.79,177c-.15.12-.29.26-.43.39a32,32,0,0,0,45.26,45.26c.13-.13.27-.28.39-.42L131.06,162A72,72,0,0,0,232,96,71.56,71.56,0,0,0,226.76,69ZM160,152a56.14,56.14,0,0,1-27.07-7,8,8,0,0,0-9.92,1.77L67.11,211.51a16,16,0,0,1-22.62-22.62L109.18,133a8,8,0,0,0,1.77-9.93,56,56,0,0,1,58.36-82.31l-31.2,33.81a8,8,0,0,0-1.94,7.1L141.83,108a8,8,0,0,0,6.14,6.14l26.35,5.66a8,8,0,0,0,7.1-1.94l33.81-31.2A56.06,56.06,0,0,1,160,152Z"/></symbol>
+  <symbol id="i-calendar" viewBox="0 0 256 256"><path d="M208,32H184V24a8,8,0,0,0-16,0v8H88V24a8,8,0,0,0-16,0v8H48A16,16,0,0,0,32,48V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V48A16,16,0,0,0,208,32ZM72,48v8a8,8,0,0,0,16,0V48h80v8a8,8,0,0,0,16,0V48h24V80H48V48ZM208,208H48V96H208V208Zm-96-88v64a8,8,0,0,1-16,0V132.94l-4.42,2.22a8,8,0,0,1-7.16-14.32l16-8A8,8,0,0,1,112,120Zm59.16,30.45L152,176h16a8,8,0,0,1,0,16H136a8,8,0,0,1-6.4-12.8l28.78-38.37A8,8,0,1,0,145.07,132a8,8,0,1,1-13.85-8A24,24,0,0,1,176,136,23.76,23.76,0,0,1,171.16,150.45Z"/></symbol>
+  <symbol id="i-lightning" viewBox="0 0 256 256"><path d="M215.79,118.17a8,8,0,0,0-5-5.66L153.18,90.9l14.66-73.33a8,8,0,0,0-13.69-7l-112,120a8,8,0,0,0,3,13l57.63,21.61L88.16,238.43a8,8,0,0,0,13.69,7l112-120A8,8,0,0,0,215.79,118.17ZM109.37,214l10.47-52.38a8,8,0,0,0-5-9.06L62,132.71l84.62-90.66L136.16,94.43a8,8,0,0,0,5,9.06l52.8,19.8Z"/></symbol>
+  <symbol id="i-list-checks" viewBox="0 0 256 256"><path d="M224,128a8,8,0,0,1-8,8H128a8,8,0,0,1,0-16h88A8,8,0,0,1,224,128ZM128,72h88a8,8,0,0,0,0-16H128a8,8,0,0,0,0,16Zm88,112H128a8,8,0,0,0,0,16h88a8,8,0,0,0,0-16ZM82.34,42.34,56,68.69,45.66,58.34A8,8,0,0,0,34.34,69.66l16,16a8,8,0,0,0,11.32,0l32-32A8,8,0,0,0,82.34,42.34Zm0,64L56,132.69,45.66,122.34a8,8,0,0,0-11.32,11.32l16,16a8,8,0,0,0,11.32,0l32-32a8,8,0,0,0-11.32-11.32Zm0,64L56,196.69,45.66,186.34a8,8,0,0,0-11.32,11.32l16,16a8,8,0,0,0,11.32,0l32-32a8,8,0,0,0-11.32-11.32Z"/></symbol>
+  <symbol id="i-tag" viewBox="0 0 256 256"><path d="M243.31,136,144,36.69A15.86,15.86,0,0,0,132.69,32H40a8,8,0,0,0-8,8v92.69A15.86,15.86,0,0,0,36.69,144L136,243.31a16,16,0,0,0,22.63,0l84.68-84.68a16,16,0,0,0,0-22.63Zm-96,96L48,132.69V48h84.69L232,147.31ZM96,84A12,12,0,1,1,84,72,12,12,0,0,1,96,84Z"/></symbol>
+  <symbol id="i-keyboard" viewBox="0 0 256 256"><path d="M224,48H32A16,16,0,0,0,16,64V192a16,16,0,0,0,16,16H224a16,16,0,0,0,16-16V64A16,16,0,0,0,224,48Zm0,144H32V64H224V192Zm-16-64a8,8,0,0,1-8,8H56a8,8,0,0,1,0-16H200A8,8,0,0,1,208,128Zm0-32a8,8,0,0,1-8,8H56a8,8,0,0,1,0-16H200A8,8,0,0,1,208,96ZM72,160a8,8,0,0,1-8,8H56a8,8,0,0,1,0-16h8A8,8,0,0,1,72,160Zm96,0a8,8,0,0,1-8,8H96a8,8,0,0,1,0-16h64A8,8,0,0,1,168,160Zm40,0a8,8,0,0,1-8,8h-8a8,8,0,0,1,0-16h8A8,8,0,0,1,208,160Z"/></symbol>
+  <symbol id="i-play-fill" viewBox="0 0 256 256"><path d="M240,128a15.74,15.74,0,0,1-7.6,13.51L88.32,229.65a16,16,0,0,1-16.2.3A15.86,15.86,0,0,1,64,216.13V39.87a15.86,15.86,0,0,1,8.12-13.82,16,16,0,0,1,16.2.3L232.4,114.49A15.74,15.74,0,0,1,240,128Z"/></symbol>
+  <symbol id="i-pause-fill" viewBox="0 0 256 256"><path d="M216,48V208a16,16,0,0,1-16,16H160a16,16,0,0,1-16-16V48a16,16,0,0,1,16-16h40A16,16,0,0,1,216,48ZM96,32H56A16,16,0,0,0,40,48V208a16,16,0,0,0,16,16H96a16,16,0,0,0,16-16V48A16,16,0,0,0,96,32Z"/></symbol>
+</svg>
+<div class="pop" id="pop" hidden role="dialog" aria-label="Translation"></div>
+<script>
+/* ===== Dados fictícios do mockup =====
+   Livro, autor, texto, traduções e itens de vocabulário foram inventados para este estudo.
+   O texto em francês é original (não vem de nenhuma obra publicada). */
+const BOOK = { title: 'La Maison des dunes', author: 'A. Morvan', lang: 'French', code: 'FR', pages: 212, chapter: 'Chapitre 4 · Le grenier' };
+const OTHER_BOOK = 'Le Jardin d’hiver';
+const NATIVE = 'Portuguese';
+
+/* Marcação dentro do texto: {y}…{/} grifo amarelo, {p}…{/} grifo rosa. */
+const PAGES = {
+  42: [
+    [{ id: 's1', fr: 'La porte du grenier était entrebâillée.', pt: 'A porta do sótão estava entreaberta.' },
+     { id: 's2', fr: '{p}Élise{/} hésita un instant, puis elle monta les dernières marches en tâtonnant, car l’ampoule avait grillé depuis longtemps.', pt: 'Élise hesitou um instante, depois subiu os últimos degraus tateando, pois a lâmpada tinha queimado havia muito tempo.', g: '<b>en + -ant</b> (en tâtonnant) é o gérondif: diz como ela subiu.' },
+     { id: 's3', fr: 'Une odeur de poussière et de bois sec flottait dans l’air.', pt: 'Um cheiro de poeira e de madeira seca pairava no ar.' }],
+    [{ id: 's4', fr: 'Sous la lucarne, une vieille malle attendait, recouverte d’un drap jauni.', pt: 'Sob a claraboia, um velho baú esperava, coberto por um lençol amarelado.' },
+     { id: 's5', fr: 'Elle souleva le couvercle, qui grinça comme une plainte.', pt: 'Ela levantou a tampa, que rangeu como um gemido.', g: '<b>souleva, grinça</b>: passé simple, o tempo da narrativa escrita. Na fala: <i>a soulevé, a grincé</i>.' },
+     { id: 's6', fr: 'À l’intérieur, il y avait des lettres, {y}des dizaines de lettres nouées par un ruban bleu{/}.', pt: 'Dentro havia cartas, dezenas de cartas amarradas com uma fita azul.' }],
+    [{ id: 's7', fr: '— Tu ne devrais pas fouiller là-dedans, dit une voix derrière elle.', pt: '— Você não devia mexer aí dentro, disse uma voz atrás dela.', g: '<b>Tu ne devrais pas</b>: condicional de <i>devoir</i>, um conselho ou uma reprovação suave.' }],
+    [{ id: 's8', fr: 'Elle sursauta.', pt: 'Ela levou um susto.' },
+     { id: 's9', fr: 'Son grand-père se tenait sur le seuil, appuyé sur sa canne, le visage à moitié dans l’ombre.', pt: 'O avô estava na soleira, apoiado na bengala, o rosto meio na sombra.' }],
+    [{ id: 's10', fr: '— Je cherchais seulement les photos de maman, répondit-elle sans se retourner.', pt: '— Eu só estava procurando as fotos da mamãe, respondeu ela sem se virar.' }],
+    [{ id: 's11', fr: 'Il ne dit rien.', pt: 'Ele não disse nada.' },
+     { id: 's12', fr: 'Dehors, le vent s’était levé et faisait claquer les volets contre le mur.', pt: 'Lá fora, o vento tinha se levantado e fazia as venezianas baterem contra a parede.', g: '<b>faire + infinitivo</b> (faisait claquer): fazer com que algo aconteça.' },
+     { id: 's13', fr: '{p}Élise{/} prit la première enveloppe et la retourna entre ses doigts : l’écriture, fine et penchée, ne ressemblait à aucune de celles qu’elle connaissait, et pourtant', pt: 'Élise pegou o primeiro envelope e o virou entre os dedos: a letra, fina e inclinada, não se parecia com nenhuma das que ela conhecia, e no entanto', cut: true }],
+  ],
+  43: [
+    [{ id: 's13b', fr: 'le nom tracé à l’encre violette était bien le sien.', pt: 'o nome traçado em tinta violeta era mesmo o dela.', cont: true }],
+    [{ id: 's14', fr: '— Qui les a écrites ? demanda-t-elle.', pt: '— Quem as escreveu? perguntou ela.' }],
+    [{ id: 's15', fr: 'Le vieil homme s’approcha lentement et s’assit sur un tabouret bancal.', pt: 'O velho se aproximou devagar e sentou-se num banquinho bambo.' },
+     { id: 's16', fr: 'Il garda le silence un long moment, comme s’il pesait chaque mot avant de le prononcer.', pt: 'Ficou em silêncio por um longo momento, como se pesasse cada palavra antes de pronunciá-la.', g: '<b>comme si + imparfait</b>: comparação hipotética ("como se pesasse").' }],
+    [{ id: 's17', fr: '— Ta grand-mère, finit-il par avouer.', pt: '— Sua avó, acabou confessando.', g: '<b>finir par + infinitivo</b>: acabar fazendo.' },
+     { id: 's18', fr: 'Elle t’en a écrit une pour chacun de tes anniversaires, jusqu’à ta majorité.', pt: 'Ela escreveu uma para cada aniversário seu, até a sua maioridade.', g: '<b>t’en a écrit une</b>: <i>en</i> retoma "des lettres" (uma delas).' },
+     { id: 's19', fr: 'Je n’ai jamais eu le courage de te les donner.', pt: 'Nunca tive coragem de entregá-las a você.' }],
+    [{ id: 's20', fr: '{p}Élise{/} dénoua le ruban.', pt: 'Élise desatou a fita.' },
+     { id: 's21', fr: 'Ses mains tremblaient un peu.', pt: 'Suas mãos tremiam um pouco.' },
+     { id: 's22', fr: 'La première lettre portait une date : le jour de sa naissance.', pt: 'A primeira carta trazia uma data: o dia do seu nascimento.' }],
+    [{ id: 's23', fr: '« Ma petite Élise, lut-elle à voix basse, quand tu liras ces lignes, la maison te paraîtra sans doute trop grande et trop silencieuse.', pt: '«Minha pequena Élise, leu ela em voz baixa, quando você ler estas linhas, a casa sem dúvida lhe parecerá grande demais e silenciosa demais.' },
+     { id: 's24', fr: 'Ne t’en fais pas : les maisons, comme les gens, finissent toujours par s’habituer à ceux qui restent. »', pt: 'Não se preocupe: as casas, como as pessoas, sempre acabam se acostumando com quem fica.»' }],
+    [{ id: 's25', fr: 'Elle replia la feuille et regarda par la lucarne.', pt: 'Ela dobrou a folha de novo e olhou pela claraboia.' },
+     { id: 's26', fr: 'La mer, au loin, avait la couleur de l’ardoise.', pt: 'O mar, ao longe, tinha a cor da ardósia.' }],
+  ],
+};
+
+/* Dicionário de amostra: forma no texto → forma base, classe, sentido nesta frase, nota curta.
+   No app, tudo isto vem do modelo, na língua nativa do usuário. */
+const DICT = {
+  'porte': ['porte', 'substantivo f.', 'porta'],
+  'grenier': ['grenier', 'substantivo m.', 'sótão', 'De <i>grain</i>: o lugar sob o telhado onde se guardava o grão.'],
+  'entrebâillée': ['entrebâiller', 'verbo · particípio passado (f. sing.)', 'entreaberta', '<i>entre-</i> + <i>bâiller</i> (abrir-se, bocejar): aberta só uma fresta.'],
+  'hésita': ['hésiter', 'verbo · passé simple, 3ª sing.', 'hesitou'],
+  'marches': ['marche', 'substantivo f. pl.', 'degraus', 'Também: caminhada, marcha. Aqui, os degraus da escada.'],
+  'tâtonnant': ['tâtonner', 'verbo · gérondif (en + -ant)', 'tateando, às apalpadelas'],
+  'ampoule': ['ampoule', 'substantivo f.', 'lâmpada', 'Também: bolha (na pele) e ampola.'],
+  'grillé': ['griller', 'verbo · particípio passado', 'queimado (a lâmpada queimou)', '<i>griller</i> = grelhar, tostar; de lâmpada ou fusível: queimar.'],
+  'longtemps': ['longtemps', 'advérbio', 'muito tempo'],
+  'odeur': ['odeur', 'substantivo f.', 'cheiro'],
+  'poussière': ['poussière', 'substantivo f.', 'poeira'],
+  'bois': ['bois', 'substantivo m.', 'madeira', 'Também: bosque.'],
+  'flottait': ['flotter', 'verbo · imparfait, 3ª sing.', 'pairava'],
+  'lucarne': ['lucarne', 'substantivo f.', 'claraboia, janelinha do telhado'],
+  'malle': ['malle', 'substantivo f.', 'baú'],
+  'recouverte': ['recouvrir', 'verbo · particípio passado (f. sing.)', 'coberta'],
+  'drap': ['drap', 'substantivo m.', 'lençol'],
+  'jauni': ['jaunir', 'verbo · particípio passado (m. sing.)', 'amarelado'],
+  'souleva': ['soulever', 'verbo · passé simple, 3ª sing.', 'levantou'],
+  'couvercle': ['couvercle', 'substantivo m.', 'tampa'],
+  'grinça': ['grincer', 'verbo · passé simple, 3ª sing.', 'rangeu', 'Passé simple: tempo da narrativa escrita. Na fala: <i>a grincé</i>.'],
+  'plainte': ['plainte', 'substantivo f.', 'gemido, lamento', 'Também: queixa (<i>porter plainte</i> = prestar queixa).'],
+  'nouées': ['nouer', 'verbo · particípio passado (f. pl.)', 'amarradas, atadas'],
+  'ruban': ['ruban', 'substantivo m.', 'fita'],
+  'fouiller': ['fouiller', 'verbo · infinitivo', 'remexer, vasculhar'],
+  'là-dedans': ['là-dedans', 'advérbio', 'aí dentro'],
+  'sursauta': ['sursauter', 'verbo · passé simple, 3ª sing.', 'levou um susto, sobressaltou-se'],
+  'seuil': ['seuil', 'substantivo m.', 'soleira (da porta)'],
+  'appuyé': ['appuyer', 'verbo · particípio passado (m. sing.)', 'apoiado'],
+  'canne': ['canne', 'substantivo f.', 'bengala'],
+  'ombre': ['ombre', 'substantivo f.', 'sombra'],
+  'dehors': ['dehors', 'advérbio', 'lá fora'],
+  'claquer': ['claquer', 'verbo · infinitivo', 'bater (com estalo)'],
+  'volets': ['volet', 'substantivo m. pl.', 'venezianas'],
+  'enveloppe': ['enveloppe', 'substantivo f.', 'envelope'],
+  'écriture': ['écriture', 'substantivo f.', 'letra, caligrafia'],
+  'penchée': ['pencher', 'verbo · particípio passado (f. sing.)', 'inclinada'],
+  'pourtant': ['pourtant', 'advérbio', 'no entanto'],
+  'encre': ['encre', 'substantivo f.', 'tinta'],
+  'tabouret': ['tabouret', 'substantivo m.', 'banquinho'],
+  'bancal': ['bancal', 'adjetivo m.', 'bambo, manco'],
+  'pesait': ['peser', 'verbo · imparfait, 3ª sing.', 'pesasse (pesava)'],
+  'avouer': ['avouer', 'verbo · infinitivo', 'confessar'],
+  'majorité': ['majorité', 'substantivo f.', 'maioridade', 'Aqui: os 18 anos. Também: maioria.'],
+  'dénoua': ['dénouer', 'verbo · passé simple, 3ª sing.', 'desatou'],
+  'tremblaient': ['trembler', 'verbo · imparfait, 3ª pl.', 'tremiam'],
+  'naissance': ['naissance', 'substantivo f.', 'nascimento'],
+  'replia': ['replier', 'verbo · passé simple, 3ª sing.', 'dobrou de novo'],
+  'feuille': ['feuille', 'substantivo f.', 'folha (de papel)'],
+  'ardoise': ['ardoise', 'substantivo f.', 'ardósia'],
+};
+const EXPR = {
+  'en tâtonnant': ['tâtonner', 'expressão · gérondif', 'tateando, às apalpadelas'],
+  'depuis longtemps': ['depuis longtemps', 'expressão', 'havia muito tempo'],
+  'à voix basse': ['à voix basse', 'expressão', 'em voz baixa'],
+  'ne t’en fais pas': ['s’en faire', 'expressão', 'não se preocupe', '<i>s’en faire</i> = preocupar-se. Na fala informal: <i>t’en fais pas</i>.'],
+  'sans doute': ['sans doute', 'expressão', 'sem dúvida; provavelmente'],
+  'au loin': ['au loin', 'expressão', 'ao longe'],
+  'à moitié': ['à moitié', 'expressão', 'meio, pela metade'],
+  'il y avait': ['il y a', 'expressão', 'havia'],
+  'se tenait': ['se tenir', 'verbo pronominal · imparfait', 'estava (de pé)'],
+  'finit-il par avouer': ['finir par', 'expressão', 'acabou confessando'],
+};
+const SAMPLE_WORDS = 'entrebâillée, tâtonnant, grillé, lucarne, malle, grinça, fouiller, sursauta, seuil, volets, bancal, dénoua, ardoise';
+
+/* Vocabulário já guardado antes desta sessão (gesto explícito do usuário).
+   sent = enviado ao caderno. book ≠ BOOK.title = guardado noutro livro da mesma língua. */
+const VOCAB_SEED = [
+  { id: 'v1', kind: 'word', text: 'entrebâilla', lemma: 'entrebâiller', cls: 'verbo · passé simple, 3ª sing.', meaning: 'entreabriu', src: 'Elle entrebâilla la fenêtre pour laisser entrer l’air du soir.', book: BOOK.title, page: 17, when: '6 days ago', sent: null },
+  { id: 'v2', kind: 'sentence', text: 'Il faisait un temps à ne pas mettre un chien dehors.', meaning: 'Fazia um tempo de não pôr nem o cachorro para fora.', book: BOOK.title, page: 38, when: '2 days ago', sent: null },
+  { id: 'v3', kind: 'word', text: 'poussière', lemma: 'poussière', cls: 'substantivo f.', meaning: 'poeira', src: 'Une fine poussière couvrait les meubles du salon.', book: BOOK.title, page: 30, when: 'Nov 20', sent: 'Nov 20' },
+  { id: 'v4', kind: 'word', text: 'volets', lemma: 'volet', cls: 'substantivo m. pl.', meaning: 'venezianas', src: 'Les volets étaient restés fermés tout l’hiver.', book: BOOK.title, page: 12, when: 'Nov 18', sent: 'Nov 20' },
+  { id: 'v5', kind: 'expr', text: 'tout à coup', lemma: 'tout à coup', cls: 'expressão', meaning: 'de repente', src: 'Tout à coup, la lumière s’éteignit.', book: BOOK.title, page: 25, when: 'Nov 18', sent: 'Nov 20' },
+  { id: 'o1', kind: 'word', text: 'seuil', lemma: 'seuil', cls: 'substantivo m.', meaning: 'soleira', src: 'Il s’arrêta sur le seuil, sans oser entrer.', book: OTHER_BOOK, page: 'ch. 1', when: 'Oct 30', sent: 'Oct 30' },
+  { id: 'o2', kind: 'word', text: 'ardoises', lemma: 'ardoise', cls: 'substantivo f. pl.', meaning: 'telhas de ardósia', src: 'Par la porte entrebâillée, on entendait la pluie tomber sur les ardoises.', book: OTHER_BOOK, page: 'ch. 3', when: 'Nov 2', sent: null },
+];
+
+const HIGHLIGHTS = [
+  { c: '#F48FB1', page: 8, text: 'Élise', date: 'Nov 14' },
+  { c: '#FFEB3B', page: 42, text: 'des dizaines de lettres nouées par un ruban bleu', date: 'Nov 26' },
+  { c: '#FFEB3B', page: 31, text: 'On ne revient jamais tout à fait dans une maison que l’on a quittée enfant.', date: 'Nov 22' },
+  { c: '#A5D6A7', page: 19, text: 'Kerlouan', date: 'Nov 18' },
+];
+const OUTLINE = [['Chapitre 1 · Le retour', 5], ['Chapitre 2 · La digue', 14], ['Chapitre 3 · Les volets clos', 27], ['Chapitre 4 · Le grenier', 39], ['Chapitre 5 · Les lettres', 58], ['Chapitre 6 · Marée basse', 81], ['Chapitre 7 · Kerlouan', 104]];
+
+window.SCENE = { side: 'chat', navTab: 'vocab', teacher: true, dest: true, preAdd: ['entrebâillée', 'tâtonnant', 'malle', 'fouiller', 'sursauta'],
+    chat: [['u', 'Por que <i>grinça</i> e não <i>a grincé</i>?'], ['a', '<p>O texto usa o <em>passé simple</em> (grinça), o tempo da narrativa escrita. Na fala você diria <em>a grincé</em> (passé composé); o sentido é o mesmo, "rangeu".</p><p>Nesta página há outros: <em>hésita, monta, souleva, sursauta</em>. Para ler, basta reconhecer. Para falar e escrever no dia a dia, use o passé composé.</p>']] };
+
+document.getElementById('outline').innerHTML = OUTLINE.map(([t, p]) => '<div' + (p === 39 ? ' class="cur"' : '') + '><span>' + t + '</span><span>' + p + '</span></div>').join('');
+document.getElementById('hlList').innerHTML = HIGHLIGHTS.map((h) => '<li class="hl-item"><div class="hl-top"><span class="sq" style="background:' + h.c + '"></span><b>p. ' + h.page + '</b><span style="margin-left:auto">' + h.date + '</span></div><span class="hl-text">' + h.text + '</span></li>').join('');
+
+/* ===== Protótipo do leitor (PDF e EPUB) com as propostas do estudo =====
+   Tudo aqui é simulação: não há rede, IA nem áudio gerado. As respostas vêm de DICT/EXPR/PAGES. */
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const ic = (n, sz = 14, cls = '') => `<svg class="i ${cls}" width="${sz}" height="${sz}" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-${n}"/></svg>`;
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const norm = (s) => s.toLowerCase().replace(/[’']/g, "'").replace(/[«»“”".,;:!?…()—–]/g, ' ').replace(/\s+/g, ' ').trim();
+const WORD_RE = /[\p{L}\p{M}]+(?:[’'\-][\p{L}\p{M}]+)*/gu;
+const DICTN = {}, EXPRN = {};
+for (const k in DICT) DICTN[norm(k)] = DICT[k];
+for (const k in EXPR) EXPRN[norm(k)] = EXPR[k];
+
+const SC = window.SCENE || {};
+const S = {
+  fmt: 'pdf', page: 42, bookLang: 'fr', follow: 'a', recall: false, marks: true,
+  mincer: false, scanned: false, audio: 'ok', tr: 'ok', sound: false, fast: false,
+  side: SC.side === undefined ? 'chat' : SC.side, navTab: SC.navTab || 'contents', teacher: !!SC.teacher,
+  vocab: VOCAB_SEED.map((v) => ({ ...v })), dest: SC.dest ? { nb: 'Français', note: 'Vocabulary — ' + BOOK.title } : null, trMode: 'collapsed',
+  noteView: SC.noteView || 'reading', retell: false, sel: null, pop: null, batches: [{ date: 'Nov 20', ids: ['v3', 'v4', 'v5'] }],
+};
+let seq = 0;
+const win = $('#window'), parea = $('#parea'), pwrap = $('#pwrap'), bar = $('#selbar'), pcol = $('#pcol');
+const HL = window.CSS && CSS.highlights ? CSS.highlights : null;
+
+/* ---------- página ---------- */
+function lookupKey(w) {
+  const k = norm(w);
+  if (DICTN[k]) return k;
+  const k2 = k.replace(/^(?:l|d|j|m|t|s|n|c|qu|jusqu|lorsqu)'/, '');
+  if (DICTN[k2]) return k2;
+  const k3 = k2.replace(/-(?:t-)?(?:elle|il|on|ils|elles|je|tu|nous|vous)$/, '');
+  return DICTN[k3] ? k3 : null;
+}
+function wordsHtml(text) {
+  let out = '', last = 0;
+  for (const m of text.matchAll(WORD_RE)) {
+    out += esc(text.slice(last, m.index));
+    const key = lookupKey(m[0]);
+    out += `<span class="w"${key ? ` data-k="${esc(key)}" data-l="${esc(DICTN[key][0])}"` : ''}>${esc(m[0])}</span>`;
+    last = m.index + m[0].length;
+  }
+  return out + esc(text.slice(last));
+}
+function sentHtml(s) {
+  let html = '';
+  for (const p of s.fr.split(/(\{[ypgb]\}|\{\/\})/)) {
+    if (/^\{[ypgb]\}$/.test(p)) html += `<span class="hl ${p[1]}">`;
+    else if (p === '{/}') html += '</span>';
+    else html += wordsHtml(p);
+  }
+  return `<span class="s" data-s="${s.id}">${html}</span>`;
+}
+function pageHtml(n) {
+  if (S.scanned) return `<div class="scan">${Array.from({ length: 30 }, (_, i) => `<i style="width:${i % 7 === 6 ? 58 : 92 + (i * 37) % 8}%"></i>`).join('')}</div>`;
+  const paras = PAGES[n].map((p, i) => `<p class="${p[0].cont ? 'cont' : i === 0 ? 'first' : ''}">${p.map((s) => (S.bookLang === 'native' ? `<span class="s" data-s="${s.id}">${esc(s.pt)}</span>` : sentHtml(s))).join(' ')}</p>`).join('');
+  const title = S.bookLang === 'native' ? 'A CASA DAS DUNAS' : 'LA MAISON DES DUNES';
+  return `<div class="sheet-in"><div class="hdr">${n % 2 === 0 ? title : 'A. MORVAN'}</div>${n === 42 ? `<h4 class="chap">${S.bookLang === 'native' ? 'Capítulo 4 · O sótão' : BOOK.chapter}</h4>` : ''}${paras}<div class="pnum">${n}</div></div>`;
+}
+function renderSheets() {
+  stopPlayer(true);
+  for (const n of [42, 43]) {
+    const el = $('#sheet' + n);
+    el.className = 'sheet ' + S.fmt;
+    el.innerHTML = pageHtml(n);
+    el.hidden = n !== S.page;
+  }
+  applyMarks();
+  renderChrome();
+}
+function renderChrome() {
+  $('#pgInput').value = S.fmt === 'pdf' ? S.page : S.page === 42 ? 96 : 97;
+  $('#pgInd').textContent = S.fmt === 'pdf' ? `Page ${S.page} of ${BOOK.pages}` : `${BOOK.chapter.split(' · ')[1]} · ${S.page === 42 ? 21 : 22}%`;
+  $$('.fnav.l, #pgPrev').forEach((b) => (b.disabled = S.page === 42));
+  $$('.fnav.r, #pgNext').forEach((b) => (b.disabled = S.page === 43));
+  const langOn = S.bookLang === 'fr';
+  $('#btnPage').hidden = !langOn;
+  $('#btnPage').disabled = S.scanned;
+  $('#btnPage').title = S.scanned ? 'This page has no selectable text' : 'Read this page aloud (L)';
+  $('#btnPage').innerHTML = ic('headphones', 14) + 'Listen to page' + (S.mincer ? '<span class="warn-dot" title="Mincer is recording"></span>' : '');
+  $('#tabVocab').hidden = !langOn;
+  if (!langOn && S.navTab === 'vocab') S.navTab = 'contents';
+  $('#noText').hidden = !S.scanned;
+  $('#searchBtn').hidden = S.fmt !== 'pdf';
+  $('#mincerRec').hidden = !S.mincer;
+  renderNav();
+}
+function goPage(n) {
+  if (n < 42 || n > 43 || n === S.page) return;
+  hideBar(); closePop();
+  S.page = n;
+  $('#sheet42').hidden = n !== 42; $('#sheet43').hidden = n !== 43;
+  parea.scrollTop = 0;
+  if (PL.open && PL.q.length && PL.ranged) {
+    if (PL.page !== n && (PL.st === 'play' || PL.st === 'gen')) { pausePlayer(); PL.away = true; }
+    else if (PL.page === n) PL.away = false;
+    else PL.away = true;
+    renderPlayer();
+  }
+  renderChrome();
+}
+const posLabel = (p) => (typeof p === 'number' ? (S.fmt === 'pdf' ? 'p. ' + p : (p === 42 ? '21%' : p === 43 ? '22%' : Math.round(p / 2) + '%')) : p);
+
+/* ---------- seleção ---------- */
+function textRange(el) {
+  const r = document.createRange(), tw = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  let first = tw.nextNode(), last = first, n;
+  while ((n = tw.nextNode())) last = n;
+  if (!first) { r.selectNodeContents(el); return r; }
+  r.setStart(first, 0); r.setEnd(last, last.length);
+  return r;
+}
+function overlaps(range, el) {
+  const r = textRange(el);
+  // END_TO_START compara o início de `range` com o fim de `r`; START_TO_END, o fim de `range` com o início de `r`.
+  return range.compareBoundaryPoints(Range.END_TO_START, r) < 0 && range.compareBoundaryPoints(Range.START_TO_END, r) > 0;
+}
+function clampRange(range, el) {
+  const r = textRange(el), out = range.cloneRange();
+  if (out.compareBoundaryPoints(Range.START_TO_START, r) < 0) out.setStart(r.startContainer, r.startOffset);
+  if (out.compareBoundaryPoints(Range.END_TO_END, r) > 0) out.setEnd(r.endContainer, r.endOffset);
+  return out;
+}
+const clean = (s) => s.replace(/\s+/g, ' ').trim();
+function selInfo(range) {
+  const sheet = $('#sheet' + S.page);
+  const sents = $$('.s', sheet).filter((s) => overlaps(range, s));
+  if (!sents.length) return null;
+  const pieces = sents.map((s) => { const r = clampRange(range, s); return { range: r, text: clean(r.toString()) }; }).filter((p) => p.text);
+  const text = pieces.map((p) => p.text).join(' ');
+  const n = (text.match(WORD_RE) || []).length;
+  if (!n) return null;
+  const whole = pieces.length > 1 || text.length >= clean(sents[0].textContent).length - 1;
+  const kind = n === 1 ? 'word' : n <= 4 && !whole ? 'expr' : 'sentence';
+  const edge = $$('.hdr, .pnum', sheet).some((e) => overlaps(range, e));
+  return { range: range.cloneRange(), text, kind, sents, pieces, words: $$('.w', sheet).filter((w) => overlaps(range, w)), edge, page: S.page };
+}
+function findItem(info) {
+  return S.vocab.find((v) => v.book === BOOK.title && v.page === info.page && norm(v.text) === norm(info.text));
+}
+function showBar(info) {
+  S.sel = info;
+  const langOn = S.bookLang === 'fr';
+  $('#barLang').hidden = !langOn;
+  const vb = $('[data-act="vocab"]', bar), has = !!findItem(info);
+  vb.classList.toggle('done', has);
+  vb.innerHTML = ic(has ? 'check' : 'bookmark-simple', 13) + (has ? 'In vocabulary' : 'Add to vocabulary');
+  bar.hidden = false;
+  const a = info.range.getBoundingClientRect(), w = pwrap.getBoundingClientRect(), ar = parea.getBoundingClientRect();
+  const bw = bar.offsetWidth, bh = bar.offsetHeight, aRight = ar.left + parea.clientWidth, aBottom = ar.top + parea.clientHeight;
+  const left = Math.max(ar.left + 8, Math.min(a.left, aRight - bw - 8));
+  let top = a.top - bh - 8;
+  if (top < ar.top + 8) top = Math.max(ar.top + 8, Math.min(a.bottom + 8, aBottom - bh - 8));
+  bar.style.left = left - w.left + 'px';
+  bar.style.top = top - w.top + 'px';
+}
+function hideBar() { bar.hidden = true; }
+function clearSel() { S.sel = null; hideBar(); getSelection().removeAllRanges(); }
+let downInSheet = false;
+document.addEventListener('mouseup', (e) => {
+  if (!downInSheet || e.target.closest('.selbar')) return;
+  downInSheet = false;
+  setTimeout(() => {
+    const sel = getSelection();
+    const sheet = $('#sheet' + S.page);
+    if (sel && !sel.isCollapsed && sel.rangeCount && sheet.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+      const info = selInfo(sel.getRangeAt(0));
+      if (info) { closePop(); showBar(info); return; }
+    }
+    S.sel = null; hideBar();
+    if (document.body.classList.contains('marks-off')) return;
+    const w = e.target.closest('.w.mk'), s = e.target.closest('.s.mk-s');
+    if (w) openItemPop(w); else if (s) openSentencePop(s);
+  }, 0);
+});
+document.addEventListener('mousedown', (e) => {
+  const t = e.target;
+  if (t.closest('.selbar, .pop, .player') && !t.closest('input, select, textarea, label')) e.preventDefault();
+  downInSheet = !!t.closest('.sheet');
+  if (t.closest('.pop, .selbar, .study-bar, .overlay')) return;
+  closePop();
+  if (!t.closest('.player')) $('#plMenu').hidden = true;
+  if (!t.closest('.sheet')) { S.sel = null; hideBar(); }
+});
+bar.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-act]');
+  if (!b || !S.sel) return;
+  const info = S.sel, act = b.dataset.act;
+  if (act === 'translate') return openTranslate(info);
+  if (act === 'listen') { clearSel(); return listenSelection(info); }
+  if (act === 'vocab') { const it = findItem(info); clearSel(); return it ? removeVocab(it.id) : addVocab(info, null); }
+  if (act === 'copy') { clearSel(); return toast('Copied'); }
+  if (act === 'note') { clearSel(); return toast('Added to Leituras · La Maison des dunes — notes', [['Open', () => openSide('notes')], ['Undo', () => {}]]); }
+  if (act === 'ask') { clearSel(); return askAi(info.text); }
+  if (act === 'hl') { if (HL) { const k = 'hl-' + b.dataset.c; if (!HL.has(k)) HL.set(k, new Highlight()); HL.get(k).add(info.range); } clearSel(); }
+});
+
+/* ---------- popover (fixed, em portal, preso à janela do app) ---------- */
+const pop = $('#pop');
+function placePop() {
+  if (pop.hidden || !S.pop) return;
+  const a = S.pop.anchor(), wr = win.getBoundingClientRect();
+  pop.style.maxHeight = Math.min(460, wr.height - 16) + 'px';
+  const pw = pop.offsetWidth, ph = pop.offsetHeight;
+  const left = Math.max(wr.left + 8, Math.min(a.left, wr.right - pw - 8));
+  let top = a.bottom + 8, where = 'below';
+  if (top + ph > wr.bottom - 8) {
+    if (a.top - ph - 8 >= wr.top + 8) { top = a.top - ph - 8; where = 'above'; }
+    else { top = wr.bottom - ph - 8; where = 'pinned'; }
+  }
+  pop.style.left = left + 'px'; pop.style.top = top + 'px'; pop.dataset.where = where;
+}
+function showPop(html, anchor, wide) {
+  pop.className = 'pop' + (wide ? ' wide' : '');
+  pop.innerHTML = html; pop.hidden = false;
+  S.pop = { ...(S.pop || {}), anchor };
+  placePop();
+}
+function closePop(restoreBar) {
+  if (pop.hidden) return;
+  pop.hidden = true;
+  const p = S.pop; S.pop = null;
+  if (restoreBar && p && p.info && !getSelection().isCollapsed) showBar(p.info);
+}
+parea.addEventListener('scroll', () => { placePop(); if (S.sel && !bar.hidden) hideBar(); });
+window.addEventListener('scroll', placePop, true);
+window.addEventListener('resize', placePop);
+const head = (inner) => `<div class="pop-h">${inner}<button class="ibtn" data-a="close" title="Close (Esc)">${ic('x', 14)}</button></div>`;
+const langFoot = () => `<div class="pop-f">${BOOK.lang} → ${NATIVE}<span>·</span><button data-a="lang" title="Wrong language? Change the language of this book">Change</button></div>`;
+function lookup(info) {
+  const k = norm(info.text);
+  if (EXPRN[k]) return EXPRN[k];
+  if (info.kind === 'word') { const key = lookupKey(info.text); return key ? DICTN[key] : null; }
+  return null;
+}
+const sentData = (id) => { for (const n in PAGES) for (const p of PAGES[n]) for (const s of p) if (s.id === id) return s; };
+function boldIn(sentence, term) {
+  const i = sentence.toLowerCase().indexOf(term.toLowerCase());
+  return i < 0 ? esc(sentence) : esc(sentence.slice(0, i)) + '<b>' + esc(sentence.slice(i, i + term.length)) + '</b>' + esc(sentence.slice(i + term.length));
+}
+function vocabBtn(info) {
+  const has = !!findItem(info);
+  return `<button class="pbtn${has ? ' done' : ''}" data-a="vocab">${ic(has ? 'check' : 'bookmark-simple', 13)}${has ? 'In vocabulary' : 'Add to vocabulary'}</button>`;
+}
+function trActions(info) {
+  return `<div class="pop-a"><button class="pbtn" data-a="say">${ic('speaker-high', 13)}Listen</button>${vocabBtn(info)}<button class="pbtn" data-a="note">${ic('quotes', 13)}Add to note</button><button class="pbtn" data-a="ask">${ic('sparkle', 13)}Ask AI</button></div>`;
+}
+function openTranslate(info) {
+  hideBar();
+  if (PL.st === 'play' || PL.st === 'gen') { pausePlayer(); PL.lookup = true; renderPlayer(); }
+  const anchor = () => info.range.getBoundingClientRect();
+  const isWord = info.kind !== 'sentence';
+  S.pop = { info };
+  const title = isWord ? `<div class="term">${esc(info.text)}</div>` : '<div class="kind">Translation</div>';
+  if (S.tr === 'nokey') return showPop(head(title) + `<div class="pop-b"><div class="warnbox">Add your OpenRouter key in Settings to translate.</div></div><div class="pop-a"><button class="pbtn" data-a="settings">${ic('gear-six', 13)}Open Settings</button></div>`, anchor, !isWord);
+  if (S.tr === 'toolong' || info.text.length > 1500) {
+    const n = S.tr === 'toolong' ? Math.max(info.text.length, 2340) : info.text.length;
+    return showPop(head('<div class="kind">Translation</div>') + `<div class="pop-b"><div class="warnbox">This selection is too long to translate (${n.toLocaleString('en-US')} characters; the limit is 1,500, about one paragraph).</div><div>Translate one paragraph at a time, or ask the AI about the passage.</div></div><div class="pop-a"><button class="pbtn" data-a="say">${ic('speaker-high', 13)}Listen</button><button class="pbtn" data-a="ask">${ic('sparkle', 13)}Ask AI</button></div>`, anchor, true);
+  }
+  showPop(head(title) + `<div class="pop-b"><div class="skel" style="width:70%"></div><div class="skel" style="width:92%"></div>${isWord ? '' : '<div class="skel" style="width:84%"></div>'}</div>` + langFoot(), anchor, !isWord);
+  if (S.tr === 'loading') return;
+  setTimeout(() => {
+    if (!S.pop || S.pop.info !== info) return;
+    if (S.tr === 'error') return showPop(head(title) + `<div class="pop-b"><div class="warnbox">Couldn’t translate. Check your connection and try again.</div></div><div class="pop-a"><button class="pbtn" data-a="retry">${ic('arrow-counter-clockwise', 13)}Try again</button></div>` + langFoot(), anchor, !isWord);
+    if (isWord) {
+      const e = lookup(info), sd = sentData(info.sents[0].dataset.s), sentence = clean(sd.fr.replace(/\{[ypgb]\}|\{\/\}/g, ''));
+      info.entry = e;
+      if (!e) return showPop(head(title) + `<div class="pop-b"><div style="color:var(--text-muted)">Mockup: there is no sample entry for “${esc(info.text)}”. Try: ${SAMPLE_WORDS}.</div></div>` + trActions(info) + langFoot(), anchor);
+      showPop(head(title) + `<div class="pop-sub">${e[0] !== norm(info.text) ? esc(e[0]) + ' · ' : ''}${esc(e[1])}</div><div class="pop-b"><div class="meaning">${esc(e[2])}</div><div class="ctx">${boldIn(sentence, info.text)}<small>Meaning in this sentence · ${posLabel(info.page)}</small></div>${e[3] ? `<div class="gnote">${e[3]}</div>` : ''}</div>` + trActions(info) + langFoot(), anchor);
+    } else {
+      const ds = info.sents.map((s) => sentData(s.dataset.s));
+      info.entry = [null, '', ds.map((d) => d.pt).join(' ')];
+      const g = ds.filter((d) => d.g).slice(0, 2).map((d) => `<div class="gnote">${d.g}</div>`).join('');
+      showPop(head(title) + `<div class="pop-b"><div class="tr">${esc(info.entry[2])}</div>${g}</div>` + trActions(info) + langFoot(), anchor, true);
+    }
+  }, 450);
+}
+pop.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-a]');
+  if (!b) return;
+  const a = b.dataset.a, p = S.pop || {}, info = p.info;
+  if (a === 'close') return closePop(true);
+  if (a === 'retry') return openTranslate(info);
+  if (a === 'settings') { closePop(); return toast('Opens Settings › Language (see the Settings scene)'); }
+  if (a === 'lang') return toast('Opens the language picker for this book (also in the Library row)');
+  if (a === 'say') { b.classList.add('speaking'); sayOnce(p.sayText || (info && info.text) || ''); return setTimeout(() => b.classList.remove('speaking'), 1100); }
+  if (a === 'vocab') { const it = findItem(info); if (it) removeVocab(it.id, true); else addVocab(info, info.entry, true); b.outerHTML = vocabBtn(info); return; }
+  if (a === 'note') { closePop(); clearSel(); return toast('Added to Leituras · La Maison des dunes — notes', [['Open', () => openSide('notes')], ['Undo', () => {}]]); }
+  if (a === 'ask') { const t = (info && info.text) || p.sayText; closePop(); clearSel(); return askAi(t); }
+  if (a === 'reveal') { $$('.rv', pop).forEach((x) => (x.hidden = false)); b.remove(); return placePop(); }
+  if (a === 'here') { const w = p.wordEl; closePop(); const r = textRange(w); return openTranslate(selInfo(r)); }
+  if (a === 'addhere') { const r = textRange(p.wordEl), i = selInfo(r); const key = lookupKey(i.text); addVocab(i, key ? DICTN[key] : null, true); return closePop(); }
+  if (a === 'find') { closePop(); return toast(S.fmt === 'pdf' ? `Opens Search in book with “${p.lemma}”` : 'The EPUB reader has no search yet'); }
+  if (a === 'remove') { closePop(); return removeVocab(p.itemId); }
+  if (a === 'tovocab') { closePop(); return openNav('vocab', p.itemId); }
+});
+
+/* ---------- vocabulário ---------- */
+function addVocab(info, entry, quiet) {
+  const key = info.kind === 'word' ? lookupKey(info.text) : null;
+  const sd = sentData(info.sents[0].dataset.s);
+  const item = {
+    id: 'n' + ++seq, kind: info.kind, text: info.text, book: BOOK.title, page: info.page, when: 'just now', sent: null,
+    lemma: entry && entry[0] ? entry[0] : key ? DICTN[key][0] : norm(info.text), cls: entry ? entry[1] : '', meaning: entry ? entry[2] : '',
+    src: info.kind === 'sentence' ? '' : clean(sd.fr.replace(/\{[ypgb]\}|\{\/\}/g, '')),
+    sids: info.kind === 'sentence' ? info.sents.map((s) => s.dataset.s) : null, els: info.kind === 'sentence' || key ? null : info.words, el: info.words[0] || info.sents[0],
+  };
+  S.vocab.unshift(item);
+  applyMarks(); renderNav();
+  if (!quiet) toast(`Added to Vocabulary${info.kind === 'sentence' ? ' (sentence)' : ''}`, [['Show', () => openNav('vocab', item.id)], ['Undo', () => removeVocab(item.id, true)]]);
+  return item;
+}
+function removeVocab(id, quiet) {
+  const i = S.vocab.findIndex((v) => v.id === id);
+  if (i < 0) return;
+  const [it] = S.vocab.splice(i, 1);
+  applyMarks(); renderNav();
+  if (!quiet) toast('Removed from Vocabulary', [['Undo', () => { S.vocab.splice(i, 0, it); applyMarks(); renderNav(); }]]);
+}
+function applyMarks() {
+  $$('.mk').forEach((e) => e.classList.remove('mk'));
+  $$('.mk-s').forEach((e) => e.classList.remove('mk-s'));
+  if (S.bookLang !== 'fr') return;
+  const lemmas = new Set(S.vocab.filter((v) => v.kind === 'word').map((v) => v.lemma));
+  $$('.w[data-l]').forEach((w) => { if (lemmas.has(w.dataset.l)) w.classList.add('mk'); });
+  for (const v of S.vocab) {
+    if (v.els) v.els.forEach((e) => e.isConnected && e.classList.add('mk'));
+    if (v.sids) v.sids.forEach((id) => $$(`.s[data-s="${id}"]`).forEach((e) => e.classList.add('mk-s')));
+  }
+  document.body.classList.toggle('marks-off', !S.marks);
+}
+function openItemPop(w) {
+  const lemma = w.dataset.l, items = lemma ? S.vocab.filter((v) => v.kind === 'word' && v.lemma === lemma) : [];
+  if (!items.length) { const v = S.vocab.find((x) => x.els && x.els.includes(w)); if (v) return openSavedPop(v, w); return; }
+  const here = items.find((v) => v.el === w);
+  const rows = items.map((v) => `<div class="ctx">${boldIn(v.src, v.text)}<small>${esc(v.book === BOOK.title ? '' : v.book + ' · ')}${posLabel(v.page)} · ${v.when}${v.sent ? ' · sent to notebook' : ''}</small><div class="meaning rv" style="font-size:13px;margin-top:2px"${S.recall ? ' hidden' : ''}>${v.meaning ? esc(v.meaning) : '<span style="color:var(--text-muted)">no translation saved</span>'}</div></div>`).join('');
+  const own = items.find((v) => v.book === BOOK.title);
+  S.pop = { wordEl: w, lemma, sayText: w.textContent, itemId: own ? own.id : items[0].id };
+  showPop(head(`<div class="term">${esc(w.textContent)}</div>`) + `<div class="pop-sub">${esc(lemma)} · ${esc(DICTN[w.dataset.k] ? DICTN[w.dataset.k][1] : items[0].cls)}</div><div class="pop-b"><div class="sec">In your vocabulary: where you saved it</div>${rows}${S.recall ? `<button class="pbtn" data-a="reveal" style="align-self:flex-start">${ic('eye', 13)}Show meaning</button>` : ''}</div><div class="pop-a"><button class="pbtn" data-a="say">${ic('speaker-high', 13)}Listen</button><button class="pbtn" data-a="here">${ic('translate', 13)}Translate here</button>${here ? '' : `<button class="pbtn" data-a="addhere">${ic('plus', 13)}Add this sentence</button>`}<button class="pbtn" data-a="find">${ic('list-magnifying-glass', 13)}Find in book</button>${own ? `<button class="pbtn" data-a="remove">${ic('trash', 13)}Remove</button>` : ''}</div>`, () => w.getBoundingClientRect());
+}
+function openSavedPop(v, el) {
+  S.pop = { itemId: v.id, sayText: v.text };
+  const tr = v.meaning ? `<div class="tr rv"${S.recall ? ' hidden' : ''}>${esc(v.meaning)}</div>${S.recall ? `<button class="pbtn" data-a="reveal" style="align-self:flex-start">${ic('eye', 13)}Show translation</button>` : ''}` : '<div style="color:var(--text-muted)">No translation saved. Select it and choose Translate if you need one.</div>';
+  showPop(head(`<div class="kind">In your vocabulary · ${v.kind === 'sentence' ? 'sentence' : 'expression'}</div>`) + `<div class="pop-b"><div class="ctx">${esc(v.text)}<small>${posLabel(v.page)} · ${v.when}${v.sent ? ' · sent to notebook' : ''}</small></div>${tr}</div><div class="pop-a"><button class="pbtn" data-a="say">${ic('speaker-high', 13)}Listen</button><button class="pbtn" data-a="tovocab">${ic('bookmark-simple', 13)}Show in list</button><button class="pbtn" data-a="remove">${ic('trash', 13)}Remove</button></div>`, () => el.getBoundingClientRect(), true);
+}
+function openSentencePop(s) {
+  const v = S.vocab.find((x) => x.sids && x.sids.includes(s.dataset.s));
+  if (v) openSavedPop(v, s);
+}
+
+/* ---------- coluna de navegação ---------- */
+function openNav(tab, flashId) {
+  S.navTab = tab; renderNav();
+  if (flashId) { const el = $(`.vc-item[data-id="${flashId}"]`); if (el) { el.scrollIntoView({ block: 'nearest' }); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1200); } }
+}
+function vocabItemHtml(v) {
+  const mean = v.meaning ? (S.recall ? `<span class="vc-mean hid" data-v="reveal" data-m="${esc(v.meaning)}">Show meaning</span>` : `<span class="vc-mean">${esc(v.meaning)}</span>`) : `<span class="vc-mean hid" data-v="tr">No translation · Translate</span>`;
+  return `<li class="vc-item ${v.kind}" data-id="${v.id}"><input type="checkbox" aria-label="Select to send"${v.checked ? ' checked' : ''}><span class="vc-term">${esc(v.text)}</span>${mean}${v.src ? `<span class="vc-src">${boldIn(v.src, v.text)}</span>` : ''}<span class="vc-meta">${posLabel(v.page)} · ${v.when}${v.sent ? `<span class="chip-sent" data-v="open" title="Sent ${v.sent} to Français · Vocabulary — ${BOOK.title}. Click to open the note.">${ic('check', 10)}Sent to notebook</span>` : ''}</span><span class="vc-acts"><button class="act" data-v="say" title="Listen">${ic('speaker-high', 12)}</button><button class="act del" data-v="del" title="Remove from Vocabulary">${ic('trash', 12)}</button></span></li>`;
+}
+function renderNav() {
+  $$('.nav-tab').forEach((t) => t.classList.toggle('on', t.dataset.tab === S.navTab));
+  $$('.nav-panel').forEach((p) => (p.hidden = p.dataset.tab !== S.navTab));
+  const mine = S.vocab.filter((v) => v.book === BOOK.title), fresh = mine.filter((v) => !v.sent), sent = mine.filter((v) => v.sent);
+  const list = $('#vcList');
+  list.innerHTML = mine.length ? (fresh.length ? `<li class="vc-sec">New</li>` + fresh.map(vocabItemHtml).join('') : '') + (sent.length ? `<li class="vc-sec">Sent to notebook</li>` + sent.map(vocabItemHtml).join('') : '') : `<li class="vc-empty">Nothing here yet. Select a word or a sentence in the book and choose <b>Add to vocabulary</b>.</li>`;
+  const checked = mine.filter((v) => v.checked), btn = $('#vcSend');
+  btn.disabled = !checked.length && !fresh.length;
+  btn.innerHTML = ic('notebook', 13) + (checked.length ? `Send ${checked.length} selected${checked.every((v) => v.sent) ? ' again' : ''}` : fresh.length ? `Send ${fresh.length} new to notebook` : 'All sent to notebook');
+  $('#vcDest').innerHTML = S.dest ? `<span title="${esc(S.dest.nb)} · ${esc(S.dest.note)}">To ${esc(S.dest.nb)} · ${esc(S.dest.note)}</span><button data-v="change">Change</button>` : '<span>You choose the note the first time.</span>';
+  $('#vcMarks').setAttribute('aria-pressed', S.marks);
+  $('#vcRecall').classList.toggle('on', S.recall);
+  $('#vcRecall').innerHTML = ic(S.recall ? 'eye-slash' : 'eye', 12) + (S.recall ? 'Meanings hidden' : 'Meanings shown');
+  $('#vcListen').disabled = !mine.length; $('#vcRetell').disabled = !mine.length;
+}
+$('#nav').addEventListener('click', (e) => {
+  const tab = e.target.closest('.nav-tab');
+  if (tab) return openNav(tab.dataset.tab);
+  const li = e.target.closest('.vc-item'), v = li && S.vocab.find((x) => x.id === li.dataset.id), a = e.target.closest('[data-v]');
+  if (e.target.matches('.vc-item input')) { v.checked = e.target.checked; return renderNav(); }
+  if (a) {
+    const k = a.dataset.v;
+    if (k === 'change') return openSend(true);
+    if (k === 'say') return sayOnce(v.src || v.text, a);
+    if (k === 'del') return removeVocab(v.id);
+    if (k === 'open') return openVocabNote();
+    if (k === 'reveal') { a.textContent = a.dataset.m; a.classList.remove('hid'); return; }
+    if (k === 'tr') { a.textContent = 'Translating…'; return setTimeout(() => { const key = v.kind === 'word' ? lookupKey(v.text) : null, ex = EXPRN[norm(v.text)], sd = v.sids && v.sids.map(sentData); v.meaning = key ? DICTN[key][2] : ex ? ex[2] : sd ? sd.map((d) => d.pt).join(' ') : '(mockup: no sample translation)'; renderNav(); }, 450); }
+  }
+  if (v) {
+    if (v.page === 42 || v.page === 43) { goPage(v.page); const el = v.sids ? $(`#sheet${v.page} .s[data-s="${v.sids[0]}"]`) : v.el && v.el.isConnected ? v.el : null; if (el) { el.scrollIntoView({ block: 'center' }); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1400); } }
+    else toast(`Goes to ${posLabel(v.page)} and flashes the item (mockup has only p. 42 and 43)`);
+  }
+});
+$('#vcMarks').onclick = () => { S.marks = !S.marks; applyMarks(); renderNav(); };
+$('#vcRecall').onclick = () => { S.recall = !S.recall; const c = $('#stRecall'); if (c) c.checked = S.recall; renderNav(); };
+$('#vcSend').onclick = () => (S.dest ? doSend() : openSend());
+$('#vcListen').onclick = () => {
+  const mine = S.vocab.filter((v) => v.book === BOOK.title);
+  startListen(mine.map((v) => ({ text: v.src || v.text })), 'Vocabulary list', {});
+};
+$('#vcRetell').onclick = () => startRetell();
+
+/* ---------- enviar ao caderno ---------- */
+function toSend() {
+  const mine = S.vocab.filter((v) => v.book === BOOK.title), checked = mine.filter((v) => v.checked);
+  return checked.length ? checked : mine.filter((v) => !v.sent);
+}
+function noteItemHtml(v, mode) {
+  const tr = !v.meaning || mode === 'none' ? '' : mode === 'visible' ? `<p class="vis">${esc(v.meaning)}</p>` : `<details class="tog"><summary>Translation</summary>${esc(v.meaning)}</details>`;
+  if (v.kind === 'sentence') return `<blockquote>${esc(v.text)}</blockquote><p class="cite">— <i>${esc(v.book)}</i>, ${posLabel(v.page)}</p>${tr}`;
+  return `<p><b>${esc(v.text)}</b>${v.lemma && v.lemma !== norm(v.text) ? ` <span style="color:var(--text-muted)">(${esc(v.lemma)})</span>` : ''}</p><blockquote>${boldIn(v.src, v.text)}</blockquote><p class="cite">— <i>${esc(v.book)}</i>, ${posLabel(v.page)}</p>${tr}`;
+}
+function openSend(change) {
+  const items = toSend();
+  if (!items.length && !change) return;
+  const d = S.destDraft = S.dest ? { ...S.dest, kind: S.dest.kind || 'vocab' } : { kind: 'vocab', nb: 'Français', note: 'Vocabulary — ' + BOOK.title };
+  $('#sendBody').innerHTML = `
+    <p class="step">Send to</p>
+    <div class="dest" id="destList">
+      <label data-k="vocab"><input type="radio" name="dest"> ${ic('plus', 13)} <span>${S.dest && S.dest.kind !== 'linked' ? '' : 'New note: '}Vocabulary — ${esc(BOOK.title)}</span><small>in Français</small></label>
+      <label data-k="linked"><input type="radio" name="dest"> <span>La Maison des dunes — notes</span><small>linked to this book · Leituras</small></label>
+      <label data-k="pick"><input type="radio" name="dest"> <span>Choose notebook and note…</span><small>same two steps as Add to note</small></label>
+    </div>
+    <p class="step">Translations</p>
+    <div class="seg" id="trSeg"><button type="button" data-m="collapsed">Collapsed under each item</button><button type="button" data-m="none">Don’t include</button><button type="button" data-m="visible">Visible</button></div>
+    <p class="help">Only items you translated have one. Collapsed uses a toggle block: the note shows the word and its sentence, and the translation stays one click away.</p>
+    <p class="step">In the note (${items.length} item${items.length === 1 ? '' : 's'})</p>
+    <div class="prev"><div class="note" id="sendPrev"></div></div>
+    <label class="chkline"><input type="checkbox" id="destKeep" checked> Send future vocabulary from this book here</label>
+    <div class="foot"><button type="button" class="btn-s" data-m="cancel">Cancel</button><button type="button" class="btn-p" data-m="send"${items.length ? '' : ' disabled'}>${items.length ? `Send ${items.length} item${items.length === 1 ? '' : 's'}` : 'Save destination'}</button></div>`;
+  const paint = () => {
+    $$('#destList label').forEach((l) => { const on = l.dataset.k === d.kind; l.classList.toggle('sel', on); $('input', l).checked = on; });
+    $$('#trSeg button').forEach((b) => b.classList.toggle('on', b.dataset.m === S.trMode));
+    $('#sendPrev').innerHTML = `<h5 style="margin-top:0">From ${esc(BOOK.title)} · Nov 26</h5>` + (items.length ? items.map((v) => noteItemHtml(v, S.trMode)).join('') : '<p style="color:var(--text-muted)">No items to send.</p>');
+  };
+  paint();
+  $('#sendBody').onclick = (e) => {
+    const l = e.target.closest('#destList label'), m = e.target.closest('[data-m]');
+    if (l) { d.kind = l.dataset.k; if (d.kind === 'linked') { d.nb = 'Leituras'; d.note = 'La Maison des dunes — notes'; } else { d.nb = 'Français'; d.note = 'Vocabulary — ' + BOOK.title; } return paint(); }
+    if (!m) return;
+    if (['collapsed', 'none', 'visible'].includes(m.dataset.m)) { S.trMode = m.dataset.m; return paint(); }
+    if (m.dataset.m === 'cancel') return closeSend();
+    if (m.dataset.m === 'send') { if ($('#destKeep').checked || !S.dest) S.dest = { ...d }; closeSend(); return items.length ? doSend(items, d) : renderNav(); }
+  };
+  $('#sendOverlay').classList.add('show');
+}
+function closeSend() { $('#sendOverlay').classList.remove('show'); }
+$('#sendOverlay').addEventListener('mousedown', (e) => { if (e.target.id === 'sendOverlay') closeSend(); });
+$('#sendX').onclick = closeSend;
+function doSend(items = toSend(), d = S.dest) {
+  if (!items.length) return;
+  const prev = items.map((v) => [v, v.sent]);
+  items.forEach((v) => { v.sent = 'Nov 26'; v.checked = false; });
+  const batch = { date: 'Nov 26', ids: items.map((v) => v.id) };
+  S.batches.push(batch);
+  renderNav(); if (S.noteView === 'vocab') renderNote();
+  toast(`${items.length} item${items.length === 1 ? '' : 's'} sent to ${d.nb} · ${d.note}`, [['Open', openVocabNote], ['Undo', () => { prev.forEach(([v, s]) => (v.sent = s)); S.batches.splice(S.batches.indexOf(batch), 1); renderNav(); renderNote(); }]]);
+}
+function openVocabNote() { S.noteView = 'vocab'; openSide('notes'); }
+
+/* ---------- coluna direita ---------- */
+function openSide(which) {
+  S.side = which;
+  $('#chatPanel').hidden = S.side !== 'chat';
+  $('#notesPanel').hidden = S.side !== 'notes';
+  $('#btnChat').classList.toggle('on', S.side === 'chat');
+  $('#btnNotes').classList.toggle('on', S.side === 'notes');
+  if (S.side === 'notes') renderNote();
+  renderChat();
+  placePop();
+}
+$('#btnChat').onclick = () => openSide(S.side === 'chat' ? null : 'chat');
+$('#btnNotes').onclick = () => openSide(S.side === 'notes' ? null : 'notes');
+$$('.side-x').forEach((b) => (b.onclick = () => openSide(null)));
+function renderNote() {
+  const el = $('#noteBody');
+  if (S.noteView === 'vocab') {
+    $('#noteSel').textContent = (S.dest ? S.dest.nb : 'Français') + ' · ' + (S.dest ? S.dest.note : 'Vocabulary — ' + BOOK.title);
+    el.innerHTML = `<h4>${esc(S.dest ? S.dest.note : 'Vocabulary — ' + BOOK.title)}</h4>` + S.batches.map((b) => `<h5>From ${esc(BOOK.title)} · ${b.date}</h5>` + b.ids.map((id) => S.vocab.find((v) => v.id === id)).filter(Boolean).map((v) => noteItemHtml(v, S.trMode)).join('')).join('') + `<p style="color:var(--text-muted);font-size:12px">The note is yours from here: write under each item, reorder, delete. Nothing in it changes when the book list changes.</p><p><button class="mini" id="noteBack">${ic('arrow-left', 12)}Back to the book’s note</button></p>`;
+    $('#noteBack').onclick = () => { S.noteView = 'reading'; renderNote(); };
+    return;
+  }
+  $('#noteSel').textContent = 'Leituras · La Maison des dunes — notes';
+  const mineW = S.vocab.filter((v) => v.book === BOOK.title && v.kind !== 'sentence'), here = mineW.filter((v) => v.page === 42 || v.page === 43);
+  const words = here.length ? here : mineW;
+  el.innerHTML = `<h4>La Maison des dunes — notes</h4><blockquote>On ne revient jamais tout à fait dans une maison que l’on a quittée enfant.</blockquote><p class="cite">— <i>La Maison des dunes</i>, ${posLabel(31)}</p><p>A casa como personagem: reparar em como os objetos guardam o tempo (volets, malle, lettres).</p>` + (S.retell ? `<h5>Retell · ${S.fmt === 'pdf' ? 'p. 42–43' : BOOK.chapter.split(' · ')[1]} · Nov 26</h5><div class="retell-words" id="rtWords">${words.map((v) => `<span class="rw" data-stem="${esc(v.lemma.slice(0, Math.max(4, v.lemma.length - 3)))}">${esc(v.text)}</span>`).join('')}</div><div class="write" id="rtText" contenteditable="true" data-ph="Tell this passage in your own words, in French. Use the words above where they fit."></div><div class="retell-foot"><button class="mini" id="rtAsk">${ic('sparkle', 12)}Ask for feedback</button><button class="mini" id="rtSample" title="Mockup only">Fill with a sample (mockup)</button></div>` : `<p><button class="mini" id="rtStart">${ic('pencil-simple', 12)}Retell this passage</button></p>`);
+  if (S.retell) {
+    const t = $('#rtText'), mark = () => { const n = norm(t.textContent); $$('#rtWords .rw').forEach((c) => { const u = n.includes(norm(c.dataset.stem)); if (u !== c.classList.contains('used')) { c.classList.toggle('used', u); c.innerHTML = (u ? ic('check', 10) : '') + esc(c.textContent); } }); };
+    t.addEventListener('input', mark);
+    $('#rtSample').onclick = () => { t.textContent = 'Élise monte au grenier. La porte est entrebâillée et il n’y a pas de lumière, alors elle monte en tâtonnant. Elle trouve une vieille malle avec beaucoup de lettres. Son grand-père arrive et il dit qu’elle ne doit pas fouiller. Elle a sursauté parce que elle ne l’a pas entendu.'; mark(); };
+    $('#rtAsk').onclick = () => {
+      const txt = clean(t.textContent);
+      if (!txt) return toast('Write your retelling first');
+      S.teacher = true; openSide('chat');
+      addChat('u', `<blockquote>${esc(txt.length > 180 ? txt.slice(0, 180) + '…' : txt)}</blockquote>Comente o meu reconto.`);
+      setTimeout(() => addChat('a', '<p>Você usou quatro palavras da sua lista no sentido do texto: <em>entrebâillée</em>, <em>en tâtonnant</em>, <em>malle</em> e <em>fouiller</em>.</p><p>Dois ajustes: «parce que elle» pede a elisão, <em>parce qu’elle</em>. E «elle a sursauté» está certo na fala; o livro usa <em>sursauta</em> (passé simple), que você só precisa reconhecer.</p><p>Para ir além: pourquoi le grand-père ne veut-il pas qu’elle ouvre la malle, à ton avis ?</p><p style="color:var(--text-muted);font-size:11px">Mockup: resposta fixa, escrita para o texto de exemplo.</p>'), 600);
+    };
+  } else $('#rtStart').onclick = startRetell;
+}
+function startRetell() { S.retell = true; S.noteView = 'reading'; openSide('notes'); const t = $('#rtText'); if (t) { t.scrollIntoView({ block: 'center' }); t.focus(); } }
+const CHAT = SC.chat || [];
+function addChat(role, html) { CHAT.push([role, html]); renderChat(); const h = $('#chatHist'); h.scrollTop = h.scrollHeight; }
+function ctxText() {
+  const words = S.vocab.filter((v) => v.book === BOOK.title && v.page === S.page);
+  return `[Language study — attached because "Language teacher" is on]\nBook language: ${BOOK.lang}\nReader's native language: ${NATIVE}\nLevel (from the Language profile note): B1\nVocabulary saved on this page: ${words.length ? words.map((v) => v.text).join(', ') : 'none'}\nAnswer in ${NATIVE}, with examples in ${BOOK.lang}. Explain at the reader's level.\nComment on the reader's own writing; do not rewrite it for them.`;
+}
+function renderChat() {
+  const h = $('#chatHist');
+  h.innerHTML = CHAT.length ? CHAT.map(([r, t]) => `<div class="bub-${r}">${t}</div>`).join('') : '<p class="empty">Ask about this book — the AI sees your current page and your most recent highlights.</p>';
+  const langOn = S.bookLang === 'fr', n = S.vocab.filter((v) => v.book === BOOK.title && v.page === S.page).length;
+  $('#teacher').hidden = !langOn;
+  $('#teacher').setAttribute('aria-pressed', S.teacher && langOn);
+  $('#ctxChip').innerHTML = `AI sees: ${posLabel(S.page)} · 3 highlights` + (S.teacher && langOn ? ` · <b>${BOOK.lang} teacher (B1)${n ? ` · ${n} saved` : ''}</b>` : '');
+  $('#ctxDetail').textContent = ctxText();
+  if (!(S.teacher && langOn)) $('#ctxDetail').hidden = true;
+}
+$('#teacher').onclick = () => { S.teacher = !S.teacher; renderChat(); };
+$('#ctxChip').onclick = () => { if (S.teacher) $('#ctxDetail').hidden = !$('#ctxDetail').hidden; };
+function askAi(text) { openSide('chat'); const t = $('#chatInput'); t.value = '> ' + (text.length > 600 ? text.slice(0, 600) + '…' : text) + '\n'; t.focus(); }
+$('#chatSend').onclick = () => {
+  const t = $('#chatInput'), v = t.value.trim();
+  if (!v) return;
+  const m = v.match(/^> (.*)\n?([\s\S]*)$/);
+  addChat('u', m ? `<blockquote>${esc(m[1])}</blockquote>${esc(m[2])}` : esc(v));
+  t.value = '';
+  setTimeout(() => addChat('a', S.teacher ? '<p>(Mockup) Com o professor ligado, a resposta vem em português, no nível B1, com exemplos em francês e usando as palavras que você guardou nesta página.</p>' : '<p>(Mockup) Resposta normal do chat do leitor, com o contexto da página e dos grifos.</p>'), 500);
+};
+
+/* ---------- mini-player: lê só o trecho pedido ---------- */
+const PL = { open: false, q: [], i: 0, st: 'idle', src: '', page: 42, speed: 0.85, step: false, cached: new Set(), t: null, msg: null, away: false, lookup: false, ranged: false, skip: true, allowRec: false, notice: null, atEnd: false };
+const player = $('#player');
+const SPEEDS = [0.75, 0.85, 1];
+function sayOnce(text, btn) {
+  if (btn) { btn.style.color = 'var(--accent-ai)'; setTimeout(() => (btn.style.color = ''), 1100); }
+  if (S.sound && window.speechSynthesis) { try { speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = 'fr-FR'; u.rate = PL.speed; speechSynthesis.speak(u); } catch (e) { /* sem voz */ } }
+}
+function listenSelection(info) {
+  const q = info.pieces.map((p) => ({ text: p.text, range: p.range }));
+  startListen(q, `Selection · ${posLabel(info.page)}`, { notice: info.edge && S.fmt === 'pdf' && PL.skip ? 'Not read: page header and page number.' : null, end: 'End of the selection.' });
+}
+function listenPage() {
+  if (S.scanned || S.bookLang !== 'fr') return;
+  const sheet = $('#sheet' + S.page);
+  const q = $$('.s', sheet).map((s) => ({ text: clean(s.textContent), range: textRange(s) }));
+  startListen(q, S.fmt === 'pdf' ? `Page ${S.page}` : 'This page', { notice: S.fmt === 'pdf' && PL.skip ? 'Not read: page header and page number.' : null, end: S.fmt === 'pdf' ? `End of page ${S.page}.` : 'End of this page.' });
+}
+function startListen(q, src, opts) {
+  closePop(); stopTimer();
+  PL.open = true; player.hidden = false; PL.msg = null; PL.away = false; PL.lookup = false; PL.atEnd = false;
+  if (S.mincer && !PL.allowRec) { PL.pending = [q, src, opts]; PL.st = 'blocked'; PL.msg = 'rec'; PL.q = []; setHL(); return renderPlayer(); }
+  if (S.audio === 'long' && !opts.confirmed) { PL.pending = [q, src, opts]; PL.st = 'blocked'; PL.msg = 'long'; PL.q = []; setHL(); return renderPlayer(); }
+  PL.q = q; PL.i = 0; PL.src = src; PL.page = S.page; PL.end = opts.end || 'End.'; PL.ranged = q.some((x) => x.range);
+  PL.notice = opts.notice || null;
+  if (PL.notice) setTimeout(() => { PL.notice = null; renderPlayer(); }, 5000);
+  setHL(); playCur();
+}
+function stopTimer() { clearTimeout(PL.t); PL.t = null; if (window.speechSynthesis) try { speechSynthesis.cancel(); } catch (e) { /* */ } }
+function dur(text) { return Math.max(700, (text.length * 58) / PL.speed) / (S.fast ? 4 : 1); }
+function playCur() {
+  stopTimer(); PL.atEnd = false; PL.lookup = false; PL.msg = null;
+  const it = PL.q[PL.i];
+  if (!it) return;
+  if (!PL.cached.has(it.text)) {
+    if (S.audio === 'net' || S.audio === 'credit' || S.audio === 'novoice') { PL.st = 'error'; PL.msg = S.audio; return renderPlayer(); }
+    PL.st = 'gen'; renderPlayer();
+    PL.t = setTimeout(() => { for (let k = PL.i; k < Math.min(PL.q.length, PL.i + 3); k++) PL.cached.add(PL.q[k].text); speak(); }, S.fast ? 250 : 750);
+    return;
+  }
+  speak();
+}
+function speak() {
+  const it = PL.q[PL.i];
+  PL.st = 'play'; renderPlayer(); setHL();
+  for (let k = PL.i + 1; k < Math.min(PL.q.length, PL.i + 3); k++) if (S.audio === 'ok' || S.audio === 'long') PL.cached.add(PL.q[k].text);
+  if (S.sound && window.speechSynthesis) { try { const u = new SpeechSynthesisUtterance(it.text); u.lang = 'fr-FR'; u.rate = PL.speed; let done = false; const fin = () => { if (!done) { done = true; clearTimeout(PL.t); onEnd(); } }; u.onend = fin; speechSynthesis.speak(u); PL.t = setTimeout(fin, dur(it.text) * 2 + 4000); return; } catch (e) { /* cai no timer */ } }
+  PL.t = setTimeout(onEnd, dur(it.text));
+}
+function onEnd() {
+  if (PL.st !== 'play') return;
+  if (PL.i >= PL.q.length - 1) { PL.st = 'end'; setHL(); return renderPlayer(); }
+  if (PL.step) { PL.st = 'paused'; PL.atEnd = true; return renderPlayer(); }
+  PL.i++; playCur();
+}
+function pausePlayer() { stopTimer(); if (PL.st === 'play' || PL.st === 'gen') PL.st = 'paused'; renderPlayer(); }
+function toggle() {
+  if (!PL.open || !PL.q.length) return;
+  if (PL.st === 'play' || PL.st === 'gen') return pausePlayer();
+  if (PL.st === 'end') { PL.i = 0; return playCur(); }
+  if (PL.atEnd && PL.i < PL.q.length - 1) PL.i++;
+  playCur();
+}
+function step(d) { if (!PL.q.length) return; const n = PL.i + d; if (n < 0 || n >= PL.q.length) return; PL.i = n; playCur(); }
+function stopPlayer(silent) {
+  stopTimer(); PL.open = false; PL.q = []; PL.st = 'idle'; PL.msg = null; PL.pending = null;
+  if (player) player.hidden = true;
+  setHL(); if (!silent) renderPlayer();
+  $('#plMenu').hidden = true;
+  parea.classList.remove('has-player', 'cap');
+  $('#toast').style.bottom = '18px';
+}
+function setHL() {
+  if (!HL) return;
+  HL.delete('listen-range'); HL.delete('listen-now');
+  if (!PL.open || !PL.ranged) return;
+  const rs = PL.q.filter((x) => x.range).map((x) => x.range);
+  if (rs.length) HL.set('listen-range', new Highlight(...rs));
+  const cur = PL.q[PL.i];
+  if (S.follow === 'b' && cur && cur.range && PL.st !== 'end' && PL.st !== 'blocked') {
+    HL.set('listen-now', new Highlight(cur.range));
+    if (PL.page === S.page && PL.st === 'play') { const r = cur.range.getBoundingClientRect(), a = parea.getBoundingClientRect(); if (r.bottom > a.bottom - 120 || r.top < a.top + 16) parea.scrollBy({ top: r.top - a.top - 120, behavior: 'smooth' }); }
+  }
+}
+function renderPlayer() {
+  if (!PL.open) return;
+  const showCap = S.follow === 'a' || !PL.ranged;
+  parea.classList.add('has-player'); parea.classList.toggle('cap', showCap);
+  const cap = $('#plCap'), msg = $('#plMsg'), it = PL.q[PL.i];
+  const M = {
+    rec: ['warn', '<span class="recdot"></span><span class="txt">Mincer is recording. This audio would end up in the recording.</span>', [['Play anyway', 'anyway'], ['Cancel', 'cancel']]],
+    long: ['', `<span class="txt">Long passage: about 6 min of audio, around $0.08 with this voice. You only pay for what you listen to.</span>`, [['Listen', 'confirm'], ['Cancel', 'cancel']]],
+    net: ['warn', `${ic('warning-circle', 14)}<span class="txt">Couldn’t generate the audio. Check your connection.${PL.i > 0 ? ' What you already heard still plays.' : ''}</span>`, [['Try again', 'retry']]],
+    credit: ['warn', `${ic('warning-circle', 14)}<span class="txt">OpenRouter has no credit left for audio.</span>`, [['Open Settings', 'settings'], ['Try again', 'retry']]],
+    novoice: ['warn', `${ic('warning-circle', 14)}<span class="txt">Choose a voice model in Settings › Language.</span>`, [['Open Settings', 'settings']]],
+  };
+  let m = PL.msg ? M[PL.msg] : null;
+  if (!m && PL.away) m = ['', `<span class="txt">Paused: this audio is from ${posLabel(PL.page)}.</span>`, [[`Back to ${posLabel(PL.page)}`, 'back']]];
+  else if (!m && PL.lookup) m = ['', '<span class="txt">Paused while you look something up. Space resumes from the start of the sentence.</span>', []];
+  else if (!m && PL.notice) m = ['', `${ic('info', 13)}<span class="txt">${PL.notice}</span>`, []];
+  msg.hidden = !m;
+  if (m) { msg.className = 'pl-msg ' + m[0]; msg.innerHTML = m[1] + m[2].map(([l, k]) => `<button class="mini" data-p="${k}">${l}</button>`).join(''); }
+  const blocked = PL.st === 'blocked';
+  cap.hidden = !showCap || blocked || PL.st === 'error';
+  cap.classList.toggle('dim', PL.st === 'gen' || PL.st === 'end');
+  cap.innerHTML = PL.st === 'gen' ? `<span style="display:inline-flex;align-items:center;gap:6px">${ic('circle-notch', 13, 'spin')}Preparing audio…</span>` : PL.st === 'end' ? esc(PL.end) : it ? esc(it.text) : '';
+  $('#plPlay').innerHTML = PL.st === 'gen' ? ic('circle-notch', 16, 'spin') : PL.st === 'play' ? ic('pause-fill', 16) : PL.st === 'end' ? ic('arrow-counter-clockwise', 16) : ic('play-fill', 16);
+  $('#plPlay').title = PL.st === 'play' ? 'Pause (Space)' : PL.st === 'end' ? 'Listen again (Space)' : 'Play (Space)';
+  $('#plPlay').disabled = blocked || !PL.q.length;
+  $('#plPrev').disabled = blocked || PL.i <= 0;
+  $('#plNext').disabled = blocked || PL.i >= PL.q.length - 1;
+  $('#plRep').disabled = blocked || !PL.q.length;
+  $('#plSrc').textContent = blocked ? (PL.pending ? PL.pending[1] : '') : PL.src;
+  const n = PL.q.length;
+  $('#plProg').innerHTML = Array.from({ length: Math.min(n, 48) }, (_, k) => { const j = n > 48 ? Math.floor((k * n) / 48) : k; return `<i class="${j < PL.i || PL.st === 'end' ? 'done' : j === PL.i ? 'cur' : ''}"></i>`; }).join('');
+  $('#plSpeed').textContent = (PL.speed === 1 ? '1.0' : PL.speed) + '×';
+  const th = player.offsetHeight;
+  $('#toast').style.bottom = (PL.open ? th + 30 : 18) + 'px';
+}
+player.addEventListener('click', (e) => {
+  const p = e.target.closest('[data-p]');
+  if (p) {
+    const k = p.dataset.p;
+    if (k === 'cancel') return stopPlayer();
+    if (k === 'anyway') { PL.allowRec = true; const a = PL.pending; PL.pending = null; return startListen(...a); }
+    if (k === 'confirm') { const a = PL.pending; PL.pending = null; a[2].confirmed = true; return startListen(...a); }
+    if (k === 'retry') return playCur();
+    if (k === 'settings') return toast('Opens Settings › Language (see the Settings scene)');
+    if (k === 'back') return goPage(PL.page);
+  }
+  const b = e.target.closest('button[id]');
+  if (!b) return;
+  if (b.id === 'plPlay') toggle();
+  else if (b.id === 'plPrev') step(-1);
+  else if (b.id === 'plNext') step(1);
+  else if (b.id === 'plRep') playCur();
+  else if (b.id === 'plClose') stopPlayer();
+  else if (b.id === 'plSpeed') { PL.speed = SPEEDS[(SPEEDS.indexOf(PL.speed) + 1) % SPEEDS.length]; renderPlayer(); if (PL.st === 'play') playCur(); }
+  else if (b.id === 'plMore') $('#plMenu').hidden = !$('#plMenu').hidden;
+});
+$('#plStep').onchange = (e) => (PL.step = e.target.checked);
+$('#plSkip').onchange = (e) => (PL.skip = e.target.checked);
+$('#plText').onchange = (e) => { S.follow = e.target.checked ? 'a' : 'b'; syncSeg('followSeg', S.follow); setHL(); renderPlayer(); };
+$('#plSettings').onclick = () => toast('Opens Settings › Language (see the Settings scene)');
+$('#btnPage').onclick = listenPage;
+
+/* ---------- barra superior do leitor, teclado, toast ---------- */
+$('#pgPrev').onclick = $('#fPrev').onclick = () => goPage(S.page - 1);
+$('#pgNext').onclick = $('#fNext').onclick = () => goPage(S.page + 1);
+document.addEventListener('keydown', (e) => {
+  if (e.target.closest('input, textarea, select, [contenteditable]') || e.ctrlKey || e.altKey || e.metaKey) return;
+  const k = e.key;
+  if (k === 'Escape') {
+    // Esc fecha uma coisa por vez; só sai da tela cheia do estudo quando não há nada aberto.
+    if (!pop.hidden) { e.preventDefault(); return closePop(true); }
+    if ($('#sendOverlay').classList.contains('show')) { e.preventDefault(); return closeSend(); }
+    if (!bar.hidden) { e.preventDefault(); return clearSel(); }
+    return;
+  }
+  if (S.bookLang !== 'fr') { if (k === 'ArrowLeft') goPage(S.page - 1); if (k === 'ArrowRight') goPage(S.page + 1); return; }
+  if (e.shiftKey && (k === 'ArrowLeft' || k === 'ArrowRight')) { e.preventDefault(); return step(k === 'ArrowLeft' ? -1 : 1); }
+  if (k === 'ArrowLeft') return goPage(S.page - 1);
+  if (k === 'ArrowRight') return goPage(S.page + 1);
+  if (k === ' ' && PL.open) { e.preventDefault(); return toggle(); }
+  const lower = k.toLowerCase();
+  if (lower === 't' && S.sel) return openTranslate(S.sel);
+  if (lower === 'l') { if (S.sel) { const i = S.sel; clearSel(); return listenSelection(i); } return listenPage(); }
+  if (lower === 'v' && S.sel) { const i = S.sel, it = findItem(i); clearSel(); return it ? removeVocab(it.id) : addVocab(i, null); }
+  if (lower === 'r' && PL.open && PL.q.length) return playCur();
+});
+let toastT;
+function toast(text, actions = []) {
+  const el = $('#toast');
+  el.innerHTML = `<span>${esc(text)}</span>` + actions.map((a, i) => `<button data-i="${i}">${a[0]}</button>`).join('');
+  el.classList.add('show');
+  el.onclick = (e) => { const b = e.target.closest('button'); if (b) { actions[+b.dataset.i][1](); el.classList.remove('show'); } };
+  clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove('show'), 5200);
+}
+
+/* ---------- barra do estudo ---------- */
+function syncSeg(id, val) { const s = $('#' + id); if (s) $$('button', s).forEach((b) => b.classList.toggle('on', b.dataset.v === String(val))); }
+function bindSeg(id, fn, init) { const s = $('#' + id); if (!s) return; s.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; syncSeg(id, b.dataset.v); fn(b.dataset.v); }); syncSeg(id, init); }
+function bindSel(id, fn) { const s = $('#' + id); if (s) s.onchange = () => fn(s.type === 'checkbox' ? s.checked : s.value); }
+bindSeg('sizeSeg', (v) => { document.body.dataset.size = v; setTimeout(() => { placePop(); renderPlayer(); }, 0); }, document.body.dataset.size);
+bindSeg('fmtSeg', (v) => { S.fmt = v; hideBar(); closePop(); renderSheets(); renderNote(); }, S.fmt);
+bindSeg('followSeg', (v) => { S.follow = v; $('#plText').checked = v === 'a'; setHL(); renderPlayer(); }, S.follow);
+bindSeg('barSeg', (v) => { document.body.dataset.bar = v; hideBar(); }, '2');
+bindSeg('navSeg', (v) => { document.body.dataset.navw = v; }, '300');
+bindSel('stBook', (v) => { S.bookLang = v; hideBar(); closePop(); renderSheets(); renderChat(); });
+bindSel('stTr', (v) => { S.tr = v; });
+bindSel('stAudio', (v) => { S.audio = v; });
+bindSel('stMincer', (v) => { S.mincer = v; PL.allowRec = false; renderChrome(); });
+bindSel('stScan', (v) => { S.scanned = v; hideBar(); closePop(); renderSheets(); });
+bindSel('stSound', (v) => { S.sound = v; });
+bindSel('stFast', (v) => { S.fast = v; });
+bindSel('stRecall', (v) => { S.recall = v; renderNav(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !e.defaultPrevented && document.body.dataset.size === 'full') { document.body.dataset.size = 'fit'; syncSeg('sizeSeg', 'fit'); } });
+
+/* ---------- início ---------- */
+renderSheets();
+(SC.preAdd || []).forEach((k) => {
+  const w = $(`.w[data-k="${k}"]`);
+  if (!w) return;
+  const page = +w.closest('.sheet').id.slice(5), keep = S.page;
+  S.page = page; const info = selInfo(textRange(w)); S.page = keep;
+  if (info) { const it = addVocab(info, DICTN[k], true); it.when = 'today'; }
+});
+(SC.preAddSentence || []).forEach((id) => { const s = $(`.s[data-s="${id}"]`); const keep = S.page; S.page = +s.closest('.sheet').id.slice(5); const info = selInfo(textRange(s)); S.page = keep; const it = addVocab(info, [null, '', sentData(id).pt], true); it.when = 'today'; });
+if (SC.retell) S.retell = true;
+openSide(S.side);
+renderNav();
+window.__ls = { S, PL, selInfo, textRange, showBar, openTranslate, listenSelection, listenPage, startRetell, openSend, goPage, addVocab, toast };
+if (SC.onReady) SC.onReady(window.__ls);
+
+</script>
+</body>
+</html>

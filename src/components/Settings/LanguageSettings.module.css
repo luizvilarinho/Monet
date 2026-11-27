@@ -1,0 +1,125 @@
+/* Settings › Language: o que a seção tem além dos campos já estilizados pelo
+   SettingsModal.module.css. */
+.sectionTitle {
+  margin: calc(var(--space-4) - var(--space-1h)) 0 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.testButton {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1h);
+  height: var(--control-lg);
+  padding: 0 var(--space-3);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.testButton:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+.testButton:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.testError {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1h) var(--space-2);
+  margin: 0;
+  font-size: 12px;
+  color: var(--accent-warn);
+}
+
+.costBox {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  line-height: var(--lh-ui);
+  color: var(--text-secondary);
+}
+
+.costTitle {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.costRow {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.costValue {
+  flex-shrink: 0;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.costNote {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.clearButton {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1h);
+  padding: var(--space-1) var(--space-3);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.clearButton:hover:not(:disabled) {
+  color: var(--accent-warn);
+  border-color: var(--accent-warn);
+}
+
+.clearButton:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.checkRow {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  font-size: 12px;
+  line-height: var(--lh-ui);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.checkRow input {
+  flex-shrink: 0;
+  margin: var(--space-0) 0 0;
+  accent-color: var(--accent-ai);
+}

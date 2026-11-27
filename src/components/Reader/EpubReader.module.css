@@ -477,6 +477,13 @@
   border-bottom-color: var(--accent, #7b6ed4);
 }
 
+/* Com as ferramentas de língua entra a aba Vocabulary: as abas ficam com 8px de
+   lado (12px de sempre) para as três caberem nos 300px da coluna. */
+.sidePanelTabsDense .sidePanelTab {
+  padding-left: var(--space-2);
+  padding-right: var(--space-2);
+}
+
 .sidePanelTabBadge {
   background: var(--accent, #7b6ed4);
   color: #0e0e10;
@@ -517,6 +524,28 @@
   border-radius: 8px;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
   white-space: nowrap;
+}
+
+/* Com as ferramentas de língua: a linha de língua (LanguageBar) fica acima da
+   linha de sempre, que segue com o mesmo padding. */
+.highlightToolbarStacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+}
+
+/* Sem as ferramentas de língua o contêiner não gera caixa: a barra fica como
+   sempre foi. */
+.highlightToolbarContents {
+  display: contents;
+}
+
+.highlightToolbarRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+  padding: var(--space-1h) var(--space-2);
 }
 
 .highlightSwatch {
@@ -822,4 +851,14 @@
   padding: var(--space-2) var(--space-3);
   border-top: 1px solid var(--border, #333340);
   flex-shrink: 0;
+}
+
+/* "Listen to page" com o Mincer gravando: ponto vermelho (o áudio entraria na
+   gravação). */
+.listenRecording::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-danger, #e05555);
 }

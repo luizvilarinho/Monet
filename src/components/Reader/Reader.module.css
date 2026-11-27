@@ -462,6 +462,28 @@
   white-space: nowrap;
 }
 
+/* Com as ferramentas de língua: a linha de língua (LanguageBar) fica acima da
+   linha de sempre, que segue com o mesmo padding. */
+.highlightToolbarStacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+}
+
+/* Sem as ferramentas de língua o contêiner não gera caixa: a barra fica como
+   sempre foi. */
+.highlightToolbarContents {
+  display: contents;
+}
+
+.highlightToolbarRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+  padding: var(--space-1h) var(--space-2);
+}
+
 .highlightSwatch {
   width: 18px;
   height: 18px;
@@ -744,6 +766,13 @@
   border-bottom-color: var(--accent, #7b6ed4);
 }
 
+/* Com as ferramentas de língua entra a aba Vocabulary: as abas ficam com 8px de
+   lado (12px de sempre) para as três caberem nos 300px da coluna. */
+.sidePanelTabsDense .sidePanelTab {
+  padding-left: var(--space-2);
+  padding-right: var(--space-2);
+}
+
 .sidePanelTabBadge {
   background: var(--accent, #7b6ed4);
   color: #0e0e10;
@@ -1010,4 +1039,24 @@
   padding: var(--space-2) var(--space-3);
   border-top: 1px solid var(--border, #333340);
   flex-shrink: 0;
+}
+
+/* "Listen to page" com o Mincer gravando: ponto vermelho (o áudio entraria na
+   gravação). */
+.listenRecording::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-danger, #e05555);
+}
+
+/* Margem de rolagem abaixo da página enquanto o mini-player está aberto. Filho
+   absoluto do .pageWrap: aumenta a rolagem sem mexer no tamanho da área. */
+.playerSpacer {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  width: 1px;
+  pointer-events: none;
 }
