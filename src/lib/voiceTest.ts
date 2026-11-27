@@ -1,10 +1,11 @@
 // Texto do "Test voice" do Settings: uma frase curta, inventada, na língua do
 // livro que o usuário abriu por último (a que ele estuda). Custa o preço de uma
-// frase.
+// frase. O app não supõe uma língua de estudo: sem livro de outra língua, o teste
+// usa a língua nativa do usuário.
 import type { Book } from '../types'
 import { baseLanguage } from './language'
 
-const FALLBACK_LANGUAGE = 'fr'
+const FALLBACK_LANGUAGE = 'en'
 
 const TEST_SENTENCES: Record<string, string> = {
   fr: 'Élise monte au grenier à 21 h 30.',
@@ -25,9 +26,9 @@ const TEST_SENTENCES: Record<string, string> = {
   tr: 'Élise saat dokuz buçukta tavan arasına çıkıyor.',
 }
 
-// A língua do livro aberto por último (maior `lastOpenedAt`) cuja língua não é a
-// nativa; sem livro assim, o francês.
-export function pickTestLanguage(books: Book[], nativeLanguage: string): string {
+// A língua que o usuário estuda: a do livro aberto por último (maior
+// `lastOpenedAt`) cuja língua não é a nativa. null sem livro assim.
+export function pickStudyLanguage(books: Book[], nativeLanguage: string): string | null {
   const native = baseLanguage(nativeLanguage)
   let best: Book | null = null
   for (const book of books) {
@@ -35,10 +36,16 @@ export function pickTestLanguage(books: Book[], nativeLanguage: string): string 
     if (!language || language === native || book.lastOpenedAt === null) continue
     if (!best || book.lastOpenedAt > (best.lastOpenedAt ?? 0)) best = book
   }
-  return best ? baseLanguage(best.language) : FALLBACK_LANGUAGE
+  return best ? baseLanguage(best.language) : null
 }
 
-// Língua sem frase própria (a lista cobre as que o app oferece): a francesa.
+// A língua do "Test voice" e da voz do Settings: a que o usuário estuda; sem ela, a
+// nativa; sem nativa, o inglês.
+export function pickTestLanguage(books: Book[], nativeLanguage: string): string {
+  return pickStudyLanguage(books, nativeLanguage) ?? (baseLanguage(nativeLanguage) || FALLBACK_LANGUAGE)
+}
+
+// Língua sem frase própria (a lista cobre as que o app oferece): a inglesa.
 export function testSentenceFor(language: string): string {
   return TEST_SENTENCES[baseLanguage(language)] ?? TEST_SENTENCES[FALLBACK_LANGUAGE]
 }

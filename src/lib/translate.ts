@@ -141,6 +141,93 @@ export function parseTranslation(raw: string, kind: SelectionKind): Translation 
   }
 }
 
+// O texto de uma passagem enquanto a resposta ainda chega: `closed` diz que a
+// string `translation` já fechou (faltam só as notas de gramática).
+export interface PartialTranslation {
+  text: string
+  closed: boolean
+}
+
+const TRANSLATION_KEY_RE = /"translation"\s*:\s*"/
+const SIMPLE_ESCAPES: Record<string, string> = {
+  '"': '"',
+  '\\': '\\',
+  '/': '/',
+  b: '\b',
+  f: '\f',
+  n: '\n',
+  r: '\r',
+  t: '\t',
+}
+
+// A cerca de código que abre a resposta ("```json" e a quebra de linha) ainda não
+// é texto; sem a quebra de linha, a cerca ainda está chegando.
+function stripLeadingFence(raw: string): string {
+  const text = raw.trimStart()
+  if (/^`{1,2}$/.test(text)) return ''
+  if (!text.startsWith('```')) return text
+  const newline = text.indexOf('\n')
+  return newline === -1 ? '' : text.slice(newline + 1)
+}
+
+// Decodifica a string JSON que começa em `start` (logo depois da aspa de abertura)
+// até onde o texto chegou. Para antes de um escape cortado no fim (`\`, `\u00e` ou
+// a primeira metade de um par substituto); escape inválido vale o caractere.
+function decodeJsonString(source: string, start: number): PartialTranslation {
+  let out = ''
+  let i = start
+  while (i < source.length) {
+    const ch = source[i]
+    if (ch === '"') return { text: out.trim(), closed: true }
+    if (ch !== '\\') {
+      out += ch
+      i += 1
+      continue
+    }
+    const next = source[i + 1]
+    if (next === undefined) break
+    if (next !== 'u') {
+      out += SIMPLE_ESCAPES[next] ?? next
+      i += 2
+      continue
+    }
+    const hex = source.slice(i + 2, i + 6)
+    if (hex.length < 4) break
+    if (!/^[0-9a-fA-F]{4}$/.test(hex)) {
+      out += 'u'
+      i += 2
+      continue
+    }
+    const unit = Number.parseInt(hex, 16)
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      // Parte alta de um par substituto: a baixa vem num segundo \uXXXX.
+      const tail = source.slice(i + 6, i + 12)
+      if (tail.length < 6 && /^(?:\\(?:u[0-9a-fA-F]{0,3})?)?$/.test(tail)) break
+      const low = /^\\u([dD][c-fC-F][0-9a-fA-F]{2})$/.exec(tail)
+      if (low) {
+        out += String.fromCharCode(unit, Number.parseInt(low[1], 16))
+        i += 12
+        continue
+      }
+    }
+    out += String.fromCharCode(unit)
+    i += 6
+  }
+  return { text: out.trim(), closed: false }
+}
+
+// O texto da passagem numa resposta ainda incompleta: o valor do campo
+// `translation` do JSON, até onde ele chegou. Texto vazio quando a chave ainda não
+// veio. Resposta que não começa por `{` é texto puro, e o parcial é o texto cru,
+// como o `parseTranslation` faz no fim.
+export function extractPartialTranslation(raw: string): PartialTranslation {
+  const text = stripLeadingFence(raw)
+  if (!text.startsWith('{')) return { text: text.trim(), closed: false }
+  const key = TRANSLATION_KEY_RE.exec(text)
+  if (!key) return { text: '', closed: false }
+  return decodeJsonString(text, key.index + key[0].length)
+}
+
 // Memória da sessão: a mesma consulta não chama a IA de novo.
 const cache = new Map<string, Translation>()
 
@@ -164,10 +251,17 @@ function failure(code: string | undefined, message: string): TranslateError {
 
 // Os ouvintes entram ANTES do invoke (o primeiro chunk pode chegar antes de ele
 // resolver). Abortar cancela a requisição no Rust e rejeita com AbortError.
+// `onPartial` avisa o texto da passagem (só `sentence`) enquanto os pedaços
+// chegam, a cada vez que ele muda; a consulta em cache responde na hora, sem
+// parcial. O resultado final vem sempre do `parseTranslation`.
 export async function requestTranslation(
-  input: TranslateInput & { model: string; signal: AbortSignal },
+  input: TranslateInput & {
+    model: string
+    signal: AbortSignal
+    onPartial?: (partial: PartialTranslation) => void
+  },
 ): Promise<Translation> {
-  const { model, signal, ...translate } = input
+  const { model, signal, onPartial, ...translate } = input
   const key = translationCacheKey(model, translate)
   const cached = cache.get(key)
   if (cached) return cached
@@ -177,6 +271,7 @@ export async function requestTranslation(
   const { systemPrompt, userMessage } = buildTranslatePrompt(translate)
   const unlisteners: UnlistenFn[] = []
   let raw = ''
+  let lastPartial: PartialTranslation | null = null
   let settle!: { resolve: () => void; reject: (reason: unknown) => void }
   const outcome = new Promise<void>((resolve, reject) => {
     settle = { resolve, reject }
@@ -191,7 +286,14 @@ export async function requestTranslation(
   try {
     unlisteners.push(
       await onOpenRouterChunk((p) => {
-        if (p.requestId === requestId) raw += p.text
+        if (p.requestId !== requestId) return
+        raw += p.text
+        if (!onPartial || translate.kind !== 'sentence' || signal.aborted) return
+        const partial = extractPartialTranslation(raw)
+        if (!partial.text) return
+        if (lastPartial && lastPartial.text === partial.text && lastPartial.closed === partial.closed) return
+        lastPartial = partial
+        onPartial(partial)
       }),
       await onOpenRouterDone((p) => {
         if (p.requestId === requestId) settle.resolve()

@@ -144,4 +144,26 @@ describe('buildLanguageProfileTemplate', () => {
     expect(readProfileLine(template, ['Explain'])).toContain('Portuguese')
     expect(readProfileLine(template, ["Don't"])).toContain('translate whole pages')
   })
+
+  it('names the language of the book, whichever it is', () => {
+    expect(buildLanguageProfileTemplate('pt', 'de').split('\n\n')[1]).toBe('German: B1')
+    expect(buildLanguageProfileTemplate('en', 'ja').split('\n\n')[1]).toBe('Japanese: B1')
+  })
+
+  it('without a study language (no book in another language), no level line', () => {
+    const template = buildLanguageProfileTemplate('pt', null)
+    expect(template.split('\n\n')).toEqual([
+      'Native language: Portuguese',
+      'Explain: grammar in Portuguese, short, with one example from the page.',
+      "Don't: translate whole pages for me. Don't rewrite what I write; point at what to fix.",
+    ])
+    expect(template).not.toContain('B1')
+    expect(template).not.toContain('French')
+    expect(readProfileLevel(template, 'fr')).toBeNull()
+    expect(readProfileLine(template, ['Explain'])).toContain('Portuguese')
+  })
+
+  it('an empty study language is the same as none', () => {
+    expect(buildLanguageProfileTemplate('pt', '')).toBe(buildLanguageProfileTemplate('pt', null))
+  })
 })

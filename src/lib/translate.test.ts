@@ -42,8 +42,10 @@ import {
   TranslateError,
   buildTranslatePrompt,
   classifySelection,
+  extractPartialTranslation,
   parseTranslation,
   requestTranslation,
+  type PartialTranslation,
   type TranslateInput,
 } from './translate'
 
@@ -127,6 +129,105 @@ describe('parseTranslation', () => {
   })
 })
 
+describe('extractPartialTranslation, the passage text while the answer is still arriving', () => {
+  const text = (raw: string) => extractPartialTranslation(raw).text
+  const head = '{"translation":"'
+
+  it('shows nothing until the "translation" key and its opening quote have arrived', () => {
+    expect(extractPartialTranslation('')).toEqual({ text: '', closed: false })
+    expect(text('{')).toBe('')
+    expect(text('{"kind":"pass')).toBe('')
+    expect(text('{"kind":"passage","translat')).toBe('')
+    expect(text('{"kind":"passage","translation"')).toBe('')
+    expect(text('{"kind":"passage","translation":')).toBe('')
+    expect(text('{"kind":"passage","translation": ')).toBe('')
+  })
+
+  it('grows with the value of the field, as the pieces arrive', () => {
+    const start = '{"kind":"passage","translation":"'
+    expect(text(`${start}A porta`)).toBe('A porta')
+    expect(text(`${start}A porta estava entre`)).toBe('A porta estava entre')
+    expect(extractPartialTranslation(`${start}A porta estava entreaberta.`)).toEqual({
+      text: 'A porta estava entreaberta.',
+      closed: false,
+    })
+  })
+
+  it('stops at the closing quote and says the text is closed', () => {
+    const raw = '{"kind":"passage","translation":"A porta estava entreaberta.","grammar":["Uma nota'
+    expect(extractPartialTranslation(raw)).toEqual({ text: 'A porta estava entreaberta.', closed: true })
+  })
+
+  it('decodes the JSON escapes', () => {
+    expect(text(`${head}Ela disse \\"oi\\" e saiu`)).toBe('Ela disse "oi" e saiu')
+    expect(text(`${head}Linha um\\nlinha dois\\ttab`)).toBe('Linha um\nlinha dois\ttab')
+    expect(text(`${head}a\\\\b\\/c`)).toBe('a\\b/c')
+    expect(text(`${head}entreaberta \\u00e9 e \\u00C0`)).toBe('entreaberta é e À')
+    expect(text(`${head}caf\\u00e9, fim"`)).toBe('café, fim')
+  })
+
+  it('holds back an escape that was cut at the end', () => {
+    expect(text(`${head}Ela disse \\`)).toBe('Ela disse')
+    expect(text(`${head}Ela disse \\u`)).toBe('Ela disse')
+    expect(text(`${head}Ela disse \\u00`)).toBe('Ela disse')
+    expect(text(`${head}Ela disse \\u00e`)).toBe('Ela disse')
+    expect(text(`${head}Ela disse \\u00e9`)).toBe('Ela disse é')
+    // O escape inteiro, depois do pedaço cortado, aparece.
+    expect(text(`${head}Ela disse \\"oi`)).toBe('Ela disse "oi')
+  })
+
+  it('a backslash that is itself escaped is text, not the start of an escape', () => {
+    expect(text(`${head}a\\\\`)).toBe('a\\')
+  })
+
+  it('waits for the second half of a surrogate pair', () => {
+    const start = `${head}Olá `
+    expect(text(`${start}\\ud83d`)).toBe('Olá')
+    expect(text(`${start}\\ud83d\\`)).toBe('Olá')
+    expect(text(`${start}\\ud83d\\ude0`)).toBe('Olá')
+    expect(text(`${start}\\ud83d\\ude00`)).toBe('Olá \u{1F600}')
+    expect(text(`${start}\\ud83d\\ude00 e mais`)).toBe('Olá \u{1F600} e mais')
+  })
+
+  it('an escape that is not valid JSON counts as its character', () => {
+    expect(text(`${head}a\\xb`)).toBe('axb')
+    expect(text(`${head}a\\uZZZZb`)).toBe('auZZZZb')
+  })
+
+  it('skips the opening code fence, even before the line ends', () => {
+    expect(text('`')).toBe('')
+    expect(text('``')).toBe('')
+    expect(text('```')).toBe('')
+    expect(text('```json')).toBe('')
+    expect(text('```json\n')).toBe('')
+    expect(text('```json\n{"translation":"A porta')).toBe('A porta')
+    expect(text('```\n{"translation":"A porta","grammar":[]}\n```')).toBe('A porta')
+  })
+
+  it('an answer in plain text, without JSON, is shown raw (as parseTranslation does at the end)', () => {
+    expect(extractPartialTranslation('  A porta estava ')).toEqual({ text: 'A porta estava', closed: false })
+    expect(text('A porta estava entreaberta.')).toBe('A porta estava entreaberta.')
+  })
+
+  it('JSON without the key never shows anything, and the end falls back to the raw text', () => {
+    const raw = '{"text":"A porta estava entreaberta."}'
+    expect(text(raw)).toBe('')
+    expect(parseTranslation(raw, 'sentence')).toMatchObject({ kind: 'passage', translation: raw })
+  })
+
+  it('what the partial shows is always a prefix of the final translation', () => {
+    const final = '{"kind":"passage","translation":"Ela disse \\"oi\\"\\npuis \\u00e9tait partie.","grammar":["a"]}'
+    const parsed = parseTranslation(final, 'sentence')
+    expect(parsed).toMatchObject({ kind: 'passage' })
+    const full = parsed?.kind === 'passage' ? parsed.translation : ''
+    expect(full).toBe('Ela disse "oi"\npuis était partie.')
+    for (let end = 0; end <= final.length; end++) {
+      expect(full.startsWith(extractPartialTranslation(final.slice(0, end)).text)).toBe(true)
+    }
+    expect(extractPartialTranslation(final)).toEqual({ text: full, closed: true })
+  })
+})
+
 describe('buildTranslatePrompt', () => {
   const base: TranslateInput = {
     text: 'entrebâillée',
@@ -161,7 +262,11 @@ describe('buildTranslatePrompt', () => {
 })
 
 describe('requestTranslation', () => {
-  const input = (patch: Partial<TranslateInput & { model: string; signal: AbortSignal }> = {}) => ({
+  const input = (
+    patch: Partial<
+      TranslateInput & { model: string; signal: AbortSignal; onPartial: (partial: PartialTranslation) => void }
+    > = {},
+  ) => ({
     text: 'entrebâillée',
     sentence: SENTENCE,
     kind: 'word' as const,
@@ -218,6 +323,101 @@ describe('requestTranslation', () => {
     await expect(requestTranslation(input({ text: 'fouille' }))).rejects.toMatchObject({ kind: 'failed' })
     rt.reply = WORD_JSON
     await expect(requestTranslation(input({ text: 'fouille' }))).resolves.toMatchObject({ kind: 'word' })
+  })
+
+  describe('com onPartial (o texto da passagem crescendo enquanto chega)', () => {
+    const PASSAGE = '{"kind":"passage","translation":"A porta estava entreaberta.","grammar":["Uma nota"]}'
+    const pieces =
+      (...parts: string[]) =>
+      (requestId: string) => {
+        parts.forEach((text) => rt.handlers.chunk.forEach((h) => h({ requestId, text })))
+        rt.handlers.done.forEach((h) => h({ requestId }))
+      }
+
+    it('avisa o texto a cada pedaço que o muda e termina com o resultado do parseTranslation', async () => {
+      rt.startImpl = pieces(
+        '{"kind":"passage",',
+        '"translation":"A porta',
+        ' estava entre',
+        'aberta.",',
+        '"grammar":["Uma',
+        ' nota"]}',
+      )
+      const seen: PartialTranslation[] = []
+      const result = await requestTranslation(
+        input({ text: SENTENCE, kind: 'sentence', onPartial: (p) => seen.push(p) }),
+      )
+      expect(seen).toEqual([
+        { text: 'A porta', closed: false },
+        { text: 'A porta estava entre', closed: false },
+        { text: 'A porta estava entreaberta.', closed: true },
+      ])
+      expect(result).toEqual({ kind: 'passage', translation: 'A porta estava entreaberta.', grammar: ['Uma nota'] })
+    })
+
+    it('resposta em texto puro: o parcial é o texto cru, e o fim também', async () => {
+      rt.startImpl = pieces('A porta ', 'estava entreaberta.')
+      const seen: string[] = []
+      const result = await requestTranslation(
+        input({ text: `${SENTENCE} (texto puro)`, kind: 'sentence', onPartial: (p) => seen.push(p.text) }),
+      )
+      expect(seen).toEqual(['A porta', 'A porta estava entreaberta.'])
+      expect(result).toMatchObject({ kind: 'passage', translation: 'A porta estava entreaberta.' })
+    })
+
+    it('a palavra não chega aos poucos: sem parcial, o mesmo resultado', async () => {
+      rt.startImpl = pieces(WORD_JSON.slice(0, 60), WORD_JSON.slice(60))
+      const onPartial = vi.fn()
+      const result = await requestTranslation(input({ text: 'sursauter', onPartial }))
+      expect(onPartial).not.toHaveBeenCalled()
+      expect(result).toMatchObject({ kind: 'word', sense: 'entreaberta' })
+    })
+
+    it('consulta em cache responde na hora, sem parcial e sem nova chamada', async () => {
+      rt.startImpl = pieces(PASSAGE)
+      const text = `${SENTENCE} (cache)`
+      await requestTranslation(input({ text, kind: 'sentence' }))
+      const onPartial = vi.fn()
+      const calls = vi.mocked(openrouter.startOpenRouterStream).mock.calls.length
+      const result = await requestTranslation(input({ text, kind: 'sentence', onPartial }))
+      expect(onPartial).not.toHaveBeenCalled()
+      expect(vi.mocked(openrouter.startOpenRouterStream).mock.calls.length).toBe(calls)
+      expect(result).toMatchObject({ kind: 'passage' })
+    })
+
+    it('erro no meio: o parcial já foi avisado e a requisição rejeita', async () => {
+      rt.startImpl = (requestId) => {
+        rt.handlers.chunk.forEach((h) => h({ requestId, text: '{"translation":"A porta est' }))
+        rt.handlers.error.forEach((h) => h({ requestId, code: 'NETWORK_ERROR', message: 'network error' }))
+      }
+      const seen: string[] = []
+      await expect(
+        requestTranslation(
+          input({ text: `${SENTENCE} (erro)`, kind: 'sentence', onPartial: (p) => seen.push(p.text) }),
+        ),
+      ).rejects.toMatchObject({ kind: 'failed' })
+      expect(seen).toEqual(['A porta est'])
+    })
+
+    it('abortada, não avisa mais nada', async () => {
+      const controller = new AbortController()
+      rt.startImpl = (requestId) => {
+        rt.handlers.chunk.forEach((h) => h({ requestId, text: '{"translation":"A porta' }))
+        controller.abort()
+        rt.handlers.chunk.forEach((h) => h({ requestId, text: ' estava' }))
+      }
+      const seen: string[] = []
+      const error = await requestTranslation(
+        input({
+          text: `${SENTENCE} (abort)`,
+          kind: 'sentence',
+          signal: controller.signal,
+          onPartial: (p) => seen.push(p.text),
+        }),
+      ).catch((e) => e)
+      expect(error.name).toBe('AbortError')
+      expect(seen).toEqual(['A porta'])
+    })
   })
 
   it('abortar cancela a requisição no Rust e rejeita com AbortError', async () => {

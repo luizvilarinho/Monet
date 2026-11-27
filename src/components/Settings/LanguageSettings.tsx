@@ -44,7 +44,7 @@ import {
   hasPublishedPrice,
   sumUsageCost,
 } from '../../lib/ttsCost'
-import { pickTestLanguage, testSentenceFor } from '../../lib/voiceTest'
+import { pickStudyLanguage, pickTestLanguage, testSentenceFor } from '../../lib/voiceTest'
 import { storage } from '../../storage'
 import { VoiceModelPicker } from '../LanguageTools/VoiceModelPicker'
 import type { SettingsSection } from './SettingsModal'
@@ -58,8 +58,9 @@ interface LanguageSettingsProps {
   // Troca de seção (o erro de voz leva à chave do OpenRouter).
   onOpenSection: (section: SettingsSection) => void
   // Abre a nota de perfil de língua (cria, se ainda não existe). `bookLanguage` é a
-  // língua que o template de uma nota nova traz.
-  onOpenLanguageProfile: (input: { nativeLanguage: string; bookLanguage: string }) => Promise<ProfileOpenResult>
+  // língua que o template de uma nota nova traz; null (nenhum livro de outra língua)
+  // deixa o template sem a linha do nível.
+  onOpenLanguageProfile: (input: { nativeLanguage: string; bookLanguage: string | null }) => Promise<ProfileOpenResult>
 }
 
 // O que a janela principal diz depois de "Open the note".
@@ -103,7 +104,8 @@ export function LanguageSettings({
   const catalog = useTtsCatalog()
   // O "Test voice" fala pelo mesmo motor do leitor, num player só desta tela, sem
   // livro: o áudio vai para o cache compartilhado.
-  // A voz do teste e a do seletor são as da língua do livro aberto por último.
+  // A voz do teste e a do seletor são as da língua do livro aberto por último (sem
+  // livro de outra língua, a nativa).
   const [testLanguage, setTestLanguage] = useState(() => pickTestLanguage([], nativeLanguage))
   const tester = useListenPlayer({
     bookId: null,
@@ -195,7 +197,7 @@ export function LanguageSettings({
     const books = await storage.getBooks().catch(() => [])
     const result = await onOpenLanguageProfile({
       nativeLanguage,
-      bookLanguage: pickTestLanguage(books, nativeLanguage),
+      bookLanguage: pickStudyLanguage(books, nativeLanguage),
     })
     if (!alive.current) return
     if (result === 'no-notebook') setProfileProblem('Create a notebook first: the note goes into one.')
@@ -404,7 +406,8 @@ export function LanguageSettings({
       <h4 className={own.sectionTitle}>Language profile</h4>
       <p className={styles.formHelp}>
         A note tagged <b>language profile</b> tells the AI your level in each language and how you want explanations. The
-        Language teacher in a book&apos;s chat reads it. Without the note, the teacher works without a level.
+        Language teacher in a book&apos;s chat reads it. Without the note, the teacher works without a level. Write one
+        line per language you study: the language&apos;s name in English, a colon and your level (A1 to C2).
       </p>
       <div>
         <button type="button" className={own.testButton} onClick={() => void handleOpenProfile()}>

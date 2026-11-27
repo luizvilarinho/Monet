@@ -4,12 +4,12 @@
 - Task report: `DOCS/reports/26-11-2026/taskreport_20261126233242.md`
 - Execution report: `DOCS/reports/26-11-2026/executionreport_20261126233242.md`
 - Explorer report: `DOCS/reports/26-11-2026/explorerreport_20261126153600_code.md` (código), `DOCS/reports/26-11-2026/explorerreport_20261126153959_voice.md` (voz e tradução), `DOCS/reports/26-11-2026/explorerreport_20261126153738_usage.md` (uso real) e `DOCS/reports/26-11-2026/explorerreport_20261126153738_market.md` (mercado e método), gerados na task de estudo
-- UX report: `DOCS/reports/26-11-2026/uxreport_20261126173030.md` (da task de estudo)
+- UX report: `DOCS/reports/26-11-2026/uxreport_20261126173030.md` (da task de estudo) e `DOCS/reports/26-11-2026/uxreport_20261127115849.md` (janela de tradução, rodada 2 de ajustes do teste)
 - Estudo e mockups: `DOCS/features/language_study.md`, `DOCS/features/language_study/` (`index.html`, `translate.html`, `listen.html`, `vocabulary.html`, `practice.html`, `settings.html`)
 - Task e Execution Report do estudo: `DOCS/reports/26-11-2026/taskreport_20261126134217.md`, `DOCS/reports/26-11-2026/executionreport_20261126134217.md`
 - Plan report: `DOCS/reports/26-11-2026/planreport_20261127000656.md`
 - Spec: `DOCS/specs/languagestudy.md`
-- Roteiro de teste do Coordenador: no fim deste arquivo (seção "Roteiro de teste do Coordenador", 92 passos: 78 do desenvolvimento e 14 novos da passada final, no item 8)
+- Roteiro de teste do Coordenador: no fim deste arquivo (seção "Roteiro de teste do Coordenador", 120 passos: 78 do desenvolvimento, 14 novos da passada final, no item 8, 23 da rodada 2 da janela de tradução, no item 9, e 5 das regras por língua, no item 10)
 - Review report: três, um por área: `DOCS/reports/26-11-2026/reviewreport_20261127100629_voice.md` (voz e player), `DOCS/reports/26-11-2026/reviewreport_20261127100918_reader.md` (língua por livro, Translate e leitores) e `DOCS/reports/26-11-2026/reviewreport_20261127101149_vocab.md` (vocabulário e prática)
 
 ## Sessions
@@ -511,6 +511,162 @@
 - Decision: aceitos os quatro pontos em que o `codeAgent` decidiu diferente da triagem (pedido em `pcm` quando o catálogo inteiro é desconhecido, para não quebrar o Gemini; primeiros testes de componente do repositório, para a aba Notes e a carga do vocabulário; teclas com o foco dentro de modal ficam com o modal, setas inclusive; `mousedown` sintético no documento pai para o clique no iframe do EPUB fechar popovers e o menu do player). Ficou para trás, com o motivo na sessão do `codeAgent`: voz N3 e N4 (esperam um livro real) e a nova tentativa do catálogo no front (N2); leitores 10 (copiar a tradução) e 11 (detecção antes da primeira página do EPUB); vocabulário N1 (o "Ask for feedback" deixa o professor ligado, decisão do Coordenador), N4, N5, N11 e N12; a voz padrão do Kokoro, cujos prefixos de língua são próprios do provedor; e a palavra repetida dentro da mesma frase no EPUB.
 - Next step: aguardando o teste do Coordenador pelo roteiro (92 passos; a seção 8 traz os 14 novos, um por mudança de comportamento da passada final). O app nunca foi executado com este código e nenhum áudio ou tradução reais foram gerados. Sem commit até ele decidir.
 
+### Orchestrator — decisão — 20261127115441
+- Summary: a rodada 1 foi commitada pelo Coordenador (`8ce293c`) e ele começou o teste. Do teste vieram três pedidos sobre a janela de tradução (o popover de Translate de uma passagem), com um print da janela aberta sobre um parágrafo:
+  1. Deixar a janela com tamanho ajustável (clicar e arrastar) e gravar a última posição e o último tamanho, para ela abrir sempre na última posição.
+  2. Enviar um `uxAgent` para rever os espaçamentos da janela: os botões estão perto demais do texto.
+  3. A tradução está lenta demais: ver a causa (hipótese dele: um system prompt maior do que deveria).
+- Inputs:
+  - `src/components/LanguageTools/TranslatePopover.tsx`, `src/components/LanguageTools/TranslatePopover.module.css` (folha compartilhada com `SavedWordPopover.tsx`)
+  - `src/lib/translate.ts`, `src/components/Reader/toolbarPlacement.ts`
+  - `src-tauri/src/lib.rs` (`openrouter_stream_chat`, `run_openrouter_stream`)
+- Decision:
+  - Entendimento do pedido 1: "última posição" só existe se a janela puder ser movida, então ela passa a ser movida (arrastando o cabeçalho) e redimensionada (arrastando borda ou canto), com posição e tamanho gravados no `localStorage`; sem nada gravado, abre ancorada na seleção como hoje.
+  - Pedido 3, diagnóstico por leitura de código (os agentes não fazem chamada paga, então não há medida de tempo): o system prompt não é a causa. Ele tem uma linha e a mensagem do usuário tem cerca de 60 palavras além do texto selecionado; o comando do Rust manda só `model`, `stream` e `messages`, sem reasoning, sem tools e sem nada do chat. A causa é a janela esperar a resposta inteira: a IA responde em JSON (`translation` + até duas notas de gramática), o Rust já entrega em pedaços, mas `requestTranslation` junta tudo e só mostra depois do fim. Num parágrafo, a espera é a geração completa da tradução e das notas com o esqueleto na tela. Correção: mostrar o texto da tradução enquanto ele chega (extraindo o campo `translation` do JSON parcial), só no front, sem mudar o Rust. Ressalva: o comando não desliga o raciocínio de modelos que raciocinam por padrão; se o "Translation model" de Settings não for o padrão (`openai/gpt-4.1-mini`), isso soma segundos antes do primeiro texto.
+  - Ordem: `uxAgent` primeiro (só relatório, sem editar código, para não haver dois agentes escrevendo nos mesmos arquivos); depois um `codeAgent` com os três pontos e a triagem do relatório de UX. Sem novo Task Report: são ajustes pedidos no teste (Passo 4, Etapa 1, item 3).
+- Next step: `uxAgent`.
+
+### UxAgent — espaçamentos da janela de tradução — 20261127115849
+- Summary: a queixa procede e a causa é estrutural. O respiro entre o texto e os botões é o `padding-bottom` do `.body`, que rola junto, e o `.actions` tem `padding-top: 0`. Com um parágrafo que passa de 460 px (o caso do print), sobra 0 px visível e nenhuma linha entre o texto cortado e os botões. Além disso, o "Ask AI" quebra sozinho para a 2ª linha (~403 px de botões em 356 px úteis), e o rodapé tem borda própria: a parte de baixo ocupa ~104 px dos ~457 da janela. Propostas, com regra, valor de hoje e valor proposto em tokens:
+  - A1 a A4 (Agora), respondem à queixa: ações como barra fixa (`padding: var(--space-2) var(--space-3)`, `border-top`, `flex-shrink: 0`); a linha de línguas dentro da barra (`.actions + .footer` sem borda); a passagem com 440 px e o gap ícone↔rótulo em `--space-1`, para os quatro botões caberem numa linha; barra de rolagem fina com `scrollbar-gutter: stable`.
+  - B1 a B3, melhorias a mais: altura explícita do botão em `--control-md`; 12 px entre a tradução e as notas; esqueleto no ritmo do texto.
+  - C1 a C9, mover e redimensionar: cabeçalho como alça; oito alças invisíveis; mínimo 300 × 220 px; uma geometria por variante (`monet:translate-window:passage`/`:word`); duplo clique para voltar ao padrão; ajuste para dentro da janela sem regravar; gravar só no `pointerup`.
+  - D1 a D7, streaming: altura reservada pela estimativa do texto de origem e a janela parada enquanto o texto chega; barra de ações desde o loading, com "Add to vocabulary" desativado até o fim; "Translating…"; sem rolagem automática; esqueleto das notas; texto parcial mantido no erro.
+  - Decisão para o Coordenador: C5, se a janela da palavra lembra também a posição ou só o tamanho.
+  - Sem app rodando: medidas do print (1:1) e do CSS. Nenhum código alterado.
+- Inputs:
+  - pedido 2 da sessão `Orchestrator — decisão — 20261127115441` e o print do Coordenador
+  - `src/components/LanguageTools/TranslatePopover.tsx`, `TranslatePopover.module.css`, `SavedWordPopover.tsx`, `src/components/Reader/toolbarPlacement.ts`, tokens em `src/App.css`
+  - `DOCS/features/language_study/translate.html`, `DOCS/reports/26-11-2026/uxreport_20261126173030.md`
+- Output: `DOCS/reports/26-11-2026/uxreport_20261127115849.md`
+- Next step: triagem do Orquestrador; depois o `codeAgent` com os três pedidos.
+
+### Orchestrator — decisão — 20261127120235
+- Summary: triagem do relatório de UX da janela de tradução. A queixa procede e a causa é estrutural: o respiro entre o texto e os botões é o `padding-bottom` da área que rola, então com um parágrafo que passa da altura máxima sobra 0 px visível entre o texto cortado e os botões.
+- Inputs:
+  - `DOCS/reports/26-11-2026/uxreport_20261127115849.md`
+- Decision: um único `codeAgent` (Sonnet 5.5) com os três pedidos do Coordenador e esta triagem:
+  - Entram agora, do relatório: A1 a A4 (barra de ações fixa com borda, linha de línguas dentro da barra, passagem a 440 px por padrão, barra de rolagem fina com calha estável); B1 e B2; C1 a C4 e C6 a C9 (cabeçalho arrasta, oito alças invisíveis, mínimo 300 × 220, máximo 640 de largura, uma geometria gravada por variante, duplo clique volta ao padrão, posição fora da janela é ajustada sem regravar, grava só ao soltar); D1, D2, D4, D5 e D7 (janela que não se mexe enquanto o texto chega, ações desde o loading com "Add to vocabulary" desativado até o fim, sem rolagem automática, erro no meio mantém o texto parcial).
+  - A critério do `codeAgent`, se couberem sem risco: D3, D6 e B3.
+  - C5 fica para o Coordenador conferir no teste: a janela da palavra também lembra a posição (segue o pedido como foi feito); a alternativa é ela lembrar só o tamanho e continuar abrindo junto da palavra.
+  - Pedido 3: a tradução da passagem aparece enquanto chega (campo `translation` extraído do JSON parcial), só no front. A palavra continua como está (resposta curta). Nenhuma mudança no Rust, para o `tauri dev` do Coordenador não reiniciar no meio do teste.
+  - O `SavedWordPopover` recebe os espaçamentos pela folha compartilhada e continua ancorado.
+- Next step: `codeAgent`; depois `tsc` e `npm test` pelo Orquestrador.
+
+### CodeAgent — janela de tradução (rodada 2 do teste) — 20261127122012
+- Summary: os três pedidos do Coordenador e a triagem do relatório de UX, só no front (nada em `src-tauri/`, nada de `package.json`, sem commit, sem subir o app, sem chave e sem chamada paga; testes só com texto inventado). Resolvido dentro do `TranslatePopover` e de duas libs; nenhum dos seis usos nos leitores mudou.
+  - **1. Mover, redimensionar e lembrar.** O cabeçalho (menos o X) arrasta a janela; oito alças invisíveis, filhas da raiz do popover, redimensionam (bordas de 6 px centradas na borda, cantos de 12 × 12 px). Pointer events com `setPointerCapture`, sem `preventDefault` no `pointerdown` (o `mousedown` compatível continua passando pelo `preventDefault` da raiz, que mantém a seleção do livro) e o `onMouseUp` da raiz continua parando a propagação (a captura leva o `mouseup` para o elemento capturado, que é filho da raiz). Mínimo 300 × 220; máximo `min(640, vw − 16)` × `vh − 16`; a borda que se move não passa de 8 px da janela do app. Uma geometria por variante em `monet:translate-window:passage` e `:word` (o `too_long` usa a da passagem; `savedItem` e `standalone` seguem o tipo), gravada só no `pointerup` de um gesto que moveu a janela (e só depois do limiar de arrasto, ver o ajuste abaixo). Com geometria gravada a janela abre nela, com tamanho fixo (inline `width`, `height` e `maxHeight` iguais à geometria: o teto de 460 px não vale e o PDF não a faz seguir a rolagem); sem ela, tudo como antes. Duplo clique no cabeçalho (fora do X) apaga a chave da variante e reancora na hora. Fora da janela do app (ao abrir e no `resize` com o popover aberto): tamanho limitado e posição empurrada para dentro, sem regravar (a chave guarda o que o usuário escolheu, e a janela volta ao lugar quando voltar a caber). Cancelamento do gesto (`pointercancel`) devolve a janela ao que era e não grava. C5 como pedido: a palavra também lembra a posição.
+  - **2. Espaçamentos (A1 a A4, B1, B2).** Folha `TranslatePopover.module.css`: barra de ações fixa (`padding: var(--space-2) var(--space-3)`, `border-top`, `flex-shrink: 0`); a linha de línguas dentro da barra (`.actions + .footer` sem borda); a passagem a 440 px e o gap ícone↔rótulo em `--space-1`; barra de rolagem fina com `scrollbar-gutter: stable` e `padding-right: var(--space-1)` no corpo; botão com `min-height: var(--control-md)` e `padding: 0 var(--space-2)`, com `:disabled` (opacidade 0,5, sem realce no hover); 4 px a mais entre a tradução e as notas (`margin-top` do `.grammar`, 12 px no total). O `.body` ganhou `flex: 1 1 auto` para a barra ficar no fundo quando o usuário faz a janela mais alta que o texto. O `SavedWordPopover` recebe tudo isso pela folha compartilhada e continua ancorado; um teste de componente confere que ele renderiza e não ganhou cabeçalho de arrasto nem alças.
+  - **3. Lentidão.** `requestTranslation` ganhou o callback opcional `onPartial`, chamado a cada pedaço que muda o texto (só `sentence`). `extractPartialTranslation` (função pura, em `translate.ts`) acha `"translation": "` no JSON incompleto, decodifica a string até onde há texto e devolve `{ text, closed }`; trata `\`, `\u` e `\uXXXX` cortados, a primeira metade de um par substituto, escape inválido (vale o caractere), chave que ainda não chegou, cerca ``` (mesmo sem a quebra de linha) e texto puro sem JSON (o parcial é o texto cru, como o `parseTranslation` faz no fim). O resultado final continua vindo do `parseTranslation` e do cache; consulta em cache não tem parcial; abortado, não avisa mais. A palavra e a expressão seguem sem streaming. No popover: D1 (sem geometria gravada, a altura é reservada na abertura por `estimatePassageHeight` e o layout effect **não** depende do texto parcial, então a janela não se reposiciona por pedaço; no fim, um único `reflowHeight`, com a borda do lado da seleção parada), D2 (o primeiro pedaço substitui o esqueleto inteiro), D3 ("Translating…" no cabeçalho e `aria-busy` no corpo), D4 (barra desde o loading nas duas variantes; "Add to vocabulary" e "Save translation" desativados até o fim, com o `title` proposto), D5 (sem rolagem automática; `scrollTop = 0` a cada pedido novo), D6 (barra no lugar das notas quando a string `translation` fechou e o resto não chegou) e D7 (erro no meio mantém o texto, acrescenta "The translation stopped before the end." e põe "Try again" primeiro) e B3 (uma barra por linha estimada, de 3 a 8).
+  - **Ajuste pedido pelo Coordenador depois da entrega: limiar de arrasto.** Um clique no cabeçalho ou numa alça com 1 px de tremor do mouse preenchia `gesture.last` e o `pointerup` gravava a geometria daquele instante (a janela deixava de seguir a seleção e ficava com a altura fixa, sem arrasto nenhum). Agora o gesto só começa quando o ponteiro anda 4 px em relação ao `pointerdown`, em qualquer direção (`DRAG_THRESHOLD_PX` e `exceedsDragThreshold`, em `translateWindow.ts`, distância euclidiana, `>= 4`). Abaixo do limiar nada se move, nada é redimensionado e nada é gravado; passado o limiar, o gesto vale com o delta inteiro desde o `pointerdown` (sem pular os 4 px) e segue valendo mesmo que o ponteiro volte para perto da origem (`Gesture.active`). Vale para mover e para as oito alças. O `data-gesture` (cursor `grabbing`) continua entrando no `pointerdown` e saindo ao soltar, com ou sem arrasto. Duplo clique com tremor volta ao padrão e não deixa chave gravada (os dois cliques não gravam nada e o `dblclick` apaga a chave).
+  - **Decisões minhas para o Coordenador conferir:** (a) no estado de **erro** a barra é "Try again, Listen, Add to note, Ask AI", **sem** Add to vocabulary (antes só havia Try again; o Add só vale com a tradução inteira, e desativado para sempre num erro enganaria); (b) o esqueleto da passagem usa barra de 12 px e vão de 8 px (ritmo de 20 px, com tokens da escala), e não 10 + 10 como no relatório, porque 10 px está fora da escala da casa; (c) o ajuste final de altura também **cresce** a janela quando o conteúdo passa da altura reservada (a borda do lado da seleção fica parada e a outra se move, até a borda da janela do app e 460 px); o relatório só falava de encolher; (d) **mover a janela também grava a altura do momento** (a geometria tem os quatro campos): arrastar uma janela de palavra ainda no esqueleto grava uma altura baixa, e a janela passa a abrir com ela (mínimo de 220 px) e rolar por dentro; "duplo clique" volta ao padrão; (e) a alça da direita cobre 2 px da barra de rolagem fina (o relatório aceita); (f) a estimativa de altura (64 caracteres por linha, 20 px por linha, 110 px de notas, 128 px de cabeçalho, barra e rodapé) é cálculo de CSS, não medida no app; com ela o piso de 220 px do relatório nunca é alcançado (a menor estimativa é 258) e por isso a função só tem o teto de 460.
+- Testes novos: `translateWindow.test.ts` (chaves, validação, o limiar de arrasto, limite à janela do app, mover e redimensionar por direção com mínimo, máximo e margem, estimativa de altura, `reflowHeight`); `translate.test.ts` (`extractPartialTranslation` com os casos do pedido, a propriedade "o parcial é sempre prefixo do resultado final" a cada corte possível de uma resposta com escapes, e o `onPartial` de `requestTranslation` pedaço a pedaço, texto puro, palavra sem parcial, cache sem parcial, erro no meio e abortada); `TranslatePopover.test.tsx` (barra desde o loading, texto chegando, erro no meio, janela que não se reposiciona por pedaço, geometria gravada por variante, ajuste ao abrir e no `resize` sem regravar, duplo clique, mover e redimensionar com gravação única no `pointerup`, `pointercancel`, X sem arrasto, alças dentro da raiz, `mousedown` e `mouseup` com a mutação conferida; e o limiar de arrasto: clique com 2 px de tremor no cabeçalho e nas alças não muda o estilo nem grava, arrasto e redimensionamento de 5 px gravam com o delta inteiro, o gesto segue valendo ao voltar perto da origem, duplo clique com tremor volta ao padrão sem chave; a mutação "limiar sempre vence" derruba três desses testes); `SavedWordPopover.test.tsx` (renderiza, ancorado, sem alças). Nota para quem testar no happy-dom: um `vi.spyOn(Storage.prototype, …)` não intercepta depois da primeira chamada a `localStorage`; os testes novos espiam `localStorage` direto.
+- Verificação (saída real): `npx tsc --noEmit` sem erros; `npm test` **59 arquivos e 1387 testes passando** (antes: 56 e 1297; 1377 antes do ajuste do limiar). Não rodei `npm run test:rust` nem nada que suba o app.
+- Files changed:
+  - src/components/LanguageTools/TranslatePopover.tsx
+  - src/components/LanguageTools/TranslatePopover.module.css
+  - src/lib/translate.ts
+  - src/lib/translate.test.ts
+  - DOCS/specs/languagestudy.md
+  - DOCS/reports/26-11-2026/executionreport_20261126233242.md
+- Files created:
+  - src/lib/translateWindow.ts
+  - src/lib/translateWindow.test.ts
+  - src/components/LanguageTools/TranslatePopover.test.tsx
+  - src/components/LanguageTools/SavedWordPopover.test.tsx
+- Files removed:
+  - nenhum
+- Left behind:
+  - **Não verificável sem o app real** (entra no item 9 do roteiro): a captura do ponteiro sobre o iframe do EPUB e sobre a camada de texto do PDF (os testes de componente simulam o `setPointerCapture`), o cursor de cada alça, o tempo até o primeiro texto e o ritmo dos pedaços de verdade, os quatro botões numa linha a 440 px com a fonte de produção, a largura da barra de rolagem fina e os 12 px de margem da direita, o quanto a estimativa de altura acerta, o `title` do botão desativado na WebView2 e o duplo clique no cabeçalho.
+  - **Não toquei no Rust, como pedido.** O comando `openrouter_stream_chat` manda só `model`, `stream` e `messages` e não desliga o raciocínio de modelos que raciocinam por padrão: se o "Translation model" do Settings for um deles, isso soma segundos antes do primeiro texto, e o streaming não resolve essa parte. Fica anotado na spec.
+  - O prop `onAddToVocabulary(translation: Translation | null)` e o comentário do `null` ("a tradução ainda não chegou") ficaram como estavam: o botão agora só funciona com a tradução pronta, então o `null` não chega mais a quem chama (já não chegava antes, porque o estado de carregamento não tinha botões). Tirar o `null` do tipo mexeria nos seis usos dos leitores, fora do que foi pedido.
+  - O texto da tradução continua sem poder ser selecionado e copiado dentro do popover (achado 10 do review dos leitores, fora desta rodada).
+
+### Orchestrator — encerramento — 20261127122750
+- Summary: rodada 2 de ajustes do teste concluída na janela de tradução, sem commit. Os três pedidos do Coordenador entraram: (1) a janela é movida pelo cabeçalho e redimensionada por borda ou canto, e a posição e o tamanho são gravados por variante (passagem e palavra) ao soltar, com duplo clique no cabeçalho para voltar ao padrão; (2) os botões viraram barra fixa com borda e 8 px de respiro, com a linha de línguas dentro dela, a passagem abre com 440 px e a barra de rolagem é fina; (3) a tradução da passagem aparece enquanto chega. Conferido pelo Orquestrador: `npx tsc --noEmit` sem erros, `npm test` com 59 arquivos e 1387 testes passando, nenhuma mudança em `src-tauri/` nem em `package.json`.
+- Inputs:
+  - `DOCS/reports/26-11-2026/uxreport_20261127115849.md`
+  - sessão `CodeAgent — janela de tradução (rodada 2 do teste) — 20261127122012`
+- Decision:
+  - Na leitura do código o Orquestrador achou um ponto frágil e devolveu ao mesmo `codeAgent` para um ajuste: qualquer movimento de 1 px no cabeçalho ou numa alça já gravava a geometria e prendia a janela. Entrou um limiar de 4 px antes de o gesto valer.
+  - Aceitas as decisões do `codeAgent` listadas na sessão dele: no erro a barra fica "Try again, Listen, Add to note, Ask AI"; o ajuste de altura no fim da tradução também cresce a janela; mover grava também a altura do momento (a partir daí a janela tem tamanho fixo e rola por dentro, até o duplo clique no cabeçalho).
+  - Para o Coordenador conferir no teste: a C5 (a janela da palavra lembra a posição, em vez de continuar abrindo junto da palavra) e os quatro botões numa linha a 440 px com a fonte real.
+  - Fica anotado, sem mudança: o comando de chat não desliga o raciocínio de modelos que raciocinam por padrão; com um "Translation model" assim, o texto demora a começar mesmo com o streaming. Corrigir pede mudança no Rust.
+- Next step: aguardando o teste do Coordenador (seção 9 do roteiro, 23 passos). Nada desta rodada foi executado no app pelos agentes: a captura do ponteiro sobre o livro, o tempo até o primeiro texto e as medidas de layout só se confirmam no teste. Sem commit até ele decidir.
+
+### Orchestrator — decisão — 20261127141825
+- Summary: o Coordenador viu a rodada 2 no app ("ficou bem interessante", "boas funcionalidades para estudar línguas") e pediu duas coisas: ver o que ficou de fora e descrever o que o interruptor "Language teacher" faz na prática. Levantamento feito por leitura dos três reviews, das sessões deste arquivo e do código; nenhum código mudou nesta sessão.
+- Inputs:
+  - `DOCS/reports/26-11-2026/reviewreport_20261127100629_voice.md`, `reviewreport_20261127100918_reader.md`, `reviewreport_20261127101149_vocab.md`
+  - `src/lib/teacherContext.ts`, `src/hooks/useReaderTeacher.ts`, `src/components/Reader/ReaderChatPanel.tsx`
+  - `src/components/Reader/Reader.tsx` (`handleTranslate`, `handleListen`, `handleAddToVocabulary`), `src-tauri/src/lib.rs` (`run_openrouter_stream`)
+- Decision: nada entra sem a escolha do Coordenador, porque cada item que sobrou tem uma decisão dele embutida. A lista, com a recomendação do Orquestrador:
+  - **Copiar a tradução (leitores 10).** Deixar o texto selecionável dentro da janela desfaz a seleção do livro, e no PDF três ações leem a seleção viva (`handleTranslate`, `handleListen`, `handleAddToVocabulary`, este último também pela tecla V): com a seleção dentro da janela, o item de vocabulário sairia com a frase e a âncora erradas. Recomendado: um botão "Copy" que copia a tradução inteira, sem mexer na seleção. A escolha é entre o botão e o texto selecionável (com a guarda nas três ações).
+  - **Raciocínio dos modelos na tradução (Rust).** Só muda algo se o "Translation model" for um modelo que raciocina por padrão; com o padrão (`openai/gpt-4.1-mini`) não muda nada. Desligar o raciocínio num modelo em que ele é obrigatório pode fazer o provedor recusar o pedido, e isso não se confere sem chamada paga. Recomendado: não fazer, a menos que ele use um modelo assim.
+  - **Janela da palavra (C5):** lembra a posição (como está) ou continua abrindo junto da palavra e lembra só o tamanho.
+  - **"Ask for feedback" e o professor (vocabulário N1):** hoje o botão liga o interruptor e ele fica ligado naquele livro; a alternativa é mandar o bloco do professor só naquela mensagem.
+  - **Retell com tudo já enviado:** hoje o botão fica desabilitado até marcar itens.
+  - **Dependem de um livro real, e ele agora tem um:** voz N4 (o "Listen to page" pular ou ler cabeçalho, rodapé e número de página por engano) e voz N3 (áudio cancelado no meio é jogado fora e pedido de novo depois).
+  - **Pequenos, sem decisão, para um ajuste só se ele quiser:** vocabulário N4 (no EPUB, "saved on this page" olha só o começo da tela), N5 (texto em NFD não recebe marca), N11 (sobras no `localStorage` ao apagar o livro), N12 (organização de tipos); leitores 11 (a primeira abertura de um EPUB sem metadado de língua atrasa a primeira página); voz N2 (o front não tenta o catálogo de novo); a voz padrão do Kokoro; a palavra repetida na mesma frase no EPUB; o `| null` do `onAddToVocabulary`.
+- Next step: aguardando o Coordenador escolher o que entra. O que entrar vai num único `codeAgent`, com sessão nova aqui e passos novos no roteiro. Sem commit até ele decidir.
+
+### Orchestrator — decisão — 20261127142936
+- Summary: depois de ler a descrição do "Language teacher" (com o exemplo em francês), o Coordenador perguntou se o texto está específico para francês e pediu para deixar mais genérico, porque pode estudar outra língua no futuro. Conferido por leitura do código: o bloco do professor, o chip "AI sees", o prompt da tradução, a nota de perfil e os rótulos da interface já são montados com a língua de cada livro e a língua do usuário (`languageName`), nas 16 línguas de `LANGUAGE_CODES`; o francês do exemplo veio do livro dele. Ajuste de teste, sem novo Task Report.
+- Inputs:
+  - `src/lib/teacherContext.ts`, `src/lib/translate.ts`, `src/lib/language.ts`, `src/lib/languageProfile.ts`
+  - `src/lib/voiceTest.ts`, `src/lib/sentences.ts`, `src/lib/pdfText.ts`, `src/lib/languageDetect.ts`
+  - `src/components/Settings/LanguageSettings.tsx`
+- Decision: o que está preso ao francês (ou só tem regra para francês e inglês) fica por baixo, em quatro pontos. Três entram agora, num único `codeAgent` (Sonnet 5.5), só no front:
+  - **Padrão francês sem livro de outra língua** (`voiceTest.ts`): o "Test voice" fala em francês e a nota de perfil nasce com a linha "French: B1". Passa a ser: o teste de voz na língua do usuário (inglês só como último recurso de frase), e a nota de perfil sem linha de nível quando não há livro de outra língua, com o formato explicado no texto do Settings.
+  - **Abreviações na divisão em frases** (`sentences.ts`): só francês e inglês têm lista; nas outras línguas a frase quebra em "Sr.", "Dr." e parecidas (afeta o Listen, a frase de contexto do Translate e a frase do item de vocabulário). Entram listas para as 16 línguas oferecidas.
+  - **Hífen de fim de linha no PDF** (`pdfText.ts`): só francês e inglês têm lista do hífen que é de verdade. Entram só os casos sem ambiguidade, o hífen suspenso antes de conjunção nas línguas germânicas ("Ein- und Ausgang"). Os pronomes com hífen das línguas românicas ("disse-me") ficam de fora: confundem-se com a quebra de sílaba comum ("par-te") e a regra faria mais estrago do que conserto; fica como limite conhecido na spec.
+  - **Fica como está:** a detecção automática da língua de um PDF cobre 7 línguas (fr, en, pt, es, it, de, nl); nas outras 9 o Coordenador escolhe a língua no "Change". Acrescentar línguas mexe nas margens entre línguas parecidas, que estão testadas e em uso.
+- Next step: `codeAgent`; depois `tsc` e `npm test` pelo Orquestrador.
+
+### CodeAgent — regras por língua — 20261127144054
+- Summary: os três pontos da sessão `Orchestrator — decisão — 20261127142936`, só em funções puras de `src/lib/` e num texto do Settings (nada em `src-tauri/`, nada de `package.json`, nada nos leitores nem no `TranslatePopover`, nada em `languageDetect.ts`; sem commit, sem subir o app, sem chave e sem chamada paga; testes e documentos só com texto inventado).
+  - **1. Sem padrão francês.** `pickStudyLanguage(books, nativeLanguage)` (nova, em `voiceTest.ts`) devolve a língua do livro aberto por último que não é a nativa, ou `null`. `pickTestLanguage` passou a ser "essa língua, senão a nativa (código base), senão `'en'`" e o `FALLBACK_LANGUAGE` agora é `'en'`; `testSentenceFor` usa a frase em inglês para língua sem frase própria. No `LanguageSettings`, o "Test voice" e a voz do seletor seguem `pickTestLanguage`, e `handleOpenProfile` passa `pickStudyLanguage` como `bookLanguage`, que virou `string | null` em `LanguageSettings`, `SettingsModal` e `App.tsx` (`handleOpenLanguageProfile`). `buildLanguageProfileTemplate(native, studyLanguage: string | null)` omite a linha do nível sem língua (com livro continua `French: B1`, por exemplo). O parágrafo de ajuda de Settings › Language › Language profile ganhou no fim: "Write one line per language you study: the language's name in English, a colon and your level (A1 to C2)."
+  - **2. Abreviações nas 16 línguas.** `ABBREVIATIONS` em `sentences.ts` ganhou lista para pt, es, it, de, nl, ca, ro, pl, sv, da, no, fi, cs e tr; as de fr e en e o código que as usa não mudaram. Antes de escrever as listas rodei o `Intl.Segmenter` de verdade (Node 24) sobre mais de uma centena de frases inventadas: ele corta depois da abreviação só quando a palavra seguinte começa com maiúscula (nome, numeral romano, substantivo alemão); antes de minúscula ele não corta, e antes de dígito o `shouldMerge` já junta. Por isso as listas são de tratamentos e títulos antes de nome, abreviações de livro e de exemplo antes de numeral romano ou de nome, e o equivalente do "etc". "z. B." sai do Segmenter como `z. ` + `B. ` + `Äpfel…`, e a lista só precisa de `z` (o `B` já é a inicial maiúscula); "d. h.", "u. a." pedem `d`/`h` e `u`/`a`; "z.B." sem espaço é o token `z.B`; com espaço inseparável (U+00A0) ou fino (U+202F) o corte e o resultado são os mesmos (conferido no teste). "p. ej." (es) é cortado só depois de "ej.", então a lista leva `ej`. `hasOpenFrenchQuote` virou `hasOpenGuillemet` (mesmo corpo).
+  - **3. Hífen suspenso.** `HYPHEN_SUSPENDED` (de: und, oder, bzw; nl: en, of; sv: och, eller; da e no: og, eller) e `joinAtHyphen(head, next, language)` no lugar de `keepsHyphen`: conjunção suspensa dá `Ein- und` (hífen e espaço), parte de composto da lista de fr/en dá `peut-être` (colado, como antes) e o resto é quebra de sílaba (o hífen sai, como antes). Vale para a linha seguinte (`cleanPdfPage`) e para a seleção (`cleanPdfSelectionText`, cuja expressão passou a capturar a letra e o hífen juntos). O "Ein- und" no meio da linha, que na seleção era indistinguível da quebra, também deixa de virar "Einund". Os pronomes com hífen das línguas românicas ficaram de fora, como decidido; entram na spec como limite conhecido.
+- Testes novos e ajustados (73 a mais; mesmos 59 arquivos): `voiceTest.test.ts` (`pickStudyLanguage` com `null`; `pickTestLanguage` com livro, sem livro, com a nativa `pt-BR`, sem nativa e "nunca francês"; frase em inglês para língua desconhecida e vazia), `languageProfile.test.ts` (sem língua de estudo e com língua vazia dão o mesmo texto, sem linha de nível e sem "French"; língua alemã e japonesa no nome da linha; o que o template escreve lê de volta), `sentences.test.ts` (31 casos, dois por língua nas 14 línguas novas, cinco no alemão, cada um com a prova de que sem a lista o texto é cortado; uma checagem de que toda língua de `LANGUAGE_CODES` além de fr e en tem caso; "z. B." com U+00A0 e U+202F; o equivalente do "etc"; o ponto que fecha continua cortando; região no código; a lista de uma língua não vale em outra; 10 casos com a saída da versão anterior para fr e en, incluindo títulos e conjunções das outras línguas; aspas « » em es e pt), `pdfText.test.ts` (11 casos de hífen suspenso por língua e conjunção, nos dois caminhos, página e seleção; região; palavra que só começa com a conjunção; quebra de sílaba nas cinco línguas; pt e es sem a regra; saídas da versão anterior em fr e en na página e na seleção, calculadas com o código antigo antes da mudança).
+- Verificação (saída real): `npx tsc --noEmit` sem erros (exit 0); `npm test` **59 arquivos e 1460 testes passando** (antes: 59 e 1387). Não rodei `npm run test:rust` nem nada que suba o app; o Test voice, a nota de perfil e o texto do Settings não foram vistos na tela.
+- Decisões minhas para o Coordenador conferir:
+  - **Nativa sem frase própria.** Se a língua nativa não é uma das 16 (o app aceita a do sistema, por exemplo `ja`) e não há livro de outra língua, o Test voice usa a voz dessa língua com a frase em inglês. Segui a regra pedida; a alternativa seria cair para `'en'` também na voz.
+  - **Listas das 14 línguas novas** (são palpites de revisão, uma por língua; a spec e os testes só fixam os casos acima): letras soltas em minúscula só no alemão (`z d h u a i v n`, para "z. B.", "d. h.", "u. a.", "i. A.", "v. Chr."); formas em minúscula dos tratamentos onde a ortografia as pede no meio da frase (it, nl, ro, pl, sv, da, no, fi, cs); o equivalente do "etc" entrou em todas (de `usw`, nl `enz`, sv e da e no `osv`, fi `jne`, cs `atd`, tr `vb` e `vs`, pl `itd`, it `ecc`, as demais `etc`), então, como em fr e en, "…, usw. Dann ging er." fica numa frase só.
+  - **Fora das listas, de propósito:** "n.º" (o token acaba em "º", nunca em ".", e o Segmenter não corta ali; a entrada seria letra morta), "dl" no holandês (também é decilitro: "2 dl. Daarna" juntaria duas frases), "Chr.", "ca.", "Mio." e as que costumam fechar a frase.
+  - **A conjunção conta como palavra inteira, mas a quebra de sílaba que cai exatamente numa delas se confunde** (uma linha que termina em hífen e a seguinte que começa com "en", "of", "og" ou "und" sozinhos): é o limite aceito na decisão; a palavra maior que só começa com a conjunção ("ver-" + "enigd") continua sem hífen e tem teste.
+  - **Aspas » … « e » … »** (alemão e línguas nórdicas) continuam sem tratamento no `hasOpenGuillemet`, que só conta « e » na ordem francesa; não mudei o que a função faz, e isso entrou na spec.
+- Files changed:
+  - src/lib/voiceTest.ts
+  - src/lib/voiceTest.test.ts
+  - src/lib/languageProfile.ts
+  - src/lib/languageProfile.test.ts
+  - src/lib/sentences.ts
+  - src/lib/sentences.test.ts
+  - src/lib/pdfText.ts
+  - src/lib/pdfText.test.ts
+  - src/components/Settings/LanguageSettings.tsx
+  - src/components/Settings/SettingsModal.tsx
+  - src/App.tsx
+  - DOCS/specs/languagestudy.md
+  - DOCS/reports/26-11-2026/executionreport_20261126233242.md
+- Files created:
+  - nenhum
+- Files removed:
+  - nenhum
+- Left behind:
+  - **Não verificável sem o app real** (entra no passo 10 do roteiro): o texto novo do Settings, o Test voice sem livro de outra língua e a nota de perfil sem a linha do nível. As abreviações foram conferidas só com o `Intl.Segmenter` do Node; o WebView2 deveria usar as mesmas regras do Unicode, mas essa equivalência não foi medida.
+  - **Pronomes com hífen das línguas românicas** ("disse-me", "dă-mi") no PDF: sem lista, o hífen se perde na quebra de linha. Decisão tomada, anotada na spec.
+  - **Detecção automática da língua de um PDF** continua com 7 línguas (fr, en, pt, es, it, de, nl); nas outras 9 o Coordenador escolhe a língua no "Change". Fora do escopo, como decidido.
+  - **`LanguageSettings` não tem teste de componente** (nunca teve): as duas chamadas novas (`pickStudyLanguage` e o texto da ajuda) ficam cobertas por `tsc` e pelos testes das funções puras.
+
+### Orchestrator — encerramento — 20261127144508
+- Summary: ajuste "regras por língua" concluído, sem commit. O que o Coordenador vê (bloco do professor, janela de tradução, nota de perfil, rótulos) já era montado com a língua de cada livro; o ajuste tirou o padrão francês e levou as regras de texto às outras línguas. Conferido pelo Orquestrador: `npx tsc --noEmit` sem erros, `npm test` com 59 arquivos e 1460 testes passando (eram 1387), nenhuma mudança em `src-tauri/` nem em `package.json`, e o diff das quatro libs lido (as listas de `fr` e `en` e o resultado delas não mudaram).
+- Inputs:
+  - sessão `CodeAgent — regras por língua — 20261127144054`
+- Decision: aceitas as decisões do `codeAgent`: o equivalente de "etc" entra em todas as línguas (como já era em `fr` e `en`, uma frase que termina nele fica junto da seguinte); letras soltas em minúscula só no alemão ("z. B.", "d. h.", "u. a.", "v. Chr.") e no polonês ("t."); com língua nativa fora das 16 e sem livro de outra língua, o "Test voice" usa a voz da língua nativa com a frase em inglês. Limites que ficam, registrados na spec: uma quebra de sílaba que deixa "en", "of", "og" ou "und" sozinhos no começo da linha sai como hífen suspenso (raro; no holandês atinge plurais como os de trema); os pronomes com hífen das línguas românicas no PDF; as aspas » … « do alemão; a detecção automática de PDF em 7 línguas.
+- Next step: aguardando o teste do Coordenador (seção 10 do roteiro, 5 passos; para ele, com um livro em francês aberto por último, nada muda no "Test voice" nem na nota de perfil). As abreviações foram conferidas com o `Intl.Segmenter` do Node, não no WebView2. Seguem abertas as escolhas da sessão `20261127141825`. Sem commit até ele decidir.
+
 ## Roteiro de teste do Coordenador
 
 Roteiro de T3, na estrutura do Apêndice E.2 do plano, ajustado ao que foi entregue. Cada passo traz o resultado esperado numa linha e um espaço "Resultado:" para você preencher. "Ponto N" é o número do ponto da seção 9 do UX report (`DOCS/reports/26-11-2026/uxreport_20261126173030.md`); os 16 pontos aparecem pelo menos uma vez, cada um no passo que o testa. Tudo no app de desenvolvimento (`npm run tauri:dev`), nunca no de produção.
@@ -838,4 +994,98 @@ Cada passo confere uma mudança de comportamento da passada final do `codeAgent`
   - Resultado:
 - **8.14** Modelo sem formato conhecido (se puder escolher um `:free` ou um MiniMax; o HeyGen só entrega PCM). "Test voice" e um Listen com esse modelo.
   - Esperado: soa na velocidade normal, nunca lento e grave (o pedido sai em `mp3`, ou em PCM a 44,1 kHz no HeyGen); se falhar, anote a mensagem exata e o `kind`.
+  - Resultado:
+
+### 9. Rodada 2: janela de tradução
+
+Passos da rodada de ajustes pedida no teste (os três pedidos sobre a janela do Translate: mover, redimensionar e lembrar; espaçamentos; lentidão). Mesmas regras de antes: app de desenvolvimento (`npm run tauri:dev`), anote a **mensagem exata** de qualquer erro. O app em teste recebe as mudanças por HMR; se algo estiver estranho, feche e reabra o app antes de concluir. Os passos que trazem **"Anote"** pedem um número ou uma opinião sua. Material: o PDF e o EPUB em francês, com um parágrafo de uns 600 a 1.000 caracteres e uma frase curta em cada um.
+
+- **9.1** Parágrafo longo no PDF (espaçamento e botões). Selecione um parágrafo inteiro (uns 700 caracteres) e aperte `T`; espere a tradução terminar.
+  - Esperado: o texto da tradução termina numa linha de borda, com 8 px de respiro entre ela e a fileira de botões; os **quatro** botões (Listen, Add to vocabulary, Add to note, Ask AI) ficam numa linha só (a janela da passagem tem 440 px); "French → Portuguese · Change" fica dentro da mesma barra, sem borda própria; a barra de rolagem é fina e discreta (não há faixa clara de uns 17 px) e a margem da direita do texto parece igual à da esquerda; a tradução e as notas de gramática têm 12 px entre si. **Anote** se algum botão quebrou para a segunda linha (a folga é de uns 19 px e depende da fonte) e se a margem da direita ficou torta.
+  - Resultado:
+- **9.2** Palavra (espaçamento). Selecione uma palavra e aperte `T`.
+  - Esperado: os botões ficam em 2 × 2 dentro da barra com borda em cima; a altura dos botões é a de sempre (28 px); a linha de línguas fica dentro da barra.
+  - Resultado:
+- **9.3** A tradução aparece enquanto chega (a lentidão). Selecione um parágrafo longo e aperte `T`. **Anote** o tempo até aparecer o primeiro texto e o tempo até a tradução terminar, e compare com a sensação de antes (a janela esperava a resposta inteira).
+  - Esperado: logo depois de `T` a janela abre com a barra de ações já no lugar e um esqueleto com uma barra por linha estimada; o cabeçalho diz "Translating…". O primeiro pedaço de texto troca o esqueleto inteiro, e o texto cresce. Enquanto ele chega, a janela **não muda de lugar nem de altura** e o corpo **não rola sozinho** (se o texto passar da janela, aparece a barra de rolagem fina e você rola à mão). "Listen", "Add to note" e "Ask AI" funcionam desde o começo; "Add to vocabulary" está apagado, e o passar do mouse mostra "Available when the translation is complete". Quando o texto fecha e as notas ainda não vieram, uma barra de esqueleto ocupa o lugar delas. No fim, o cabeçalho volta a "Translation", as notas aparecem, "Add to vocabulary" acende, e a janela faz **um único ajuste** de altura (encolhe se sobrou espaço). Se o primeiro texto demorar muito, veja qual é o "Translation model" em Settings › Language: um modelo que raciocina por padrão soma segundos antes do primeiro texto (o app não desliga o raciocínio; ver a sessão do `codeAgent` desta rodada).
+  - Resultado:
+- **9.4** O ajuste final com a janela acima da seleção. Selecione um parágrafo bem embaixo na página, de modo que a janela abra **acima** dele, e traduza.
+  - Esperado: durante o texto a janela fica parada; no fim, se ela encolhe, a **base** fica onde estava (a janela continua colada na seleção, sem se afastar dela) e o topo é que se move. Com a janela abaixo da seleção (9.3), é o **topo** que fica parado.
+  - Resultado:
+- **9.5** Texto curto. Selecione uma frase curta (uns 80 caracteres) e traduza.
+  - Esperado: o esqueleto tem poucas barras, a janela é menor que a do parágrafo, e no fim ela se ajusta ao conteúdo, sem pular de lugar.
+  - Resultado:
+- **9.6** Erro no meio da tradução. Num parágrafo longo, assim que o texto começar a aparecer, corte a rede (desligue o Wi-Fi). Se não conseguir cortar a tempo, pule.
+  - Esperado: o texto que já chegou **continua na tela**, com o aviso "The translation stopped before the end."; a barra mostra "Try again" como primeiro botão, depois Listen, Add to note e Ask AI (sem Add to vocabulary). Com a rede de volta, "Try again" refaz do zero: o texto antigo e o aviso saem, o corpo volta ao topo e o texto chega de novo.
+  - Resultado:
+- **9.7** Erro sem texto e sem chave. Desligue a rede **antes** de apertar `T`; depois (se quiser) tire a chave do OpenRouter.
+  - Esperado: sem texto parcial, o aviso é "Couldn’t translate." com "Try again" na barra; sem chave, "Add your OpenRouter key in Settings." com "Open Settings" como único botão e sem a linha de línguas.
+  - Resultado:
+- **9.8** A palavra não chega aos poucos. Traduza uma palavra e uma expressão de três palavras.
+  - Esperado: o esqueleto de duas barras e a barra de ações desde o primeiro quadro (com "Add to vocabulary" apagado); o sentido chega de uma vez e a barra **não pula** nem muda de lugar quando ele chega.
+  - Resultado:
+- **9.9** Consulta repetida. Traduza o mesmo parágrafo duas vezes seguidas (feche com `Esc` e abra de novo).
+  - Esperado: na segunda vez o texto, as notas e o botão "Add to vocabulary" já aparecem de uma vez, sem esqueleto demorado e sem chamada nova.
+  - Resultado:
+- **9.10** Mover a janela. Abra uma tradução e arraste o **cabeçalho** (a palavra "Translation" ou o termo, a faixa de cima) para outro ponto da tela.
+  - Esperado: o cursor vira mão aberta e depois mão fechada; a janela segue o ponteiro; ela **não passa** da borda da janela do app (fica a 8 px); a seleção do livro continua marcada e a janela **não fecha** ao soltar. Clicar no X continua fechando a janela; apertar e arrastar a partir do X não move nada.
+  - Resultado:
+- **9.11** Redimensionar. Arraste as quatro bordas e os quatro cantos (os cursores mudam: setas verticais, horizontais e diagonais).
+  - Esperado: a borda ou o canto acompanha o ponteiro e o lado oposto fica parado; o mínimo é 300 × 220 px; a largura vai até 640 px e a altura vai **além de 460 px**, até 16 px a menos que a janela do app; a seleção continua marcada e a janela não fecha. Com a janela mais alta que o texto, a barra de ações fica **no fundo** e o espaço sobra entre o texto e ela. Com a janela mais baixa que o texto, o corpo rola por dentro e a barra continua visível.
+  - Resultado:
+- **9.12** Lembrar posição e tamanho. Depois de mover e redimensionar a janela da passagem, feche com `Esc`, traduza **outro** parágrafo, em outra parte da página e depois em outra página. Em seguida feche o app e abra de novo.
+  - Esperado: a janela abre **no mesmo lugar e do mesmo tamanho**, sem ir para perto da seleção, e não se mexe com a rolagem do PDF; o tamanho é fixo (não muda enquanto o texto chega, nem no fim; o corpo rola por dentro) e não há teto de 460 px; reabrindo o app, continua assim. Mover ou redimensionar **não** grava nada durante o gesto, só ao soltar (soltar fora da janela do app conta).
+  - Resultado:
+- **9.13** Uma geometria por variante. Com a passagem gravada, abra a tradução de uma **palavra**, mova e redimensione essa janela; depois abra uma passagem, uma palavra e um texto com mais de 1.500 caracteres (o aviso de texto longo).
+  - Esperado: a palavra abre na geometria da palavra e a passagem na da passagem, sem uma mexer na outra; o aviso de texto longo abre na da **passagem**, com Listen e Ask AI. As chaves são `monet:translate-window:passage` e `monet:translate-window:word` (dá para conferir no DevTools, se quiser).
+  - Resultado:
+- **9.14** Voltar ao padrão. Com a janela da passagem gravada, dê **duplo clique no cabeçalho**; depois faça o mesmo na janela da palavra, e dê um duplo clique no X.
+  - Esperado: a janela volta na hora para o lado da seleção, com o tamanho de sempre (440 ou 340 px) e a altura pelo conteúdo; só a variante em que você clicou volta (a outra continua gravada); fechada e aberta de novo, abre ancorada na seleção. O duplo clique no X só fecha, não restaura nada.
+  - Resultado:
+- **9.15** Posição que não cabe. Arraste a janela para o canto de baixo à direita e redimensione-a grande; feche o app, **diminua** a janela do app (ou ponha-a noutro monitor menor) e abra de novo; depois aumente a janela do app com a tradução aberta. Faça também o contrário: com a tradução aberta, diminua a janela do app.
+  - Esperado: ao abrir, a janela aparece **inteira** dentro da janela do app, a 8 px das bordas, com o tamanho limitado ao que cabe (nunca fora da tela); diminuir a janela do app com a tradução aberta a empurra para dentro na hora; ao aumentar de novo, ela **volta ao lugar que você escolheu** (o ajuste não regrava a posição).
+  - Resultado:
+- **9.16** O EPUB: arrastar passando por cima do livro. No EPUB em francês, selecione uma frase, aperte `T`, e arraste o cabeçalho e depois uma alça (um canto) **passando sobre o texto do livro** (o iframe), soltando tanto sobre o livro como fora dele.
+  - Esperado: a janela segue o ponteiro sem travar ao passar sobre o texto do livro; a seleção do livro **não** se desfaz e a janela não fecha, nem ao soltar sobre o livro; clicar fora (num ponto vazio do livro) fecha a janela como antes; virar a página também fecha.
+  - Resultado:
+- **9.17** O PDF: arrastar sobre a camada de texto. Repita o passo anterior no PDF, passando sobre o texto da página e soltando sobre ele.
+  - Esperado: o mesmo: a janela segue o ponteiro, a seleção continua marcada, soltar sobre o texto não a limpa nem abre o "Remove highlight" de um grifo que estiver embaixo.
+  - Resultado:
+- **9.18** O "Translate" de um item da aba Vocabulary (`savedItem`). Num item sem sentido, clique "Translate"; mova e redimensione a janela; depois clique "Save translation" quando ela terminar.
+  - Esperado: "Save translation" fica apagado até o fim e depois grava o sentido; a janela abre na geometria da variante (palavra ou passagem, pelo tipo do item); arrastar o cabeçalho ou uma alça **não** a fecha (o clique fora é o que fecha, e as alças contam como dentro); `Esc` fecha.
+  - Resultado:
+- **9.19** O "Translate here" de uma palavra marcada (`standalone`). Clique numa palavra marcada no texto, "Translate here"; mova a janela e use "Add to vocabulary" no fim.
+  - Esperado: o mesmo do passo anterior: arrastar não fecha, o clique fora e `Esc` fecham, e o "Add to vocabulary" cria um item novo (só habilita no fim).
+  - Resultado:
+- **9.20** O popover "onde você guardou" (`SavedWordPopover`). Clique numa palavra marcada no texto (sem abrir o Translate).
+  - Esperado: abre **ancorado** na palavra, como sempre, e **não** se move nem se redimensiona (o cursor no cabeçalho é o normal, sem alças); recebe os espaçamentos novos: barra de ações com borda em cima e 8 px de respiro, com os botões quebrando em duas linhas dentro dela; a lista de frases, se rolar, usa a barra de rolagem fina; `Esc` e o clique fora fecham; o "Translate here" dele abre a janela de tradução na geometria gravada da palavra.
+  - Resultado:
+- **9.21** C5, a palavra lembra a posição. Use a tradução de palavra algumas vezes seguidas, em pontos diferentes da página, depois de a ter movido uma vez.
+  - Esperado: ela abre sempre no lugar gravado, mesmo quando a palavra selecionada está longe. **Decida e anote**: isso atrapalha (o olho tem que viajar até o canto)? Se sim, a alternativa é a palavra lembrar **só o tamanho** e continuar abrindo junto da palavra; me diga qual você prefere.
+  - Resultado:
+- **9.22** Troca de língua com a janela aberta. Com a janela de uma passagem aberta, clique em "Change", troque a língua de destino ("Translate into") e depois a do livro.
+  - Esperado: cada troca refaz a tradução; o corpo volta ao topo, o esqueleto e o texto chegam de novo, e a janela se reajusta uma vez ao fim (sem geometria gravada) ou não muda (com geometria gravada); os dois seletores continuam funcionando e o clique neles não fecha a janela.
+  - Resultado:
+- **9.23** Clique sem arrastar não prende a janela (limiar de 4 px). Com **nenhuma** geometria gravada (apague as chaves com o duplo clique no cabeçalho, ou no DevTools), abra uma tradução e **clique** no cabeçalho, no meio dele e com a mão um pouco trêmula (1 ou 2 px de movimento), e faça o mesmo numa borda e num canto (as alças são invisíveis: o cursor muda de forma sobre elas). Depois feche a janela com `Esc` e traduza **outro** parágrafo, em outro ponto da página.
+  - Esperado: nada se move, a janela não é redimensionada e **nada é gravado** (no DevTools, `monet:translate-window:passage` e `:word` continuam sem valor); a nova janela abre **junto da seleção**, com a altura pelo conteúdo, e não no lugar do clique. Um arrasto de uns 5 px ou mais **começa**: a janela anda por inteiro com o ponteiro (sem um "pulo" de 4 px no começo), segue valendo se o ponteiro voltar para perto de onde começou, e só então a geometria é gravada ao soltar. Um duplo clique no cabeçalho, mesmo com a mão trêmula, volta ao padrão e não deixa chave gravada.
+  - Resultado:
+
+### 10. Outras línguas
+
+Passos do ajuste que tira o francês de dentro do app (o "Test voice", a nota de perfil, as abreviações da divisão em frases e o hífen do fim da linha no PDF passaram a valer para as 16 línguas oferecidas). Com o que você tem, o app continua falando francês, porque o livro aberto por último é francês: o que se confere é que **nada mudou** nele e que, com um livro em outra língua, a língua do livro aparece onde antes só havia o francês. Mesmas regras de antes: app de desenvolvimento, anote a **mensagem exata** de qualquer erro. Nenhum passo exige chamada paga.
+
+- **10.1** O "Test voice" e o seletor de voz seguem o livro aberto por último. Em Settings › Language, olhe o seletor de voz de "Reading aloud" sem apertar "Test voice".
+  - Esperado: as vozes francesas vêm primeiro (a língua é a do livro francês que você abriu por último). Se apertar "Test voice", é a frase francesa "Élise monte au grenier à 21 h 30." (custa o preço de uma frase; é opcional).
+  - Resultado:
+- **10.2** A nota de perfil sem supor o francês. Só se você **ainda não tem** a nota com a tag `language profile`: em Settings › Language › Language profile, "Open the note". Se já tem, ela só abre; pule este passo.
+  - Esperado: a nota nasce com quatro linhas (a língua nativa, "French: B1", "Explain" e "Don't"), porque o livro aberto por último é francês. Sem nenhum livro de outra língua ela nasceria **sem** a linha do nível; isso só se vê numa biblioteca sem livros em outra língua e está coberto por teste.
+  - Resultado:
+- **10.3** O texto de ajuda do perfil. Em Settings › Language › Language profile, leia o parágrafo acima do botão.
+  - Esperado: termina com "Write one line per language you study: the language's name in English, a colon and your level (A1 to C2).", sem citar língua nenhuma, depois do resto de antes ("A note tagged language profile tells the AI…").
+  - Resultado:
+- **10.4** Um livro em outra língua (se tiver um que não seja francês nem a sua língua; senão, pule). Abra-o, selecione uma frase, aperte `T` e ligue o "Language teacher" na linha do Send do chat do livro.
+  - Esperado: o rodapé do Translate mostra o nome da língua desse livro, não "French" ("English → Portuguese", por exemplo); o chip do chat diz "AI sees: p. N · <língua> teacher"; ao voltar a Settings › Language, o seletor de voz traz as vozes **dessa** língua primeiro (ele é o livro aberto por último). Se o livro tiver um tratamento com ponto antes de um nome ("Sr.", "Dr.", "Hr."), "Listen" e a frase do Translate não cortam depois dele.
+  - Resultado:
+- **10.5** O francês continua igual. No livro em francês, ouça (ou traduza) uma frase com "M.", "Mme" ou "p." antes de um nome ou número, e, num PDF, selecione um trecho que termine uma linha em "peut-" + "être".
+  - Esperado: a frase não é cortada depois da abreviação, e a seleção do PDF mantém "peut-être", como antes deste ajuste.
   - Resultado:

@@ -58,13 +58,30 @@ const HYPHEN_KEEP: Record<string, Set<string>> = {
   en: new Set('based like free wide term time year old'.split(' ')),
 }
 
+// Hífen suspenso ("Ein- und Ausgang"): o hífen é de verdade e o que vem depois é a
+// conjunção, uma palavra à parte; fica "Ein- und", com o espaço.
+const HYPHEN_SUSPENDED: Record<string, Set<string>> = {
+  de: new Set('und oder bzw'.split(' ')),
+  nl: new Set('en of'.split(' ')),
+  sv: new Set('och eller'.split(' ')),
+  da: new Set('og eller'.split(' ')),
+  no: new Set('og eller'.split(' ')),
+}
+
 // Primeira palavra do trecho que segue o hífen ("t-il" conta como uma só).
 function leadingToken(text: string): string {
   return /^\p{L}+(?:-\p{L}+)?/u.exec(text)?.[0].toLowerCase() ?? ''
 }
 
-function keepsHyphen(next: string, language: string): boolean {
-  return HYPHEN_KEEP[baseLanguage(language)]?.has(leadingToken(next)) ?? false
+// Junta `head` (termina em letra e hífen) com `next`, o que vem na linha seguinte (ou
+// depois do espaço, na seleção): hífen suspenso fica com espaço, hífen de composto
+// real fica colado, e o resto é quebra de sílaba, em que o hífen sai.
+function joinAtHyphen(head: string, next: string, language: string): string {
+  const lang = baseLanguage(language)
+  const token = leadingToken(next)
+  if (HYPHEN_SUSPENDED[lang]?.has(token)) return `${head} ${next}`
+  if (HYPHEN_KEEP[lang]?.has(token)) return head + next
+  return head.slice(0, -1) + next
 }
 
 const PAGE_NUMBER = /^\s*[-–—]?\s*(\d{1,4}|[ivxlcdm]{1,7})\s*[-–—]?\s*$/i
@@ -119,7 +136,7 @@ export function cleanPdfPage(
     }
     const prev = kept[i - 1].text
     if (/\p{L}-$/u.test(text) && /^\p{Ll}/u.test(line.text)) {
-      text = (keepsHyphen(line.text, opts.language) ? text : text.slice(0, -1)) + line.text
+      text = joinAtHyphen(text, line.text, opts.language)
     } else if (
       /[.!?…»"”]$/.test(prev) &&
       /^[\p{Lu}—–«]/u.test(line.text) &&
@@ -134,13 +151,14 @@ export function cleanPdfPage(
 }
 
 // Seleção do PDF: vem com os spans juntados por espaço e quebras de linha.
-// Colapsa os espaços e desfaz o hífen de fim de linha ("entrebâil- lée").
+// Colapsa os espaços e desfaz o hífen de fim de linha ("entrebâil- lée"); o hífen
+// suspenso ("Ein- und") e o de composto real ficam.
 export function cleanPdfSelectionText(text: string, language: string): string {
   return text
     .replace(/\s+/g, ' ')
     .trim()
-    .replace(/(\p{L})- (\p{Ll}\p{L}*(?:-\p{L}+)?)/gu, (_m, letter: string, rest: string) =>
-      keepsHyphen(rest, language) ? `${letter}-${rest}` : `${letter}${rest}`,
+    .replace(/(\p{L}-) (\p{Ll}\p{L}*(?:-\p{L}+)?)/gu, (_m, head: string, rest: string) =>
+      joinAtHyphen(head, rest, language),
     )
 }
 

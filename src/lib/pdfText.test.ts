@@ -186,6 +186,97 @@ describe('cleanPdfSelectionText', () => {
   })
 })
 
+// Hífen suspenso das línguas germânicas ("Ein- und Ausgang"): textos inventados. O hífen
+// fica e o espaço depois dele também; a quebra de sílaba continua perdendo o hífen.
+describe('hífen suspenso', () => {
+  // As linhas do texto, de cima para baixo, numa página sem cabeçalho nem rodapé.
+  function joined(texts: string[], language: string): string {
+    const lines = texts.map((text, i) => line(text, 500 - 20 * i))
+    return cleanPdfPage(lines, PAGE_HEIGHT, { skipHeaders: false, language }).text
+  }
+
+  // [língua, fim da linha, começo da linha seguinte, resultado]
+  const SUSPENDED: Array<[string, string, string, string]> = [
+    ['de', 'Der Ein-', 'und Ausgang ist offen.', 'Der Ein- und Ausgang ist offen.'],
+    ['de', 'Der Ein-', 'oder Ausgang ist offen.', 'Der Ein- oder Ausgang ist offen.'],
+    ['de', 'Der Ein-', 'bzw. Ausgang ist offen.', 'Der Ein- bzw. Ausgang ist offen.'],
+    ['nl', 'Vul uw voor-', 'en achternaam in.', 'Vul uw voor- en achternaam in.'],
+    ['nl', 'Kies hoofd-', 'of bijgerecht.', 'Kies hoofd- of bijgerecht.'],
+    ['sv', 'Skriv för-', 'och efternamn.', 'Skriv för- och efternamn.'],
+    ['sv', 'Skriv för-', 'eller efternamn.', 'Skriv för- eller efternamn.'],
+    ['da', 'Skriv for-', 'og efternavn.', 'Skriv for- og efternavn.'],
+    ['da', 'Skriv for-', 'eller efternavn.', 'Skriv for- eller efternavn.'],
+    ['no', 'Skriv for-', 'og etternavn.', 'Skriv for- og etternavn.'],
+    ['no', 'Skriv for-', 'eller etternavn.', 'Skriv for- eller etternavn.'],
+  ]
+
+  it.each(SUSPENDED)('%s: "%s" + "%s" fica com hífen e espaço', (language, end, start, expected) => {
+    expect(joined([end, start], language)).toBe(expected)
+    expect(cleanPdfSelectionText(`${end} ${start}`, language)).toBe(expected)
+  })
+
+  it('região no código não muda a regra (de-AT, nl-BE)', () => {
+    expect(joined(['Der Ein-', 'und Ausgang ist offen.'], 'de-AT')).toBe('Der Ein- und Ausgang ist offen.')
+    expect(joined(['Vul uw voor-', 'en achternaam in.'], 'nl-BE')).toBe('Vul uw voor- en achternaam in.')
+  })
+
+  it('a conjunção no começo da linha de uma palavra maior não conta: é quebra de sílaba', () => {
+    expect(joined(['Het team is ver-', 'enigd en sterk.'], 'nl')).toBe('Het team is verenigd en sterk.')
+  })
+
+  it('a quebra de sílaba perde o hífen nessas línguas, como antes', () => {
+    expect(joined(['Die Ausgangs-', 'tür ist offen.'], 'de')).toBe('Die Ausgangstür ist offen.')
+    expect(joined(['De uit-', 'gang is open.'], 'nl')).toBe('De uitgang is open.')
+    expect(joined(['Det finns en ut-', 'gång här.'], 'sv')).toBe('Det finns en utgång här.')
+    expect(joined(['Der er en ud-', 'gang her.'], 'da')).toBe('Der er en udgang her.')
+    expect(joined(['Det er en ut-', 'gang her.'], 'no')).toBe('Det er en utgang her.')
+  })
+
+  it('na seleção, só o hífen suspenso fica e a quebra de sílaba se desfaz', () => {
+    expect(cleanPdfSelectionText('Die Ausgangs- tür und der Ein- und Ausgang.', 'de')).toBe(
+      'Die Ausgangstür und der Ein- und Ausgang.',
+    )
+    expect(cleanPdfSelectionText('Der  Ein-\nund Ausgang', 'de')).toBe('Der Ein- und Ausgang')
+  })
+
+  it('numa língua sem a regra (pt, es) o texto sai como saía: a regra não vale para todas', () => {
+    // O hífen e o espaço se perdem, como antes.
+    expect(joined(['Der Ein-', 'und Ausgang ist offen.'], 'pt')).toBe('Der Einund Ausgang ist offen.')
+    expect(cleanPdfSelectionText('Ein- und Ausgang', 'es')).toBe('Einund Ausgang')
+  })
+})
+
+describe('fr e en dão o mesmo resultado de antes', () => {
+  function joined(texts: string[], language: string): string {
+    const lines = texts.map((text, i) => line(text, 500 - 20 * i))
+    return cleanPdfPage(lines, PAGE_HEIGHT, { skipHeaders: false, language }).text
+  }
+
+  // Resultados da versão anterior (só fr e en tinham lista, só de hífen colado).
+  it('na página', () => {
+    expect(joined(['Il y avait peut-', 'être personne.'], 'fr')).toBe('Il y avait peut-être personne.')
+    expect(joined(['Que fera-', 't-il demain ?'], 'fr')).toBe('Que fera-t-il demain ?')
+    expect(joined(['La porte était entrebâil-', 'lée.'], 'fr')).toBe('La porte était entrebâillée.')
+    expect(joined(['a state-', 'based approach'], 'en')).toBe('a state-based approach')
+    expect(joined(['a state-', 'based approach'], 'fr')).toBe('a statebased approach')
+    // A conjunção alemã, holandesa e escandinava não vale em fr nem em en.
+    expect(joined(['Der Ein-', 'und Ausgang ist offen.'], 'fr')).toBe('Der Einund Ausgang ist offen.')
+    expect(joined(['Der Ein-', 'und Ausgang ist offen.'], 'en')).toBe('Der Einund Ausgang ist offen.')
+    expect(joined(['Vul uw voor-', 'en achternaam in.'], 'fr')).toBe('Vul uw voor-en achternaam in.')
+    expect(joined(['Vul uw voor-', 'en achternaam in.'], 'en')).toBe('Vul uw vooren achternaam in.')
+  })
+
+  it('na seleção', () => {
+    expect(cleanPdfSelectionText('Il y avait peut- être quelqu’un.', 'fr')).toBe('Il y avait peut-être quelqu’un.')
+    expect(cleanPdfSelectionText('Il y avait peut- être quelqu’un.', 'en')).toBe('Il y avait peutêtre quelqu’un.')
+    expect(cleanPdfSelectionText('a time- based plan', 'en')).toBe('a time-based plan')
+    expect(cleanPdfSelectionText('Ein- und Ausgang', 'fr')).toBe('Einund Ausgang')
+    expect(cleanPdfSelectionText('Ein- und Ausgang', 'en')).toBe('Einund Ausgang')
+    expect(cleanPdfSelectionText('voor- en achternaam', 'fr')).toBe('voor-en achternaam')
+    expect(cleanPdfSelectionText('voor- en achternaam', 'en')).toBe('vooren achternaam')
+  })
+})
+
 describe('skippedNotice', () => {
   it('names what was left out, joined with "and" and without repeats', () => {
     expect(skippedNotice(['header', 'page number'])).toBe('Not read: page header and page number')

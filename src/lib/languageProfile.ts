@@ -78,12 +78,13 @@ export function readProfileLine(content: string, labels: string[]): string | nul
 }
 
 // O conteúdo inicial da nota, com os nomes das línguas em inglês. Uma linha por
-// parágrafo (o editor junta linhas seguidas num parágrafo só).
-export function buildLanguageProfileTemplate(native: string, bookLanguage: string): string {
+// parágrafo (o editor junta linhas seguidas num parágrafo só). Sem língua de
+// estudo (`studyLanguage` null: nenhum livro de outra língua), sem a linha do nível.
+export function buildLanguageProfileTemplate(native: string, studyLanguage: string | null): string {
   const nativeName = languageName(native)
   return [
     `Native language: ${nativeName}`,
-    `${languageName(bookLanguage)}: B1`,
+    ...(studyLanguage ? [`${languageName(studyLanguage)}: B1`] : []),
     `Explain: grammar in ${nativeName}, short, with one example from the page.`,
     "Don't: translate whole pages for me. Don't rewrite what I write; point at what to fix.",
   ].join('\n\n')

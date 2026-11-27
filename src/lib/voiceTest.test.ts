@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { LANGUAGE_CODES } from './language'
 import type { Book } from '../types'
-import { pickTestLanguage, testSentenceFor } from './voiceTest'
+import { pickStudyLanguage, pickTestLanguage, testSentenceFor } from './voiceTest'
 
 function book(over: Partial<Book> & { id: string }): Book {
   return {
@@ -19,19 +19,19 @@ function book(over: Partial<Book> & { id: string }): Book {
   } as Book
 }
 
-describe('pickTestLanguage', () => {
+describe('pickStudyLanguage', () => {
   it('takes the language of the book opened last that is not in the native language', () => {
     const books = [
       book({ id: 'a', language: 'fr', lastOpenedAt: 100 }),
       book({ id: 'b', language: 'en', lastOpenedAt: 300 }),
       book({ id: 'c', language: 'pt', lastOpenedAt: 900 }),
     ]
-    expect(pickTestLanguage(books, 'pt')).toBe('en')
+    expect(pickStudyLanguage(books, 'pt')).toBe('en')
   })
 
   it('compares base languages (pt-BR is pt)', () => {
     const books = [book({ id: 'a', language: 'pt', lastOpenedAt: 900 }), book({ id: 'b', language: 'es', lastOpenedAt: 5 })]
-    expect(pickTestLanguage(books, 'pt-BR')).toBe('es')
+    expect(pickStudyLanguage(books, 'pt-BR')).toBe('es')
   })
 
   it('ignores books never opened and books without a language', () => {
@@ -40,12 +40,40 @@ describe('pickTestLanguage', () => {
       book({ id: 'b', language: '', lastOpenedAt: 50 }),
       book({ id: 'c', language: null, lastOpenedAt: 60 }),
     ]
-    expect(pickTestLanguage(books, 'pt')).toBe('fr')
+    expect(pickStudyLanguage(books, 'pt')).toBeNull()
   })
 
-  it('without a book in another language, French', () => {
-    expect(pickTestLanguage([], 'pt')).toBe('fr')
-    expect(pickTestLanguage([book({ id: 'a', language: 'pt', lastOpenedAt: 1 })], 'pt')).toBe('fr')
+  it('without a book in another language, null (no language is assumed)', () => {
+    expect(pickStudyLanguage([], 'pt')).toBeNull()
+    expect(pickStudyLanguage([book({ id: 'a', language: 'pt', lastOpenedAt: 1 })], 'pt')).toBeNull()
+  })
+})
+
+describe('pickTestLanguage', () => {
+  it('takes the study language when there is a book in another language', () => {
+    const books = [
+      book({ id: 'a', language: 'de', lastOpenedAt: 100 }),
+      book({ id: 'b', language: 'fr', lastOpenedAt: 300 }),
+    ]
+    expect(pickTestLanguage(books, 'pt')).toBe('fr')
+    expect(pickTestLanguage(books, 'en')).toBe('fr')
+  })
+
+  it('without a book in another language, the native language (base code)', () => {
+    expect(pickTestLanguage([], 'pt')).toBe('pt')
+    expect(pickTestLanguage([], 'pt-BR')).toBe('pt')
+    expect(pickTestLanguage([book({ id: 'a', language: 'de', lastOpenedAt: null })], 'es')).toBe('es')
+    expect(pickTestLanguage([book({ id: 'a', language: 'pt', lastOpenedAt: 1 })], 'pt')).toBe('pt')
+  })
+
+  it('without a native language either, English', () => {
+    expect(pickTestLanguage([], '')).toBe('en')
+    expect(pickTestLanguage([], 'und')).toBe('en')
+  })
+
+  it('never falls back to French', () => {
+    expect(pickTestLanguage([], 'pt')).not.toBe('fr')
+    expect(pickTestLanguage([], '')).not.toBe('fr')
   })
 })
 
@@ -58,17 +86,18 @@ describe('testSentenceFor', () => {
   })
 
   it('every language the app offers has a sentence of its own', () => {
-    const french = testSentenceFor('fr')
+    const english = testSentenceFor('en')
     for (const code of LANGUAGE_CODES) {
       const sentence = testSentenceFor(code)
       expect(sentence.length).toBeGreaterThan(10)
-      if (code !== 'fr') expect(sentence).not.toBe(french)
+      if (code !== 'en') expect(sentence).not.toBe(english)
     }
   })
 
-  it('accepts a region tag and falls back to French for an unknown language', () => {
+  it('accepts a region tag and falls back to English for an unknown language', () => {
     expect(testSentenceFor('pt-BR')).toBe(testSentenceFor('pt'))
-    expect(testSentenceFor('ja')).toBe(testSentenceFor('fr'))
-    expect(testSentenceFor('')).toBe(testSentenceFor('fr'))
+    expect(testSentenceFor('ja')).toBe(testSentenceFor('en'))
+    expect(testSentenceFor('')).toBe(testSentenceFor('en'))
+    expect(testSentenceFor('ja')).not.toBe(testSentenceFor('fr'))
   })
 })

@@ -4102,7 +4102,7 @@ function App() {
   // ela, cria uma (tag `language profile` e o template) no primeiro caderno, como o
   // "Save radar profile" faz, e abre. O Settings fecha para a nota aparecer.
   const handleOpenLanguageProfile = useCallback(
-    async (input: { nativeLanguage: string; bookLanguage: string }): Promise<'opened' | 'no-notebook' | 'failed'> => {
+    async (input: { nativeLanguage: string; bookLanguage: string | null }): Promise<'opened' | 'no-notebook' | 'failed'> => {
       const existing = findLanguageProfile(notes, disabledNotebookIds)
       if (existing?.notebookId) {
         setSettingsOpen(false)

@@ -8,12 +8,36 @@ import { baseLanguage } from './language'
 const MAX_SENTENCE_CHARS = 400
 
 // Abreviações que terminam em ponto sem terminar a frase (comparadas sem o
-// ponto final).
+// ponto final, com a caixa exata). Em cada língua oferecida: tratamentos e títulos
+// antes de um nome, abreviações de livro e de exemplo que vêm antes de numeral romano
+// ou de nome ("cap. I", "z. B. Äpfel") e o equivalente do "etc". Ficam de fora as que
+// costumam fechar a frase. Antes de minúscula ou dígito o corte já é desfeito por
+// `shouldMerge`; o que a lista resolve é o corte antes de maiúscula. Uma letra solta
+// em minúscula só entra onde a abreviação tem uma letra só ("t." do polonês) ou se
+// escreve com espaço no meio ("z. B."); a inicial maiúscula já vale em toda língua.
 const ABBREVIATIONS: Record<string, Set<string>> = {
   fr: new Set(
     ['M', 'MM', 'Mme', 'Mlle', 'Mmes', 'Dr', 'Pr', 'St', 'Ste', 'p', 'pp', 'cf', 'etc', 'av', 'apr', 'J.-C', 'n°', 'vol', 'chap'],
   ),
   en: new Set(['Mr', 'Mrs', 'Ms', 'Dr', 'St', 'vs', 'e.g', 'i.e', 'p', 'pp', 'vol', 'ch', 'etc']),
+  pt: new Set('Sr Sra Srta Srs Dr Dra Prof Profa Profª Eng Exmo Exma Sto Sta Av p pp pág págs cap vol ex etc'.split(' ')),
+  es: new Set('Sr Sra Srta Srs Dr Dra Dña Prof Lic Ing Sto Sta p pp pág págs cap vol ej etc'.split(' ')),
+  it: new Set('Sig sig Sigg Dott dott Dr dr Prof prof Avv avv Ing ing Geom Rag p pp pag pagg cap vol es ecc'.split(' ')),
+  de: new Set(
+    'Dr Prof Hr Fr Mag Ing Dipl.-Ing Hrsg Kap Bd Nr vgl Vgl bzw usw z.B d.h u.a z d h u a i v n'.split(' '),
+  ),
+  nl: new Set(
+    'Dhr dhr Mevr mevr Mej Mw Mr mr Dr dr Drs drs Ir ir Ing ing Prof prof hfst bijv b.v o.a d.w.z enz'.split(' '),
+  ),
+  ca: new Set('Sr Sra Srta Dr Dra Prof Profa St Sta p pp pàg pàgs cap vol ex etc'.split(' ')),
+  ro: new Set('Dl dl Dna dna Dr dr Prof prof Ing Sf p pp pag cap vol ex etc'.split(' ')),
+  pl: new Set('Prof prof Inż inż Ks ks Gen gen Św św np tzn tzw m.in itd zob rozdz t tj por'.split(' ')),
+  sv: new Set('Hr Dr dr Prof prof kap t.ex bl.a dvs osv'.split(' ')),
+  da: new Set('Hr Dr dr Prof prof kap bd f.eks bl.a dvs osv'.split(' ')),
+  no: new Set('Hr Dr dr Prof prof kap bd f.eks bl.a dvs osv'.split(' ')),
+  fi: new Set('Prof prof Ins ins Kapt kapt esim ts ks vrt jne'.split(' ')),
+  cs: new Set('Dr Ing Mgr Bc Prof prof Doc doc JUDr MUDr PhDr RNDr Sv sv kap např tj tzv atd'.split(' ')),
+  tr: new Set('Sn Dr Prof Doç Yrd Öğr Gör Av Uzm Op Müh Hz Bkz örn vb vs'.split(' ')),
 }
 
 // O `lib` do projeto é ES2020 e o tipo do Intl.Segmenter (ES2022) não vem com
@@ -42,7 +66,8 @@ function endsWithAbbreviation(text: string, language: string): boolean {
   return ABBREVIATIONS[baseLanguage(language)]?.has(token) ?? false
 }
 
-function hasOpenFrenchQuote(text: string): boolean {
+// Aspas « … » abertas e ainda sem fechar (valem em toda língua que as usa).
+function hasOpenGuillemet(text: string): boolean {
   return (text.match(/«/g)?.length ?? 0) > (text.match(/»/g)?.length ?? 0)
 }
 
@@ -50,7 +75,7 @@ function shouldMerge(acc: string, next: string, language: string): boolean {
   return (
     endsWithAbbreviation(acc, language) ||
     /^[\p{Ll}\d]/u.test(next.trimStart()) ||
-    hasOpenFrenchQuote(acc)
+    hasOpenGuillemet(acc)
   )
 }
 

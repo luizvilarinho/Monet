@@ -1,0 +1,1278 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vídeo no Library</title>
+<style>
+/* ===== Tokens copiados de src/App.css (o app só tem tema escuro), como nos mockups de language_study ===== */
+:root {
+  --bg-app: #1f1f2f;
+  --bg-panel: #161625;
+  --surface-1: #1d1d34;
+  --surface-2: #292959;
+  --surface-3: #2e2e36;
+  --text-primary: #ddddf1;
+  --text-secondary: #a2a2ae;
+  --text-muted: #9494ad;
+  --accent: #7b6ed4;
+  --accent-ai: #5dcaa5;
+  --accent-warn: #ef9f27;
+  --accent-danger: #e05555;
+  --border: #2e2f2cb3;
+  --hair: #34344f;
+  --space-1: 4px; --space-1h: 6px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 20px;
+  --radius-sm: 4px; --radius-md: 6px; --radius-lg: 8px; --radius-xl: 10px;
+  --control-md: 28px; --control-lg: 32px;
+  --lh-ui: 1.45;
+  /* Marcas na folha branca (as mesmas do estudo de línguas) */
+  --vocab-ink: #0e7c86;
+  --vocab-ui: #57b8c2;
+  --now-band: rgba(31, 31, 47, 0.14);   /* frase que está tocando: cinza sem matiz, como o trecho do Listen */
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: #121220; color: var(--text-primary); font: 14px/1.45 'Segoe UI', system-ui, -apple-system, sans-serif; -webkit-font-smoothing: antialiased; }
+button, input, select, textarea { font-family: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: default; }
+a { color: var(--accent); }
+.i { fill: currentColor; flex-shrink: 0; display: block; }
+[hidden] { display: none !important; }
+kbd { font-family: inherit; font-size: 11px; color: var(--text-muted); border: 1px solid var(--hair); border-radius: var(--radius-sm); padding: 0 var(--space-1); white-space: nowrap; }
+
+/* ===== Barra do estudo (fora do mockup) ===== */
+.study-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; padding: 8px 16px; font-size: 12px; color: var(--text-secondary); border-bottom: 1px solid var(--hair); }
+.study-bar strong { color: var(--text-primary); font-weight: 600; }
+.study-bar nav { display: flex; gap: 10px; }
+.study-bar nav a.on { color: var(--text-primary); text-decoration: none; font-weight: 600; }
+.study-bar .lbl { color: var(--text-muted); margin-right: -8px; }
+.study-bar label.chk { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.study-bar select { background: #18182a; color: var(--text-primary); border: 1px solid var(--hair); border-radius: var(--radius-sm); font-size: 12px; padding: 1px 4px; }
+.seg { display: inline-flex; border: 1px solid var(--hair); border-radius: var(--radius-sm); overflow: hidden; }
+.seg button { background: transparent; border: none; border-right: 1px solid var(--hair); color: var(--text-secondary); font-size: 12px; padding: 2px 8px; }
+.seg button:last-child { border-right: none; }
+.seg button.on { background: var(--surface-2); color: var(--text-primary); }
+.study-bar .meas { flex-basis: 100%; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.study-bar .meas b { color: var(--text-primary); font-weight: 500; }
+.study-bar .focusinfo { color: var(--accent-ai); }
+.stage { padding: 12px 0; overflow-x: auto; }
+
+/* ===== Janela do app ===== */
+.window { width: max(1280px, calc(100% - 32px)); height: max(800px, calc(100vh - 110px)); margin: 0 auto; display: flex; flex-direction: column; background: var(--bg-app); border-radius: 8px; box-shadow: 0 0 0 1px var(--hair); overflow: hidden; position: relative; }
+body[data-size='1280'] .window { width: 1280px; height: 800px; }
+body[data-size='960'] .window { width: 960px; height: 600px; }
+.tb { height: 44px; flex-shrink: 0; display: flex; align-items: center; gap: 16px; padding: 8px 16px; background: var(--bg-panel); border-bottom: 1px solid var(--border); }
+.tb .brand { font-size: 15px; font-weight: 600; letter-spacing: .04em; }
+.tb .modes { margin-left: auto; display: flex; gap: 4px; }
+.tb .modes > span { padding: 4px 12px; font-size: 13px; color: var(--text-secondary); border-bottom: 2px solid transparent; display: inline-flex; align-items: center; }
+.tb .modes > span.on { color: var(--accent); border-bottom-color: var(--accent); }
+.tb .rec { display: inline-flex; align-items: center; gap: var(--space-1); margin-left: var(--space-1h); color: var(--accent-danger); font-size: 12px; font-variant-numeric: tabular-nums; }
+.tb .rec i { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-danger); animation: recPulse 1.4s ease-in-out infinite; }
+@keyframes recPulse { 50% { opacity: .35; } }
+
+/* ===== Leitor ===== */
+.reader { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.rtb { height: 45px; flex-shrink: 0; display: flex; align-items: center; gap: var(--space-2); padding: 0 var(--space-4); border-bottom: 1px solid var(--border); background: var(--bg-panel); }
+.rtb .ttl { min-width: 0; flex: 1; display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-primary); overflow: hidden; }
+.rtb .ttl span.t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fmt { font-size: 10px; letter-spacing: .04em; text-transform: uppercase; color: var(--text-muted); border: 1px solid var(--hair); border-radius: 3px; padding: 0 4px; flex-shrink: 0; }
+.tbtn { display: inline-flex; align-items: center; gap: var(--space-1h); background: transparent; border: 1px solid var(--border); border-radius: 6px; color: var(--text-secondary); min-height: 28px; padding: 0 10px; font-size: 12px; white-space: nowrap; flex-shrink: 0; }
+.tbtn:hover:not(:disabled) { color: var(--text-primary); border-color: var(--accent); }
+.tbtn.on, .tbtn[aria-pressed='true'] { color: var(--text-primary); border-color: var(--accent); background: rgba(123, 110, 212, .12); }
+.tbtn.sq { width: 28px; padding: 0; justify-content: center; }
+.rtb .zoom { font-size: 12px; color: var(--text-secondary); min-width: 38px; text-align: center; }
+.rtb .grp { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.rbody { display: flex; flex: 1; min-height: 0; }
+
+/* ----- Coluna da esquerda (Contents e Vocabulary; Highlights fica fora da fase 1) ----- */
+.nav { width: 300px; flex-shrink: 0; border-right: 1px solid var(--border); background: var(--bg-panel); display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.nav-tabs { display: flex; align-items: center; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.nav-col { display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none; border-right: 1px solid var(--border); color: var(--text-muted); padding: var(--space-2) var(--space-3); }
+.nav-tab { background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--text-secondary); padding: var(--space-2); line-height: 20px; font-size: 12px; font-weight: 500; white-space: nowrap; }
+.nav-tab.on { color: var(--text-primary); border-bottom-color: var(--accent); }
+.nav-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.rail { width: 48px; flex-shrink: 0; border-right: 1px solid var(--border); background: var(--bg-panel); display: none; flex-direction: column; align-items: center; gap: 6px; padding-top: 6px; }
+.rail button { width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: 1px solid transparent; border-radius: var(--radius-md); color: var(--text-muted); }
+.rail button:hover { color: var(--text-primary); border-color: var(--border); }
+body.nav-collapsed .nav { display: none; }
+body.nav-collapsed .rail { display: flex; }
+.outline { flex: 1; min-height: 0; overflow-y: auto; padding: var(--space-3); display: flex; flex-direction: column; gap: 2px; }
+.outline button { display: flex; align-items: baseline; gap: 8px; padding: var(--space-1h) var(--space-2); font-size: 12px; border-radius: var(--radius-md); color: var(--text-primary); background: transparent; border: none; text-align: left; }
+.outline button:hover { background: rgba(255, 255, 255, .04); }
+.outline button.cur { background: rgba(123, 110, 212, .14); }
+.outline button span:first-child { font-variant-numeric: tabular-nums; color: var(--text-muted); font-size: 11px; min-width: 36px; }
+.outline .help { font-size: 11px; color: var(--text-muted); padding: 8px var(--space-2) 0; line-height: 1.5; }
+.vc-head { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3) 0; flex-shrink: 0; }
+.switch { display: inline-flex; align-items: center; gap: var(--space-1h); background: transparent; border: none; padding: 0; color: var(--text-secondary); font-size: 12px; min-height: 24px; }
+.switch i { width: 26px; height: 14px; border-radius: 999px; background: var(--surface-3); border: 1px solid var(--hair); position: relative; flex-shrink: 0; }
+.switch i::after { content: ''; position: absolute; top: 1px; left: 1px; width: 10px; height: 10px; border-radius: 50%; background: var(--text-muted); transition: left .12s; }
+.switch[aria-pressed='true'] i { background: rgba(87, 184, 194, .3); border-color: var(--vocab-ui); }
+.switch[aria-pressed='true'] i::after { left: 13px; background: var(--vocab-ui); }
+.switch.ai[aria-pressed='true'] { color: var(--accent-ai); }
+.switch.ai[aria-pressed='true'] i { background: rgba(93, 202, 165, .25); border-color: var(--accent-ai); }
+.switch.ai[aria-pressed='true'] i::after { background: var(--accent-ai); }
+.vc-list { list-style: none; margin: 0; padding: var(--space-3); display: flex; flex-direction: column; gap: var(--space-2); overflow-y: auto; flex: 1; min-height: 0; }
+.vc-sec { font-size: 11px; color: var(--text-muted); font-weight: 500; padding-top: var(--space-1); }
+.vc-item { position: relative; background: var(--surface-1); border: 1px solid transparent; border-radius: var(--radius-md); padding: var(--space-2) 54px var(--space-2) 30px; display: flex; flex-direction: column; gap: 3px; font-size: 12px; cursor: pointer; }
+.vc-item:hover { border-color: var(--accent); }
+.vc-item input { position: absolute; left: 9px; top: 10px; width: 13px; height: 13px; margin: 0; accent-color: var(--accent-ai); }
+.vc-term { font-size: 13px; font-weight: 600; text-decoration: underline dotted var(--vocab-ui); text-decoration-thickness: 1.5px; text-underline-offset: 3px; }
+.vc-mean { line-height: 1.4; }
+.vc-src { color: var(--text-secondary); line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.vc-src b { color: var(--text-primary); font-weight: 600; }
+.vc-meta { font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; display: flex; gap: 6px; align-items: center; }
+.vc-acts { position: absolute; top: var(--space-1h); right: var(--space-1h); display: flex; gap: 2px; }
+.act { width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--text-muted); padding: 0; }
+.act:hover { color: var(--accent); background: rgba(123, 110, 212, .12); border-color: rgba(123, 110, 212, .35); }
+.chip-sent { font-size: 10px; padding: 0 6px; border-radius: 999px; background: rgba(93, 202, 165, .14); color: var(--accent-ai); border: 1px solid rgba(93, 202, 165, .35); }
+.vc-foot { flex-shrink: 0; border-top: 1px solid var(--border); padding: var(--space-2) var(--space-3); display: flex; flex-direction: column; gap: var(--space-1h); }
+.vc-foot .row { display: flex; gap: var(--space-1h); }
+.vc-send { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 28px; background: var(--accent-ai); color: #0e0e10; border: 1px solid var(--accent-ai); border-radius: var(--radius-md); font-size: 12px; font-weight: 600; }
+.vc-send:disabled { opacity: .5; }
+.vc-dest { font-size: 11px; color: var(--text-muted); }
+.vc-dest button { background: transparent; border: none; padding: 0; color: var(--text-secondary); font-size: 11px; text-decoration: underline; }
+.mini { display: inline-flex; align-items: center; gap: var(--space-1); background: transparent; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-secondary); font-size: 11px; min-height: 24px; padding: 0 var(--space-2); white-space: nowrap; }
+.mini:hover:not(:disabled) { color: var(--text-primary); border-color: var(--accent); }
+.mini.on { color: var(--text-primary); border-color: var(--accent); background: rgba(123, 110, 212, .12); }
+
+/* ----- Coluna do meio: vídeo em cima, controles, divisória, transcrição ----- */
+.vcol { position: relative; flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; container-type: inline-size; container-name: vcol; }
+.vpane { flex-shrink: 0; background: #0b0b13; display: flex; align-items: center; justify-content: center; padding: 8px 12px; }
+.vpane.bar { padding: 0 12px; height: 44px !important; justify-content: flex-start; gap: 8px; font-size: 12px; color: var(--text-secondary); border-bottom: 1px solid var(--border); background: var(--bg-panel); }
+.vpane.bar .msg { flex: 1; min-width: 0; line-height: 1.35; }
+.vpane.bar.warn { color: var(--accent-warn); }
+/* Retângulo de marcação do player do YouTube: no app é o iframe, que nada pode cobrir. */
+.yt { position: relative; background: #000; overflow: hidden; border-radius: 2px; flex-shrink: 0; user-select: none; }
+.yt-frame { position: absolute; inset: 0; background: radial-gradient(120% 90% at 30% 35%, #4a3b2a 0%, #241c16 45%, #0d0b0a 100%); }
+.yt-frame::after { content: ''; position: absolute; left: 18%; top: 24%; width: 34%; height: 46%; border-radius: 50% 50% 46% 46%; background: radial-gradient(circle at 40% 35%, #c9945a, #7a4f27 70%); opacity: .55; filter: blur(1px); }
+.yt-tag { position: absolute; left: 8px; top: 6px; font-size: 10px; letter-spacing: .03em; color: rgba(255, 255, 255, .72); background: rgba(0, 0, 0, .45); padding: 1px 6px; border-radius: 3px; }
+.yt-dim { position: absolute; right: 8px; top: 6px; font-size: 10px; color: rgba(255, 255, 255, .6); font-variant-numeric: tabular-nums; }
+.yt-big { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 56px; height: 40px; border-radius: 10px; background: rgba(40, 40, 40, .85); border: none; color: #fff; display: flex; align-items: center; justify-content: center; }
+.yt-ctrls { position: absolute; left: 0; right: 0; bottom: 0; height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 10px; background: linear-gradient(transparent, rgba(0, 0, 0, .7)); color: #fff; font-size: 11px; font-variant-numeric: tabular-nums; }
+.yt-ctrls .bar { flex: 1; height: 3px; background: rgba(255, 255, 255, .3); border-radius: 2px; position: relative; }
+.yt-ctrls .bar i { position: absolute; left: 0; top: 0; bottom: 0; background: #e6e6e6; border-radius: 2px; }
+.yt-ad { position: absolute; left: 10px; bottom: 36px; font-size: 11px; color: #111; background: #f2d34b; padding: 1px 8px; border-radius: 3px; }
+.yt-load { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: rgba(255, 255, 255, .8); gap: 8px; font-size: 12px; background: #000; }
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Faixa de estudo: fora da área do vídeo */
+.strip { flex-shrink: 0; background: var(--bg-panel); border-top: 1px solid var(--border); }
+.srow { height: 44px; display: flex; align-items: center; gap: 4px; padding: 0 8px; }
+.sb { width: 28px; height: 28px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none; border-radius: 50%; color: var(--text-secondary); padding: 0; }
+.sb:hover:not(:disabled) { color: var(--text-primary); background: rgba(255, 255, 255, .06); }
+.sb:disabled, .tg:disabled, .speed:disabled { opacity: .35; }
+.sb.play { width: 32px; height: 32px; background: var(--accent-ai); color: #0e0e10; }
+.sb.play:hover:not(:disabled) { background: var(--accent-ai); color: #0e0e10; filter: brightness(1.06); }
+.stime { font-size: 12px; color: var(--text-secondary); font-variant-numeric: tabular-nums; margin: 0 6px; white-space: nowrap; }
+.stime b { color: var(--text-primary); font-weight: 500; }
+.sdiv { width: 1px; height: 18px; background: var(--border); margin: 0 4px; flex-shrink: 0; }
+.tg { display: inline-flex; align-items: center; gap: 5px; height: 28px; flex-shrink: 0; background: transparent; border: 1px solid var(--border); border-radius: 14px; color: var(--text-secondary); font-size: 12px; padding: 0 10px; white-space: nowrap; }
+.tg:hover:not(:disabled) { color: var(--text-primary); border-color: var(--accent); }
+.tg[aria-pressed='true'] { color: var(--accent-ai); border-color: var(--accent-ai); background: rgba(93, 202, 165, .1); }
+.tg.reveal { color: var(--text-primary); border-color: var(--accent); }
+.speed { flex-shrink: 0; min-width: 44px; height: 24px; background: transparent; border: 1px solid var(--border); border-radius: 12px; color: var(--text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; padding: 0 6px; }
+.speed:hover:not(:disabled) { color: var(--text-primary); border-color: var(--accent); }
+.sfill { flex: 1; min-width: 4px; }
+@container vcol (max-width: 600px) { .tg .lb { display: none; } .tg { width: 28px; padding: 0; justify-content: center; } .stime .dur { display: none; } }
+.smsg { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; padding: 0 12px 8px; font-size: 12px; color: var(--text-secondary); line-height: 1.4; }
+.smsg.warn { color: var(--accent-warn); }
+.smsg .txt { flex: 1; min-width: 160px; }
+.smsg .recdot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-danger); flex-shrink: 0; }
+.smsg button { background: transparent; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 12px; min-height: 24px; padding: 0 8px; }
+.smenu { position: absolute; z-index: 30; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 22px rgba(0, 0, 0, .5); padding: 6px; display: flex; flex-direction: column; gap: 2px; font-size: 12px; min-width: 120px; }
+.smenu button { background: transparent; border: none; color: var(--text-primary); text-align: left; padding: 5px 8px; border-radius: 4px; display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.smenu button:hover { background: rgba(123, 110, 212, .14); }
+.smenu button.on::after { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--accent-ai); margin-left: auto; }
+.smenu .info { color: var(--text-muted); font-size: 11px; padding: 4px 8px; line-height: 1.45; max-width: 280px; }
+.smenu hr { border: none; border-top: 1px solid var(--border); margin: 4px 0; }
+
+/* Divisória ajustável */
+.divider { flex-shrink: 0; height: 8px; cursor: row-resize; background: var(--bg-panel); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: center; touch-action: none; }
+.divider i { width: 36px; height: 3px; border-radius: 2px; background: var(--hair); }
+.divider:hover i, .divider:focus-visible i, .divider.drag i { background: var(--accent); }
+.divider:focus-visible { outline: none; }
+
+/* Transcrição: folha branca, rolagem contínua, parágrafos com o tempo na margem */
+.tarea { flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; padding: 12px; position: relative; }
+.tsheet { position: relative; max-width: 760px; margin: 0 auto; background: #fff; color: #17171c; box-shadow: 0 8px 24px rgba(0, 0, 0, .35); padding: 18px 24px 28px 64px; font: 16px/1.65 Georgia, 'Times New Roman', serif; color-scheme: only light; }
+.tsheet ::selection { background: rgba(123, 110, 212, .35); }
+.thead { font-family: 'Segoe UI', system-ui, sans-serif; margin: 0 0 14px -40px; padding-bottom: 10px; border-bottom: 1px solid #e6e6ee; }
+.thead h1 { font-size: 16px; margin: 0 0 2px; color: #17171c; font-weight: 600; }
+.thead .meta { font-size: 12px; color: #5c5c6e; }
+.thead .src { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #5c5c6e; margin-top: 6px; }
+.thead .src button { background: transparent; border: none; padding: 0; color: #4c3fb0; text-decoration: underline; font-size: 12px; }
+.tbanner { font-family: 'Segoe UI', system-ui, sans-serif; margin: 8px 0 0; padding: 8px 10px; border-radius: 6px; background: #fff4e0; border: 1px solid #f0c27a; color: #6a4300; font-size: 12px; line-height: 1.45; display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.tbanner span { flex: 1; min-width: 200px; }
+.tbanner button { background: #fff; border: 1px solid #d9a24f; border-radius: 4px; color: #4a2f00; font-size: 12px; padding: 2px 8px; }
+.chap { font: 600 13px/1.4 'Segoe UI', system-ui, sans-serif; color: #3c3c4e; margin: 20px 0 8px; position: relative; }
+.para { margin: 0 0 14px; position: relative; }
+.para.cur::before { content: ''; position: absolute; left: -12px; top: 5px; bottom: 5px; width: 3px; border-radius: 2px; background: var(--accent); }
+.ts { position: absolute; left: -52px; top: 3px; font: 11px/1.5 'Segoe UI', system-ui, sans-serif; color: #75758a; background: transparent; border: none; padding: 0; font-variant-numeric: tabular-nums; cursor: pointer; }
+.chap .ts { top: 1px; }
+.ts:hover { color: #4c3fb0; text-decoration: underline; }
+.para.cur > .ts { color: var(--accent); font-weight: 600; }
+.s { cursor: pointer; border-radius: 2px; }
+.s:hover { background: rgba(31, 31, 47, .05); }
+.s.now-fallback { background: var(--now-band); }
+::highlight(vidnow) { background-color: rgba(31, 31, 47, .14); }
+::highlight(vidflash) { background-color: rgba(14, 124, 134, .2); }
+.mk { text-decoration: underline dotted var(--vocab-ink); text-decoration-thickness: .11em; text-underline-offset: .22em; }
+body.marks-off .mk { text-decoration: none; }
+.tsheet.hidetext .s:not(.rev) { color: transparent; text-shadow: 0 0 9px rgba(23, 23, 28, .6); user-select: none; }
+.tsheet.hidetext .s:not(.rev) .mk { text-decoration-color: transparent; }
+.prep { font-family: 'Segoe UI', system-ui, sans-serif; color: #3c3c4e; font-size: 13px; line-height: 1.55; margin-left: -40px; }
+.prep ol { margin: 8px 0 0; padding-left: 18px; }
+.prep li.done { color: #6b6b7c; }
+.prep li.cur { font-weight: 600; }
+.prep .sk { height: 10px; border-radius: 4px; margin: 10px 0; background: linear-gradient(90deg, #eee 0%, #f7f7f7 50%, #eee 100%); background-size: 200% 100%; animation: shimmer 1.4s linear infinite; }
+@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+/* Botão de voltar a acompanhar o vídeo */
+.follow { position: absolute; right: 26px; bottom: 16px; z-index: 8; display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 15px; background: var(--bg-panel); border: 1px solid var(--accent); color: var(--text-primary); font-size: 12px; box-shadow: 0 6px 18px rgba(0, 0, 0, .45); font-variant-numeric: tabular-nums; }
+.follow:hover { background: #1d1d34; }
+
+/* Barra de seleção (sem as cores de grifo na fase 1) */
+.selbar { position: absolute; z-index: 9; display: flex; flex-direction: column; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 18px rgba(0, 0, 0, .45); white-space: nowrap; }
+.selbar .row { display: flex; align-items: center; gap: 6px; padding: 6px 8px; }
+.selbar .row.lang { border-bottom: 1px solid var(--border); }
+.sbtn { display: inline-flex; align-items: center; gap: 5px; background: transparent; border: none; color: var(--text-primary); font-size: 11px; font-weight: 500; padding: 4px 8px; border-radius: 4px; }
+.sbtn:hover { background: rgba(123, 110, 212, .18); }
+.sbtn kbd { font-size: 10px; padding: 0 3px; }
+
+/* ----- Coluna da direita ----- */
+.side { width: 340px; flex-shrink: 0; border-left: 1px solid var(--border); background: var(--bg-panel); display: flex; flex-direction: column; min-height: 0; }
+.side-h { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-3); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.side-h h3 { margin: 0; font-size: 12px; font-weight: 500; }
+.side-h .acts { display: flex; align-items: center; gap: var(--space-1); }
+.icb { display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none; color: var(--text-muted); min-width: 24px; min-height: 24px; padding: 4px 6px; border-radius: var(--radius-sm); }
+.icb:hover { background: rgba(255, 255, 255, .06); color: var(--text-primary); }
+.modelsel { font-size: 11px; color: var(--text-secondary); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 2px 6px; white-space: nowrap; }
+.history { flex: 1; min-height: 0; overflow-y: auto; padding: var(--space-3); display: flex; flex-direction: column; gap: var(--space-3); }
+.history .empty { margin: auto; text-align: center; color: var(--text-muted); font-size: 12px; padding: 0 var(--space-4); line-height: 1.5; }
+.bub-u { align-self: flex-end; max-width: 90%; background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-xl); padding: var(--space-2) var(--space-3); font-size: 13px; white-space: pre-wrap; }
+.bub-u blockquote { margin: 0 0 6px; padding-left: 8px; border-left: 2px solid var(--hair); color: var(--text-secondary); font-size: 12px; }
+.bub-a { align-self: flex-start; font-size: 13px; line-height: 1.5; }
+.composer { flex-shrink: 0; border-top: 1px solid var(--border); padding: var(--space-3); }
+.ctxchip { display: block; width: 100%; margin: 0 0 var(--space-2); color: var(--text-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: transparent; border: none; padding: 0; text-align: left; font-variant-numeric: tabular-nums; }
+.ctxchip b { color: var(--accent-ai); font-weight: 500; }
+.ctxdetail { margin: 0 0 var(--space-2); background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 6px 8px; font: 11px/1.5 Consolas, monospace; color: var(--text-secondary); white-space: pre-wrap; max-height: 150px; overflow-y: auto; }
+.composer textarea { width: 100%; resize: none; background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-lg); color: var(--text-primary); font-size: 13px; line-height: 1.4; padding: var(--space-2) var(--space-3); }
+.composer .actions { display: flex; align-items: center; justify-content: space-between; margin-top: var(--space-2); }
+.send { background: var(--accent-ai); color: #0e0e10; border: none; border-radius: var(--radius-md); min-height: 28px; padding: 4px 12px; font-size: 12px; font-weight: 600; }
+.notebar { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.notebar .sel { flex: 1; min-width: 0; background: var(--surface-1); border: 1px solid var(--border); border-radius: 6px; font-size: 12px; padding: 5px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note { flex: 1; min-height: 0; overflow-y: auto; padding: var(--space-4) var(--space-3); font-size: 13px; line-height: 1.6; }
+.note h4 { margin: 0 0 8px; font-size: 16px; font-weight: 600; }
+.note h5 { margin: 16px 0 6px; font-size: 13px; font-weight: 600; }
+.note p { margin: 0 0 8px; }
+.note blockquote { margin: 0 0 6px; padding-left: 10px; border-left: 2px solid var(--hair); color: var(--text-secondary); }
+.note .cite { color: var(--text-muted); font-size: 12px; margin: 0 0 12px; }
+.note .write { min-height: 80px; border: 1px dashed var(--hair); border-radius: var(--radius-md); padding: 8px 10px; outline: none; white-space: pre-wrap; }
+.note .write:empty::before { content: attr(data-ph); color: var(--text-muted); }
+
+/* ----- Popover (portal, fixed, acima de 1000) ----- */
+.pop { position: fixed; z-index: 1100; width: 340px; display: flex; flex-direction: column; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 22px rgba(0, 0, 0, .5); font-size: 12px; color: var(--text-primary); }
+.pop.wide { width: 440px; }
+.pop-h { display: flex; align-items: flex-start; gap: var(--space-2); padding: 10px 12px 0; }
+.pop-h .term { flex: 1; min-width: 0; font-size: 15px; font-weight: 600; line-height: 1.3; }
+.pop-h .kind { flex: 1; font-size: 11px; color: var(--text-muted); padding-top: 4px; }
+.pop-sub { padding: 2px 12px 0; color: var(--text-muted); font-size: 11px; }
+.pop-b { padding: 8px 12px 10px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; min-height: 0; }
+.pop .meaning { font-size: 14px; line-height: 1.45; }
+.pop .tr { font-size: 13px; line-height: 1.55; }
+.pop .ctx { color: var(--text-secondary); line-height: 1.5; border-left: 2px solid var(--hair); padding-left: 8px; }
+.pop .ctx b { color: var(--text-primary); }
+.pop .ctx small { display: block; color: var(--text-muted); font-size: 11px; margin-top: 2px; }
+.pop .warnbox { color: var(--accent-warn); line-height: 1.5; }
+.pop-a { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px 10px; border-top: 1px solid var(--border); }
+.pbtn { display: inline-flex; align-items: center; gap: 6px; background: transparent; border: 1px solid var(--border); border-radius: 5px; color: var(--text-primary); padding: 0 10px; height: 28px; font-size: 12px; white-space: nowrap; }
+.pbtn:hover { border-color: var(--accent); background: rgba(123, 110, 212, .1); }
+.pop-f { display: flex; align-items: center; gap: 6px; border-top: 1px solid var(--border); padding: 6px 12px; color: var(--text-muted); font-size: 11px; }
+.pop-f button { background: transparent; border: none; padding: 0; color: var(--text-secondary); font-size: 11px; text-decoration: underline; }
+.pop .ibtn { width: 24px; height: 24px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none; border-radius: var(--radius-sm); color: var(--text-muted); padding: 0; }
+.pop .ibtn:hover { color: var(--text-primary); background: rgba(255, 255, 255, .06); }
+
+/* ===== Toast ===== */
+.toast { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 1100; display: none; align-items: center; gap: var(--space-2); background: var(--accent-ai); color: #0e0e10; font-size: 12px; font-weight: 500; border-radius: var(--radius-md); padding: var(--space-1h) var(--space-3); box-shadow: 0 6px 18px rgba(0, 0, 0, .45); max-width: 80%; }
+.toast.show { display: flex; }
+.toast button { background: transparent; border: 1px solid rgba(14, 14, 16, .45); border-radius: var(--radius-sm); color: #0e0e10; font-size: 12px; font-weight: 600; padding: 0 var(--space-2); min-height: 22px; }
+
+/* ===== Notas do estudo ===== */
+.page { max-width: 1180px; margin: 0 auto; padding: 8px 16px 64px; }
+.page h1 { font-size: 20px; margin: 24px 0 6px; }
+.page h2 { font-size: 15px; margin: 24px 0 8px; }
+.page p, .page li { color: var(--text-secondary); max-width: 96ch; }
+.page code { font-size: 12px; color: var(--text-primary); background: #1b1b30; padding: 0 4px; border-radius: 3px; }
+.notes-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 900px) { .notes-grid { grid-template-columns: 1fr; } }
+.notes-box { background: #18182a; border: 1px solid var(--hair); border-radius: 8px; padding: 12px 16px; margin-top: 12px; }
+.notes-box h3 { font-size: 13px; margin: 0 0 6px; color: var(--text-primary); }
+.notes-box ul { margin: 0; padding-left: 18px; }
+.notes-box li { font-size: 13px; margin: 3px 0; }
+table.cmp { border-collapse: collapse; width: 100%; font-size: 12px; margin-top: 8px; }
+table.cmp th, table.cmp td { border: 1px solid var(--hair); padding: 5px 8px; text-align: left; vertical-align: top; color: var(--text-secondary); }
+table.cmp th { color: var(--text-primary); font-weight: 500; background: #18182a; }
+</style>
+</head>
+<body data-size="1280">
+<!-- Barra do estudo: não faz parte do app. -->
+<div class="study-bar">
+  <strong>Estudo: vídeo do YouTube no Library</strong>
+  <nav><a href="index.html" class="on">Página do vídeo</a><a href="entry.html">Entrada (colar o link)</a></nav>
+  <span class="lbl">Janela</span><span class="seg" id="sizeSeg"><button type="button" data-v="1280">1280×800</button><button type="button" data-v="960">960×600 (mínima)</button><button type="button" data-v="fit">Ajustar</button></span>
+  <span class="lbl">Esquerda</span><span class="seg" id="navSeg"><button type="button" data-v="open">aberta</button><button type="button" data-v="collapsed">recolhida</button></span>
+  <span class="lbl">Direita</span><span class="seg" id="rightSeg"><button type="button" data-v="chat">Chat</button><button type="button" data-v="notes">Notes</button><button type="button" data-v="none">fechada</button></span>
+  <span class="lbl">Exemplo</span><span class="seg" id="langSeg"><button type="button" data-v="fr">francês</button><button type="button" data-v="de">alemão</button></span>
+  <span class="lbl">Transcrição</span><select id="stSrc"><option value="author">legenda do autor</option><option value="auto">automática, pontuação pela IA</option><option value="nopunct">automática sem pontuação</option><option value="preparing">ainda sendo preparada</option></select>
+  <span class="lbl">Player</span><select id="stPlayer"><option value="ok">normal</option><option value="loading">carregando</option><option value="ad">anúncio antes do vídeo</option><option value="buffer">rede lenta</option><option value="offline">sem internet</option><option value="unavailable">vídeo indisponível</option></select>
+  <label class="chk"><input type="checkbox" id="stRec"> Mincer gravando</label>
+  <label class="chk"><input type="checkbox" id="stNoKey"> sem chave de API</label>
+  <a href="#notas">Como testar e regras</a>
+  <span class="meas" id="meas"></span>
+</div>
+<div class="stage">
+<div class="window" id="window">
+  <header class="tb">
+    <span class="brand">Monet</span>
+    <span class="modes"><span>Notebook</span><span>Chat</span><span class="on">Library</span><span>Mincer<span class="rec" id="mincerRec" hidden><i></i>12:41</span></span></span>
+  </header>
+  <div class="reader">
+    <div class="rtb">
+      <button type="button" class="tbtn" id="backLib"><svg class="i" width="13" height="13" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-arrow-left"/></svg>Library</button>
+      <div class="ttl"><span class="fmt">video</span><span class="t" id="rtTitle"></span></div>
+      <div class="grp" title="Text size"><button type="button" class="tbtn sq" id="fontDown" aria-label="Smaller text"><svg class="i" width="12" height="12" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-text-aa"/></svg></button><span class="zoom" id="fontLbl">100%</span><button type="button" class="tbtn sq" id="fontUp" aria-label="Larger text"><svg class="i" width="16" height="16" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-text-aa"/></svg></button></div>
+      <button type="button" class="tbtn" id="btnHide" aria-pressed="false" title="Listen first: blur the transcript and reveal one sentence at a time (S)"><svg class="i" width="14" height="14" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-eye-slash"/></svg>Hide text</button>
+      <button type="button" class="tbtn" id="btnYt" title="Open the video on YouTube at the current time (your browser)"><svg class="i" width="14" height="14" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-arrow-square-out"/></svg>Open on YouTube</button>
+      <div class="grp"><button type="button" class="tbtn" id="btnChat">Chat</button><button type="button" class="tbtn" id="btnNotes">Notes</button></div>
+    </div>
+    <div class="rbody" id="rbody">
+      <div class="rail" id="rail">
+        <button type="button" id="railOpen" title="Expand panel" aria-label="Expand panel"><svg class="i" width="16" height="16" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-sidebar-simple"/></svg></button>
+        <button type="button" data-goto="contents" title="Contents" aria-label="Contents"><svg class="i" width="16" height="16" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-list-bullets"/></svg></button>
+        <button type="button" data-goto="vocab" title="Vocabulary" aria-label="Vocabulary"><svg class="i" width="16" height="16" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-bookmark-simple"/></svg></button>
+      </div>
+      <aside class="nav" id="nav" aria-label="Video navigation">
+        <div class="nav-tabs">
+          <button type="button" class="nav-col" id="navCollapse" aria-label="Collapse panel"><svg class="i" width="16" height="16" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-sidebar-simple"/></svg></button>
+          <button type="button" class="nav-tab" data-tab="contents">Contents</button>
+          <button type="button" class="nav-tab" data-tab="vocab">Vocabulary</button>
+        </div>
+        <div class="nav-panel" data-tab="contents"><div class="outline" id="outline"></div></div>
+        <div class="nav-panel" data-tab="vocab" hidden>
+          <div class="vc-head"><button type="button" class="switch" id="vcMarks" aria-pressed="true" title="Show or hide the dotted marks in the text"><i></i>Mark in text</button></div>
+          <ul class="vc-list" id="vcList"></ul>
+          <div class="vc-foot">
+            <div class="row"><button type="button" class="vc-send" id="vcSend"></button></div>
+            <div class="vc-dest" id="vcDest"></div>
+            <div class="row"><button type="button" class="mini" id="vcListen" title="Plays the sentence of each item in the video, one after another"><svg class="i" width="12" height="12" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-headphones"/></svg>Listen to list</button><button type="button" class="mini" id="vcRetell" title="Write this passage in your own words, in the video's note"><svg class="i" width="12" height="12" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-pencil-simple"/></svg>Retell</button></div>
+          </div>
+        </div>
+      </aside>
+      <div class="vcol" id="vcol">
+        <div class="vpane" id="vpane">
+          <div class="yt" id="yt" title="Placeholder for YouTube's embedded player (iframe)">
+            <div class="yt-frame"></div>
+            <span class="yt-tag">YouTube player (iframe) · nothing covers it</span>
+            <span class="yt-dim" id="ytDim"></span>
+            <button type="button" class="yt-big" id="ytBig" aria-label="Play (YouTube's own button)"><svg class="i" width="18" height="18" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-play-fill"/></svg></button>
+            <div class="yt-ad" id="ytAd" hidden></div>
+            <div class="yt-ctrls"><svg class="i" id="ytIcon" width="12" height="12" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-play-fill"/></svg><span id="ytTime">0:00</span><span class="bar"><i id="ytBar"></i></span><svg class="i" width="13" height="13" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-subtitles"/></svg><svg class="i" width="13" height="13" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-gear-six"/></svg></div>
+            <div class="yt-load" id="ytLoad" hidden><svg class="i spin" width="18" height="18" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-circle-notch"/></svg>Loading video…</div>
+          </div>
+        </div>
+        <div class="strip" id="strip">
+          <div class="srow">
+            <button type="button" class="sb" id="bPrev" title="Previous sentence (←)" aria-label="Previous sentence"><svg class="i" width="15" height="15" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-skip-back"/></svg></button>
+            <button type="button" class="sb" id="bReplay" title="Replay this sentence (R)" aria-label="Replay this sentence"><svg class="i" width="15" height="15" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-arrow-counter-clockwise"/></svg></button>
+            <button type="button" class="sb play" id="bPlay" title="Play or pause (Space)" aria-label="Play or pause"><svg class="i" width="16" height="16" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-play-fill" id="bPlayUse"/></svg></button>
+            <button type="button" class="sb" id="bNext" title="Next sentence (→)" aria-label="Next sentence"><svg class="i" width="15" height="15" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-skip-forward"/></svg></button>
+            <span class="stime" id="sTime"></span>
+            <button type="button" class="tg reveal" id="bReveal" hidden title="Show the sentence that is playing (S)"><svg class="i" width="14" height="14" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-eye"/></svg><span class="lb">Reveal</span></button>
+            <span class="sfill"></span>
+            <button type="button" class="tg" id="bPause" aria-pressed="false" title="Pause at the end of each sentence (P)"><svg class="i" width="14" height="14" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-pause-circle"/></svg><span class="lb">Pause at end</span></button>
+            <button type="button" class="tg" id="bLoop" aria-pressed="false" title="Repeat this sentence until you turn it off (Shift+R)"><svg class="i" width="14" height="14" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-repeat"/></svg><span class="lb">Loop</span></button>
+            <button type="button" class="speed" id="bSpeed" title="Playback speed">1×</button>
+            <button type="button" class="sb" id="bMore" title="Transcript and video options" aria-label="Transcript and video options"><svg class="i" width="16" height="16" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-dots-three"/></svg></button>
+          </div>
+          <div class="smsg" id="sMsg" hidden></div>
+        </div>
+        <div class="divider" id="divider" role="separator" aria-orientation="horizontal" aria-label="Resize the video" tabindex="0" title="Drag to resize the video · Double-click to reset"><i></i></div>
+        <div class="tarea" id="tarea" tabindex="-1">
+          <div class="tsheet" id="sheet"></div>
+        </div>
+        <button type="button" class="follow" id="follow" hidden title="Follow the video again (F)"></button>
+        <div class="selbar" id="selbar" hidden>
+          <div class="row lang">
+            <button type="button" class="sbtn" data-act="translate" title="Translate (T)"><svg class="i" width="13" height="13" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-translate"/></svg>Translate</button>
+            <button type="button" class="sbtn" data-act="listen" title="Play this part in the video (L)"><svg class="i" width="13" height="13" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-speaker-high"/></svg>Listen</button>
+            <button type="button" class="sbtn" data-act="vocab" title="Add to this video's vocabulary (V)"><svg class="i" width="13" height="13" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-bookmark-simple"/></svg>Add to vocabulary</button>
+          </div>
+          <div class="row">
+            <button type="button" class="sbtn" data-act="copy">Copy</button>
+            <button type="button" class="sbtn" data-act="note">Add to note</button>
+            <button type="button" class="sbtn" data-act="ask">Ask AI</button>
+          </div>
+        </div>
+      </div>
+      <aside class="side" id="chatPanel" aria-label="Video chat">
+        <div class="side-h"><h3>Chat</h3><div class="acts">
+          <button type="button" class="icb" title="System prompt"><svg class="i" width="14" height="14" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-sliders"/></svg></button><button type="button" class="icb" title="Clear all"><svg class="i" width="14" height="14" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-broom"/></svg></button>
+          <span class="modelsel">gpt-4.1-mini</span>
+          <button type="button" class="icb" id="chatX" aria-label="Close chat panel"><svg class="i" width="14" height="14" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-x"/></svg></button></div></div>
+        <div class="history" id="chatHist"><p class="empty">Ask about this video. The AI sees the part of the transcript on your screen.</p></div>
+        <div class="composer">
+          <button type="button" class="ctxchip" id="ctxChip" title="Sent with each message. Click to see it."></button>
+          <pre class="ctxdetail" id="ctxDetail" hidden></pre>
+          <textarea id="chatInput" rows="3" placeholder="Ask about this video..." aria-label="message"></textarea>
+          <div class="actions">
+            <button type="button" class="switch ai" id="teacher" aria-pressed="true" title="Adds the video's language, your language, your level and the words you saved in this passage"><i></i><svg class="i" width="13" height="13" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-graduation-cap"/></svg>Language teacher</button>
+            <button type="button" class="send" id="chatSend">Send</button>
+          </div>
+        </div>
+      </aside>
+      <aside class="side" id="notesPanel" aria-label="Video notes" hidden>
+        <div class="side-h"><h3>Notes</h3><button type="button" class="icb" id="notesX" aria-label="Close notes panel"><svg class="i" width="14" height="14" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-x"/></svg></button></div>
+        <div class="notebar"><span class="sel" id="noteSel"></span><button type="button" class="mini"><svg class="i" width="12" height="12" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-plus"/></svg>New note</button></div>
+        <div class="note" id="noteBody"></div>
+      </aside>
+    </div>
+  </div>
+  <div class="toast" id="toast" role="status"></div>
+</div>
+</div>
+
+<div class="page" id="notas">
+  <h1>Página do vídeo no Library</h1>
+  <p>Título, canal, texto, tempos e traduções são <b>inventados</b> para este estudo (nenhum vem de vídeo real). Não há YouTube, IA nem rede: o retângulo preto marca o lugar do player embutido, e o tempo do vídeo é simulado. O exemplo está em francês (e em alemão, para mostrar que nada depende da língua); a língua nativa do exemplo é o português.</p>
+  <div class="notes-grid">
+    <div class="notes-box"><h3>Como testar</h3><ul>
+      <li><b>Espaço</b> toca e pausa. A frase que toca fica marcada em cinza, o parágrafo ganha a barra roxa e o tempo dele fica roxo. A rolagem segue sozinha.</li>
+      <li><b>Role a transcrição</b> com a roda: o "acompanhar" desliga e aparece <b>Follow · 00:52</b>. Clique nele (ou <kbd>F</kbd>) para voltar ao ponto que toca.</li>
+      <li><b>Clique numa frase</b>: o vídeo vai para ela e toca. Duplo clique numa palavra só seleciona (o clique espera 250 ms para saber se é duplo).</li>
+      <li><b>Selecione</b> e use Translate (<kbd>T</kbd>): o vídeo pausa e o popover nunca fica em cima do player nem dos controles. <kbd>T</kbd> sem seleção traduz a frase que toca.</li>
+      <li><b>Listen</b> (<kbd>L</kbd>) toca a parte selecionada no próprio vídeo e para no fim. Sem voz sintetizada nesta página.</li>
+      <li><b>Pause at end</b> (<kbd>P</kbd>) para no fim de cada frase; Espaço segue. <b>Loop</b> (<kbd>Shift</kbd>+<kbd>R</kbd>) repete a frase com uma pausa curta entre as vezes. <kbd>R</kbd> repete uma vez; <kbd>←</kbd>/<kbd>→</kbd> vão de frase em frase.</li>
+      <li><b>Hide text</b> borra a transcrição; <b>Reveal</b> (<kbd>S</kbd>) mostra a frase que tocou.</li>
+      <li><b>Arraste a divisória</b> sob os controles (ou foco nela e <kbd>↑</kbd>/<kbd>↓</kbd>). Duplo clique volta ao padrão. A linha de medidas no alto mostra os números.</li>
+      <li>Na barra do estudo: janela 960×600, coluna da esquerda aberta (ela recolhe sozinha se o meio cair abaixo de 400 px), estados do player e da transcrição, Mincer gravando.</li>
+      <li>Clique dentro do retângulo do player: simula o botão do próprio YouTube; a barra do estudo avisa que o foco voltou ao app.</li>
+    </ul></div>
+    <div class="notes-box"><h3>Regras desenhadas</h3><ul>
+      <li><b>Altura</b>: o vídeo nasce com 42% da altura útil, nunca abaixo de 200 px (mínimo do YouTube) nem acima do 16:9 da largura; a transcrição nunca fica com menos de 160 px. A proporção arrastada é lembrada.</li>
+      <li><b>Largura</b>: a coluna do meio nunca fica abaixo de 400 px. A última coluna aberta vence: abrir o chat recolhe a coluna da esquerda; abrir a da esquerda fecha o chat.</li>
+      <li><b>Nada sobre o player</b>: barra de seleção, popovers e menus evitam o retângulo do vídeo e a faixa de controles. Sem internet ou com o vídeo indisponível, o lugar do player vira uma faixa de 44 px e a transcrição ganha a altura.</li>
+      <li><b>Acompanhar</b> desliga ao rolar, selecionar ou abrir a tradução; volta com Follow, <kbd>F</kbd> ou um clique numa frase ou num tempo.</li>
+      <li><b>Teclas</b> valem com o foco na página; o app devolve o foco depois de um clique no player (o player recebe <code>disablekb=1</code>).</li>
+      <li><b>Abrir o item</b> nunca toca sozinho: o vídeo fica parado no ponto salvo.</li>
+    </ul></div>
+  </div>
+  <h2>Atalhos da página do vídeo</h2>
+  <table class="cmp">
+    <tr><th>Tecla</th><th>Ação</th><th>Diferença em relação ao livro</th></tr>
+    <tr><td><kbd>Espaço</kbd></td><td>Toca e pausa. Depois de uma pausa causada pela tradução, retoma do começo da frase.</td><td>No livro só vale com o mini-player aberto.</td></tr>
+    <tr><td><kbd>←</kbd> <kbd>→</kbd> (e com <kbd>Shift</kbd>)</td><td>Frase anterior e seguinte</td><td>No livro as setas viram a página; aqui não há página.</td></tr>
+    <tr><td><kbd>R</kbd> / <kbd>Shift</kbd>+<kbd>R</kbd></td><td>Repete a frase uma vez / liga e desliga o Loop</td><td>R igual ao livro.</td></tr>
+    <tr><td><kbd>P</kbd></td><td>Pause at end</td><td>Novo.</td></tr>
+    <tr><td><kbd>S</kbd></td><td>Reveal (só com Hide text)</td><td>Novo.</td></tr>
+    <tr><td><kbd>F</kbd></td><td>Volta a acompanhar o vídeo</td><td>Novo.</td></tr>
+    <tr><td><kbd>T</kbd> <kbd>V</kbd> <kbd>L</kbd></td><td>Translate, Add to vocabulary, Listen (no vídeo). <kbd>T</kbd> e <kbd>L</kbd> sem seleção agem na frase que toca.</td><td>No livro, <kbd>L</kbd> sem seleção lê a página.</td></tr>
+    <tr><td><kbd>&lt;</kbd> <kbd>&gt;</kbd></td><td>Velocidade (0,5×, 0,75×, 1×, 1,25×)</td><td>Os mesmos do YouTube.</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>Fecha o popover; depois, a seleção</td><td>Igual.</td></tr>
+  </table>
+</div>
+
+<!-- Ícones Phosphor (peso regular; play e pause em fill), embutidos a partir de @phosphor-icons/react. -->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <symbol id="i-arrow-left" viewBox="0 0 256 256"><path d="M224,128a8,8,0,0,1-8,8H59.31l58.35,58.34a8,8,0,0,1-11.32,11.32l-72-72a8,8,0,0,1,0-11.32l72-72a8,8,0,0,1,11.32,11.32L59.31,120H216A8,8,0,0,1,224,128Z"/></symbol>
+  <symbol id="i-sidebar-simple" viewBox="0 0 256 256"><path d="M216,40H40A16,16,0,0,0,24,56V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A16,16,0,0,0,216,40ZM40,56H80V200H40ZM216,200H96V56H216V200Z"/></symbol>
+  <symbol id="i-x" viewBox="0 0 256 256"><path d="M205.66,194.34a8,8,0,0,1-11.32,11.32L128,139.31,61.66,205.66a8,8,0,0,1-11.32-11.32L116.69,128,50.34,61.66A8,8,0,0,1,61.66,50.34L128,116.69l66.34-66.35a8,8,0,0,1,11.32,11.32L139.31,128Z"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 256 256"><path d="M64,105V40a8,8,0,0,0-16,0v65a32,32,0,0,0,0,62v49a8,8,0,0,0,16,0V167a32,32,0,0,0,0-62Zm-8,47a16,16,0,1,1,16-16A16,16,0,0,1,56,152Zm80-95V40a8,8,0,0,0-16,0V57a32,32,0,0,0,0,62v97a8,8,0,0,0,16,0V119a32,32,0,0,0,0-62Zm-8,47a16,16,0,1,1,16-16A16,16,0,0,1,128,104Zm104,64a32.06,32.06,0,0,0-24-31V40a8,8,0,0,0-16,0v97a32,32,0,0,0,0,62v17a8,8,0,0,0,16,0V199A32.06,32.06,0,0,0,232,168Zm-32,16a16,16,0,1,1,16-16A16,16,0,0,1,200,184Z"/></symbol>
+  <symbol id="i-broom" viewBox="0 0 256 256"><path d="M235.5,216.81c-22.56-11-35.5-34.58-35.5-64.8V134.73a15.94,15.94,0,0,0-10.09-14.87L165,110a8,8,0,0,1-4.48-10.34l21.32-53a28,28,0,0,0-16.1-37,28.14,28.14,0,0,0-35.82,16,.61.61,0,0,0,0,.12L108.9,79a8,8,0,0,1-10.37,4.49L73.11,73.14A15.89,15.89,0,0,0,55.74,76.8C34.68,98.45,24,123.75,24,152a111.45,111.45,0,0,0,31.18,77.53A8,8,0,0,0,61,232H232a8,8,0,0,0,3.5-15.19ZM67.14,88l25.41,10.3a24,24,0,0,0,31.23-13.45l21-53c2.56-6.11,9.47-9.27,15.43-7a12,12,0,0,1,6.88,15.92L145.69,93.76a24,24,0,0,0,13.43,31.14L184,134.73V152c0,.33,0,.66,0,1L55.77,101.71A108.84,108.84,0,0,1,67.14,88Zm48,128a87.53,87.53,0,0,1-24.34-42,8,8,0,0,0-15.49,4,105.16,105.16,0,0,0,18.36,38H64.44A95.54,95.54,0,0,1,40,152a85.9,85.9,0,0,1,7.73-36.29l137.8,55.12c3,18,10.56,33.48,21.89,45.16Z"/></symbol>
+  <symbol id="i-translate" viewBox="0 0 256 256"><path d="M247.15,212.42l-56-112a8,8,0,0,0-14.31,0l-21.71,43.43A88,88,0,0,1,108,126.93,103.65,103.65,0,0,0,135.69,64H160a8,8,0,0,0,0-16H104V32a8,8,0,0,0-16,0V48H32a8,8,0,0,0,0,16h87.63A87.76,87.76,0,0,1,96,116.35a87.74,87.74,0,0,1-19-31,8,8,0,1,0-15.08,5.34A103.63,103.63,0,0,0,84,127a87.55,87.55,0,0,1-52,17,8,8,0,0,0,0,16,103.46,103.46,0,0,0,64-22.08,104.18,104.18,0,0,0,51.44,21.31l-26.6,53.19a8,8,0,0,0,14.31,7.16L148.94,192h70.11l13.79,27.58A8,8,0,0,0,240,224a8,8,0,0,0,7.15-11.58ZM156.94,176,184,121.89,211.05,176Z"/></symbol>
+  <symbol id="i-speaker-high" viewBox="0 0 256 256"><path d="M155.51,24.81a8,8,0,0,0-8.42.88L77.25,80H32A16,16,0,0,0,16,96v64a16,16,0,0,0,16,16H77.25l69.84,54.31A8,8,0,0,0,160,224V32A8,8,0,0,0,155.51,24.81ZM32,96H72v64H32ZM144,207.64,88,164.09V91.91l56-43.55Zm54-106.08a40,40,0,0,1,0,52.88,8,8,0,0,1-12-10.58,24,24,0,0,0,0-31.72,8,8,0,0,1,12-10.58ZM248,128a79.9,79.9,0,0,1-20.37,53.34,8,8,0,0,1-11.92-10.67,64,64,0,0,0,0-85.33,8,8,0,1,1,11.92-10.67A79.83,79.83,0,0,1,248,128Z"/></symbol>
+  <symbol id="i-skip-back" viewBox="0 0 256 256"><path d="M199.81,34a16,16,0,0,0-16.24.43L64,109.23V40a8,8,0,0,0-16,0V216a8,8,0,0,0,16,0V146.77l119.57,74.78A15.95,15.95,0,0,0,208,208.12V47.88A15.86,15.86,0,0,0,199.81,34ZM192,208,64.16,128,192,48.07Z"/></symbol>
+  <symbol id="i-skip-forward" viewBox="0 0 256 256"><path d="M200,32a8,8,0,0,0-8,8v69.23L72.43,34.45A15.95,15.95,0,0,0,48,47.88V208.12a16,16,0,0,0,24.43,13.43L192,146.77V216a8,8,0,0,0,16,0V40A8,8,0,0,0,200,32ZM64,207.93V48.05l127.84,80Z"/></symbol>
+  <symbol id="i-arrow-counter-clockwise" viewBox="0 0 256 256"><path d="M224,128a96,96,0,0,1-94.71,96H128A95.38,95.38,0,0,1,62.1,197.8a8,8,0,0,1,11-11.63A80,80,0,1,0,71.43,71.39a3.07,3.07,0,0,1-.26.25L44.59,96H72a8,8,0,0,1,0,16H24a8,8,0,0,1-8-8V56a8,8,0,0,1,16,0V85.8L60.25,60A96,96,0,0,1,224,128Z"/></symbol>
+  <symbol id="i-headphones" viewBox="0 0 256 256"><path d="M201.89,54.66A103.43,103.43,0,0,0,128.79,24H128A104,104,0,0,0,24,128v56a24,24,0,0,0,24,24H64a24,24,0,0,0,24-24V144a24,24,0,0,0-24-24H40.36A88,88,0,0,1,128,40h.67a87.71,87.71,0,0,1,87,80H192a24,24,0,0,0-24,24v40a24,24,0,0,0,24,24h16a24,24,0,0,0,24-24V128A103.41,103.41,0,0,0,201.89,54.66ZM64,136a8,8,0,0,1,8,8v40a8,8,0,0,1-8,8H48a8,8,0,0,1-8-8V136Zm152,48a8,8,0,0,1-8,8H192a8,8,0,0,1-8-8V144a8,8,0,0,1,8-8h24Z"/></symbol>
+  <symbol id="i-circle-notch" viewBox="0 0 256 256"><path d="M232,128a104,104,0,0,1-208,0c0-41,23.81-78.36,60.66-95.27a8,8,0,0,1,6.68,14.54C60.15,61.59,40,93.27,40,128a88,88,0,0,0,176,0c0-34.73-20.15-66.41-51.34-80.73a8,8,0,0,1,6.68-14.54C208.19,49.64,232,87,232,128Z"/></symbol>
+  <symbol id="i-warning-circle" viewBox="0 0 256 256"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm-8-80V80a8,8,0,0,1,16,0v56a8,8,0,0,1-16,0Zm20,36a12,12,0,1,1-12-12A12,12,0,0,1,140,172Z"/></symbol>
+  <symbol id="i-gear-six" viewBox="0 0 256 256"><path d="M128,80a48,48,0,1,0,48,48A48.05,48.05,0,0,0,128,80Zm0,80a32,32,0,1,1,32-32A32,32,0,0,1,128,160Zm109.94-52.79a8,8,0,0,0-3.89-5.4l-29.83-17-.12-33.62a8,8,0,0,0-2.83-6.08,111.91,111.91,0,0,0-36.72-20.67,8,8,0,0,0-6.46.59L128,41.85,97.88,25a8,8,0,0,0-6.47-.6A112.1,112.1,0,0,0,54.73,45.15a8,8,0,0,0-2.83,6.07l-.15,33.65-29.83,17a8,8,0,0,0-3.89,5.4,106.47,106.47,0,0,0,0,41.56,8,8,0,0,0,3.89,5.4l29.83,17,.12,33.62a8,8,0,0,0,2.83,6.08,111.91,111.91,0,0,0,36.72,20.67,8,8,0,0,0,6.46-.59L128,214.15,158.12,231a7.91,7.91,0,0,0,3.9,1,8.09,8.09,0,0,0,2.57-.42,112.1,112.1,0,0,0,36.68-20.73,8,8,0,0,0,2.83-6.07l.15-33.65,29.83-17a8,8,0,0,0,3.89-5.4A106.47,106.47,0,0,0,237.94,107.21Zm-15,34.91-28.57,16.25a8,8,0,0,0-3,3c-.58,1-1.19,2.06-1.81,3.06a7.94,7.94,0,0,0-1.22,4.21l-.15,32.25a95.89,95.89,0,0,1-25.37,14.3L134,199.13a8,8,0,0,0-3.91-1h-.19c-1.21,0-2.43,0-3.64,0a8.08,8.08,0,0,0-4.1,1l-28.84,16.1A96,96,0,0,1,67.88,201l-.11-32.2a8,8,0,0,0-1.22-4.22c-.62-1-1.23-2-1.8-3.06a8.09,8.09,0,0,0-3-3.06l-28.6-16.29a90.49,90.49,0,0,1,0-28.26L61.67,97.63a8,8,0,0,0,3-3c.58-1,1.19-2.06,1.81-3.06a7.94,7.94,0,0,0,1.22-4.21l.15-32.25a95.89,95.89,0,0,1,25.37-14.3L122,56.87a8,8,0,0,0,4.1,1c1.21,0,2.43,0,3.64,0a8.08,8.08,0,0,0,4.1-1l28.84-16.1A96,96,0,0,1,188.12,55l.11,32.2a8,8,0,0,0,1.22,4.22c.62,1,1.23,2,1.8,3.06a8.09,8.09,0,0,0,3,3.06l28.6,16.29A90.49,90.49,0,0,1,222.9,142.12Z"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 256 256"><path d="M224,128a8,8,0,0,1-8,8H136v80a8,8,0,0,1-16,0V136H40a8,8,0,0,1,0-16h80V40a8,8,0,0,1,16,0v80h80A8,8,0,0,1,224,128Z"/></symbol>
+  <symbol id="i-pencil-simple" viewBox="0 0 256 256"><path d="M227.31,73.37,182.63,28.68a16,16,0,0,0-22.63,0L36.69,152A15.86,15.86,0,0,0,32,163.31V208a16,16,0,0,0,16,16H92.69A15.86,15.86,0,0,0,104,219.31L227.31,96a16,16,0,0,0,0-22.63ZM92.69,208H48V163.31l88-88L180.69,120ZM192,108.68,147.31,64l24-24L216,84.68Z"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 256 256"><path d="M247.31,124.76c-.35-.79-8.82-19.58-27.65-38.41C194.57,61.26,162.88,48,128,48S61.43,61.26,36.34,86.35C17.51,105.18,9,124,8.69,124.76a8,8,0,0,0,0,6.5c.35.79,8.82,19.57,27.65,38.4C61.43,194.74,93.12,208,128,208s66.57-13.26,91.66-38.34c18.83-18.83,27.3-37.61,27.65-38.4A8,8,0,0,0,247.31,124.76ZM128,192c-30.78,0-57.67-11.19-79.93-33.25A133.47,133.47,0,0,1,25,128,133.33,133.33,0,0,1,48.07,97.25C70.33,75.19,97.22,64,128,64s57.67,11.19,79.93,33.25A133.46,133.46,0,0,1,231.05,128C223.84,141.46,192.43,192,128,192Zm0-112a48,48,0,1,0,48,48A48.05,48.05,0,0,0,128,80Zm0,80a32,32,0,1,1,32-32A32,32,0,0,1,128,160Z"/></symbol>
+  <symbol id="i-eye-slash" viewBox="0 0 256 256"><path d="M53.92,34.62A8,8,0,1,0,42.08,45.38L61.32,66.55C25,88.84,9.38,123.2,8.69,124.76a8,8,0,0,0,0,6.5c.35.79,8.82,19.57,27.65,38.4C61.43,194.74,93.12,208,128,208a127.11,127.11,0,0,0,52.07-10.83l22,24.21a8,8,0,1,0,11.84-10.76Zm47.33,75.84,41.67,45.85a32,32,0,0,1-41.67-45.85ZM128,192c-30.78,0-57.67-11.19-79.93-33.25A133.16,133.16,0,0,1,25,128c4.69-8.79,19.66-33.39,47.35-49.38l18,19.75a48,48,0,0,0,63.66,70l14.73,16.2A112,112,0,0,1,128,192Zm6-95.43a8,8,0,0,1,3-15.72,48.16,48.16,0,0,1,38.77,42.64,8,8,0,0,1-7.22,8.71,6.39,6.39,0,0,1-.75,0,8,8,0,0,1-8-7.26A32.09,32.09,0,0,0,134,96.57Zm113.28,34.69c-.42.94-10.55,23.37-33.36,43.8a8,8,0,1,1-10.67-11.92A132.77,132.77,0,0,0,231.05,128a133.15,133.15,0,0,0-23.12-30.77C185.67,75.19,158.78,64,128,64a118.37,118.37,0,0,0-19.36,1.57A8,8,0,1,1,106,49.79,134,134,0,0,1,128,48c34.88,0,66.57,13.26,91.66,38.35,18.83,18.83,27.3,37.62,27.65,38.41A8,8,0,0,1,247.31,131.26Z"/></symbol>
+  <symbol id="i-dots-three" viewBox="0 0 256 256"><path d="M140,128a12,12,0,1,1-12-12A12,12,0,0,1,140,128Zm56-12a12,12,0,1,0,12,12A12,12,0,0,0,196,116ZM60,116a12,12,0,1,0,12,12A12,12,0,0,0,60,116Z"/></symbol>
+  <symbol id="i-bookmark-simple" viewBox="0 0 256 256"><path d="M184,32H72A16,16,0,0,0,56,48V224a8,8,0,0,0,12.24,6.78L128,193.43l59.77,37.35A8,8,0,0,0,200,224V48A16,16,0,0,0,184,32Zm0,177.57-51.77-32.35a8,8,0,0,0-8.48,0L72,209.57V48H184Z"/></symbol>
+  <symbol id="i-graduation-cap" viewBox="0 0 256 256"><path d="M251.76,88.94l-120-64a8,8,0,0,0-7.52,0l-120,64a8,8,0,0,0,0,14.12L32,117.87v48.42a15.91,15.91,0,0,0,4.06,10.65C49.16,191.53,78.51,216,128,216a130,130,0,0,0,48-8.76V240a8,8,0,0,0,16,0V199.51a115.63,115.63,0,0,0,27.940-22.57A15.91,15.91,0,0,0,224,166.29V117.87l27.76-14.81a8,8,0,0,0,0-14.12ZM128,200c-43.27,0-68.72-21.14-80-33.71V126.4l76.24,40.66a8,8,0,0,0,7.52,0L176,143.47v46.34C163.4,195.69,147.52,200,128,200Zm80-33.75a97.830,97.830,0,0,1-16,14.25V134.93l16-8.53ZM188,118.940l-.22-.13-56-29.87a8,8,0,0,0-7.52,14.12L171,128l-43,22.93L25,96,128,41.07,231,96Z"/></symbol>
+  <symbol id="i-play-fill" viewBox="0 0 256 256"><path d="M240,128a15.74,15.74,0,0,1-7.6,13.51L88.32,229.65a16,16,0,0,1-16.2.3A15.86,15.86,0,0,1,64,216.13V39.87a15.86,15.86,0,0,1,8.120-13.82,16,16,0,0,1,16.2.3L232.4,114.49A15.74,15.74,0,0,1,240,128Z"/></symbol>
+  <symbol id="i-pause-fill" viewBox="0 0 256 256"><path d="M216,48V208a16,16,0,0,1-16,16H160a16,16,0,0,1-16-16V48a16,16,0,0,1,16-16h40A16,16,0,0,1,216,48ZM96,32H56A16,16,0,0,0,40,48V208a16,16,0,0,0,16,16H96a16,16,0,0,0,16-16V48A16,16,0,0,0,96,32Z"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 256 256"><path d="M216,48H176V40a24,24,0,0,0-24-24H104A24,24,0,0,0,80,40v8H40a8,8,0,0,0,0,16h8V208a16,16,0,0,0,16,16H192a16,16,0,0,0,16-16V64h8a8,8,0,0,0,0-16ZM96,40a8,8,0,0,1,8-8h48a8,8,0,0,1,8,8v8H96Zm96,168H64V64H192ZM112,104v64a8,8,0,0,1-16,0V104a8,8,0,0,1,16,0Zm48,0v64a8,8,0,0,1-16,0V104a8,8,0,0,1,16,0Z"/></symbol>
+  <symbol id="i-repeat" viewBox="0 0 256 256"><path d="M24,128A72.08,72.08,0,0,1,96,56H204.69L194.34,45.66a8,8,0,0,1,11.32-11.32l24,24a8,8,0,0,1,0,11.32l-24,24a8,8,0,0,1-11.32-11.32L204.69,72H96a56.06,56.06,0,0,0-56,56,8,8,0,0,1-16,0Zm200-8a8,8,0,0,0-8,8,56.06,56.06,0,0,1-56,56H51.31l10.35-10.34a8,8,0,0,0-11.32-11.320l-24,24a8,8,0,0,0,0,11.32l24,24a8,8,0,0,0,11.32-11.32L51.31,200H160a72.08,72.08,0,0,0,72-72A8,8,0,0,0,224,120Z"/></symbol>
+  <symbol id="i-pause-circle" viewBox="0 0 256 256"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216ZM112,96v64a8,8,0,0,1-16,0V96a8,8,0,0,1,16,0Zm48,0v64a8,8,0,0,1-16,0V96a8,8,0,0,1,16,0Z"/></symbol>
+  <symbol id="i-arrow-square-out" viewBox="0 0 256 256"><path d="M224,104a8,8,0,0,1-16,0V59.32l-66.33,66.34a8,8,0,0,1-11.32-11.32L196.68,48H152a8,8,0,0,1,0-16h64a8,8,0,0,1,8,8Zm-40,24a8,8,0,0,0-8,8v72H48V80h72a8,8,0,0,0,0-16H48A16,16,0,0,0,32,80V208a16,16,0,0,0,16,16H176a16,16,0,0,0,16-16V136A8,8,0,0,0,184,128Z"/></symbol>
+  <symbol id="i-wifi-slash" viewBox="0 0 256 256"><path d="M213.92,210.62a8,8,0,1,1-11.84,10.76l-52-57.15a60,60,0,0,0-57.41,7.24,8,8,0,1,1-9.42-12.93A75.43,75.43,0,0,1,128,144c1.28,0,2.55,0,3.82.1L104.9,114.49A108,108,0,0,0,61,135.31,8,8,0,0,1,49.73,134,8,8,0,0,1,51,122.77a124.27,124.27,0,0,1,41.71-21.66L69.37,75.4a155.43,155.43,0,0,0-40.29,24A8,8,0,0,1,18.92,87,171.87,171.87,0,0,1,58,62.86L42.08,45.38A8,8,0,1,1,53.92,34.62ZM128,192a12,12,0,1,0,12,12A12,12,0,0,0,128,192ZM237.08,87A172.3,172.3,0,0,0,106,49.4a8,8,0,1,0,2,15.87A158.33,158.33,0,0,1,128,64a156.25,156.25,0,0,1,98.92,35.37A8,8,0,0,0,237.08,87ZM195,135.31a8,8,0,0,0,11.24-1.3,8,8,0,0,0-1.3-11.24,124.25,124.25,0,0,0-51.73-24.2A8,8,0,1,0,150,114.24,108.12,108.12,0,0,1,195,135.31Z"/></symbol>
+  <symbol id="i-arrow-down" viewBox="0 0 256 256"><path d="M205.66,149.66l-72,72a8,8,0,0,1-11.32,0l-72-72a8,8,0,0,1,11.32-11.32L120,196.69V40a8,8,0,0,1,16,0V196.69l58.34-58.35a8,8,0,0,1,11.32,11.32Z"/></symbol>
+  <symbol id="i-arrow-up" viewBox="0 0 256 256"><path d="M205.66,117.66a8,8,0,0,1-11.32,0L136,59.31V216a8,8,0,0,1-16,0V59.31L61.66,117.66a8,8,0,0,1-11.32-11.32l72-72a8,8,0,0,1,11.32,0l72,72A8,8,0,0,1,205.66,117.66Z"/></symbol>
+  <symbol id="i-text-aa" viewBox="0 0 256 256"><path d="M87.24,52.59a8,8,0,0,0-14.48,0l-64,136a8,8,0,1,0,14.48,6.81L39.9,160h80.2l16.66,35.4a8,8,0,1,0,14.48-6.81ZM47.43,144,80,74.79,112.57,144ZM200,96c-12.76,0-22.73,3.47-29.63,10.32a8,8,0,0,0,11.26,11.36c3.8-3.770,10-5.68,18.37-5.68,13.23,0,24,9,24,20v3.22A42.76,42.76,0,0,0,200,128c-22.06,0-40,16.15-40,36s17.94,36,40,36a42.73,42.73,0,0,0,24-7.25,8,8,0,0,0,16-.75V132C240,112.15,222.06,96,200,96Zm0,88c-13.23,0-24-9-24-20s10.77-20,24-20,24,9,24,20S213.23,184,200,184Z"/></symbol>
+  <symbol id="i-list-bullets" viewBox="0 0 256 256"><path d="M80,64a8,8,0,0,1,8-8H216a8,8,0,0,1,0,16H88A8,8,0,0,1,80,64Zm136,56H88a8,8,0,0,0,0,16H216a8,8,0,0,0,0-16Zm0,64H88a8,8,0,0,0,0,16H216a8,8,0,0,0,0-16ZM44,52A12,12,0,1,0,56,64,12,12,0,0,0,44,52Zm0,64a12,12,0,1,0,12,12A12,12,0,0,0,44,116Zm0,64a12,12,0,1,0,12,12A12,12,0,0,0,44,180Z"/></symbol>
+  <symbol id="i-play-circle" viewBox="0 0 256 256"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm48.24-94.78-64-40A8,8,0,0,0,100,88v80a8,8,0,0,0,12.24,6.78l64-40a8,8,0,0,0,0-13.56ZM116,153.57V102.43L156.91,128Z"/></symbol>
+  <symbol id="i-subtitles" viewBox="0 0 256 256"><path d="M224,48H32A16,16,0,0,0,16,64V192a16,16,0,0,0,16,16H224a16,16,0,0,0,16-16V64A16,16,0,0,0,224,48Zm0,144H32V64H224V192ZM48,136a8,8,0,0,1,8-8H72a8,8,0,0,1,0,16H56A8,8,0,0,1,48,136Zm160,0a8,8,0,0,1-8,8H104a8,8,0,0,1,0-16h96A8,8,0,0,1,208,136Zm-48,32a8,8,0,0,1-8,8H56a8,8,0,0,1,0-16h96A8,8,0,0,1,160,168Zm48,0a8,8,0,0,1-8,8H184a8,8,0,0,1,0-16h16A8,8,0,0,1,208,168Z"/></symbol>
+  <symbol id="i-waveform" viewBox="0 0 256 256"><path d="M56,96v64a8,8,0,0,1-16,0V96a8,8,0,0,1,16,0ZM88,24a8,8,0,0,0-8,8V224a8,8,0,0,0,16,0V32A8,8,0,0,0,88,24Zm40,32a8,8,0,0,0-8,8V192a8,8,0,0,0,16,0V64A8,8,0,0,0,128,56Zm40,32a8,8,0,0,0-8,8v64a8,8,0,0,0,16,0V96A8,8,0,0,0,168,88Zm40-16a8,8,0,0,0-8,8v96a8,8,0,0,0,16,0V80A8,8,0,0,0,208,72Z"/></symbol>
+</svg>
+<div class="pop" id="pop" hidden role="dialog" aria-label="Translation"></div>
+
+<script>
+/* ===== Dados inventados para o estudo (texto original, não vem de nenhum vídeo) ===== */
+const DATA = {
+  fr: {
+    title: 'Le pain du matin, pas à pas', channel: 'Atelier Ardoise', lang: 'French', code: 'fr', native: 'Portuguese', level: 'B1', duration: 162,
+    chapters: [{ t: 0, title: 'Avant l’aube' }, { t: 60, title: 'Le levain' }, { t: 120, title: 'La cuisson' }],
+    paras: [
+      [[4.0, 7.6, 'Bonjour à tous, et merci d’être là si tôt.', 'Bom dia a todos, e obrigado por estarem aqui tão cedo.'],
+       [7.9, 12.8, 'Il est quatre heures du matin, et le fournil est encore froid.', 'São quatro horas da manhã, e a padaria ainda está fria.'],
+       [13.2, 18.9, 'Aujourd’hui, je vais vous montrer comment on prépare le pain de la journée.', 'Hoje vou mostrar como se prepara o pão do dia.']],
+      [[21.0, 25.4, 'Ce n’est pas une recette compliquée, mais elle demande de la patience.', 'Não é uma receita complicada, mas exige paciência.'],
+       [25.8, 30.6, 'D’ailleurs, la plupart des erreurs viennent du fait qu’on se dépêche.', 'Aliás, a maioria dos erros vem de a gente ter pressa.'],
+       [31.0, 36.2, 'On veut que la pâte lève plus vite, alors on ajoute trop de levure.', 'Queremos que a massa cresça mais rápido, então pomos fermento demais.'],
+       [36.6, 40.1, 'Résultat : le pain a un goût fade et il sèche dès le lendemain.', 'Resultado: o pão fica sem gosto e seca já no dia seguinte.']],
+      [[43.0, 47.5, 'Alors, avant de commencer, je vous propose une petite règle.', 'Então, antes de começar, proponho uma pequena regra.'],
+       [47.9, 51.0, 'On ne regarde pas l’horloge, on regarde la pâte.', 'Não olhamos o relógio, olhamos a massa.'],
+       [51.5, 56.8, 'Elle vous dira elle-même quand elle est prête, à condition de savoir l’écouter.', 'Ela mesma vai dizer quando está pronta, desde que se saiba escutá-la.']],
+      [[60.0, 64.6, 'Voici le levain que j’ai nourri hier soir avant de partir.', 'Aqui está o fermento natural que alimentei ontem à noite antes de sair.'],
+       [65.0, 70.2, 'Vous voyez ces petites bulles à la surface ? C’est bon signe.', 'Vocês veem essas bolhinhas na superfície? É bom sinal.'],
+       [70.6, 76.4, 'S’il sent un peu l’acide, comme une pomme verte, c’est qu’il est en pleine forme.', 'Se tiver um cheiro um pouco ácido, como de maçã verde, é porque está em plena forma.']],
+      [[79.0, 84.3, 'Je mélange la farine et l’eau tiède, puis je laisse reposer une demi-heure.', 'Misturo a farinha e a água morna, depois deixo descansar meia hora.'],
+       [84.8, 89.9, 'Les boulangers appellent ça l’autolyse, mais le mot n’a pas d’importance.', 'Os padeiros chamam isso de autólise, mas a palavra não importa.'],
+       [90.3, 96.0, 'Ce qui compte, c’est que la farine ait le temps de boire toute l’eau.', 'O que conta é a farinha ter tempo de beber toda a água.']],
+      [[99.0, 103.8, 'Ensuite, j’ajoute le levain et le sel, et je pétris doucement.', 'Depois acrescento o fermento natural e o sal, e sovo devagar.'],
+       [104.2, 109.4, 'Il ne faut pas écraser la pâte : il faut la plier, encore et encore.', 'Não se deve esmagar a massa: é preciso dobrá-la, de novo e de novo.'],
+       [109.8, 114.0, 'Au bout de quelques minutes, elle devient lisse et un peu brillante.', 'Depois de alguns minutos, ela fica lisa e um pouco brilhante.']],
+      [[120.0, 125.1, 'Pendant que la pâte lève, on allume le four, et on attend.', 'Enquanto a massa cresce, acendemos o forno e esperamos.'],
+       [125.5, 131.2, 'C’est souvent le moment où je bois mon premier café de la journée.', 'Muitas vezes é a hora em que tomo o primeiro café do dia.'],
+       [131.6, 136.9, 'Quand le four est bien chaud, j’enfourne les pains d’un geste rapide.', 'Quando o forno está bem quente, ponho os pães no forno num gesto rápido.']],
+      [[139.0, 143.4, 'Écoutez bien : la croûte chante quand elle refroidit.', 'Escutem bem: a casca canta quando esfria.'],
+       [143.8, 148.6, 'Ce petit craquement, c’est la récompense de toute une nuit de travail.', 'Esse estalinho é a recompensa de uma noite inteira de trabalho.'],
+       [149.0, 154.2, 'Demain, on essaiera avec une farine de seigle, un peu plus capricieuse.', 'Amanhã vamos tentar com uma farinha de centeio, um pouco mais temperamental.'],
+       [154.6, 158.0, 'À bientôt, et bonne journée.', 'Até breve, e bom dia.']]
+    ],
+    words: {
+      'fournil': { base: 'fournil', cls: 'noun · masculine', mean: 'o lugar onde se faz o pão (a padaria por dentro)' },
+      'dépêche': { base: 'se dépêcher', cls: 'verb', mean: 'ter pressa, apressar-se' },
+      'levure': { base: 'levure', cls: 'noun · feminine', mean: 'fermento (biológico, de pacote)', note: 'Aqui se opõe a “levain”, o fermento natural.' },
+      'fade': { base: 'fade', cls: 'adjective', mean: 'sem gosto, insosso' },
+      'lève': { base: 'lever', cls: 'verb', mean: 'cresce (a massa)' },
+      'sèche': { base: 'sécher', cls: 'verb', mean: 'seca' },
+      'lendemain': { base: 'lendemain', cls: 'noun · masculine', mean: 'o dia seguinte' },
+      'horloge': { base: 'horloge', cls: 'noun · feminine', mean: 'relógio (de parede)' },
+      'levain': { base: 'levain', cls: 'noun · masculine', mean: 'fermento natural' },
+      'nourri': { base: 'nourrir', cls: 'verb', mean: 'alimentei' },
+      'bulles': { base: 'bulle', cls: 'noun · feminine', mean: 'bolhas' },
+      'tiède': { base: 'tiède', cls: 'adjective', mean: 'morna' },
+      'pétris': { base: 'pétrir', cls: 'verb', mean: 'sovo (a massa)' },
+      'écraser': { base: 'écraser', cls: 'verb', mean: 'esmagar' },
+      'plier': { base: 'plier', cls: 'verb', mean: 'dobrar' },
+      'lisse': { base: 'lisse', cls: 'adjective', mean: 'lisa' },
+      'enfourne': { base: 'enfourner', cls: 'verb', mean: 'ponho no forno' },
+      'croûte': { base: 'croûte', cls: 'noun · feminine', mean: 'casca (do pão)' },
+      'craquement': { base: 'craquement', cls: 'noun · masculine', mean: 'estalo' },
+      'récompense': { base: 'récompense', cls: 'noun · feminine', mean: 'recompensa' },
+      'seigle': { base: 'seigle', cls: 'noun · masculine', mean: 'centeio' },
+      'capricieuse': { base: 'capricieux', cls: 'adjective', mean: 'temperamental, imprevisível' },
+      'à condition de': { base: 'à condition de', cls: 'expression', mean: 'desde que, com a condição de' },
+      'en pleine forme': { base: 'en pleine forme', cls: 'expression', mean: 'em plena forma' },
+      'encore et encore': { base: 'encore et encore', cls: 'expression', mean: 'de novo e de novo' },
+      'au bout de': { base: 'au bout de', cls: 'expression', mean: 'depois de, ao fim de' },
+      'd’ailleurs': { base: 'd’ailleurs', cls: 'expression', mean: 'aliás' },
+      'dès le lendemain': { base: 'dès le lendemain', cls: 'expression', mean: 'já no dia seguinte' }
+    },
+    vocab: [
+      { term: 'à condition de', mean: 'desde que, com a condição de', si: 9, sent: true },
+      { term: 'levain', mean: 'fermento natural', si: 10, sent: false },
+      { term: 'tiède', mean: 'morna', si: 13, sent: false }
+    ]
+  },
+  de: {
+    title: 'Mit dem Rad zur Arbeit', channel: 'Kanal Beispiel', lang: 'German', code: 'de', native: 'Portuguese', level: 'A2', duration: 50,
+    chapters: [{ t: 0, title: 'In der Stadt' }, { t: 25, title: 'Am Fluss' }],
+    paras: [
+      [[2.0, 3.6, 'Guten Morgen!', 'Bom dia!'],
+       [3.9, 7.8, 'Heute nehme ich euch mit auf meinen Weg zur Arbeit.', 'Hoje levo vocês comigo no caminho para o trabalho.'],
+       [8.2, 12.9, 'Es ist kalt, aber das Fahrrad ist trotzdem schneller als der Bus.', 'Está frio, mas a bicicleta ainda assim é mais rápida que o ônibus.']],
+      [[13.3, 17.4, 'An dieser Kreuzung muss man besonders aufpassen.', 'Neste cruzamento é preciso tomar um cuidado especial.'],
+       [17.8, 22.6, 'Die Autos biegen oft ab, ohne auf die Radfahrer zu achten.', 'Os carros muitas vezes viram sem prestar atenção nos ciclistas.']],
+      [[25.0, 29.5, 'Jetzt wird es ruhiger, denn der Weg führt am Fluss entlang.', 'Agora fica mais tranquilo, porque o caminho segue ao longo do rio.'],
+       [29.9, 34.1, 'Im Sommer sitzen hier abends viele Leute auf den Treppen.', 'No verão, à noite, muita gente se senta aqui nas escadas.'],
+       [34.5, 38.8, 'Heute ist es leer, nur ein paar Enten schwimmen vorbei.', 'Hoje está vazio, só alguns patos passam nadando.']],
+      [[39.2, 43.0, 'Noch zehn Minuten, dann bin ich da.', 'Mais dez minutos e chego.'],
+       [43.4, 46.5, 'Bis morgen und gute Fahrt!', 'Até amanhã e boa viagem!']]
+    ],
+    words: {
+      'kreuzung': { base: 'die Kreuzung', cls: 'noun · feminine', mean: 'cruzamento' },
+      'aufpassen': { base: 'aufpassen', cls: 'verb', mean: 'prestar atenção, tomar cuidado' },
+      'trotzdem': { base: 'trotzdem', cls: 'adverb', mean: 'mesmo assim' },
+      'entlang': { base: 'entlang', cls: 'preposition', mean: 'ao longo de', note: 'Aqui vem depois do nome: “am Fluss entlang”.' },
+      'treppen': { base: 'die Treppe', cls: 'noun · feminine', mean: 'escadas' },
+      'enten': { base: 'die Ente', cls: 'noun · feminine', mean: 'patos' },
+      'leer': { base: 'leer', cls: 'adjective', mean: 'vazio' },
+      'ruhiger': { base: 'ruhig', cls: 'adjective', mean: 'mais tranquilo' },
+      'biegen': { base: 'abbiegen', cls: 'verb', mean: 'virar (numa rua)', note: 'Verbo separável: “biegen … ab”.' }
+    },
+    vocab: [{ term: 'Kreuzung', mean: 'cruzamento', si: 3, sent: false }]
+  }
+};
+
+/* ===== Estado ===== */
+const $ = (id) => document.getElementById(id);
+const st = {
+  lang: 'fr', source: 'author', player: 'ok', nav: 'open', right: 'chat', navAuto: false,
+  t: 47.9, playing: false, rate: 1, pauseAtEnd: false, loop: false, follow: true,
+  cur: -1, endHandled: -1, gap: 0, gapTarget: 0, segEnd: null, queue: [], adLeft: 0, recOk: false,
+  pausedByLookup: false, ratio: null, font: 16, hide: false, revealed: new Set(), tab: 'contents', teacher: true,
+  units: [], sentences: [], vocab: { fr: [], de: [] }, notes: [], prepTimer: null, puncTimer: null
+};
+let D = DATA.fr;
+for (const k of Object.keys(DATA)) st.vocab[k] = DATA[k].vocab.map((v, i) => ({ ...v, id: k + i, date: 'Nov 27' }));
+try { const r = parseFloat(localStorage.getItem('mock:video-split')); if (r > 0 && r < 1) st.ratio = r; } catch (e) {}
+
+const fmt = (s) => { s = Math.max(0, Math.floor(s)); return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); };
+const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const norm = (s) => s.normalize('NFC').toLowerCase().replace(/[’']/g, '’').replace(/^[\s.,;:!?«»"()\-–—]+|[\s.,;:!?«»"()\-–—]+$/g, '');
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+/* ===== Unidades de sincronização: frases (ou, sem pontuação, grupos por pausa) ===== */
+function buildUnits() {
+  st.sentences = [];
+  D.paras.forEach((p, pi) => p.forEach(([a, b, text, tr]) => st.sentences.push({ start: a, end: b, text, tr, para: pi })));
+  if (st.source === 'nopunct') {
+    st.units = [];
+    D.paras.forEach((p, pi) => {
+      const idx = st.sentences.map((s, i) => i).filter((i) => st.sentences[i].para === pi);
+      for (let k = 0; k < idx.length; k += 2) {
+        const grp = idx.slice(k, k + 2).map((i) => st.sentences[i]);
+        const text = grp.map((s) => s.text).join(' ').toLowerCase().replace(/[.,;:!?«»"]/g, '').replace(/\s+/g, ' ').trim();
+        st.units.push({ start: grp[0].start, end: grp[grp.length - 1].end, text, tr: grp.map((s) => s.tr).join(' '), para: pi, from: idx[k] });
+      }
+    });
+  } else {
+    st.units = st.sentences.map((s, i) => ({ ...s, from: i }));
+  }
+}
+function unitAt(t) { let r = -1; for (let i = 0; i < st.units.length; i++) { if (st.units[i].start - 0.02 <= t) r = i; else break; } return r; }
+function unitOfSentence(si) { for (let i = st.units.length - 1; i >= 0; i--) if (st.units[i].from <= si) return i; return 0; }
+
+/* ===== Transcrição ===== */
+function vocabFor() { return st.vocab[st.lang]; }
+function markRegex() {
+  const forms = [];
+  for (const v of vocabFor()) { forms.push(v.term); const w = D.words[norm(v.term)]; if (w && w.base && w.base !== v.term) forms.push(w.base.replace(/^(die|der|das|se) /i, '')); }
+  if (!forms.length) return null;
+  const alts = [...new Set(forms)].sort((a, b) => b.length - a.length).map((f) => f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/’/g, '[’\']'));
+  return new RegExp('(?<![\\p{L}\\p{M}\\p{N}])(' + alts.join('|') + ')(?![\\p{L}\\p{M}\\p{N}])', 'giu');
+}
+function markText(text, re) {
+  if (!re) return esc(text);
+  let out = '', last = 0; re.lastIndex = 0; let m;
+  while ((m = re.exec(text))) { out += esc(text.slice(last, m.index)) + '<span class="mk" data-term="' + esc(m[0]) + '">' + esc(m[0]) + '</span>'; last = m.index + m[0].length; }
+  return out + esc(text.slice(last));
+}
+function srcLine() {
+  const ic = (id) => '<svg class="i" width="13" height="13" viewBox="0 0 256 256" aria-hidden="true"><use href="#' + id + '"/></svg>';
+  if (st.source === 'author') return ic('i-subtitles') + '<span>Transcript from the video’s captions, written by its author.</span>';
+  if (st.source === 'auto') return ic('i-subtitles') + '<span>YouTube automatic captions · punctuation added by AI.</span>';
+  if (st.source === 'nopunct') return ic('i-subtitles') + '<span>YouTube automatic captions, without punctuation.</span>';
+  return ic('i-waveform') + '<span>Preparing the transcript…</span>';
+}
+function renderTranscript() {
+  const sheet = $('sheet'); const keepTop = $('tarea').scrollTop;
+  let h = '<div class="thead"><h1>' + esc(D.title) + '</h1><div class="meta">' + esc(D.channel) + ' · ' + fmt(D.duration).replace(/^0/, '') + ' · ' + D.lang + '</div><div class="src">' + srcLine() + '</div>';
+  if (st.source === 'nopunct') {
+    h += '<div class="tbanner"><span>These captions have no punctuation, so the text is split at pauses and a line can stop in the middle of a sentence.</span>' +
+      (isNoKey() ? '<span>Add your OpenRouter key in Settings to add punctuation.</span><button type="button" data-act="settings">Open Settings</button>'
+        : '<button type="button" data-act="punct">Add punctuation · about $0.01</button>') + '</div>';
+  }
+  h += '</div>';
+  if (st.source === 'preparing') {
+    h += '<div class="prep"><b>Getting the transcript.</b> You can already play the video; the text appears here when it’s ready.<ol><li class="done">Video details</li><li class="cur">Captions (a few seconds)</li><li>Sentences and times</li></ol><div class="sk"></div><div class="sk" style="width:86%"></div><div class="sk" style="width:92%"></div></div>';
+    sheet.innerHTML = h; sheet.className = 'tsheet'; return;
+  }
+  const re = markRegex();
+  D.paras.forEach((p, pi) => {
+    const units = st.units.map((u, i) => ({ u, i })).filter((x) => x.u.para === pi);
+    const ch = D.chapters.find((c) => Math.abs(c.t - Math.floor(units[0].u.start)) < 6 && (pi === 0 || D.paras[pi - 1][0][0] < c.t));
+    if (ch) h += '<h3 class="chap">' + esc(ch.title) + '</h3>';
+    h += '<p class="para" data-p="' + pi + '"><button type="button" class="ts" data-t="' + units[0].u.start + '">' + fmt(units[0].u.start) + '</button>' +
+      units.map(({ u, i }) => '<span class="s' + (st.revealed.has(i) ? ' rev' : '') + '" data-i="' + i + '">' + markText(u.text, re) + '</span>').join(' ') + '</p>';
+  });
+  sheet.innerHTML = h;
+  sheet.className = 'tsheet' + (st.hide ? ' hidetext' : '');
+  sheet.style.fontSize = st.font + 'px';
+  $('tarea').scrollTop = keepTop;
+  st.cur = -2; updateCurrent(true);
+}
+function isNoKey() { return $('stNoKey').checked; }
+
+/* ===== Frase atual, acompanhar, highlight ===== */
+const HL = typeof CSS !== 'undefined' && CSS.highlights && typeof Highlight !== 'undefined';
+function unitEl(i) { return $('sheet').querySelector('.s[data-i="' + i + '"]'); }
+function setHighlight(name, el) {
+  if (!HL) { document.querySelectorAll('.s.now-fallback').forEach((e) => e.classList.remove('now-fallback')); if (el && name === 'vidnow') el.classList.add('now-fallback'); return; }
+  if (!el) { CSS.highlights.delete(name); return; }
+  const r = document.createRange(); r.selectNodeContents(el); CSS.highlights.set(name, new Highlight(r));
+}
+function updateCurrent(force) {
+  if (st.source === 'preparing') { updateContents(); return; }
+  const i = unitAt(st.t);
+  if (i === st.cur && !force) return;
+  const changed = i !== st.cur; st.cur = i;
+  if (changed) st.endHandled = -1;
+  const el = i >= 0 ? unitEl(i) : null;
+  setHighlight('vidnow', el);
+  document.querySelectorAll('.para.cur').forEach((p) => p.classList.remove('cur'));
+  if (el) el.closest('.para').classList.add('cur');
+  updateContents();
+  if (st.follow) scrollToCurrent(false);
+  updateCtx();
+}
+let progScrollUntil = 0;
+function scrollToCurrent(always) {
+  const el = st.cur >= 0 ? unitEl(st.cur) : null; if (!el) return;
+  const ta = $('tarea'); const r = el.getBoundingClientRect(); const tr = ta.getBoundingClientRect();
+  const rel = r.top - tr.top; const h = ta.clientHeight;
+  if (always || rel < h * 0.12 || r.bottom - tr.top > h * 0.7) {
+    progScrollUntil = performance.now() + 700;
+    ta.scrollTo({ top: ta.scrollTop + rel - h * 0.3, behavior: 'smooth' });
+  }
+}
+function setFollow(on) {
+  st.follow = on; renderFollow();
+  if (on) scrollToCurrent(true);
+}
+function renderFollow() {
+  const f = $('follow');
+  if (st.follow || st.cur < 0 || st.source === 'preparing') { f.hidden = true; return; }
+  const el = unitEl(st.cur); let dir = 'i-arrow-down';
+  if (el) { const r = el.getBoundingClientRect(), tr = $('tarea').getBoundingClientRect(); if (r.bottom < tr.top + 20) dir = 'i-arrow-up'; }
+  f.innerHTML = '<svg class="i" width="13" height="13" viewBox="0 0 256 256" aria-hidden="true"><use href="#' + dir + '"/></svg>Follow · ' + fmt(st.t);
+  f.hidden = false;
+}
+
+/* ===== Simulação do player ===== */
+const blocked = () => ['loading', 'offline', 'unavailable'].includes(st.player);
+function play(fromUser) {
+  if (blocked()) { toast(st.player === 'loading' ? 'The video is still loading.' : 'The video isn’t available. The transcript still works.'); return; }
+  if ($('stRec').checked && !st.recOk && fromUser) {
+    msg('<span class="recdot"></span><span class="txt">Mincer is recording system audio. The video’s sound would end up in the recording.</span><button type="button" data-msg="playanyway">Play anyway</button><button type="button" data-msg="cancel">Cancel</button>', true);
+    return;
+  }
+  if (st.pausedByLookup && st.cur >= 0) { st.t = Math.max(0, st.units[st.cur].start - 0.1); }
+  st.pausedByLookup = false;
+  if (st.player === 'ad' && st.adLeft <= 0 && !st.adDone) { st.adLeft = 6; }
+  if (st.player === 'buffer') { msg('<span class="txt">Waiting for the video… The connection is slow; the transcript waits with it.</span>'); }
+  st.playing = true; if (st.t >= D.duration - 0.05) st.t = 0;
+  if (!$('sMsg').dataset.keep) clearMsgSoon();
+  renderPlayer();
+}
+function pause() { st.playing = false; st.segEnd = null; st.queue = []; st.gap = 0; renderPlayer(); }
+function seek(t) { st.t = clamp(t, 0, D.duration); st.endHandled = -1; st.gap = 0; updateCurrent(); renderPlayer(); }
+function playUnit(i, opts = {}) {
+  if (i < 0 || i >= st.units.length) return;
+  st.pausedByLookup = false;
+  seek(st.units[i].start - 0.15);
+  if (opts.once) st.segEnd = st.units[i].end + 0.15;
+  setFollow(true); play(true);
+}
+function playRange(a, b) { st.pausedByLookup = false; seek(st.units[a].start - 0.15); st.segEnd = st.units[b].end + 0.15; play(true); }
+let last = performance.now(), lastPlayerRender = 0;
+function tick() {
+  const now = performance.now(); const dt = Math.min(0.2, (now - last) / 1000); last = now;
+  if (st.playing && !blocked()) {
+    if (st.adLeft > 0) {
+      st.adLeft -= dt;
+      if (st.adLeft <= 0) { st.adDone = true; clearMsg(); }
+      else msg('<span class="txt">Ad playing. The transcript waits for the video.</span>');
+    } else if (st.player === 'buffer') {
+      // rede lenta: o tempo não anda
+    } else if (st.gap > 0) {
+      st.gap -= dt; if (st.gap <= 0) { st.t = st.gapTarget; st.endHandled = -1; }
+    } else {
+      st.t += dt * st.rate;
+      const u = st.cur >= 0 ? st.units[st.cur] : null;
+      if (st.segEnd != null && st.t >= st.segEnd) {
+        st.segEnd = null;
+        if (st.queue.length) { const nx = st.queue.shift(); st.gap = 0.8; st.gapTarget = st.units[nx].start - 0.15; st.segEnd = st.units[nx].end + 0.15; }
+        else { st.playing = false; }
+      } else if (u && st.loop && st.t >= u.end + 0.1 && st.endHandled !== st.cur) {
+        st.endHandled = st.cur; st.gap = 0.7; st.gapTarget = u.start - 0.15; st.t = u.end + 0.1;
+      } else if (u && st.pauseAtEnd && st.t >= u.end + 0.05 && st.endHandled !== st.cur) {
+        st.endHandled = st.cur; st.t = u.end + 0.05; st.playing = false;
+      }
+      if (st.t >= D.duration) { st.t = D.duration; st.playing = false; }
+      updateCurrent();
+    }
+  }
+  if (now - lastPlayerRender > 120) { lastPlayerRender = now; renderPlayer(); if (!st.follow) renderFollow(); }
+  requestAnimationFrame(tick);
+}
+function renderPlayer() {
+  const pl = st.playing && !blocked();
+  $('bPlayUse').setAttribute('href', pl ? '#i-pause-fill' : '#i-play-fill');
+  $('ytIcon').querySelector('use').setAttribute('href', pl ? '#i-pause-fill' : '#i-play-fill');
+  $('ytBig').hidden = pl || st.t > 1 || st.player === 'loading';
+  const shown = st.adLeft > 0 ? 'Ad · 0:0' + Math.ceil(st.adLeft) : fmt(st.t).replace(/^0/, '') + ' / ' + fmt(D.duration).replace(/^0/, '');
+  $('ytTime').textContent = shown;
+  $('ytBar').style.width = (st.adLeft > 0 ? 0 : (st.t / D.duration) * 100) + '%';
+  $('ytAd').hidden = !(st.adLeft > 0); $('ytAd').textContent = 'Ad · ' + Math.ceil(st.adLeft) + ' s';
+  $('ytLoad').hidden = st.player !== 'loading';
+  $('sTime').innerHTML = '<b>' + fmt(st.t) + '</b><span class="dur"> / ' + fmt(D.duration) + '</span>';
+  const dis = blocked() || st.adLeft > 0 || st.source === 'preparing';
+  ['bPrev', 'bReplay', 'bNext', 'bPause', 'bLoop', 'bReveal'].forEach((id) => { $(id).disabled = dis; });
+  $('bPlay').disabled = blocked();
+  $('bSpeed').disabled = blocked();
+}
+
+/* ===== Mensagens da faixa de controles ===== */
+let msgTimer = 0;
+function msg(html, keep) { const m = $('sMsg'); m.innerHTML = html; m.hidden = false; m.className = 'smsg' + (keep ? ' warn' : ''); m.dataset.keep = keep ? '1' : ''; clearTimeout(msgTimer); layout(); }
+function clearMsg() { const m = $('sMsg'); if (m.hidden) return; m.hidden = true; m.dataset.keep = ''; layout(); }
+function clearMsgSoon() { clearTimeout(msgTimer); msgTimer = setTimeout(clearMsg, 2600); }
+$('sMsg').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-msg]'); if (!b) return;
+  if (b.dataset.msg === 'playanyway') { st.recOk = true; clearMsg(); play(true); }
+  if (b.dataset.msg === 'cancel') clearMsg();
+});
+
+/* ===== Layout: altura do vídeo, divisória, largura mínima ===== */
+const TEXT_MIN = 160, COL_MIN = 400, STRIP_PAD = 16;
+function rightW() { return st.right === 'none' ? 0 : 340; }
+function layout() {
+  const win = $('window');
+  // última coluna aberta vence: se o meio ficaria abaixo de 400 px, a da esquerda recolhe
+  const navW = st.nav === 'open' ? 300 : 48;
+  st.navAuto = st.nav === 'open' && win.clientWidth - 300 - rightW() < COL_MIN;
+  document.body.classList.toggle('nav-collapsed', st.nav === 'collapsed' || st.navAuto);
+  $('chatPanel').hidden = st.right !== 'chat';
+  $('notesPanel').hidden = st.right !== 'notes';
+  $('btnChat').classList.toggle('on', st.right === 'chat');
+  $('btnNotes').classList.toggle('on', st.right === 'notes');
+  const vcol = $('vcol'); const W = vcol.clientWidth; const bodyH = $('rbody').clientHeight;
+  const vp = $('vpane'); const strip = $('strip'); const bar = st.player === 'offline' || st.player === 'unavailable';
+  if (bar) {
+    vp.className = 'vpane bar' + (st.player === 'unavailable' ? ' warn' : '');
+    vp.style.height = '44px';
+    vp.innerHTML = st.player === 'offline'
+      ? '<svg class="i" width="16" height="16" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-wifi-slash"/></svg><span class="msg">You’re offline. The transcript works here; the video needs internet.</span><button type="button" class="tbtn" data-vp="retry">Try again</button>'
+      : '<svg class="i" width="16" height="16" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-warning-circle"/></svg><span class="msg">This video can’t play here. It may have been removed or made private, be age-restricted, or its owner doesn’t allow it in other apps.</span><button type="button" class="tbtn" data-vp="yt"><svg class="i" width="13" height="13" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-arrow-square-out"/></svg>Open on YouTube</button><button type="button" class="tbtn" data-vp="retry">Try again</button>';
+    strip.hidden = true; $('divider').hidden = true;
+  } else {
+    if (vp.classList.contains('bar')) { vp.className = 'vpane'; vp.innerHTML = ''; vp.appendChild(ytEl); }
+    strip.hidden = false; $('divider').hidden = false;
+    const stripH = strip.offsetHeight || 44;
+    const maxByWidth = Math.floor((W - 24) * 9 / 16);
+    const maxByHeight = bodyH - STRIP_PAD - stripH - 8 - TEXT_MIN;
+    const max = Math.max(200, Math.min(maxByWidth, maxByHeight));
+    const want = st.ratio ? Math.round(st.ratio * bodyH) : Math.round(0.42 * bodyH);
+    const vh = clamp(want, 200, max);
+    const vw = Math.round(vh * 16 / 9);
+    ytEl.style.width = vw + 'px'; ytEl.style.height = vh + 'px';
+    vp.style.height = (vh + STRIP_PAD) + 'px';
+    $('ytDim').textContent = vw + ' × ' + vh;
+    st.vh = vh; st.vw = vw; st.vmax = max;
+  }
+  // medidas na barra do estudo
+  const taH = $('tarea').clientHeight; const lines = Math.floor((taH - 24 - 18) / (st.font * 1.65));
+  $('meas').innerHTML = 'Janela <b>' + win.clientWidth + '×' + win.clientHeight + '</b> · coluna do meio <b>' + W + ' px</b>' +
+    (bar ? ' · lugar do vídeo: faixa de 44 px' : ' · vídeo <b>' + st.vw + '×' + st.vh + '</b> (mín. 356×200, máx. agora ' + Math.round(st.vmax * 16 / 9) + '×' + st.vmax + ')') +
+    ' · transcrição <b>' + taH + ' px</b> (~' + Math.max(0, lines) + ' linhas)' + (st.navAuto ? ' · <b>coluna da esquerda recolhida sozinha</b> (o meio ficaria com ' + (win.clientWidth - 300 - rightW()) + ' px)' : '') +
+    ' <span class="focusinfo" id="focusInfo"></span>';
+  positionSelbar(); placePopAgain(); updateCtx();
+}
+const ytEl = $('yt');
+$('vpane').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-vp]'); if (!b) return;
+  if (b.dataset.vp === 'retry') { toast('Still not available.'); }
+  if (b.dataset.vp === 'yt') openOnYt();
+});
+// divisória
+(function () {
+  const dv = $('divider'); let y0 = 0, h0 = 0, on = false;
+  dv.addEventListener('pointerdown', (e) => { on = true; y0 = e.clientY; h0 = st.vh; dv.setPointerCapture(e.pointerId); dv.classList.add('drag'); e.preventDefault(); });
+  dv.addEventListener('pointermove', (e) => { if (!on) return; const bodyH = $('rbody').clientHeight; st.ratio = clamp(h0 + e.clientY - y0, 200, st.vmax) / bodyH; layout(); });
+  dv.addEventListener('pointerup', () => { if (!on) return; on = false; dv.classList.remove('drag'); try { localStorage.setItem('mock:video-split', String(st.ratio)); } catch (e) {} });
+  dv.addEventListener('dblclick', () => { st.ratio = null; try { localStorage.removeItem('mock:video-split'); } catch (e) {} layout(); toast('Video size reset.'); });
+  dv.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return; e.preventDefault(); e.stopPropagation();
+    const bodyH = $('rbody').clientHeight; st.ratio = clamp(st.vh + (e.key === 'ArrowDown' ? 12 : -12), 200, st.vmax) / bodyH; layout();
+  });
+})();
+
+/* ===== Contents ===== */
+function renderContents() {
+  const o = $('outline');
+  o.innerHTML = D.chapters.map((c, i) => '<button type="button" data-ch="' + i + '"><span>' + fmt(c.t) + '</span><span>' + esc(c.title) + '</span></button>').join('') +
+    '<p class="help">Chapters from the video. A video without chapters shows one entry every 5 minutes, with its first words.</p>';
+}
+function updateContents() {
+  let ci = 0; D.chapters.forEach((c, i) => { if (c.t <= st.t) ci = i; });
+  $('outline').querySelectorAll('button[data-ch]').forEach((b) => b.classList.toggle('cur', +b.dataset.ch === ci));
+}
+$('outline').addEventListener('click', (e) => { const b = e.target.closest('button[data-ch]'); if (!b) return; seek(D.chapters[+b.dataset.ch].t); setFollow(true); });
+
+/* ===== Vocabulary ===== */
+function renderVocab() {
+  const items = vocabFor(); const list = $('vcList'); const ic = (id, w) => '<svg class="i" width="' + w + '" height="' + w + '" viewBox="0 0 256 256" aria-hidden="true"><use href="#' + id + '"/></svg>';
+  const row = (v) => {
+    const s = st.sentences[v.si]; const re = new RegExp('(?<![\\p{L}\\p{M}\\p{N}])(' + v.term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')(?![\\p{L}\\p{M}\\p{N}])', 'iu');
+    const src = esc(s.text).replace(re, '<b>$1</b>');
+    return '<li class="vc-item" data-id="' + v.id + '"><input type="checkbox" aria-label="Select"><span class="vc-term">' + esc(v.term) + '</span>' + (v.mean ? '<span class="vc-mean">' + esc(v.mean) + '</span>' : '') +
+      '<span class="vc-src">' + src + '</span><span class="vc-meta">' + fmt(s.start) + ' · ' + v.date + (v.sent ? ' <span class="chip-sent">Sent to notebook</span>' : '') + '</span>' +
+      '<span class="vc-acts"><button type="button" class="act" data-a="play" title="Play this sentence in the video">' + ic('i-play-circle', 13) + '</button><button type="button" class="act" data-a="del" title="Remove">' + ic('i-trash', 12) + '</button></span></li>';
+  };
+  const nw = items.filter((v) => !v.sent), sent = items.filter((v) => v.sent);
+  list.innerHTML = !items.length ? '<li class="vc-sec" style="text-align:center;padding:16px 0">Nothing saved yet. Select a word and choose Add to vocabulary (V).</li>'
+    : (nw.length ? '<li class="vc-sec">New</li>' + nw.map(row).join('') : '') + (sent.length ? '<li class="vc-sec">Sent to notebook</li>' + sent.map(row).join('') : '');
+  $('vcSend').innerHTML = ic('i-plus', 12) + (nw.length ? 'Send ' + nw.length + ' new to notebook' : 'Nothing new to send');
+  $('vcSend').disabled = !nw.length;
+  $('vcDest').innerHTML = 'To: Vocabulary — ' + esc(D.title) + ' · <button type="button">Change</button>';
+}
+$('vcList').addEventListener('click', (e) => {
+  const li = e.target.closest('.vc-item'); if (!li) return; const v = vocabFor().find((x) => x.id === li.dataset.id); if (!v) return;
+  const a = e.target.closest('[data-a]');
+  if (e.target.matches('input')) return;
+  if (a && a.dataset.a === 'del') { st.vocab[st.lang] = vocabFor().filter((x) => x !== v); renderVocab(); renderTranscript(); toast('Removed from vocabulary.', 'Undo', () => { st.vocab[st.lang].push(v); renderVocab(); renderTranscript(); }); return; }
+  const ui = unitOfSentence(v.si);
+  if (a && a.dataset.a === 'play') { playUnit(ui, { once: true }); return; }
+  seek(st.units[ui].start); setFollow(true); flash(ui);
+});
+function flash(i) { const el = unitEl(i); if (!el || !HL) return; setHighlight('vidflash', el); setTimeout(() => CSS.highlights.delete('vidflash'), 1300); }
+$('vcSend').addEventListener('click', () => { const nw = vocabFor().filter((v) => !v.sent); nw.forEach((v) => (v.sent = true)); renderVocab(); toast('Sent ' + nw.length + ' to “Vocabulary — ' + D.title + '”.', 'Open', () => openRight('notes')); });
+$('vcListen').addEventListener('click', () => {
+  const items = vocabFor(); if (!items.length) return;
+  const us = [...new Set(items.map((v) => unitOfSentence(v.si)))];
+  st.queue = us.slice(1); playRange(us[0], us[0]); st.queue = us.slice(1);
+  toast('Playing the sentences of ' + items.length + ' items in the video.');
+});
+$('vcRetell').addEventListener('click', () => {
+  const words = vocabFor().filter((v) => !v.sent).map((v) => v.term); const vis = visibleRange();
+  st.notes.push({ kind: 'retell', head: 'Retell · ' + fmt(vis.a) + '–' + fmt(vis.b) + ' · Nov 27', words });
+  renderNotes(); openRight('notes');
+});
+$('vcMarks').addEventListener('click', (e) => { const on = e.currentTarget.getAttribute('aria-pressed') !== 'true'; e.currentTarget.setAttribute('aria-pressed', String(on)); document.body.classList.toggle('marks-off', !on); });
+
+/* ===== Abas, colunas ===== */
+function setTab(t) { st.tab = t; document.querySelectorAll('.nav-tab').forEach((b) => b.classList.toggle('on', b.dataset.tab === t)); document.querySelectorAll('.nav-panel').forEach((p) => (p.hidden = p.dataset.tab !== t)); }
+document.querySelectorAll('.nav-tab').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab)));
+function openNav() {
+  const win = $('window'); if (win.clientWidth - 300 - rightW() < COL_MIN && st.right !== 'none') { st.right = 'none'; toast('Chat closed to keep room for the video.'); }
+  st.nav = 'open'; syncSegs(); layout();
+}
+$('navCollapse').addEventListener('click', () => { st.nav = 'collapsed'; syncSegs(); layout(); });
+$('railOpen').addEventListener('click', openNav);
+$('rail').addEventListener('click', (e) => { const b = e.target.closest('[data-goto]'); if (!b) return; setTab(b.dataset.goto); openNav(); });
+function openRight(which) { st.right = which; syncSegs(); layout(); }
+$('btnChat').addEventListener('click', () => openRight(st.right === 'chat' ? 'none' : 'chat'));
+$('btnNotes').addEventListener('click', () => openRight(st.right === 'notes' ? 'none' : 'notes'));
+$('chatX').addEventListener('click', () => openRight('none'));
+$('notesX').addEventListener('click', () => openRight('none'));
+
+/* ===== Chat: contexto efêmero = o trecho na tela ===== */
+function visibleRange() {
+  const ta = $('tarea').getBoundingClientRect(); let a = null, b = null;
+  $('sheet').querySelectorAll('.s').forEach((el) => { const r = el.getBoundingClientRect(); if (r.bottom > ta.top && r.top < ta.bottom) { const u = st.units[+el.dataset.i]; if (a === null) a = u.start; b = u.end; } });
+  return { a: a ?? 0, b: b ?? 0 };
+}
+function updateCtx() {
+  if (!$('ctxChip')) return;
+  if (st.source === 'preparing') { $('ctxChip').innerHTML = 'AI sees: nothing yet (the transcript is being prepared)'; return; }
+  const v = visibleRange(); const saved = vocabFor().filter((x) => { const s = st.sentences[x.si]; return s.start >= v.a - 0.5 && s.end <= v.b + 0.5; });
+  $('ctxChip').innerHTML = st.teacher
+    ? 'AI sees: <b>' + fmt(v.a) + '–' + fmt(v.b) + ' · ' + D.lang + ' teacher (' + D.level + ')' + (saved.length ? ' · ' + saved.length + ' saved' : '') + '</b>'
+    : 'AI sees: transcript ' + fmt(v.a) + '–' + fmt(v.b);
+  $('ctxDetail').textContent = '[Transcript ' + fmt(v.a) + '–' + fmt(v.b) + ', the part on screen; earlier text is added up to about 2,400 characters]\n' +
+    (st.teacher ? '\n[Language teacher]\nVideo language: ' + D.lang + '. Your language: ' + D.native + '. Level: ' + D.level + '.\nAnswer in ' + D.native + '. Quote examples in ' + D.lang + ' from the transcript.\nComment on what the learner writes; don’t rewrite it.\nSaved in this passage: ' + (saved.map((x) => x.term + (x.mean ? ' (' + x.mean + ')' : '')).join(', ') || 'none') : '');
+}
+$('ctxChip').addEventListener('click', () => { $('ctxDetail').hidden = !$('ctxDetail').hidden; });
+$('teacher').addEventListener('click', (e) => { st.teacher = e.currentTarget.getAttribute('aria-pressed') !== 'true'; e.currentTarget.setAttribute('aria-pressed', String(st.teacher)); updateCtx(); });
+$('chatSend').addEventListener('click', () => {
+  const t = $('chatInput').value.trim(); if (!t) return; const h = $('chatHist'); const em = h.querySelector('.empty'); if (em) em.remove();
+  h.insertAdjacentHTML('beforeend', '<div class="bub-u">' + esc(t) + '</div><div class="bub-a">(mockup) A resposta usaria o trecho de ' + $('ctxChip').textContent.replace('AI sees: ', '') + ', sem RAG e sem guardar o texto na conversa.</div>');
+  $('chatInput').value = ''; h.scrollTop = h.scrollHeight;
+});
+
+/* ===== Notes ===== */
+function renderNotes() {
+  $('noteSel').textContent = 'Notes — ' + D.title;
+  let h = '<h4>Notes — ' + esc(D.title) + '</h4>';
+  for (const n of st.notes) {
+    if (n.kind === 'quote') h += '<blockquote>' + esc(n.text) + '</blockquote><p class="cite">— <i>' + esc(D.title) + '</i>, ' + n.at + '</p>';
+    if (n.kind === 'retell') h += '<h5>### ' + esc(n.head) + '</h5><p>Words: ' + esc(n.words.join(' · ') || '—') + '</p><div class="write" contenteditable="true" data-ph="Write the passage in your own words…"></div>';
+  }
+  if (!st.notes.length) h += '<p style="color:var(--text-muted)">Quotes you add from the transcript land here with their time (“— title, 01:23”).</p>';
+  $('noteBody').innerHTML = h;
+}
+
+/* ===== Seleção, barra, clique na frase ===== */
+let clickTimer = 0;
+$('sheet').addEventListener('click', (e) => {
+  const act = e.target.closest('[data-act]');
+  if (act && act.dataset.act === 'punct') { addPunctuation(); return; }
+  if (act && act.dataset.act === 'settings') { toast('(mockup) Opens Settings › OpenRouter.'); return; }
+  const ts = e.target.closest('.ts');
+  if (ts) { seek(+ts.dataset.t - 0.15); setFollow(true); play(true); return; }
+  const sel = getSelection(); if (sel && !sel.isCollapsed) return;
+  const mk = e.target.closest('.mk');
+  if (mk && !(st.hide && !mk.closest('.s').classList.contains('rev'))) { openSaved(mk); return; }
+  const s = e.target.closest('.s'); if (!s) return;
+  if (e.detail > 1) { clearTimeout(clickTimer); return; }
+  clearTimeout(clickTimer);
+  clickTimer = setTimeout(() => { const g = getSelection(); if (g && !g.isCollapsed) return; playUnit(+s.dataset.i); }, 250);
+});
+$('sheet').addEventListener('dblclick', () => clearTimeout(clickTimer));
+$('sheet').addEventListener('mouseup', () => setTimeout(() => {
+  const sel = getSelection();
+  if (sel && !sel.isCollapsed && $('sheet').contains(sel.anchorNode) && sel.toString().trim()) { st.sel = sel.getRangeAt(0).cloneRange(); setFollow(false); showSelbar(); }
+}, 0));
+document.addEventListener('selectionchange', () => { const sel = getSelection(); if ((!sel || sel.isCollapsed) && $('pop').hidden) { $('selbar').hidden = true; st.sel = null; } });
+function showSelbar() { $('selbar').hidden = false; positionSelbar(); }
+function positionSelbar() {
+  const bar = $('selbar'); if (bar.hidden || !st.sel) return;
+  const vr = $('vcol').getBoundingClientRect(), ta = $('tarea').getBoundingClientRect(); const r = st.sel.getBoundingClientRect();
+  const bw = bar.offsetWidth, bh = bar.offsetHeight;
+  let top = r.top - vr.top - bh - 8; const minTop = ta.top - vr.top + 4;
+  if (top < minTop) top = r.bottom - vr.top + 8;
+  let left = r.left - vr.left + r.width / 2 - bw / 2; left = clamp(left, 8, vr.width - bw - 8);
+  bar.style.top = top + 'px'; bar.style.left = left + 'px';
+}
+$('tarea').addEventListener('scroll', () => {
+  if (performance.now() > progScrollUntil && st.follow) setFollow(false);
+  positionSelbar(); placePopAgain(); updateCtx(); if (!st.follow) renderFollow();
+});
+$('tarea').addEventListener('wheel', () => { progScrollUntil = 0; });
+$('follow').addEventListener('click', () => setFollow(true));
+$('selbar').addEventListener('mousedown', (e) => e.preventDefault());
+$('selbar').addEventListener('click', (e) => { const b = e.target.closest('[data-act]'); if (b) doAct(b.dataset.act); });
+function selUnits() {
+  if (!st.sel) return null; const a = st.sel.startContainer, b = st.sel.endContainer;
+  const ua = (a.nodeType === 3 ? a.parentElement : a).closest('.s'), ub = (b.nodeType === 3 ? b.parentElement : b).closest('.s');
+  if (!ua || !ub) return null; return [+ua.dataset.i, +ub.dataset.i];
+}
+function doAct(act) {
+  const text = st.sel ? st.sel.toString().trim() : ''; const us = selUnits();
+  if (act === 'translate') return openTranslate(text, us);
+  if (act === 'listen') { if (us) playRange(us[0], us[1]); return; }
+  if (act === 'vocab') return addVocab(text, us);
+  if (act === 'copy') { toast('Copied.'); return; }
+  if (act === 'note') { st.notes.push({ kind: 'quote', text: us ? st.units[us[0]].text : text, at: fmt(us ? st.units[us[0]].start : st.t) }); renderNotes(); toast('Added to note.', 'Open', () => openRight('notes')); clearSel(); return; }
+  if (act === 'ask') { openRight('chat'); $('chatInput').value = '> ' + text + '\n\n'; $('chatInput').focus(); clearSel(); return; }
+}
+function clearSel() { getSelection().removeAllRanges(); $('selbar').hidden = true; st.sel = null; }
+function addVocab(text, us) {
+  if (!text || !us) return; const si = st.units[us[0]].from;
+  if (vocabFor().some((v) => norm(v.term) === norm(text) && v.si === si)) { toast('Already in your vocabulary.'); return; }
+  const w = D.words[norm(text)];
+  st.vocab[st.lang].push({ id: 'n' + Date.now(), term: text.replace(/^[«"(]+|[».,;:!?")]+$/g, ''), mean: w ? w.mean : '', si, sent: false, date: 'Nov 27' });
+  clearSel(); closePop(); renderVocab(); renderTranscript(); toast('Added to vocabulary · ' + fmt(st.sentences[si].start));
+}
+
+/* ===== Translate (popover que evita o player) ===== */
+let popAnchor = null;
+function lookupWord(text) {
+  let k = norm(text); if (D.words[k]) return { k, w: D.words[k] };
+  k = k.replace(/^(l|d|qu|j|s|c|n)’/, ''); if (D.words[k]) return { k, w: D.words[k] };
+  return null;
+}
+function openTranslate(text, us, opts = {}) {
+  if (!us) return;
+  if (st.playing) { pause(); st.pausedByLookup = true; msg('<span class="txt">Paused for the translation. Space resumes from the start of the sentence.</span>'); clearMsgSoon(); }
+  setFollow(false);
+  const words = text.split(/\s+/).filter(Boolean); const unitText = st.units[us[0]].text;
+  const isWord = !opts.passage && words.length <= 4 && us[0] === us[1] && norm(text) !== norm(unitText);
+  const ic = (id) => '<svg class="i" width="13" height="13" viewBox="0 0 256 256" aria-hidden="true"><use href="#' + id + '"/></svg>';
+  const actions = '<div class="pop-a"><button type="button" class="pbtn" data-p="listen" title="Plays this sentence in the video">' + ic('i-speaker-high') + 'Listen</button><button type="button" class="pbtn" data-p="vocab">' + ic('i-bookmark-simple') + 'Add to vocabulary</button><button type="button" class="pbtn" data-p="note">Add to note</button><button type="button" class="pbtn" data-p="ask">Ask AI</button></div>';
+  const foot = '<div class="pop-f">' + D.lang + ' → ' + D.native + ' · <button type="button">Change</button></div>';
+  const x = '<button type="button" class="ibtn" data-p="x" aria-label="Close">' + ic('i-x') + '</button>';
+  let h;
+  if ($('stPlayer').value === 'offline' || isNoKey()) {
+    h = '<div class="pop-h"><div class="kind">Translation</div>' + x + '</div><div class="pop-b"><div class="warnbox">' + (isNoKey() ? 'Add your OpenRouter key in Settings.' : 'Couldn’t translate. Check your connection.') + '</div></div>' +
+      '<div class="pop-a"><button type="button" class="pbtn" data-p="x">' + (isNoKey() ? 'Open Settings' : 'Try again') + '</button></div>';
+  } else if (isWord) {
+    const f = lookupWord(text); const s = st.units[us[0]];
+    const ctx = esc(s.text).replace(new RegExp('(?<![\\p{L}\\p{M}\\p{N}])(' + text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')(?![\\p{L}\\p{M}\\p{N}])', 'iu'), '<b>$1</b>');
+    h = '<div class="pop-h"><div class="term">' + esc(text) + '</div>' + x + '</div>' +
+      (f ? '<div class="pop-sub">' + esc(f.w.base) + ' · ' + esc(f.w.cls) + '</div><div class="pop-b"><div class="meaning">' + esc(f.w.mean) + '</div><div class="ctx">' + ctx + '<small>Meaning in this sentence · ' + fmt(s.start) + '</small></div>' + (f.w.note ? '<div class="ctx" style="border-left-color:transparent;padding-left:0">' + esc(f.w.note) + '</div>' : '') + '</div>'
+         : '<div class="pop-b"><div class="warnbox">(mockup) This word isn’t in the sample table. Try “' + Object.keys(D.words)[0] + '”.</div></div>') + actions + foot;
+  } else {
+    const parts = []; for (let i = us[0]; i <= us[1]; i++) parts.push(st.units[i].tr);
+    h = '<div class="pop-h"><div class="kind">Translation · ' + fmt(st.units[us[0]].start) + '</div>' + x + '</div><div class="pop-b"><div class="tr">' + esc(parts.join(' ')) + '</div></div>' + actions + foot;
+  }
+  const pop = $('pop'); pop.innerHTML = h; pop.className = 'pop' + (isWord ? '' : ' wide'); pop.hidden = false; pop.dataset.us = us.join(','); pop.dataset.text = text;
+  popAnchor = opts.anchor || st.sel; $('selbar').hidden = true; placePop();
+}
+function forbiddenRect() {
+  // o player e a faixa de controles: nada flutua sobre eles
+  const a = $('vpane').getBoundingClientRect(), b = $('strip').hidden ? a : $('strip').getBoundingClientRect();
+  return { left: a.left, right: a.right, top: a.top, bottom: Math.max(a.bottom, b.bottom) + 8 };
+}
+function placePop() {
+  const pop = $('pop'); if (pop.hidden || !popAnchor) return;
+  const r = popAnchor.getBoundingClientRect(); const W = $('window').getBoundingClientRect(); const m = 8;
+  pop.style.maxHeight = ''; const w = pop.offsetWidth; let h = pop.offsetHeight; const z = forbiddenRect();
+  let left = clamp(r.left, W.left + m, W.right - w - m);
+  const overlapsZone = (l) => l < z.right && l + w > z.left;
+  let top = r.bottom + 8;
+  if (top + h > W.bottom - m) {
+    const above = r.top - 8 - h; const minTop = overlapsZone(left) ? z.bottom : W.top + 44 + m;
+    if (above >= minTop) top = above;
+    else if (W.right - z.right >= w + 2 * m) { left = z.right + m; top = clamp(r.top - h / 2, W.top + 44 + m, W.bottom - h - m); }
+    else { top = Math.max(z.bottom, Math.min(r.bottom + 8, W.bottom - m - 220)); pop.style.maxHeight = (W.bottom - m - top) + 'px'; }
+  }
+  pop.style.left = left + 'px'; pop.style.top = top + 'px';
+}
+function placePopAgain() { if (!$('pop').hidden) placePop(); }
+function closePop() { $('pop').hidden = true; popAnchor = null; }
+$('pop').addEventListener('mousedown', (e) => { if (!e.target.closest('select,input,textarea')) e.preventDefault(); });
+$('pop').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-p]'); if (!b) return; const us = $('pop').dataset.us.split(',').map(Number); const text = $('pop').dataset.text;
+  if (b.dataset.p === 'x') { closePop(); if (st.sel) showSelbar(); return; }
+  if (b.dataset.p === 'listen') { playRange(us[0], us[1]); return; }
+  if (b.dataset.p === 'vocab') { if (!st.sel) { const el = unitEl(us[0]); const r = document.createRange(); r.selectNodeContents(el); st.sel = r; } addVocab(text, us); return; }
+  if (b.dataset.p === 'note') { st.notes.push({ kind: 'quote', text: st.units[us[0]].text, at: fmt(st.units[us[0]].start) }); renderNotes(); closePop(); toast('Added to note.', 'Open', () => openRight('notes')); return; }
+  if (b.dataset.p === 'ask') { closePop(); openRight('chat'); $('chatInput').value = '> ' + text + '\n\n'; return; }
+});
+document.addEventListener('mousedown', (e) => { if (!$('pop').hidden && !$('pop').contains(e.target) && !$('selbar').contains(e.target)) closePop(); if (!e.target.closest('.smenu') && !e.target.closest('#bSpeed') && !e.target.closest('#bMore')) closeMenus(); });
+
+/* palavra marcada: onde você guardou */
+function openSaved(mk) {
+  const term = norm(mk.dataset.term); const items = vocabFor().filter((v) => norm(v.term) === term || (D.words[norm(v.term)] && norm(D.words[norm(v.term)].base).endsWith(term)));
+  const ic = (id) => '<svg class="i" width="13" height="13" viewBox="0 0 256 256" aria-hidden="true"><use href="#' + id + '"/></svg>';
+  const v = items[0]; if (!v) return; const s = st.sentences[v.si];
+  const pop = $('pop'); pop.className = 'pop'; pop.hidden = false; pop.dataset.us = unitOfSentence(v.si) + ',' + unitOfSentence(v.si); pop.dataset.text = v.term;
+  pop.innerHTML = '<div class="pop-h"><div class="term">' + esc(mk.dataset.term) + '</div><button type="button" class="ibtn" data-p="x" aria-label="Close">' + ic('i-x') + '</button></div><div class="pop-sub">In your vocabulary: where you saved it</div>' +
+    '<div class="pop-b"><div class="ctx">' + esc(s.text) + '<small>' + fmt(s.start) + ' · ' + v.date + (v.mean ? ' · ' + esc(v.mean) : '') + '</small></div></div>' +
+    '<div class="pop-a"><button type="button" class="pbtn" data-p="listen" title="Plays the sentence where you saved it">' + ic('i-speaker-high') + 'Listen</button><button type="button" class="pbtn" data-p="here">' + ic('i-translate') + 'Translate here</button></div>';
+  popAnchor = mk; placePop();
+  pop.querySelector('[data-p="here"]').addEventListener('click', () => { const u = +mk.closest('.s').dataset.i; openTranslate(mk.dataset.term, [u, u], { anchor: mk }); });
+}
+
+/* ===== Faixa de controles ===== */
+$('bPlay').addEventListener('click', () => (st.playing ? pause() : play(true)));
+$('bPrev').addEventListener('click', () => stepUnit(-1));
+$('bNext').addEventListener('click', () => stepUnit(1));
+$('bReplay').addEventListener('click', () => { if (st.cur >= 0) playUnit(st.cur, { once: !st.playing && !st.pauseAtEnd && !st.loop }); });
+function stepUnit(d) { const i = clamp((st.cur < 0 ? -1 : st.cur) + d, 0, st.units.length - 1); const was = st.playing; seek(st.units[i].start - 0.15); setFollow(true); if (was) play(); }
+function setPauseAtEnd(on) { st.pauseAtEnd = on; if (on) st.loop = false; syncToggles(); }
+function setLoop(on) { st.loop = on; if (on) st.pauseAtEnd = false; syncToggles(); }
+function syncToggles() { $('bPause').setAttribute('aria-pressed', String(st.pauseAtEnd)); $('bLoop').setAttribute('aria-pressed', String(st.loop)); }
+$('bPause').addEventListener('click', () => setPauseAtEnd(!st.pauseAtEnd));
+$('bLoop').addEventListener('click', () => setLoop(!st.loop));
+$('bReveal').addEventListener('click', reveal);
+function reveal() { if (!st.hide || st.cur < 0) return; st.revealed.add(st.cur); const el = unitEl(st.cur); if (el) el.classList.add('rev'); }
+const RATES = [0.5, 0.75, 1, 1.25];
+function closeMenus() { document.querySelectorAll('.smenu').forEach((m) => m.remove()); }
+function menuAt(btn, html) {
+  closeMenus(); const m = document.createElement('div'); m.className = 'smenu'; m.innerHTML = html; $('vcol').appendChild(m);
+  const vr = $('vcol').getBoundingClientRect(), br = btn.getBoundingClientRect();
+  m.style.top = (br.bottom - vr.top + 6) + 'px'; m.style.left = clamp(br.right - vr.left - m.offsetWidth, 8, vr.width - m.offsetWidth - 8) + 'px'; return m;
+}
+function setRate(r) { st.rate = r; $('bSpeed').textContent = (r === 1 ? '1' : String(r)) + '×'; }
+$('bSpeed').addEventListener('click', (e) => {
+  const m = menuAt(e.currentTarget, RATES.map((r) => '<button type="button" data-r="' + r + '"' + (r === st.rate ? ' class="on"' : '') + '>' + r + '×</button>').join('') + '<div class="info">YouTube offers 0.25× to 2× in steps of 0.25.</div>');
+  m.addEventListener('click', (ev) => { const b = ev.target.closest('[data-r]'); if (!b) return; setRate(+b.dataset.r); closeMenus(); });
+});
+$('bMore').addEventListener('click', (e) => {
+  const srcTxt = { author: 'Captions written by the author', auto: 'YouTube automatic captions, punctuation added by AI', nopunct: 'YouTube automatic captions, without punctuation', preparing: 'Being prepared' }[st.source];
+  const m = menuAt(e.currentTarget, '<div class="info">Transcript: ' + srcTxt + '. Fetched Nov 27.</div><button type="button" data-m="yt">Open on YouTube at ' + fmt(st.t) + '</button><button type="button" data-m="reset">Reset video size</button><hr><button type="button" data-m="keys">Keyboard shortcuts</button>');
+  m.addEventListener('click', (ev) => { const b = ev.target.closest('[data-m]'); if (!b) return; closeMenus();
+    if (b.dataset.m === 'yt') openOnYt(); if (b.dataset.m === 'reset') { st.ratio = null; layout(); } if (b.dataset.m === 'keys') location.hash = 'notas'; });
+});
+function openOnYt() { toast('(mockup) Opens the video in your browser at ' + fmt(st.t) + '.'); }
+$('btnYt').addEventListener('click', openOnYt);
+$('btnHide').addEventListener('click', (e) => {
+  st.hide = !st.hide; e.currentTarget.setAttribute('aria-pressed', String(st.hide)); $('bReveal').hidden = !st.hide;
+  if (!st.hide) st.revealed.clear(); renderTranscript(); layout();
+});
+$('fontDown').addEventListener('click', () => { st.font = Math.max(14, st.font - 1); $('fontLbl').textContent = Math.round(st.font / 16 * 100) + '%'; renderTranscript(); layout(); });
+$('fontUp').addEventListener('click', () => { st.font = Math.min(20, st.font + 1); $('fontLbl').textContent = Math.round(st.font / 16 * 100) + '%'; renderTranscript(); layout(); });
+$('backLib').addEventListener('click', () => toast('(mockup) Back to the Library. The video stops and its time is saved.'));
+// o botão do próprio YouTube, dentro do player: no app o foco volta à página logo depois
+ytEl.addEventListener('click', (e) => {
+  if (st.player === 'loading') return; st.playing ? pause() : play(true);
+  const fi = $('focusInfo'); if (fi) { fi.textContent = '· clique no player: no app, o foco volta à página e as teclas seguem valendo'; setTimeout(() => { const f = $('focusInfo'); if (f) f.textContent = ''; }, 3000); }
+});
+
+/* ===== Teclado ===== */
+document.addEventListener('keydown', (e) => {
+  const t = e.target; if (t.closest && t.closest('input, textarea, select, [contenteditable="true"]')) return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (t.id === 'divider' && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) return;
+  const k = e.key;
+  if (k === 'Escape') { if (!$('pop').hidden) { closePop(); if (st.sel) showSelbar(); } else clearSel(); closeMenus(); return; }
+  if (k === ' ') { e.preventDefault(); st.playing ? pause() : play(true); return; }
+  if (k === 'ArrowLeft' || k === 'ArrowRight') { e.preventDefault(); stepUnit(k === 'ArrowLeft' ? -1 : 1); return; }
+  if (k === 'r' && !e.shiftKey) { $('bReplay').click(); return; }
+  if (k === 'R' && e.shiftKey) { setLoop(!st.loop); return; }
+  if (k === 'p' || k === 'P') { setPauseAtEnd(!st.pauseAtEnd); return; }
+  if (k === 's' || k === 'S') { reveal(); return; }
+  if (k === 'f' || k === 'F') { setFollow(true); return; }
+  if (k === '<' || k === '>') { const i = RATES.indexOf(st.rate); setRate(RATES[clamp(i + (k === '>' ? 1 : -1), 0, RATES.length - 1)]); return; }
+  const text = st.sel ? st.sel.toString().trim() : '';
+  if (k === 't' || k === 'T') {
+    if (text) doAct('translate');
+    else if (st.cur >= 0) { const el = unitEl(st.cur); openTranslate(st.units[st.cur].text, [st.cur, st.cur], { passage: true, anchor: el }); }
+    return;
+  }
+  if ((k === 'v' || k === 'V') && text) { doAct('vocab'); return; }
+  if (k === 'l' || k === 'L') { if (text) doAct('listen'); else if (st.cur >= 0) playUnit(st.cur, { once: true }); return; }
+});
+
+/* ===== Estados da barra do estudo ===== */
+function addPunctuation() {
+  const b = $('sheet').querySelector('[data-act="punct"]'); if (b) { b.disabled = true; b.textContent = 'Adding punctuation…'; }
+  clearTimeout(st.puncTimer); st.puncTimer = setTimeout(() => { $('stSrc').value = 'auto'; setSource('auto'); toast('Punctuation added. Times kept word by word.'); }, 1800);
+}
+function setSource(v) {
+  st.source = v; clearTimeout(st.prepTimer); buildUnits(); st.revealed.clear(); renderTranscript(); renderVocab(); layout(); renderPlayer();
+  if (v === 'preparing') st.prepTimer = setTimeout(() => { $('stSrc').value = 'auto'; setSource('auto'); toast('Transcript ready.'); }, 5000);
+}
+$('stSrc').addEventListener('change', (e) => setSource(e.target.value));
+$('stPlayer').addEventListener('change', (e) => { st.player = e.target.value; st.adLeft = 0; st.adDone = false; if (blocked()) st.playing = false; clearMsg(); layout(); renderPlayer(); });
+$('stRec').addEventListener('change', (e) => { $('mincerRec').hidden = !e.target.checked; st.recOk = false; });
+$('stNoKey').addEventListener('change', () => { if (st.source === 'nopunct') renderTranscript(); });
+function seg(id, cb) { $(id).addEventListener('click', (e) => { const b = e.target.closest('button[data-v]'); if (b) cb(b.dataset.v); }); }
+function syncSegs() {
+  const on = (id, v) => $(id).querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.v === v));
+  on('sizeSeg', document.body.dataset.size); on('navSeg', st.nav); on('rightSeg', st.right); on('langSeg', st.lang);
+}
+seg('sizeSeg', (v) => { document.body.dataset.size = v; syncSegs(); layout(); });
+seg('navSeg', (v) => { if (v === 'open') openNav(); else { st.nav = 'collapsed'; syncSegs(); layout(); } });
+seg('rightSeg', (v) => openRight(v));
+seg('langSeg', (v) => { st.lang = v; D = DATA[v]; st.t = v === 'fr' ? 47.9 : 13.3; st.playing = false; $('rtTitle').textContent = D.title; renderNotes(); renderContents(); setSource(st.source); syncSegs(); });
+addEventListener('resize', layout);
+
+/* ===== Toast ===== */
+let toastTimer = 0;
+function toast(text, btn, fn) {
+  const t = $('toast'); t.innerHTML = '<span>' + esc(text) + '</span>' + (btn ? '<button type="button">' + btn + '</button>' : ''); t.classList.add('show');
+  if (btn) t.querySelector('button').onclick = () => { t.classList.remove('show'); fn && fn(); };
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 3500);
+}
+
+/* ===== Início ===== */
+(function init() {
+  const q = new URLSearchParams(location.search);
+  if (q.get('lang') === 'de') { st.lang = 'de'; D = DATA.de; st.t = 13.3; }
+  if (q.get('size')) document.body.dataset.size = q.get('size');
+  if (q.get('transcript')) { st.source = q.get('transcript'); $('stSrc').value = st.source; }
+  if (q.get('player')) { st.player = q.get('player'); $('stPlayer').value = st.player; }
+  if (q.get('right')) st.right = q.get('right');
+  if (q.get('nav')) st.nav = q.get('nav');
+  $('rtTitle').textContent = D.title;
+  setTab('contents'); renderContents(); renderNotes(); syncSegs();
+  setSource(st.source);
+  requestAnimationFrame(() => { layout(); scrollToCurrent(true); requestAnimationFrame(tick); });
+})();
+</script>
+</body>
+</html>

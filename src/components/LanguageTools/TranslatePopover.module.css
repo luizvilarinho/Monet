@@ -1,6 +1,7 @@
 /* Popover de Translate: `position: fixed` em portal, acima dos modais (1000) e
    no mesmo nível do toast (1100). left/top/max-height vêm do layout effect
-   (placeFloatingPanel), contra a janela. */
+   (placeFloatingPanel), contra a janela; com a geometria gravada pelo usuário
+   (mover e redimensionar), também width e height. */
 .popover {
   position: fixed;
   z-index: 1100;
@@ -17,7 +18,7 @@
 }
 
 .wide {
-  width: 380px;
+  width: 440px;
 }
 
 .header {
@@ -25,6 +26,18 @@
   align-items: flex-start;
   gap: var(--space-2);
   padding: var(--space-3) var(--space-3) 0;
+}
+
+/* O cabeçalho (menos o X) é a alça de mover; só no Translate, não no
+   SavedWordPopover, que usa o mesmo `.header` e continua ancorado. */
+.draggable {
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.popover[data-gesture='move'] .draggable {
+  cursor: grabbing;
 }
 
 .term {
@@ -72,12 +85,18 @@
 }
 
 .body {
+  flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-3) var(--space-3);
+  /* A calha fina da barra de rolagem (fixa, para o texto que chega não se
+     reorganizar quando a barra aparece) completa a margem da direita. */
+  padding: var(--space-2) var(--space-1) var(--space-3) var(--space-3);
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-muted) 40%, transparent) transparent;
+  scrollbar-gutter: stable;
 }
 
 .meaning {
@@ -112,7 +131,7 @@
 
 .grammar {
   list-style: none;
-  margin: 0;
+  margin: var(--space-1) 0 0;
   padding: 0;
   display: flex;
   flex-direction: column;
@@ -132,18 +151,22 @@
   color: var(--accent-warn);
 }
 
+/* Barra fixa: o respiro entre o texto e os botões é dela, e não do corpo que rola. */
 .actions {
   display: flex;
   flex-wrap: wrap;
+  flex-shrink: 0;
   gap: var(--space-1h);
-  padding: 0 var(--space-3) var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--border);
 }
 
 .action {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-1h);
-  padding: var(--space-1h) var(--space-2);
+  gap: var(--space-1);
+  min-height: var(--control-md);
+  padding: 0 var(--space-2);
   background: transparent;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -154,9 +177,14 @@
   cursor: pointer;
 }
 
-.action:hover {
+.action:hover:not(:disabled) {
   border-color: var(--accent);
   background: rgba(123, 110, 212, 0.1);
+}
+
+.action:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .footer {
@@ -167,6 +195,12 @@
   border-top: 1px solid var(--border);
   font-size: 11px;
   color: var(--text-muted);
+}
+
+/* A linha de línguas logo abaixo das ações faz parte da barra: sem borda própria. */
+.actions + .footer {
+  padding: 0 var(--space-3) var(--space-2);
+  border-top: none;
 }
 
 .languages {
@@ -220,6 +254,94 @@
   background: linear-gradient(90deg, var(--surface-1) 0%, var(--surface-2) 50%, var(--surface-1) 100%);
   background-size: 200% 100%;
   animation: shimmer 1.4s linear infinite;
+}
+
+/* Esqueleto da passagem: uma barra por linha estimada, no ritmo do texto (12 + 8 = 20 px). */
+.skeletonLines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.skeletonLines .skeleton {
+  height: var(--space-3);
+}
+
+/* Barra no lugar das notas de gramática, com o texto já completo. */
+.skeletonNotes {
+  width: 60%;
+  margin-top: var(--space-1);
+}
+
+/* Oito alças invisíveis, filhas da raiz (o clique fora dos leitores testa
+   `rootRef.contains`): bordas de 6 px centradas na borda e cantos de 12 × 12 px. */
+.resize {
+  position: absolute;
+  touch-action: none;
+}
+
+.resizeN {
+  top: -4px;
+  left: 12px;
+  right: 12px;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+.resizeS {
+  bottom: -4px;
+  left: 12px;
+  right: 12px;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+.resizeE {
+  right: -4px;
+  top: 12px;
+  bottom: 12px;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+.resizeW {
+  left: -4px;
+  top: 12px;
+  bottom: 12px;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+.resizeNE {
+  top: -6px;
+  right: -6px;
+  width: 12px;
+  height: 12px;
+  cursor: nesw-resize;
+}
+
+.resizeSW {
+  bottom: -6px;
+  left: -6px;
+  width: 12px;
+  height: 12px;
+  cursor: nesw-resize;
+}
+
+.resizeNW {
+  top: -6px;
+  left: -6px;
+  width: 12px;
+  height: 12px;
+  cursor: nwse-resize;
+}
+
+.resizeSE {
+  bottom: -6px;
+  right: -6px;
+  width: 12px;
+  height: 12px;
+  cursor: nwse-resize;
 }
 
 @keyframes shimmer {

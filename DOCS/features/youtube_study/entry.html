@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Entrada do vídeo</title>
+<style>
+/* Tokens copiados de src/App.css, como em index.html */
+:root {
+  --bg-app: #1f1f2f; --bg-panel: #161625; --surface-1: #1d1d34; --surface-2: #292959; --surface-3: #2e2e36;
+  --text-primary: #ddddf1; --text-secondary: #a2a2ae; --text-muted: #9494ad;
+  --accent: #7b6ed4; --accent-ai: #5dcaa5; --accent-warn: #ef9f27; --accent-danger: #e05555;
+  --border: #2e2f2cb3; --hair: #34344f;
+  --radius-sm: 4px; --radius-md: 6px; --radius-lg: 8px;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: #121220; color: var(--text-primary); font: 14px/1.45 'Segoe UI', system-ui, -apple-system, sans-serif; -webkit-font-smoothing: antialiased; }
+button, input, select { font-family: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: default; opacity: .5; }
+a { color: var(--accent); }
+.i { fill: currentColor; flex-shrink: 0; display: block; }
+[hidden] { display: none !important; }
+
+.study-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; padding: 8px 16px; font-size: 12px; color: var(--text-secondary); border-bottom: 1px solid var(--hair); }
+.study-bar strong { color: var(--text-primary); font-weight: 600; }
+.study-bar nav { display: flex; gap: 10px; }
+.study-bar nav a.on { color: var(--text-primary); text-decoration: none; font-weight: 600; }
+.study-bar .lbl { color: var(--text-muted); margin-right: -8px; }
+.study-bar label.chk { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.seg { display: inline-flex; border: 1px solid var(--hair); border-radius: var(--radius-sm); overflow: hidden; }
+.seg button { background: transparent; border: none; border-right: 1px solid var(--hair); color: var(--text-secondary); font-size: 12px; padding: 2px 8px; }
+.seg button:last-child { border-right: none; }
+.seg button.on { background: var(--surface-2); color: var(--text-primary); }
+.stage { padding: 12px 0; overflow-x: auto; }
+
+.window { width: 1280px; height: 800px; margin: 0 auto; display: flex; flex-direction: column; background: var(--bg-app); border-radius: 8px; box-shadow: 0 0 0 1px var(--hair); overflow: hidden; position: relative; }
+body[data-size='960'] .window { width: 960px; height: 600px; }
+.tb { height: 44px; flex-shrink: 0; display: flex; align-items: center; gap: 16px; padding: 8px 16px; background: var(--bg-panel); border-bottom: 1px solid var(--border); }
+.tb .brand { font-size: 15px; font-weight: 600; letter-spacing: .04em; }
+.tb .modes { margin-left: auto; display: flex; gap: 4px; }
+.tb .modes > span { padding: 4px 12px; font-size: 13px; color: var(--text-secondary); border-bottom: 2px solid transparent; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.tb .modes > span.on { color: var(--accent); border-bottom-color: var(--accent); }
+.tb .busy { color: var(--accent-ai); }
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.main { flex: 1; min-height: 0; overflow-y: auto; padding: 20px 24px; }
+.hdr { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.hdr h2 { margin: 0; font-size: 18px; font-weight: 600; flex: 1; }
+.tbtn { display: inline-flex; align-items: center; gap: 6px; background: transparent; border: 1px solid var(--border); border-radius: 6px; color: var(--text-secondary); min-height: 30px; padding: 0 12px; font-size: 12px; white-space: nowrap; }
+.tbtn:hover:not(:disabled) { color: var(--text-primary); border-color: var(--accent); }
+.tbtn.on { color: var(--text-primary); border-color: var(--accent); background: rgba(123, 110, 212, .12); }
+.tbtn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.tbtn.primary:hover:not(:disabled) { filter: brightness(1.08); color: #fff; }
+
+/* Painel de adicionar vídeo: inline, sem modal */
+.addp { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; margin-bottom: 14px; }
+.addp .row { display: flex; gap: 8px; align-items: center; }
+.addp input { flex: 1; min-width: 0; height: 32px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 6px; color: var(--text-primary); padding: 0 10px; font-size: 13px; }
+.addp input:focus { outline: none; border-color: var(--accent); }
+.addp .help { margin: 8px 0 0; font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+.addp .err { margin: 8px 0 0; font-size: 12px; color: var(--accent-warn); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.addp .err button { background: transparent; border: 1px solid var(--border); border-radius: 4px; color: var(--text-primary); font-size: 12px; padding: 1px 8px; }
+.addp .x { background: transparent; border: none; color: var(--text-muted); padding: 4px; border-radius: 4px; }
+.addp .x:hover { color: var(--text-primary); background: rgba(255, 255, 255, .06); }
+
+.banner { display: flex; align-items: center; gap: 10px; background: rgba(93, 202, 165, .08); border: 1px solid rgba(93, 202, 165, .35); border-radius: 6px; padding: 6px 10px; font-size: 12px; margin-bottom: 12px; }
+.banner span { flex: 1; }
+.banner button { background: transparent; border: none; color: var(--accent); text-decoration: underline; font-size: 12px; padding: 0; }
+
+table.lib { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.lib th { text-align: left; font-size: 11px; font-weight: 500; color: var(--text-muted); padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+table.lib td { padding: 9px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; color: var(--text-secondary); }
+table.lib td.t { color: var(--text-primary); max-width: 340px; }
+table.lib tr.new td { background: rgba(123, 110, 212, .06); }
+.fmt { font-size: 10px; letter-spacing: .04em; text-transform: uppercase; color: var(--text-muted); border: 1px solid var(--hair); border-radius: 3px; padding: 0 4px; margin-right: 6px; }
+.fmt.video { color: var(--accent-ai); border-color: rgba(93, 202, 165, .45); }
+.ttl { display: inline-flex; align-items: center; }
+.state { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 12px; color: var(--accent-ai); }
+.state.warn { color: var(--accent-warn); }
+.state.muted { color: var(--text-muted); }
+.acts { display: flex; gap: 6px; flex-wrap: wrap; }
+.mini { display: inline-flex; align-items: center; gap: 4px; background: transparent; border: 1px solid var(--border); border-radius: 4px; color: var(--text-secondary); font-size: 11px; min-height: 24px; padding: 0 8px; white-space: nowrap; }
+.mini:hover:not(:disabled) { color: var(--text-primary); border-color: var(--accent); }
+.mini.go { color: var(--text-primary); border-color: var(--accent-ai); }
+.bar { height: 4px; border-radius: 2px; background: var(--surface-3); overflow: hidden; width: 100px; }
+.bar i { display: block; height: 100%; background: var(--accent-ai); }
+.bar.ind i { width: 35%; animation: ind 1.2s ease-in-out infinite; }
+@keyframes ind { 0% { transform: translateX(-100%); } 100% { transform: translateX(290%); } }
+
+/* Mincer */
+.mn { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+body[data-size='960'] .mn { grid-template-columns: 1fr; }
+.card { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
+.card h3 { margin: 0 0 10px; font-size: 13px; font-weight: 600; }
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+.tabs span { padding: 6px 10px; font-size: 12px; color: var(--text-secondary); border-bottom: 2px solid transparent; }
+.tabs span.on { color: var(--text-primary); border-bottom-color: var(--accent); }
+.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.field label { font-size: 12px; color: var(--text-secondary); }
+.field input { height: 32px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 6px; color: var(--text-primary); padding: 0 10px; font-size: 13px; }
+.help { font-size: 12px; color: var(--text-muted); line-height: 1.5; margin: 6px 0 10px; }
+.item { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.item .tx { flex: 1; min-width: 0; }
+.item .tx small { display: block; color: var(--text-muted); font-size: 11px; }
+
+.toast { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 1100; display: none; align-items: center; gap: 8px; background: var(--accent-ai); color: #0e0e10; font-size: 12px; font-weight: 500; border-radius: 6px; padding: 6px 12px; box-shadow: 0 6px 18px rgba(0, 0, 0, .45); max-width: 80%; }
+.toast.show { display: flex; }
+.toast button, .toast a { background: transparent; border: 1px solid rgba(14, 14, 16, .45); border-radius: 4px; color: #0e0e10; font-size: 12px; font-weight: 600; padding: 0 8px; min-height: 22px; text-decoration: none; display: inline-flex; align-items: center; }
+
+.page { max-width: 1180px; margin: 0 auto; padding: 8px 16px 64px; }
+.page h1 { font-size: 20px; margin: 24px 0 6px; }
+.page p, .page li { color: var(--text-secondary); max-width: 96ch; }
+.notes-box { background: #18182a; border: 1px solid var(--hair); border-radius: 8px; padding: 12px 16px; margin-top: 12px; }
+.notes-box h3 { font-size: 13px; margin: 0 0 6px; color: var(--text-primary); }
+.notes-box ul { margin: 0; padding-left: 18px; }
+.notes-box li { font-size: 13px; margin: 3px 0; }
+.page code { font-size: 12px; color: var(--text-primary); background: #1b1b30; padding: 0 4px; border-radius: 3px; }
+</style>
+</head>
+<body data-size="1280">
+<div class="study-bar">
+  <strong>Estudo: vídeo do YouTube no Library</strong>
+  <nav><a href="index.html">Página do vídeo</a><a href="entry.html" class="on">Entrada (colar o link)</a></nav>
+  <span class="lbl">Tela</span><span class="seg" id="sceneSeg"><button type="button" data-v="library">Library</button><button type="button" data-v="mincer">Mincer</button></span>
+  <span class="lbl">Janela</span><span class="seg" id="sizeSeg"><button type="button" data-v="1280">1280×800</button><button type="button" data-v="960">960×600</button></span>
+  <span class="lbl">Colar exemplo</span>
+  <span class="seg" id="sampleSeg">
+    <button type="button" data-v="author">legenda do autor</button>
+    <button type="button" data-v="auto">legenda automática</button>
+    <button type="button" data-v="none">sem legenda</button>
+    <button type="button" data-v="other">só legenda em outra língua</button>
+    <button type="button" data-v="noembed">não deixa embutir</button>
+    <button type="button" data-v="live">ao vivo</button>
+    <button type="button" data-v="playlist">link de playlist</button>
+    <button type="button" data-v="dup">já está no Library</button>
+    <button type="button" data-v="bad">link inválido</button>
+  </span>
+  <label class="chk"><input type="checkbox" id="noKey"> sem chave de API</label>
+  <label class="chk"><input type="checkbox" id="noModel"> sem modelo de transcrição</label>
+  <a href="#notas">Regras</a>
+</div>
+<div class="stage">
+<div class="window">
+  <header class="tb">
+    <span class="brand">Monet</span>
+    <span class="modes"><span>Notebook</span><span>Chat</span><span data-scene="library">Library</span><span data-scene="mincer">Mincer<svg class="i spin busy" id="mincerBusy" hidden width="12" height="12" viewBox="0 0 256 256" aria-label="Working"><use href="#i-circle-notch"/></svg></span></span>
+  </header>
+
+  <!-- ===== Library ===== -->
+  <section class="main" id="sceneLibrary">
+    <div class="hdr">
+      <h2>Library</h2>
+      <button type="button" class="tbtn"><svg class="i" width="13" height="13" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-plus"/></svg>Add docs folder</button>
+      <button type="button" class="tbtn"><svg class="i" width="13" height="13" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-plus"/></svg>Import book</button>
+      <button type="button" class="tbtn" id="btnAddVideo"><svg class="i" width="13" height="13" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-youtube-logo"/></svg>Add video</button>
+    </div>
+    <div class="addp" id="addPanel" hidden>
+      <div class="row">
+        <svg class="i" width="16" height="16" viewBox="0 0 256 256" aria-hidden="true" style="color:var(--text-muted)"><use href="#i-link"/></svg>
+        <input id="url" type="text" placeholder="Paste a YouTube link" aria-label="YouTube link" autocomplete="off">
+        <button type="button" class="tbtn primary" id="btnAdd">Add</button>
+        <button type="button" class="x" id="closeAdd" aria-label="Close"><svg class="i" width="14" height="14" viewBox="0 0 256 256" aria-hidden="true"><use href="#i-x"/></svg></button>
+      </div>
+      <p class="help">The video plays from YouTube inside Monet; the transcript stays with you, even offline. When the video has captions, it takes a few seconds and costs nothing. Without captions, Monet can transcribe the audio (a few minutes, a few cents) — you choose.</p>
+      <div class="err" id="addErr" hidden></div>
+    </div>
+    <div class="banner" id="banner" hidden></div>
+    <table class="lib">
+      <thead><tr><th>Title</th><th>Author</th><th>Language</th><th>Length</th><th>Progress</th><th>Added</th><th>Last opened</th><th>Actions</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </section>
+
+  <!-- ===== Mincer ===== -->
+  <section class="main" id="sceneMincer" hidden>
+    <div class="hdr"><h2>Mincer</h2></div>
+    <div class="mn">
+      <div class="card">
+        <h3>New</h3>
+        <div class="tabs"><span>Recording</span><span>File</span><span class="on">YouTube</span><span>Web page</span></div>
+        <div class="field"><label for="mUrl">Video link</label><input id="mUrl" placeholder="https://www.youtube.com/watch?v=…" value="https://www.youtube.com/watch?v=EXAMPLEID02"></div>
+        <div class="field"><label>What to do</label><span class="seg" id="mMode" style="align-self:flex-start"><button type="button" data-v="sum">Summarize</button><button type="button" data-v="study" class="on">Study in Library</button></span></div>
+        <p class="help" id="mHelp"></p>
+        <button type="button" class="tbtn primary" id="mGo">Add to Library</button>
+      </div>
+      <div class="card">
+        <h3>Done</h3>
+        <div class="item"><svg class="i" width="16" height="16" viewBox="0 0 256 256" aria-hidden="true" style="color:var(--text-muted)"><use href="#i-youtube-logo"/></svg><div class="tx">Une ville sans voitures ?<small>YouTube · summary · Nov 25</small></div><button type="button" class="mini">Open</button><button type="button" class="mini go" data-study="1" title="Opens this video in the Library with its transcript, reusing the text already fetched">Study in Library</button></div>
+        <div class="item"><svg class="i" width="16" height="16" viewBox="0 0 256 256" aria-hidden="true" style="color:var(--text-muted)"><use href="#i-waveform"/></svg><div class="tx">Team meeting<small>Recording · transcript · Nov 24</small></div><button type="button" class="mini">Open</button></div>
+        <p class="help">“Study in Library” only appears on YouTube items. A recording or a file has no video to sync with.</p>
+      </div>
+    </div>
+  </section>
+  <div class="toast" id="toast" role="status"></div>
+</div>
+</div>
+
+<div class="page" id="notas">
+  <h1>Entrada: colar o link</h1>
+  <p>Títulos, canais e links são <b>inventados</b>; os ids dos links (<code>EXAMPLEID01</code>…) não existem. Nada aqui acessa a rede: as etapas são simuladas com tempos encurtados (legenda em ~3 s, áudio em ~8 s no lugar de minutos).</p>
+  <div class="notes-box"><h3>Regras desenhadas</h3><ul>
+    <li><b>Entrada principal no Library</b>, botão <b>Add video</b>, com o campo num painel no próprio Library (sem modal). O Mincer tem o atalho <b>Study in Library</b> na aba YouTube e nos itens prontos.</li>
+    <li>Depois de Add, a linha entra na tabela na hora, com a etapa escrita ("Getting captions…"). Você continua usando o app; nada abre sozinho. Quando fica pronto: toast "Ready to study" com <b>Open</b> (notificação do sistema só se a janela não estiver na frente).</li>
+    <li><b>Open</b> já funciona enquanto prepara: o vídeo toca e a transcrição mostra o progresso no lugar do texto.</li>
+    <li><b>Sem legenda</b>: transcrever o áudio é sempre um clique seu, com tempo e custo à vista. <b>Legenda só em outra língua</b>: você escolhe entre usá-la e transcrever o áudio.</li>
+    <li><b>Legenda automática</b>: a pontuação pela IA roda sozinha se há chave (centavos de centavo); sem chave, o texto entra sem pontuação e a página do vídeo oferece "Add punctuation".</li>
+    <li><b>Não deixa embutir</b>: entra como "transcript only" (sem player), com <b>Open on YouTube</b>. <b>Ao vivo</b>: recusado. <b>Playlist</b>: só o vídeo do link. <b>Repetido</b>: "Already in your Library" com Open.</li>
+    <li>Na tabela, vídeo tem selo <b>video</b>, canal na coluna Author, coluna <b>Length</b> (antes Pages: "212 p." ou "48 min") e progresso pelo tempo.</li>
+  </ul></div>
+</div>
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <symbol id="i-plus" viewBox="0 0 256 256"><path d="M224,128a8,8,0,0,1-8,8H136v80a8,8,0,0,1-16,0V136H40a8,8,0,0,1,0-16h80V40a8,8,0,0,1,16,0v80h80A8,8,0,0,1,224,128Z"/></symbol>
+  <symbol id="i-x" viewBox="0 0 256 256"><path d="M205.66,194.34a8,8,0,0,1-11.32,11.32L128,139.31,61.66,205.66a8,8,0,0,1-11.32-11.32L116.69,128,50.34,61.66A8,8,0,0,1,61.66,50.34L128,116.69l66.34-66.35a8,8,0,0,1,11.32,11.32L139.31,128Z"/></symbol>
+  <symbol id="i-circle-notch" viewBox="0 0 256 256"><path d="M232,128a104,104,0,0,1-208,0c0-41,23.81-78.36,60.66-95.27a8,8,0,0,1,6.68,14.54C60.15,61.59,40,93.27,40,128a88,88,0,0,0,176,0c0-34.73-20.15-66.41-51.34-80.73a8,8,0,0,1,6.68-14.54C208.19,49.64,232,87,232,128Z"/></symbol>
+  <symbol id="i-warning-circle" viewBox="0 0 256 256"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm-8-80V80a8,8,0,0,1,16,0v56a8,8,0,0,1-16,0Zm20,36a12,12,0,1,1-12-12A12,12,0,0,1,140,172Z"/></symbol>
+  <symbol id="i-check" viewBox="0 0 256 256"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></symbol>
+  <symbol id="i-arrow-square-out" viewBox="0 0 256 256"><path d="M224,104a8,8,0,0,1-16,0V59.32l-66.33,66.34a8,8,0,0,1-11.32-11.32L196.68,48H152a8,8,0,0,1,0-16h64a8,8,0,0,1,8,8Zm-40,24a8,8,0,0,0-8,8v72H48V80h72a8,8,0,0,0,0-16H48A16,16,0,0,0,32,80V208a16,16,0,0,0,16,16H176a16,16,0,0,0,16-16V136A8,8,0,0,0,184,128Z"/></symbol>
+  <symbol id="i-youtube-logo" viewBox="0 0 256 256"><path d="M164.44,121.34l-48-32A8,8,0,0,0,104,96v64a8,8,0,0,0,12.44,6.66l48-32a8,8,0,0,0,0-13.32ZM120,145.05V111l25.58,17ZM234.33,69.52a24,24,0,0,0-14.49-16.4C185.560,39.88,131,40,128,40s-57.56-.12-91.84,13.12a24,24,0,0,0-14.49,16.4C19.08,79.5,16,97.74,16,128s3.08,48.5,5.67,58.48a24,24,0,0,0,14.49,16.41C69,215.56,120.4,216,127.34,216h1.32c6.94,0,58.37-.44,91.18-13.11a24,24,0,0,0,14.49-16.41c2.59-10,5.67-28.22,5.67-58.48S236.92,79.5,234.33,69.52Zm-15.49,113a8,8,0,0,1-4.77,5.49c-31.65,12.22-85.48,12-86,12H128c-.54,0-54.33.2-86-12a8,8,0,0,1-4.77-5.49C34.8,173.39,32,156.57,32,128s2.8-45.39,5.16-54.47A8,8,0,0,1,41.93,68c30.52-11.79,81.66-12,85.85-12h.27c.54,0,54.38-.18,86,12a8,8,0,0,1,4.77,5.49C221.2,82.61,224,99.43,224,128S221.2,173.39,218.84,182.47Z"/></symbol>
+  <symbol id="i-link" viewBox="0 0 256 256"><path d="M240,88.23a54.43,54.43,0,0,1-16,37L189.25,160a54.27,54.27,0,0,1-38.63,16h-.05A54.63,54.63,0,0,1,96,119.84a8,8,0,0,1,16,.45A38.62,38.62,0,0,0,150.58,160h0a38.39,38.39,0,0,0,27.31-11.31l34.75-34.75a38.63,38.63,0,0,0-54.63-54.63l-11,11A8,8,0,0,1,135.7,59l11-11A54.65,54.65,0,0,1,224,48,54.86,54.86,0,0,1,240,88.23ZM109,185.66l-11,11A38.41,38.41,0,0,1,70.6,208h0a38.63,38.63,0,0,1-27.29-65.94L78,107.31A38.63,38.63,0,0,1,144,135.71a8,8,0,0,0,16,.45A54.86,54.86,0,0,0,144,96a54.65,54.65,0,0,0-77.27,0L32,130.75A54.62,54.62,0,0,0,70.56,224h0a54.28,54.28,0,0,0,38.64-16l11-11A8,8,0,0,0,109,185.66Z"/></symbol>
+  <symbol id="i-waveform" viewBox="0 0 256 256"><path d="M56,96v64a8,8,0,0,1-16,0V96a8,8,0,0,1,16,0ZM88,24a8,8,0,0,0-8,8V224a8,8,0,0,0,16,0V32A8,8,0,0,0,88,24Zm40,32a8,8,0,0,0-8,8V192a8,8,0,0,0,16,0V64A8,8,0,0,0,128,56Zm40,32a8,8,0,0,0-8,8v64a8,8,0,0,0,16,0V96A8,8,0,0,0,168,88Zm40-16a8,8,0,0,0-8,8v96a8,8,0,0,0,16,0V80A8,8,0,0,0,208,72Z"/></symbol>
+</svg>
+
+<script>
+/* Dados inventados para o estudo */
+const $ = (id) => document.getElementById(id);
+const SAMPLES = {
+  author: { url: 'https://youtu.be/EXAMPLEID01', title: 'Le pain du matin, pas à pas', ch: 'Atelier Ardoise', lang: 'French', min: 3, kind: 'author' },
+  auto: { url: 'https://www.youtube.com/watch?v=EXAMPLEID03', title: 'Marché du samedi', ch: 'Petits Reportages', lang: 'French', min: 12, kind: 'auto' },
+  none: { url: 'https://youtu.be/EXAMPLEID04', title: 'Promenade au port', ch: 'Carnet de route', lang: 'French', min: 18, kind: 'none' },
+  other: { url: 'https://youtu.be/EXAMPLEID05', title: 'Die alte Mühle', ch: 'Kanal Beispiel', lang: 'German', min: 9, kind: 'other' },
+  noembed: { url: 'https://youtu.be/EXAMPLEID06', title: 'Concert au jardin', ch: 'Salle Exemple', lang: 'French', min: 41, kind: 'noembed' },
+  live: { url: 'https://www.youtube.com/watch?v=EXAMPLEID07', kind: 'live' },
+  playlist: { url: 'https://www.youtube.com/watch?v=EXAMPLEID08&list=EXAMPLELIST1', title: 'Leçon 1 : les saisons', ch: 'École Exemple', lang: 'French', min: 7, kind: 'author', playlist: true },
+  dup: { url: 'https://youtu.be/EXAMPLEID00', kind: 'dup' },
+  bad: { url: 'https://example.com/video/123', kind: 'bad' }
+};
+const rows = [
+  { id: 'b1', fmt: 'pdf', title: 'Petit traité des nuages', author: 'A. Exemple', lang: 'French', len: '212 p.', prog: '38%', added: 'Nov 12', opened: 'Today', state: 'ready' },
+  { id: 'v0', fmt: 'video', title: 'Mit dem Rad zur Arbeit', author: 'Kanal Beispiel', lang: 'German', len: '1 min', prog: '0:13 of 0:50', added: 'Nov 26', opened: 'Yesterday', state: 'ready' },
+  { id: 'b2', fmt: 'epub', title: 'Contes du bord de mer', author: 'B. Modèle', lang: 'French', len: '148 p.', prog: '—', added: 'Nov 3', opened: '—', state: 'ready' }
+];
+const ic = (id, w = 13) => '<svg class="i' + (id === 'i-circle-notch' ? ' spin' : '') + '" width="' + w + '" height="' + w + '" viewBox="0 0 256 256" aria-hidden="true"><use href="#' + id + '"/></svg>';
+const timers = {};
+
+function render() {
+  $('rows').innerHTML = rows.map((r) => {
+    let st = '', acts = '';
+    const open = '<a class="mini go" href="index.html' + (r.state === 'ready' ? '' : '?transcript=preparing') + '">Open</a>';
+    if (r.state === 'ready') { acts = r.fmt === 'video' && r.noembed ? '<button type="button" class="mini">Open</button><button type="button" class="mini">' + ic('i-arrow-square-out', 12) + 'Open on YouTube</button>' : '<button type="button" class="mini">Open</button>'; if (r.noembed) st = '<div class="state muted">' + ic('i-warning-circle') + 'Transcript only: its owner doesn’t allow playing it in other apps.</div>'; if (r.nopunct) st = '<div class="state warn">' + ic('i-warning-circle') + 'Automatic captions without punctuation. Add your key in Settings to add it.</div>'; }
+    if (r.state === 'stage') { st = '<div class="state">' + ic('i-circle-notch') + '<span>' + r.stage + '</span>' + (r.pct != null ? '<span class="bar"><i style="width:' + r.pct + '%"></i></span>' : '<span class="bar ind"><i></i></span>') + '</div>'; acts = open + '<button type="button" class="mini" data-cancel="' + r.id + '">Cancel</button>'; }
+    if (r.state === 'nocap') {
+      st = '<div class="state warn">' + ic('i-warning-circle') + (r.noModel ? 'No captions for this video. To transcribe the audio, choose a transcription model in Settings › Mincer.' : 'No captions for this video. Monet can transcribe the audio: about ' + Math.max(2, Math.round(r.minN / 4)) + ' min, about $' + (r.minN * 0.0006).toFixed(2) + '.') + '</div>';
+      acts = (r.noModel ? '<button type="button" class="mini">Open Settings</button>' : '<button type="button" class="mini go" data-tx="' + r.id + '">' + ic('i-waveform', 12) + 'Transcribe audio</button>') + '<button type="button" class="mini" data-rm="' + r.id + '">Remove</button>';
+    }
+    if (r.state === 'other') {
+      st = '<div class="state warn">' + ic('i-warning-circle') + 'Captions only in English. The video is in ' + r.lang + '.</div>';
+      acts = '<button type="button" class="mini" data-useother="' + r.id + '">Use English captions</button><button type="button" class="mini go" data-tx="' + r.id + '">' + ic('i-waveform', 12) + 'Transcribe audio · ~' + Math.max(2, Math.round(r.minN / 4)) + ' min</button>';
+    }
+    return '<tr class="' + (r.fresh ? 'new' : '') + '"><td class="t"><span class="ttl"><span class="fmt ' + r.fmt + '">' + r.fmt + '</span>' + r.title + '</span>' + st + '</td><td>' + r.author + '</td><td>' + r.lang + '</td><td>' + r.len + '</td><td>' + r.prog + '</td><td>' + r.added + '</td><td>' + r.opened + '</td><td><div class="acts">' + acts + '</div></td></tr>';
+  }).join('');
+  $('mincerBusy').hidden = !rows.some((r) => r.state === 'stage');
+}
+
+function err(html) { $('addErr').innerHTML = html; $('addErr').hidden = !html; }
+function add(urlStr) {
+  err('');
+  const s = Object.values(SAMPLES).find((x) => x.url === urlStr.trim());
+  if (!s) { err(ic('i-warning-circle') + 'That doesn’t look like a YouTube video link.'); return; }
+  if (s.kind === 'bad') { err(ic('i-warning-circle') + 'That doesn’t look like a YouTube video link.'); return; }
+  if (s.kind === 'dup') { err(ic('i-warning-circle') + 'Already in your Library: Mit dem Rad zur Arbeit. <a class="mini" href="index.html?lang=de">Open</a>'); return; }
+  if (s.kind === 'live') { err(ic('i-warning-circle') + 'Live streams can’t be added. Try again when the stream has ended and been saved.'); return; }
+  const r = { id: 'n' + Date.now(), fmt: 'video', title: s.title, author: s.ch, lang: s.lang, len: s.min + ' min', minN: s.min, prog: '—', added: 'Today', opened: '—', state: 'stage', stage: 'Getting video details…', fresh: true };
+  rows.unshift(r); $('url').value = ''; $('addPanel').hidden = true; render();
+  if (s.playlist) toast('Only this video was added, not the playlist.');
+  const next = (ms, fn) => { timers[r.id] = setTimeout(() => { fn(); render(); }, ms); };
+  next(900, () => {
+    if (s.kind === 'noembed') { r.state = 'stage'; r.stage = 'Getting captions…'; next(1500, () => { r.state = 'ready'; r.noembed = true; ready(r, s); }); return; }
+    if (s.kind === 'none') { r.state = 'nocap'; r.noModel = $('noModel').checked; return; }
+    if (s.kind === 'other') { r.state = 'other'; return; }
+    r.stage = 'Getting captions…';
+    next(1500, () => {
+      if (s.kind === 'auto' && !$('noKey').checked) { r.stage = 'Adding punctuation…'; next(1800, () => { r.state = 'ready'; ready(r, s); }); return; }
+      if (s.kind === 'auto') r.nopunct = true;
+      r.state = 'ready'; ready(r, s);
+    });
+  });
+}
+function ready(r, s) {
+  $('banner').innerHTML = ic('i-check') + '<span>Added “' + r.title + '”. Language detected: ' + r.lang + '.</span><button type="button">Change</button><button type="button" data-x>Dismiss</button>';
+  $('banner').hidden = false;
+  toast('Ready to study: ' + r.title, '<a href="index.html">Open</a>');
+}
+function transcribe(r) {
+  r.state = 'stage'; r.stage = 'Transcribing the audio · 1 of 5'; r.pct = 0; render();
+  let k = 1; const step = () => { k++; if (k <= 5) { r.stage = 'Transcribing the audio · ' + k + ' of 5'; r.pct = (k - 1) * 20; render(); timers[r.id] = setTimeout(step, 1600); } else { r.state = 'ready'; r.pct = null; render(); ready(r); } };
+  timers[r.id] = setTimeout(step, 1600);
+}
+$('rows').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return; const find = (id) => rows.find((x) => x.id === id);
+  if (b.dataset.cancel) { clearTimeout(timers[b.dataset.cancel]); rows.splice(rows.indexOf(find(b.dataset.cancel)), 1); render(); toast('Cancelled. Nothing was kept.'); }
+  if (b.dataset.rm) { rows.splice(rows.indexOf(find(b.dataset.rm)), 1); render(); }
+  if (b.dataset.tx) transcribe(find(b.dataset.tx));
+  if (b.dataset.useother) { const r = find(b.dataset.useother); r.lang = 'English (captions)'; r.state = 'ready'; render(); ready(r); }
+});
+$('banner').addEventListener('click', (e) => { if (e.target.matches('[data-x]')) $('banner').hidden = true; });
+$('btnAddVideo').addEventListener('click', () => { $('addPanel').hidden = false; $('url').focus(); });
+$('closeAdd').addEventListener('click', () => { $('addPanel').hidden = true; err(''); });
+$('btnAdd').addEventListener('click', () => add($('url').value));
+$('url').addEventListener('keydown', (e) => { if (e.key === 'Enter') add($('url').value); if (e.key === 'Escape') $('addPanel').hidden = true; });
+$('url').addEventListener('input', () => err(''));
+
+/* Mincer */
+function mHelp() {
+  const study = $('mMode').querySelector('.on').dataset.v === 'study';
+  $('mHelp').textContent = study ? 'Adds the video to the Library with its transcript, synced to the video. Nothing is summarized.' : 'Transcribes and summarizes the video into a note.';
+  $('mGo').textContent = study ? 'Add to Library' : 'Summarize';
+}
+$('mMode').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; $('mMode').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b)); mHelp(); });
+$('mGo').addEventListener('click', () => {
+  if ($('mGo').textContent === 'Summarize') { toast('(mockup) Summary queued in Mincer, as today.'); return; }
+  setScene('library'); SAMPLES.mincer = { url: $('mUrl').value, title: 'Atelier du dimanche', ch: 'Atelier Ardoise', lang: 'French', min: 22, kind: 'author' }; add($('mUrl').value);
+});
+document.querySelector('[data-study]').addEventListener('click', () => {
+  rows.unshift({ id: 'm1', fmt: 'video', title: 'Une ville sans voitures ?', author: 'Petits Reportages', lang: 'French', len: '15 min', prog: '—', added: 'Today', opened: '—', state: 'ready', fresh: true });
+  setScene('library'); render(); toast('Added to the Library with the transcript Mincer already had.', '<a href="index.html">Open</a>');
+});
+
+/* Barra do estudo */
+function setScene(v) {
+  $('sceneLibrary').hidden = v !== 'library'; $('sceneMincer').hidden = v !== 'mincer';
+  document.querySelectorAll('[data-scene]').forEach((s) => s.classList.toggle('on', s.dataset.scene === v));
+  $('sceneSeg').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.v === v));
+}
+$('sceneSeg').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) setScene(b.dataset.v); });
+document.querySelectorAll('[data-scene]').forEach((s) => s.addEventListener('click', () => setScene(s.dataset.scene)));
+$('sizeSeg').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; document.body.dataset.size = b.dataset.v; $('sizeSeg').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b)); });
+$('sampleSeg').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; setScene('library'); $('addPanel').hidden = false; $('url').value = SAMPLES[b.dataset.v].url; err(''); $('url').focus(); });
+
+let tt = 0;
+function toast(text, extra) { const t = $('toast'); t.innerHTML = '<span>' + text + '</span>' + (extra || ''); t.classList.add('show'); clearTimeout(tt); tt = setTimeout(() => t.classList.remove('show'), 4500); }
+
+setScene('library'); $('sizeSeg').querySelector('[data-v="1280"]').classList.add('on'); mHelp(); render();
+</script>
+</body>
+</html>

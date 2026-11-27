@@ -55,7 +55,7 @@ export interface SettingsModalProps {
   onApiKeyChanged: (hasKey: boolean) => void
   onUpdateFound: (update: Update, mandatory: boolean) => void
   /** "Open the note" do Settings › Language: abre (ou cria) a nota de perfil de língua. */
-  onOpenLanguageProfile: (input: { nativeLanguage: string; bookLanguage: string }) => Promise<ProfileOpenResult>
+  onOpenLanguageProfile: (input: { nativeLanguage: string; bookLanguage: string | null }) => Promise<ProfileOpenResult>
 }
 
 const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
